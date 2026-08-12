@@ -1,0 +1,136 @@
+# 工具系统
+
+## 1. Tool 是协议对象
+
+`Tool` 不只是可调用函数。参考实现的接口同时描述五类信息，定义在 `claude-code/src/Tool.ts:362`：
+
+| 类别 | 代表字段 |
+| --- | --- |
+| 身份与发现 | `name`、`aliases`、`searchHint`、`isMcp`、`shouldDefer` |
+| Schema | `inputSchema`、`inputJSONSchema`、`outputSchema` |
+| 调度属性 | `isEnabled`、`isConcurrencySafe`、`interruptBehavior` |
+| 风险属性 | `isReadOnly`、`isDestructive`、`isOpenWorld`、`checkPermissions` |
+| 执行与结果 | `validateInput`、`call`、`mapToolResultToToolResultBlockParam` |
+
+接口还包含 prompt 和大量 UI 渲染方法。这是产品层需求，不是工具执行内核的必要组成；阅读源码时应把协议/执行字段与展示字段分开理解。
+
+## 2. ToolResult
+
+`call()` 返回的 `ToolResult<T>` 可包含：
+
+- `data`：工具的领域输出；
+- `newMessages`：工具额外产生的内部消息；
+- `contextModifier`：成功后对 `ToolUseContext` 的变换；
+- `mcpMeta`：MCP 的 `_meta` 和 `structuredContent`。
+
+领域输出不会直接塞进对话。`mapToolResultToToolResultBlockParam()` 负责生成带正确 `tool_use_id` 的 API `tool_result`，之后再经过大小预算和持久化处理。
+
+## 3. 默认实现
+
+`buildTool()` 为常用字段补默认值：
+
+- enabled：`true`
+- concurrency-safe：`false`
+- read-only：`false`
+- destructive：`false`
+- permission：返回 allow 和原输入
+- classifier input：空字符串
+- user-facing name：工具名
+
+这些是当前源码的兼容性默认，不应自动视为理想安全策略。尤其 permission/destructive 元数据需要每个有副作用的 Python 工具显式声明。
+
+## 4. 工具池组装
+
+工具集合不是全局常量，而是按当前环境和权限上下文投影：
+
+1. `getAllBaseTools()` 枚举构建产物中可能存在的内置工具。
+2. `getTools()` 应用 feature、simple mode、REPL mode、`isEnabled()` 等过滤。
+3. blanket deny 的工具在发送给模型前直接移出集合。
+4. `assembleToolPool()` 合并内置工具和 MCP 工具。
+5. 同名冲突时内置工具优先。
+6. 内置与 MCP 分区后分别按名称排序，保持 prompt cache 前缀稳定。
+
+工具名查找支持 alias；只在恢复旧 Transcript 等兼容场景下回退到已废弃名称。
+
+主要实现位于 `claude-code/src/tools.ts` 和 `claude-code/src/utils/toolPool.ts`。
+
+## 5. 单次执行管线
+
+`runToolUse()` 与 `checkPermissionsAndCallTool()` 形成统一执行管线：
+
+```text
+按 name/alias 查找工具
+  → Schema 类型校验
+  → validateInput 语义校验
+  → 防御性清理内部字段
+  → 在克隆输入上补充观察字段
+  → PreToolUse hooks
+  → 权限决策
+  → Tool.call
+  → 映射 tool_result
+  → 大结果外置
+  → PostToolUse / PostToolUseFailure hooks
+  → 生成内部 Message
+```
+
+Schema 错误、语义错误、未知工具、权限拒绝和执行异常都会转换成 `is_error: true` 的 tool result，而不是仅抛异常终止循环。这样模型能够看到失败并调整下一步。
+
+`backfillObservableInput()` 只修改克隆：SDK、Transcript、hook 和权限层可以看到派生字段，但重新发送给模型的原始 tool input 不被改写，从而保护 prompt cache 和 thinking 签名。
+
+对应实现：`claude-code/src/services/tools/toolExecution.ts`。
+
+## 6. 批量调度
+
+非流式调度器 `runTools()` 把调用划分成两类批次：
+
+- 连续的 concurrency-safe 调用组成并行批次；
+- 每个非 concurrency-safe 调用单独串行执行。
+
+并行资格在 Schema 解析成功后由工具根据具体输入判断；判断抛错时按不安全处理。非流式兼容路径会按 tool ID 暂存 modifier，再按原始工具顺序应用；但工具协议只保证非 safe 工具的 context modifier，调用方不应依赖并行 modifier。
+
+实现位于 `claude-code/src/services/tools/toolOrchestration.ts`。
+
+## 7. 流式调度
+
+`StreamingToolExecutor` 在模型还在输出时接收完整 tool block。每个调用经历：
+
+```text
+queued → executing → completed → yielded
+```
+
+调度规则：
+
+- 当前无运行工具时，队首工具可启动。
+- 当前全是 concurrency-safe 工具时，新的 safe 工具可并行启动。
+- 非 safe 工具必须等待所有运行工具结束，并阻止后续越过它。
+- progress 不受最终结果顺序约束，立即发出。
+- 已完成的 safe 工具结果可以先发出；非 safe 工具是结果与执行顺序的屏障，结果关联依靠 tool ID 而非完成顺序。
+
+Bash 工具报错会取消并行 sibling，因为批量 shell 命令常存在隐式依赖；Read/WebFetch 等独立读失败不会取消其他读取。
+
+取消使用父子 `AbortController`：用户取消可向下传播，sibling error 只取消本批工具而不直接终止整个 query controller。
+
+实现位于 `claude-code/src/services/tools/StreamingToolExecutor.ts`。
+
+## 8. 结果大小与上下文变更
+
+每个工具声明单结果阈值；执行器统一把超大文本落盘并返回预览。聚合结果预算和跨轮稳定替换由上下文层负责，见 [03-context-management.md](03-context-management.md)。
+
+`contextModifier` 只适用于不会并发冲突的变更。流式执行器不支持 safe 并行工具修改 context；需要共享状态的工具应串行，或把状态更新改造成可交换事件。
+
+## 9. 核心不变量
+
+1. 工具输入在 Schema 和语义校验通过前不得进入权限或执行层。
+2. 调度属性由具体输入决定，异常时保守地串行。
+3. 工具异常必须产生协议完整的 tool result。
+4. 并行完成顺序不可作为业务语义；关联依靠 tool ID，共享 context 变更必须串行。
+5. 模型原始 tool input 与观察层派生 input 必须分开。
+6. 工具池排序和冲突规则必须稳定，否则会破坏 prompt cache。
+
+## 10. 主要源码入口
+
+- `claude-code/src/Tool.ts`
+- `claude-code/src/tools.ts`
+- `claude-code/src/services/tools/{toolExecution,toolOrchestration,StreamingToolExecutor}.ts`
+- `claude-code/src/utils/toolPool.ts`
+- `claude-code/src/utils/toolResultStorage.ts`

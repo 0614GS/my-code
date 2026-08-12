@@ -1,0 +1,128 @@
+"""Search text files with a regular expression."""
+
+import fnmatch
+import re
+from pathlib import Path
+
+from nano_code.messages import JsonObject
+from nano_code.tools.base import (
+    Tool,
+    ToolContext,
+    ToolDefinition,
+    ToolInputError,
+    ToolOutput,
+    ToolRisk,
+)
+from nano_code.tools.paths import relative_display_path, resolve_workspace_path
+from nano_code.tools.validation import (
+    optional_bool,
+    optional_int,
+    optional_string,
+    required_string,
+)
+
+_MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
+_SKIPPED_ROOTS = frozenset({".git", ".nano-code", ".venv", "__pycache__"})
+
+
+class GrepTool(Tool):
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="Grep",
+            description=(
+                "Search UTF-8 workspace files with a Python regular expression."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string"},
+                    "path": {"type": "string", "default": "."},
+                    "glob": {"type": "string", "default": "*"},
+                    "case_sensitive": {"type": "boolean", "default": True},
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                    },
+                },
+                "required": ["pattern"],
+                "additionalProperties": False,
+            },
+        )
+
+    @property
+    def risk(self) -> ToolRisk:
+        return ToolRisk.READ
+
+    @property
+    def concurrency_safe(self) -> bool:
+        return True
+
+    def validate_input(self, tool_input: JsonObject) -> None:
+        pattern = required_string(tool_input, "pattern")
+        self._compile(pattern, optional_bool(tool_input, "case_sensitive", True))
+        optional_string(tool_input, "path", ".")
+        optional_string(tool_input, "glob", "*")
+        optional_int(tool_input, "max_results", 100, minimum=1, maximum=500)
+
+    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+        base = resolve_workspace_path(
+            context.cwd,
+            optional_string(tool_input, "path", "."),
+            must_exist=True,
+        )
+        regex = self._compile(
+            required_string(tool_input, "pattern"),
+            optional_bool(tool_input, "case_sensitive", True),
+        )
+        file_glob = optional_string(tool_input, "glob", "*")
+        limit = optional_int(tool_input, "max_results", 100, minimum=1, maximum=500)
+        matches = self._grep(context.cwd, base, regex, file_glob, limit)
+        return ToolOutput(content="\n".join(matches) if matches else "<no matches>")
+
+    @staticmethod
+    def _compile(pattern: str, case_sensitive: bool) -> re.Pattern[str]:
+        try:
+            flags = 0 if case_sensitive else re.IGNORECASE
+            return re.compile(pattern, flags)
+        except re.error as error:
+            raise ToolInputError(f"Invalid regular expression: {error}") from error
+
+    @staticmethod
+    def _grep(
+        cwd: Path,
+        base: Path,
+        regex: re.Pattern[str],
+        file_glob: str,
+        limit: int,
+    ) -> list[str]:
+        candidates = [base] if base.is_file() else base.rglob("*")
+        matches: list[str] = []
+        for path in candidates:
+            if not path.is_file():
+                continue
+            relative = path.resolve().relative_to(cwd.resolve())
+            if any(part in _SKIPPED_ROOTS for part in relative.parts):
+                continue
+            if not fnmatch.fnmatch(path.name, file_glob) and not fnmatch.fnmatch(
+                relative.as_posix(), file_glob
+            ):
+                continue
+            try:
+                if path.stat().st_size > _MAX_SEARCH_FILE_BYTES:
+                    continue
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if b"\x00" in raw:
+                continue
+            for line_number, line in enumerate(
+                raw.decode("utf-8", errors="replace").splitlines(), start=1
+            ):
+                if regex.search(line):
+                    display = relative_display_path(cwd, path)
+                    matches.append(f"{display}:{line_number}:{line}")
+                    if len(matches) >= limit:
+                        return matches
+        return matches

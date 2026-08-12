@@ -1,0 +1,41 @@
+[project]
+name = "nano-code"
+version = "0.1.0"
+description = "A small, educational coding agent inspired by Claude Code"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.121.0,<0.122.0",
+]
+
+[project.scripts]
+nano-code = "nano_code.cli.main:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17.0",
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.1.0",
+    "ruff>=0.12.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+asyncio_mode = "auto"
+testpaths = ["tests"]

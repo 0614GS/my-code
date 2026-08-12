@@ -1,0 +1,95 @@
+# Agent 运行循环
+
+## 1. 两层生命周期
+
+运行时刻意分成两层：
+
+| 层 | 生命周期 | 责任 | 入口 |
+| --- | --- | --- | --- |
+| `QueryEngine` | 整个会话 | 保存消息、用量、文件缓存、取消控制器；把内部事件转换为 SDK 输出 | `claude-code/src/QueryEngine.ts:184` |
+| `query()` | 一次用户回合 | 在模型调用、工具执行、恢复逻辑之间循环，直到终止 | `claude-code/src/query.ts:219` |
+
+`QueryEngine.submitMessage()` 先处理用户输入和本地命令，把用户消息写入 Transcript，再进入 `query()`。提前持久化很重要：即使进程在首个模型响应前退出，会话仍然可以恢复。
+
+`query()` 是异步生成器。模型增量、内部消息、工具进度和边界事件会边产生边向上游发送，而不是等整个回合完成后返回一个大对象。
+
+## 2. 一次循环迭代
+
+主路径如下：
+
+```text
+读取 State
+  → 构造本轮模型可见上下文
+  → 检查/执行上下文压缩
+  → 流式调用模型
+  → 收集 assistant block 与 tool_use
+  ├─ 没有 tool_use：运行 Stop hooks，结束或重试
+  └─ 存在 tool_use：执行工具，加入 tool_result，进入下一次迭代
+```
+
+工具结果之后还会注入本轮新产生的附件，例如文件变化、队列消息、记忆、技能发现结果。注入完成后才建立下一轮 `State.messages`，避免普通用户消息插入 `tool_use` 与 `tool_result` 之间。
+
+工具集合可以在两次迭代之间刷新，因此中途连上的 MCP server 不必等到下一个用户回合才生效。
+
+## 3. 显式循环状态
+
+`query.ts` 把跨迭代数据收敛到 `State`：
+
+- `messages`：下一次迭代的上下文输入。
+- `toolUseContext`：工具、权限、取消信号、文件缓存及状态访问器。
+- `autoCompactTracking`：是否压缩过、距上次压缩多少轮、连续失败次数。
+- `maxOutputTokensRecoveryCount`：输出截断恢复次数。
+- `hasAttemptedReactiveCompact`：防止 prompt-too-long 恢复死循环。
+- `pendingToolUseSummary`：与主模型调用并行生成的工具摘要。
+- `stopHookActive`：标记当前是否处于 Stop hook 触发的重试链。
+- `turnCount`：工具轮计数，用于 `maxTurns`。
+- `transition`：上一次继续循环的原因。
+
+继续和终止原因使用联合类型表示，见：
+
+- `claude-code/src/query/transitions.ts`
+- `claude-code/src/query/config.ts`
+
+运行配置在进入 `query()` 时快照一次；循环状态则在每个 `continue` 点整体替换。这让“为什么又调了一次模型”可以从 transition 直接判断，而不必反推消息内容。
+
+## 4. 流式工具执行
+
+启用 `StreamingToolExecutor` 时，完整的 `tool_use` block 一到达就可以开始执行，不必等待模型流结束。执行器同时保证：
+
+- 只读且声明为 concurrency-safe 的工具可以并行。
+- 非 concurrency-safe 工具独占执行。
+- progress 和已完成的 safe 工具结果可以及时发出；非 safe 工具构成不可跨越的执行屏障。
+- 流式 fallback 时，旧执行器被 discard，新响应使用全新执行器。
+
+非流式路径在采样结束后调用 `runTools()`，语义保持一致。调度细节见 [04-tool-system.md](04-tool-system.md)。
+
+## 5. 恢复与终止
+
+几个容易破坏对话协议的异常被放在循环内处理：
+
+- **流式 fallback**：删除失败尝试产生的孤立 assistant 消息，清空工具结果，再以 fallback 模型重试。
+- **模型调用抛错**：为已经出现的每个 `tool_use` 合成错误 `tool_result`，防止历史失配。
+- **用户取消**：先让执行器为排队或运行中的工具补齐取消结果，再终止回合。
+- **prompt too long**：先尝试已有的轻量 collapse，再尝试 reactive compact；每条恢复路径都有单次保护。
+- **max output tokens**：可先提高单次输出上限，再注入继续提示；恢复次数有上限。
+- **API 错误**：不运行 Stop hooks，避免“错误 → hook 阻塞 → 重试同一错误”的循环。
+- **maxTurns / budget**：在进入下一工具轮前检查，达到限制后返回结构化结果。
+
+可恢复错误在恢复结果确定前不会先暴露给 SDK 调用方，否则调用方可能看到中间错误后提前关闭连接。
+
+## 6. 核心不变量
+
+1. 每个已发出的 `tool_use` 最终都必须有同 ID 的 `tool_result`，包括取消和异常路径。
+2. 只有完成本轮工具结果与附件组装后，才建立下一次迭代的消息数组。
+3. fallback 不能复用失败尝试的 tool ID、thinking block 或执行器状态。
+4. API 没有产生有效回答时，不执行依赖回答内容的 Stop hooks。
+5. 循环退出原因是显式数据，不使用“最后一条消息长什么样”作为唯一状态机。
+
+## 7. 主要源码入口
+
+- `claude-code/src/QueryEngine.ts`
+- `claude-code/src/query.ts`
+- `claude-code/src/query/{config,deps,transitions,stopHooks}.ts`
+- `claude-code/src/services/api/claude.ts`
+- `claude-code/src/services/tools/StreamingToolExecutor.ts`
+- `claude-code/src/services/tools/toolOrchestration.ts`
