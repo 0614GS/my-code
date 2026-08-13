@@ -1,4 +1,4 @@
-"""Session transcripts, persistence, and recovery."""
+"""会话记录、持久化与恢复。"""
 
 from nano_code.sessions.store import SessionStore
 

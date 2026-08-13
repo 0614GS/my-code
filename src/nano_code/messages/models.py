@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
+# Restrict cross-layer data to JSON rather than allowing Any. Provider payloads,
+# transcripts, and tool inputs can therefore be checked at every boundary.
 type JsonValue = (
     None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 )
@@ -66,6 +68,8 @@ class ToolUseBlock:
     id: str
     name: str
     input: JsonObject
+    # Literal discriminators give mypy the same narrowing role that tagged
+    # unions provide in the TypeScript reference implementation.
     type: Literal["tool_use"] = field(default="tool_use", init=False)
 
 
@@ -73,6 +77,8 @@ class ToolUseBlock:
 class ToolResultBlock:
     """The result paired with one model tool request."""
 
+    # tool_use_id is provider protocol identity; it is intentionally separate
+    # from the local transcript message UUID below.
     tool_use_id: str
     content: str
     is_error: bool = False
@@ -87,15 +93,23 @@ type AssistantBlock = TextBlock | ToolUseBlock
 class ChatMessage:
     """One persisted message in the internal transcript."""
 
+    # role is the provider protocol role. origin records who actually created
+    # the message, because tool results also travel under the provider's user role.
     role: MessageRole
     content: tuple[ContentBlock, ...]
     origin: MessageOrigin
+
+    # Local UUIDs form the recoverable transcript chain independently of API IDs.
     uuid: str = field(default_factory=new_id)
     parent_uuid: str | None = None
     timestamp: str = field(default_factory=utc_now)
+    # Tool-result messages retain a direct provenance edge to the assistant
+    # message that requested them; this becomes important for parallel calls.
     source_message_uuid: str | None = None
 
     def __post_init__(self) -> None:
+        # Enforce provider-shape invariants at construction time so malformed
+        # messages cannot reach persistence and fail much later during sampling.
         if not self.content:
             raise ValueError("A message must contain at least one content block")
         if self.role == "assistant" and any(

@@ -1,3 +1,3 @@
-"""A small, educational coding agent."""
+"""一个小型、用于学习的编程智能体。"""
 
 __version__ = "0.1.0"

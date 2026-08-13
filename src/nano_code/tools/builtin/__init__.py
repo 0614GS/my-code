@@ -1,4 +1,4 @@
-"""Built-in tools shipped with nano-code."""
+"""nano-code 自带的内置工具。"""
 
 from nano_code.tools.base import Tool
 from nano_code.tools.builtin.bash import BashTool
@@ -10,7 +10,7 @@ from nano_code.tools.builtin.write_file import WriteFileTool
 
 
 def builtin_tools() -> tuple[Tool, ...]:
-    """Return built-ins in a stable order before registry validation."""
+    """在注册表校验前按稳定顺序返回内置工具。"""
 
     return (
         BashTool(),

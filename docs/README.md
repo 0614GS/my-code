@@ -32,6 +32,8 @@ ToolSearch ──> 按需暴露 deferred tool schema
 | [06-mcp-and-tool-discovery.md](06-mcp-and-tool-discovery.md) | MCP 工具如何接入，以及为何需要延迟加载？ |
 | [07-hooks.md](07-hooks.md) | Hooks 在哪些阶段介入，能改变什么？ |
 | [08-mvp-scope.md](08-mvp-scope.md) | Python MVP 当前实现什么，哪些能力留到后续？ |
+| [09-storage-and-settings.md](09-storage-and-settings.md) | 会话、工具结果和分层配置分别存在哪里？ |
+| [10-terminal-ui.md](10-terminal-ui.md) | TUI、slash 命令和核心 runtime 如何解耦？ |
 
 ## 统一术语
 
@@ -46,6 +48,6 @@ ToolSearch ──> 按需暴露 deferred tool schema
 
 ## 阅读边界
 
-当前文档不展开 TUI、远程会话、团队协作、浏览器控制、统计上报和具体模型提示词。它们会使用这里的内核，但不是 nano-code 第一阶段需要复刻的架构。
+当前文档不展开远程会话、团队协作、浏览器控制、统计上报和具体模型提示词。它们会使用这里的内核，但不是 nano-code 第一阶段需要复刻的架构。
 
 源码行号来自当前仓库快照，后续更新参考源码时可能漂移；文件与符号名比固定行号更可靠。

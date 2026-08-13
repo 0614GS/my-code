@@ -15,11 +15,13 @@ htmlcov/
 # Virtual environments
 .venv/
 
-# Local configuration and runtime state
+# Local configuration
 .env
 .env.*
 !.env.example
-.nano-code/
+/.nano-code/settings.local.json
+/.nano-code/*.tmp
+**/.credentials.json
 *.log
 
 # Editors and operating systems

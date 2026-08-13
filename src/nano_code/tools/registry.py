@@ -9,11 +9,15 @@ class ToolRegistry:
     """An immutable, deterministically ordered collection of tools."""
 
     def __init__(self, tools: Iterable[Tool]) -> None:
+        # Tool schema order is part of the prompt prefix. Stable sorting improves
+        # provider cache reuse and makes snapshots deterministic.
         ordered = sorted(tools, key=lambda tool: tool.definition.name)
         by_name: dict[str, Tool] = {}
         for tool in ordered:
             name = tool.definition.name
             if name in by_name:
+                # Fail rather than shadowing a tool: permission rules and model calls
+                # must resolve a name to exactly one implementation.
                 raise ValueError(f"Duplicate tool name: {name}")
             by_name[name] = tool
         self._tools = tuple(ordered)

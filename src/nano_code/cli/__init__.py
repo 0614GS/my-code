@@ -1,1 +1,1 @@
-"""Command-line entry points and terminal interaction."""
+"""命令行入口与终端交互。"""

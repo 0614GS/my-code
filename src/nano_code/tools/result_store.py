@@ -17,13 +17,20 @@ class ToolResultStore:
             return content
 
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+        # Deriving the filename from protocol identity makes repeated projection
+        # of the same result stable without exposing arbitrary model-generated IDs.
         digest = hashlib.sha256(tool_use_id.encode("utf-8")).hexdigest()[:20]
         path = self.root / f"{digest}.txt"
         if not path.exists():
+            # O_EXCL prevents an existing result from being silently overwritten;
+            # restrictive modes keep potentially sensitive command output private.
             descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
                 handle.write(content)
 
+        # The fixed prefix is stored in the transcript, so future requests replay
+        # byte-stable context instead of re-deciding how much content to include.
         preview = content[: self.max_inline_chars]
         return (
             f"Output exceeded {self.max_inline_chars} characters and was saved to "

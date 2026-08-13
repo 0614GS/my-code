@@ -188,7 +188,25 @@ Bash 权限是多阶段分析，而不是黑名单正则：
 5. shell 解析失败意味着无法证明安全，不意味着安全。
 6. Permission 和 Sandbox 必须是两个可独立测试的边界。
 
-## 12. 主要源码入口
+## 12. nano-code 的小型映射
+
+Python 版本采用同样的两阶段结果：工具先返回可含 `passthrough` 的
+`ToolPermissionResult`，`PermissionPolicy` 再收敛为最终三态
+`PermissionDecision`。职责分配如下：
+
+```text
+Tool                 具体输入是否只读、工具特有规则和安全语义
+PermissionPolicy     blanket 规则、mode、优先级和默认 ask
+ToolExecutor         校验、请求确认、执行获批 input、生成 tool_result
+PermissionPrompter   交互形式；不参与安全判断
+```
+
+Bash 分析器只自动允许能够静态证明安全的命令。简单管道和 compound command 会
+逐段检查，所有子命令都通过才视为只读；prefix allow 也必须覆盖每个子命令，不能
+用 `Bash(git:*)` 放行 `git status && rm file`。当前 content rule 已进入内核模型，
+设置文件持久化和“本次/长期允许”的 UI 仍留待后续。
+
+## 13. 主要源码入口
 
 - `claude-code/src/types/permissions.ts`
 - `claude-code/src/utils/permissions/permissions.ts`

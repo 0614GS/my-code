@@ -1,4 +1,4 @@
-"""Internal messages and provider message conversion."""
+"""内部消息及 provider 消息转换。"""
 
 from nano_code.messages.models import (
     ChatMessage,

@@ -1,4 +1,4 @@
-"""Console entry point and minimal REPL."""
+"""控制台入口与最小化 REPL。"""
 
 import asyncio
 import sys
@@ -6,8 +6,15 @@ from collections.abc import Coroutine
 from typing import Any
 
 from nano_code.agent import AgentEngine
-from nano_code.cli.arguments import CliOptions, parse_args
-from nano_code.cli.runtime import build_engine
+from nano_code.cli.arguments import AuthOptions, CliOptions, parse_cli
+from nano_code.cli.auth import run_auth_command
+from nano_code.cli.runtime import (
+    CliChatRuntime,
+    DeferredPermissionPrompter,
+    build_engine,
+)
+from nano_code.config import bootstrap_user_storage
+from nano_code.tui import NanoCodeTui
 
 
 async def _submit(engine: AgentEngine, prompt: str) -> None:
@@ -15,34 +22,19 @@ async def _submit(engine: AgentEngine, prompt: str) -> None:
     print(result.text or "<no text response>")
 
 
-async def _repl(engine: AgentEngine, session_id: str) -> None:
-    print(f"nano-code session {session_id}. Type /exit to quit.")
-    while True:
-        try:
-            # The MVP event loop has no concurrent UI work, and direct input also works
-            # in restricted environments where Python worker threads are unavailable.
-            prompt = input("nano-code> ")  # noqa: ASYNC250
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-        if prompt.strip() in {"/exit", "/quit"}:
-            return
-        if not prompt.strip():
-            continue
-        try:
-            await _submit(engine, prompt)
-        except KeyboardInterrupt:
-            print("Cancelled.", file=sys.stderr)
-        except Exception as error:
-            print(f"Error: {error}", file=sys.stderr)
-
-
 async def run(options: CliOptions) -> int:
-    engine = build_engine(options.settings, options.session_id)
     if options.prompt is not None:
+        engine = build_engine(options.settings, options.session_id)
         await _submit(engine, options.prompt)
         return 0
-    await _repl(engine, engine.session_store.session_id)
+    permission_prompter = DeferredPermissionPrompter()
+    engine = build_engine(
+        options.settings,
+        options.session_id,
+        permission_prompter=permission_prompter,
+    )
+    runtime = CliChatRuntime(engine, options.settings, permission_prompter)
+    await NanoCodeTui(runtime).run()
     return 0
 
 
@@ -59,8 +51,23 @@ def _run_async(task: Coroutine[Any, Any, int]) -> int:
 
 def main(argv: list[str] | None = None) -> None:
     try:
-        options = parse_args(argv)
+        options = parse_cli(argv)
+        paths = (
+            options.paths
+            if isinstance(options, AuthOptions)
+            else options.settings.paths
+        )
+        bootstrap_user_storage(paths)
     except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
         raise SystemExit(2) from error
+    if isinstance(options, AuthOptions):
+        try:
+            raise SystemExit(run_auth_command(options))
+        except (EOFError, KeyboardInterrupt):
+            print("Cancelled.", file=sys.stderr)
+            raise SystemExit(130) from None
+        except ValueError as error:
+            print(f"Error: {error}", file=sys.stderr)
+            raise SystemExit(2) from error
     raise SystemExit(_run_async(run(options)))

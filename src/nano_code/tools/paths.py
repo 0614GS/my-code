@@ -20,14 +20,22 @@ def resolve_workspace_path(
     candidate = Path(raw_path).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
+
+    # resolve(strict=False) follows every existing symlink component while still
+    # allowing a not-yet-created final path. Checking before resolution would let
+    # an in-workspace symlink point writes outside the workspace.
     resolved = candidate.resolve(strict=False)
 
+    # Path containment is a tool safety invariant and is enforced even when the
+    # permission policy is in bypass mode.
     if not resolved.is_relative_to(root):
         raise ToolInputError(f"Path escapes the workspace: {raw_path}")
     if must_exist and not resolved.exists():
         raise ToolInputError(f"Path does not exist: {raw_path}")
 
     if writable:
+        # Agent state, VCS metadata, and the upstream snapshot are never writable
+        # tool targets; permission approval cannot override this boundary.
         relative = resolved.relative_to(root)
         if relative.parts and relative.parts[0] in _PROTECTED_WRITE_ROOTS:
             raise ToolInputError(f"Path is protected from agent writes: {raw_path}")

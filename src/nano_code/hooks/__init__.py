@@ -1,1 +1,1 @@
-"""Lifecycle hooks and hook execution."""
+"""生命周期钩子及其执行逻辑。"""

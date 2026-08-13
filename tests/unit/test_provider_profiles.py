@@ -1,0 +1,51 @@
+import json
+import stat
+from pathlib import Path
+
+import pytest
+
+from nano_code.providers.profiles import (
+    ProviderProfile,
+    ProviderProfileError,
+    ProviderProfileStore,
+    ProviderProtocol,
+)
+
+
+def test_provider_profiles_round_trip_without_credentials(tmp_path: Path) -> None:
+    path = tmp_path / "config" / "providers.json"
+    store = ProviderProfileStore(path)
+    profile = ProviderProfile(
+        id="company-gateway",
+        protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
+        base_url="https://gateway.example/anthropic",
+        model="compatible-model",
+    )
+
+    store.write((profile,))
+
+    assert store.load() == {profile.id: profile}
+    assert "apiKey" not in path.read_text(encoding="utf-8")
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+
+
+def test_provider_catalog_requires_supported_protocol(tmp_path: Path) -> None:
+    path = tmp_path / "providers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "providers": {"custom": {"protocol": "openai", "model": "model"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProviderProfileError, match="Unsupported provider protocol"):
+        ProviderProfileStore(path).load()
+
+
+def test_provider_id_is_safe_for_configuration_keys() -> None:
+    with pytest.raises(ProviderProfileError, match="provider ID"):
+        ProviderProfile(id="../escape", model="model")

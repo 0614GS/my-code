@@ -127,7 +127,19 @@ Bash 工具报错会取消并行 sibling，因为批量 shell 命令常存在隐
 5. 模型原始 tool input 与观察层派生 input 必须分开。
 6. 工具池排序和冲突规则必须稳定，否则会破坏 prompt cache。
 
-## 10. 主要源码入口
+## 10. Python 实现的职责边界
+
+nano-code 保留静态 `risk` 作为默认分类，同时让工具按具体输入实现
+`is_read_only(input, context)` 和 `check_permissions(input, context)`。后者返回
+`allow | ask | deny | passthrough`，只表达工具领域内的事实；全局规则、mode 和
+最终 ask 收敛仍由 `PermissionPolicy` 统一处理。`ToolExecutor` 不识别 Bash、Read
+等具体类型，只保证 validation → permission → execution → result 的顺序。
+
+Bash 的命令解析和参数白名单因此位于 `tools/builtin/bash_permissions.py`，而不是
+Executor。权限层批准了修改后的 input 时，Executor 必须把同一个 input 交给弹窗
+和执行阶段，避免“用户批准 A、工具执行 B”。
+
+## 11. 主要源码入口
 
 - `claude-code/src/Tool.ts`
 - `claude-code/src/tools.ts`

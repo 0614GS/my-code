@@ -43,6 +43,8 @@ def block_to_json(block: ContentBlock) -> JsonObject:
 def message_to_json(message: ChatMessage) -> JsonObject:
     """Encode one internal message for JSONL persistence."""
 
+    # Version the on-disk record independently of provider SDK types. Transcript
+    # migrations can then evolve without changing the agent's internal dataclasses.
     return {
         "type": "message",
         "version": 1,
@@ -106,6 +108,8 @@ def block_from_json(value: object) -> ContentBlock:
 def message_from_json(value: object) -> ChatMessage:
     """Decode and validate one versioned transcript record."""
 
+    # A transcript is untrusted input on resume: it may be old, partial, or edited.
+    # Re-enter the strict JSON domain before constructing typed messages.
     try:
         data = to_json_object(value)
     except TypeError as error:
@@ -118,6 +122,8 @@ def message_from_json(value: object) -> ChatMessage:
     if not isinstance(raw_content, list):
         raise MessageDecodeError("'content' must be a list")
 
+    # Spell out each literal branch so both runtime validation and mypy narrowing
+    # agree; a broad cast here would let future unknown values leak into the core.
     raw_role = _required_string(data, "role")
     if raw_role == "user":
         role: MessageRole = "user"

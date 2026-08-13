@@ -1,1 +1,1 @@
-"""MCP connections, adapters, and tool discovery."""
+"""MCP 连接、适配器与工具发现。"""
