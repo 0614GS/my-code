@@ -9,6 +9,7 @@ from nano_code.messages.models import (
     TokenUsage,
     ToolResultBlock,
     ToolUseBlock,
+    to_json_object,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "TokenUsage",
     "ToolResultBlock",
     "ToolUseBlock",
+    "to_json_object",
 ]

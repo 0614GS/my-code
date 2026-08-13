@@ -1,4 +1,4 @@
-"""Pure permission types, separated to avoid orchestration import cycles."""
+"""纯权限类型；单独存放以避免编排层循环导入。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class PermissionMode(StrEnum):
-    """User-selectable defaults after explicit rules and safety checks."""
+    """显式规则与安全检查之后，由用户选择的默认行为。"""
 
     DEFAULT = "default"
     ACCEPT_EDITS = "acceptEdits"
@@ -29,7 +29,7 @@ class PermissionBehavior(StrEnum):
 
 
 class ToolPermissionBehavior(StrEnum):
-    """A tool-local result before the global policy resolves defaults."""
+    """全局策略解析默认行为前的工具局部结果。"""
 
     ALLOW = "allow"
     ASK = "ask"
@@ -39,7 +39,7 @@ class ToolPermissionBehavior(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PermissionRule:
-    """A tool rule; optional content is interpreted by that tool."""
+    """工具规则；可选内容由对应工具解释。"""
 
     tool_name: str
     behavior: PermissionBehavior
@@ -61,7 +61,7 @@ class PermissionRule:
 
 @dataclass(frozen=True, slots=True)
 class ToolPermissionContext:
-    """Read-only policy facts supplied to a tool-specific permission check."""
+    """提供给工具专属权限检查的只读策略事实。"""
 
     mode: PermissionMode
     rules: tuple[PermissionRule, ...]
@@ -81,7 +81,7 @@ class ToolPermissionContext:
 
 @dataclass(frozen=True, slots=True)
 class ToolPermissionResult:
-    """A tool's input-aware safety judgment, before global mode handling."""
+    """全局模式处理前，工具基于具体输入作出的安全判断。"""
 
     behavior: ToolPermissionBehavior
     message: str
@@ -121,7 +121,7 @@ class ToolPermissionResult:
 
 @dataclass(frozen=True, slots=True)
 class PermissionDecision:
-    """An auditable decision before optional user confirmation."""
+    """可选用户确认前的可审计决策。"""
 
     behavior: PermissionBehavior
     message: str
@@ -131,7 +131,7 @@ class PermissionDecision:
 
 @dataclass(frozen=True, slots=True)
 class PermissionConfirmation:
-    """An explicit human response, optionally including denial guidance."""
+    """用户的显式响应，可附带拒绝原因或指导。"""
 
     allowed: bool
     feedback: str | None = None

@@ -1,4 +1,4 @@
-"""Filesystem layout for settings and per-project runtime state."""
+"""设置与项目级运行时状态的文件系统布局。"""
 
 import hashlib
 import os
@@ -14,7 +14,7 @@ _MAX_SANITIZED_LENGTH = 200
 
 
 class SettingsScope(StrEnum):
-    """Editable settings scopes, ordered separately by ``SettingsStore``."""
+    """可编辑的设置作用域，具体优先级由 ``SettingsStore`` 单独管理。"""
 
     USER = "user"
     PROJECT = "project"
@@ -22,11 +22,10 @@ class SettingsScope(StrEnum):
 
 
 def sanitize_path(name: str) -> str:
-    """Convert an absolute project path into a portable directory name.
+    """将项目绝对路径转换为可移植的目录名。
 
-    Claude Code uses the same non-alphanumeric replacement and 200-character
-    prefix. SHA-256 gives the Python implementation a stable long-path suffix
-    across processes and platforms.
+    Claude Code 同样会替换非字母数字字符并保留 200 字符前缀。SHA-256
+    为 Python 实现在不同进程和平台间提供稳定的长路径后缀。
     """
 
     normalized = unicodedata.normalize("NFC", name)
@@ -39,7 +38,7 @@ def sanitize_path(name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class NanoCodePaths:
-    """Resolved paths shared by settings, transcripts, and tool-result storage."""
+    """设置、会话记录与工具结果存储共享的已解析路径。"""
 
     cwd: Path
     config_home: Path
@@ -52,7 +51,7 @@ class NanoCodePaths:
         environ: Mapping[str, str] | None = None,
         home: Path | None = None,
     ) -> "NanoCodePaths":
-        """Resolve the workspace and the ``~/.nano-code``-style config home."""
+        """解析工作区和形如 ``~/.nano-code`` 的配置主目录。"""
 
         environment = os.environ if environ is None else environ
         canonical_cwd = _canonical_path(cwd)
@@ -70,7 +69,7 @@ class NanoCodePaths:
 
     @property
     def project_state_dir(self) -> Path:
-        # Grouping by canonical cwd keeps similarly named repositories isolated.
+        # 按规范化 cwd 分组，避免同名仓库相互干扰。
         return self.projects_dir / sanitize_path(str(self.cwd))
 
     @property
@@ -79,13 +78,13 @@ class NanoCodePaths:
 
     @property
     def credentials_path(self) -> Path:
-        """Return the user-only credential file, separate from settings."""
+        """返回独立于设置文件的用户专属凭据文件。"""
 
         return self.config_home / ".credentials.json"
 
     @property
     def providers_path(self) -> Path:
-        """Return the user-only, non-secret provider profile catalog."""
+        """返回用户专属且不含密钥的 provider profile 目录。"""
 
         return self.config_home / "providers.json"
 
@@ -95,11 +94,10 @@ class NanoCodePaths:
 
     @property
     def project_config_collides_with_user_storage(self) -> bool:
-        """Whether project settings would occupy the user config directory.
+        """项目设置是否会占用用户配置目录。
 
-        This occurs with the default layout when nano-code starts in the user's
-        home directory. One file cannot safely represent both a trusted user
-        scope and an untrusted project scope.
+        nano-code 在用户主目录中以默认布局启动时会发生这种情况。同一个
+        文件无法同时安全表示可信用户作用域和不可信项目作用域。
         """
 
         return self.project_config_dir == self.config_home
@@ -132,7 +130,6 @@ class NanoCodePaths:
 
 
 def _canonical_path(path: Path) -> Path:
-    # ``resolve`` canonicalizes symlinks when possible and is non-strict for
-    # config paths that have not been materialized yet.
+    # ``resolve`` 会尽可能规范化符号链接，并允许尚未创建的配置路径存在。
     resolved = path.resolve(strict=False)
     return Path(unicodedata.normalize("NFC", str(resolved)))

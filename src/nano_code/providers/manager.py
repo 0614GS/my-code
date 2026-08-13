@@ -1,4 +1,4 @@
-"""Application service for provider profile and credential mutations."""
+"""负责变更 provider profile 和凭据的应用服务。"""
 
 import os
 from collections.abc import Mapping
@@ -17,7 +17,7 @@ from nano_code.providers.router import ProviderConnection
 
 @dataclass(frozen=True, slots=True)
 class ProviderView:
-    """Credential-free profile data safe to expose to terminal frontends."""
+    """可安全暴露给终端前端且不含凭据的 profile 数据。"""
 
     id: str
     protocol: ProviderProtocol
@@ -29,7 +29,7 @@ class ProviderView:
 
 @dataclass(frozen=True, slots=True)
 class ProviderUpdate:
-    """User-entered profile data; ``api_key=None`` preserves an existing key."""
+    """用户输入的 profile 数据；``api_key=None`` 表示保留现有 key。"""
 
     id: str
     model: str
@@ -38,7 +38,7 @@ class ProviderUpdate:
 
 
 class ProviderManager:
-    """Coordinate non-secret profiles, secrets, and active-provider settings."""
+    """协调非敏感 profile、密钥及当前 provider 设置。"""
 
     def __init__(
         self,
@@ -74,8 +74,8 @@ class ProviderManager:
         )
         profiles = self.profiles.load()
 
-        # Persist the secret first. If the following profile write fails, the
-        # result is an unreachable orphan key rather than a route using no key.
+        # 先持久化密钥。如果后续 profile 写入失败，只会留下无法访问的孤立 key，
+        # 而不会生成缺少 key 的可用路由。
         if update.api_key is not None:
             self.credentials.save_api_key(update.api_key, profile.id)
         profiles[profile.id] = profile

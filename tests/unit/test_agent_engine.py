@@ -34,6 +34,7 @@ from nano_code.tools.executor import ToolExecutor
 from nano_code.tools.result_store import ToolResultStore
 
 _SESSION_ID = "12345678-1234-1234-1234-123456789abc"
+_OTHER_SESSION_ID = "87654321-4321-4321-4321-cba987654321"
 
 
 class FakeProvider:
@@ -227,3 +228,46 @@ def test_resume_repairs_trailing_unresolved_tool_uses(tmp_path: Path) -> None:
     assert isinstance(repair, ToolResultBlock)
     assert repair.tool_use_id == "interrupted"
     assert repair.is_error is True
+
+
+def test_resume_switches_store_and_messages_after_validating_target(
+    tmp_path: Path,
+) -> None:
+    engine = build_engine(tmp_path, FakeProvider([]))
+    current = ChatMessage(role="user", origin="human", content=(TextBlock("current"),))
+    engine.session_store.append(current)
+    engine.messages.append(current)
+    target_store = SessionStore(tmp_path / "state", _OTHER_SESSION_ID)
+    target = ChatMessage(role="user", origin="human", content=(TextBlock("target"),))
+    target_store.append(target)
+
+    loaded = engine.resume(target_store)
+
+    assert loaded == (target,)
+    assert engine.messages == [target]
+    assert engine.session_store.session_id == _OTHER_SESSION_ID
+
+
+def test_failed_resume_preserves_current_engine_state(tmp_path: Path) -> None:
+    engine = build_engine(tmp_path, FakeProvider([]))
+    current_store = engine.session_store
+    current_messages = list(engine.messages)
+    broken_store = SessionStore(tmp_path / "state", _OTHER_SESSION_ID)
+    broken_store.project_state_dir.mkdir(parents=True, exist_ok=True)
+    broken_store.path.write_text("not json\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid transcript line"):
+        engine.resume(broken_store)
+
+    assert engine.session_store is current_store
+    assert engine.messages == current_messages
+
+
+def test_resume_rejects_missing_or_empty_session(tmp_path: Path) -> None:
+    engine = build_engine(tmp_path, FakeProvider([]))
+    empty_store = SessionStore(tmp_path / "state", _OTHER_SESSION_ID)
+
+    with pytest.raises(ValueError, match="contains no messages"):
+        engine.resume(empty_store)
+
+    assert engine.session_store.session_id == _SESSION_ID

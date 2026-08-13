@@ -1,4 +1,4 @@
-"""Deterministic permission precedence for built-in tools."""
+"""内置工具的确定性权限优先级。"""
 
 from collections.abc import Iterable
 
@@ -15,7 +15,7 @@ from nano_code.tools.base import Tool, ToolContext, ToolRisk
 
 
 class PermissionPolicy:
-    """Compose global rules, tool judgments, and mode without performing UI."""
+    """组合全局规则、工具判断与模式，不处理 UI。"""
 
     def __init__(
         self,
@@ -28,10 +28,10 @@ class PermissionPolicy:
     async def decide(
         self, tool: Tool, tool_input: JsonObject, context: ToolContext
     ) -> PermissionDecision:
-        """Compose global policy with an input-aware tool-local judgment."""
+        """组合全局策略与基于具体输入的工具局部判断。"""
 
-        # Explicit deny and ask rules are checked before every permissive mode.
-        # In particular, bypassPermissions must not silently erase user policy.
+        # 所有宽松模式之前都要检查显式 deny 和 ask 规则。
+        # 尤其是 bypassPermissions 不能静默抹除用户策略。
         deny_rule = self._whole_tool_rule(tool, PermissionBehavior.DENY)
         if deny_rule is not None:
             return PermissionDecision(
@@ -57,8 +57,8 @@ class PermissionPolicy:
             ),
         )
 
-        # A tool owns input semantics, so its denial is authoritative. Explicit
-        # content asks and protected-path checks can opt out of bypass as well.
+        # 工具拥有输入语义，因此它的拒绝具有权威性。显式内容询问和受保护路径检查
+        # 同样可以声明不受 bypass 影响。
         if tool_result.behavior is ToolPermissionBehavior.DENY:
             return PermissionDecision(
                 behavior=PermissionBehavior.DENY,
@@ -75,8 +75,8 @@ class PermissionPolicy:
                 reason=tool_result.reason,
             )
 
-        # Plan mode is a capability reduction based on this concrete call, not
-        # only a static tool category. Read-only Bash calls therefore remain usable.
+        # plan 模式根据当前具体调用收缩能力，而不只依赖静态工具类别，
+        # 因此只读 Bash 调用仍然可用。
         if self.mode is PermissionMode.PLAN and not tool.is_read_only(
             tool_input, context
         ):
@@ -86,8 +86,8 @@ class PermissionPolicy:
                 reason="mode:plan",
             )
 
-        # Bypass changes the default permission decision, not tool-level safety.
-        # Filesystem tools still reject workspace escape and protected paths.
+        # bypass 只改变默认权限决策，不改变工具级安全边界。
+        # 文件系统工具仍会拒绝逃逸工作区和访问受保护路径。
         if self.mode is PermissionMode.BYPASS:
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
@@ -96,7 +96,7 @@ class PermissionPolicy:
                 updated_input=_updated_input(tool_result.updated_input, tool_input),
             )
 
-        # An explicit allow is considered only after higher-priority objections.
+        # 只有处理完更高优先级的反对项后，才考虑显式 allow。
         allow_rule = self._whole_tool_rule(tool, PermissionBehavior.ALLOW)
         if allow_rule is not None:
             return PermissionDecision(
@@ -122,7 +122,7 @@ class PermissionPolicy:
                 updated_input=_updated_input(tool_result.updated_input, tool_input),
             )
 
-        # dontAsk is fail-closed: an operation that would prompt becomes a denial.
+        # dontAsk 按拒绝处理：原本需要询问的操作会直接被拒绝。
         if self.mode is PermissionMode.DONT_ASK:
             return PermissionDecision(
                 behavior=PermissionBehavior.DENY,
@@ -133,8 +133,8 @@ class PermissionPolicy:
                 reason="mode:dontAsk",
             )
 
-        # A normal tool-local ask and passthrough both converge on the same UI
-        # boundary. The distinction remains visible in the auditable reason.
+        # 普通工具局部 ask 与 passthrough 最终进入同一个 UI 边界，
+        # 两者差异仍保留在可审计原因中。
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             message=tool_result.message,

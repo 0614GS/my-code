@@ -1,4 +1,4 @@
-"""Narrow contracts between a terminal frontend and a chat runtime."""
+"""终端前端与对话运行时之间的窄接口。"""
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -7,6 +7,7 @@ from typing import Protocol
 from nano_code.messages import JsonObject
 from nano_code.permissions import PermissionConfirmation
 from nano_code.providers.manager import ProviderUpdate, ProviderView
+from nano_code.sessions import SessionSummary
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,33 +63,71 @@ class TurnCompleted:
 
 
 type TurnEvent = TextDelta | ToolStarted | ToolFinished | TurnCompleted
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryUserMessage:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryAssistantMessage:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryToolCall:
+    tool_use_id: str
+    name: str
+    input: JsonObject
+    result: str
+    is_error: bool
+
+
+type HistoryEntry = HistoryUserMessage | HistoryAssistantMessage | HistoryToolCall
+
+
+@dataclass(frozen=True, slots=True)
+class ResumedSession:
+    status: RuntimeStatus
+    history: tuple[HistoryEntry, ...]
+
+
 type PermissionHandler = Callable[
     [PermissionRequest], Awaitable[PermissionConfirmation]
 ]
 
 
 class ChatRuntime(Protocol):
-    """Capabilities needed by the TUI; no core implementation types leak here."""
+    """TUI 所需能力；核心实现类型不会泄漏到此处。"""
 
     async def submit(self, prompt: str) -> TurnResult:
-        """Run one user turn."""
+        """运行一个用户轮次。"""
         ...
 
     def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
-        """Run one user turn while yielding display-safe lifecycle events."""
+        """运行一个用户轮次，并产出可安全展示的生命周期事件。"""
         ...
 
     def status(self) -> RuntimeStatus:
-        """Return a safe, credential-free runtime snapshot."""
+        """返回安全且不含凭据的运行时快照。"""
         ...
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:
-        """Route permission prompts to the active frontend."""
+        """将权限提示路由到当前前端。"""
 
     def providers(self) -> tuple[ProviderView, ...]:
-        """Return credential-free provider profiles."""
+        """返回不含凭据的 provider profile。"""
         ...
 
     async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
-        """Persist, activate, and hot-swap one provider profile."""
+        """持久化、激活并热切换一个 provider profile。"""
+        ...
+
+    async def list_sessions(self) -> tuple[SessionSummary, ...]:
+        """列出当前项目中除活动会话外的可恢复会话。"""
+        ...
+
+    async def resume_session(self, session_id: str) -> ResumedSession:
+        """严格加载并切换会话，返回与核心消息类型解耦的历史投影。"""
         ...

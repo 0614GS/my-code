@@ -1,4 +1,4 @@
-"""Strict JSON encoding for transcript messages."""
+"""会话消息的严格 JSON 编解码。"""
 
 from collections.abc import Mapping
 
@@ -17,11 +17,11 @@ from nano_code.messages.models import (
 
 
 class MessageDecodeError(ValueError):
-    """Raised when a transcript record does not match the message schema."""
+    """会话记录不符合消息 schema 时抛出。"""
 
 
 def block_to_json(block: ContentBlock) -> JsonObject:
-    """Encode a content block without provider-specific fields."""
+    """编码不含 provider 专属字段的内容块。"""
 
     if isinstance(block, TextBlock):
         return {"type": "text", "text": block.text}
@@ -41,10 +41,9 @@ def block_to_json(block: ContentBlock) -> JsonObject:
 
 
 def message_to_json(message: ChatMessage) -> JsonObject:
-    """Encode one internal message for JSONL persistence."""
+    """编码一条内部消息用于 JSONL 持久化。"""
 
-    # Version the on-disk record independently of provider SDK types. Transcript
-    # migrations can then evolve without changing the agent's internal dataclasses.
+    # 磁盘记录版本独立于 provider SDK 类型，使会话迁移无需修改智能体内部数据类。
     return {
         "type": "message",
         "version": 1,
@@ -75,7 +74,7 @@ def _optional_string(data: Mapping[str, object], key: str) -> str | None:
 
 
 def block_from_json(value: object) -> ContentBlock:
-    """Decode and validate one internal content block."""
+    """解码并校验一个内部内容块。"""
 
     if not isinstance(value, dict):
         raise MessageDecodeError("Content block must be an object")
@@ -106,10 +105,10 @@ def block_from_json(value: object) -> ContentBlock:
 
 
 def message_from_json(value: object) -> ChatMessage:
-    """Decode and validate one versioned transcript record."""
+    """解码并校验一条带版本的会话记录。"""
 
-    # A transcript is untrusted input on resume: it may be old, partial, or edited.
-    # Re-enter the strict JSON domain before constructing typed messages.
+    # 恢复时会话记录属于不可信输入：它可能过时、不完整或被编辑过。
+    # 构造强类型消息前，先重新进入严格 JSON 数据域。
     try:
         data = to_json_object(value)
     except TypeError as error:
@@ -122,8 +121,8 @@ def message_from_json(value: object) -> ChatMessage:
     if not isinstance(raw_content, list):
         raise MessageDecodeError("'content' must be a list")
 
-    # Spell out each literal branch so both runtime validation and mypy narrowing
-    # agree; a broad cast here would let future unknown values leak into the core.
+    # 显式列出每个 Literal 分支，使运行时校验与 mypy 类型收窄保持一致；
+    # 宽泛的 cast 会让未来的未知值渗入核心层。
     raw_role = _required_string(data, "role")
     if raw_role == "user":
         role: MessageRole = "user"

@@ -1,4 +1,4 @@
-"""Compact, credential-safe presentation helpers for built-in tool events."""
+"""紧凑且不泄漏凭据的内置工具事件展示辅助函数。"""
 
 import json
 
@@ -8,7 +8,7 @@ _MAX_SUMMARY_CHARS = 140
 
 
 def tool_call_summary(name: str, tool_input: JsonObject) -> str:
-    """Prefer the identifying argument over dumping a potentially huge payload."""
+    """优先展示标识性参数，避免输出可能十分庞大的 payload。"""
 
     preferred_keys = {
         "Bash": ("command",),
@@ -30,7 +30,7 @@ def tool_call_summary(name: str, tool_input: JsonObject) -> str:
 
 
 def tool_result_summary(name: str, content: str, *, is_error: bool) -> str:
-    """Describe result size and keep at most one useful output line on screen."""
+    """描述结果大小，并在屏幕上最多保留一行有用输出。"""
 
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     if not lines:

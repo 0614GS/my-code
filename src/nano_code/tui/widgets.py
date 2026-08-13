@@ -1,4 +1,4 @@
-"""Reusable Textual widgets for the nano-code terminal design system."""
+"""nano-code 终端设计系统中可复用的 Textual 组件。"""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ class UserMessage(Static):
 
 
 class AssistantMessage(Static):
-    """Incremental Markdown rendered in bounded refresh batches."""
+    """按有界刷新批次渲染的增量 Markdown。"""
 
     def __init__(self, content: str) -> None:
         super().__init__(RichMarkdown(content), classes="message")
@@ -79,8 +79,8 @@ class AssistantMessage(Static):
 
     async def _flush_after_delay(self) -> None:
         try:
-            # Coalesce high-frequency token fragments so Markdown parsing stays
-            # responsive and bounded without leaving a long-lived worker behind.
+            # 合并高频 token 片段，使 Markdown 解析保持响应且工作量有界，
+            # 同时不遗留长期运行的 worker。
             await asyncio.sleep(1 / 30)
             self._apply_pending()
         finally:
@@ -95,7 +95,7 @@ class AssistantMessage(Static):
 
 
 class ToolCallMessage(Static):
-    """One stable row updated in place when tool execution finishes."""
+    """工具执行完成时原地更新的一行稳定展示。"""
 
     def __init__(self, tool_use_id: str, name: str, tool_input: JsonObject) -> None:
         super().__init__(classes="message tool-call")
@@ -158,7 +158,7 @@ class StatusBar(Static):
 
 
 class PermissionPanel(Vertical):
-    """Claude-style inline chooser that temporarily replaces the prompt box."""
+    """临时替换输入框的 Claude 风格行内选择器。"""
 
     BINDINGS = [
         Binding("escape", "deny", "Deny", show=False),
@@ -223,7 +223,7 @@ class PermissionPanel(Vertical):
             self.action_feedback()
 
     def on_key(self, event: Key) -> None:
-        """Number shortcuts apply only to the chooser, never feedback typing."""
+        """数字快捷键只作用于选择器，不影响反馈文本输入。"""
 
         if not self.query_one("#permission-options", OptionList).has_focus:
             return

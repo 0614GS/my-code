@@ -1,4 +1,4 @@
-"""Conservative, input-aware permission analysis for the Bash tool."""
+"""Bash 工具保守且感知具体输入的权限分析。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)
 
 @dataclass(frozen=True, slots=True)
 class BashAnalysis:
-    """The stable facts used by Bash permissions, scheduling, and tests."""
+    """供 Bash 权限、调度和测试使用的稳定事实。"""
 
     is_read_only: bool
     reason: str
@@ -347,7 +347,7 @@ _GIT_OPTIONS: dict[str, _OptionSpec] = {
 
 
 def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
-    """Prove a small subset of shell commands read-only or fail closed."""
+    """证明一小部分 shell 命令只读；无法证明时按非只读处理。"""
 
     lexical_error = _find_unsafe_shell_syntax(command)
     if lexical_error is not None:
@@ -376,7 +376,7 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
 
 
 def bash_rule_matches(rule_content: str, command: str) -> bool:
-    """Match exact or Claude-compatible ``:*`` command-prefix rules."""
+    """匹配精确规则或兼容 Claude 的 ``:*`` 命令前缀规则。"""
 
     normalized_rule = rule_content.strip()
     normalized_command = command.strip()

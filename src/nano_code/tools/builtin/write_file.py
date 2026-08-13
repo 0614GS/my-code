@@ -1,4 +1,4 @@
-"""Write complete text files within the workspace."""
+"""在工作区内写入完整文本文件。"""
 
 from pathlib import Path
 

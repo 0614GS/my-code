@@ -116,3 +116,15 @@ compact boundary 表示模型上下文从这里重新开始，但 Transcript 仍
 - `claude-code/src/utils/sessionStorage.ts`
 - `claude-code/src/utils/sessionRestore.ts`
 - `claude-code/src/assistant/sessionHistory.ts`
+
+## 10. nano-code 的会话发现与恢复边界
+
+nano-code 将“列出会话”和“恢复会话”分开处理：
+
+1. `SessionCatalog` 只扫描当前项目对应的状态目录，通过 `stat` 和有界文件头提取首条用户提示，不为列表加载完整 JSONL。
+2. 候选按文件修改时间倒序排列，当前活动会话、空文件、异常首记录、非 UUID 文件和符号链接都会被过滤。
+3. 用户选择后，`SessionStore` 才严格解析完整记录，校验 UUID 唯一性和父节点顺序，并从最后一条记录沿父指针恢复活动分支。
+4. `AgentEngine.resume()` 先完成目标会话校验及未闭合工具轮修复，再替换内存状态；失败时保留原会话。
+5. runtime 在同一临界区切换 transcript、消息历史和工具结果目录，TUI 只接收展示 DTO，不接触 `ChatMessage` 或 JSONL。
+
+这对应 Claude Code 的轻量日志列表、选中后完整加载、集中恢复 session-scoped 状态三层设计。nano-code 当前没有 compact、fork 和并行工具兄弟分支，因此活动链算法仍保持更小的范围。

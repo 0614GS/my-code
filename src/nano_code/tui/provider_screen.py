@@ -1,4 +1,4 @@
-"""Provider profile editor with password-safe API-key input."""
+"""使用密码安全 API key 输入框的 provider profile 编辑器。"""
 
 from textual import on
 from textual.app import ComposeResult
@@ -13,7 +13,7 @@ from nano_code.providers.profiles import ProviderProfile
 
 
 class ProviderScreen(ModalScreen[ProviderUpdate | None]):
-    """Edit or create one profile; persistence remains a runtime concern."""
+    """编辑或创建一个 profile；持久化仍由运行时负责。"""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 

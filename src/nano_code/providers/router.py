@@ -1,4 +1,4 @@
-"""Runtime router for atomically switching provider connections between turns."""
+"""用于在轮次间原子切换 provider 连接的运行时路由器。"""
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
@@ -19,7 +19,7 @@ from nano_code.providers.profiles import ProviderProtocol
 
 @dataclass(frozen=True, slots=True)
 class ProviderConnection:
-    """A fully resolved profile ready to construct an SDK adapter."""
+    """已完整解析、可用于构造 SDK 适配器的 profile。"""
 
     id: str
     protocol: ProviderProtocol
@@ -35,11 +35,11 @@ type ProviderFactory = Callable[[ProviderConnection], ModelProvider]
 @runtime_checkable
 class _ClosableProvider(Protocol):
     async def close(self) -> None:
-        """Release provider-owned network resources."""
+        """释放 provider 持有的网络资源。"""
 
 
 class ProviderRouter:
-    """Serialize requests and swaps while preserving the agent-loop protocol."""
+    """串行化请求与切换，同时保持智能体循环协议。"""
 
     def __init__(
         self,
@@ -57,15 +57,15 @@ class ProviderRouter:
         return self._connection
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
-        # Holding the lock for one complete request makes a profile swap an
-        # explicit between-turn operation rather than a mid-request mutation.
+        # 在一次完整请求期间持有锁，使 profile 切换成为明确的轮次间操作，
+        # 而不是请求途中的状态变更。
         async with self._lock:
             if self._provider is None:
                 self._provider = self._factory(self._connection)
             return await self._provider.complete(request)
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
-        """Keep one adapter and connection stable for the full SSE response."""
+        """在完整 SSE 响应期间保持同一个适配器和连接。"""
 
         async with self._lock:
             if self._provider is None:

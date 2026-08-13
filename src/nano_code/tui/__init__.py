@@ -4,8 +4,13 @@ from nano_code.tui.app import NanoCodeApp, NanoCodeTui
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.contracts import (
     ChatRuntime,
+    HistoryAssistantMessage,
+    HistoryEntry,
+    HistoryToolCall,
+    HistoryUserMessage,
     PermissionHandler,
     PermissionRequest,
+    ResumedSession,
     RuntimeStatus,
     TextDelta,
     ToolFinished,
@@ -15,14 +20,21 @@ from nano_code.tui.contracts import (
     TurnResult,
 )
 from nano_code.tui.provider_screen import ProviderScreen
+from nano_code.tui.resume_screen import ResumeScreen
 
 __all__ = [
     "ChatRuntime",
+    "HistoryAssistantMessage",
+    "HistoryEntry",
+    "HistoryToolCall",
+    "HistoryUserMessage",
     "NanoCodeApp",
     "NanoCodeTui",
     "PermissionHandler",
     "PermissionRequest",
     "RuntimeStatus",
+    "ResumedSession",
+    "ResumeScreen",
     "SlashCommandRegistry",
     "ProviderScreen",
     "TextDelta",

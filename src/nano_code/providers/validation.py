@@ -1,10 +1,10 @@
-"""Validation shared by provider profiles and resolved runtime settings."""
+"""provider profile 与已解析运行时设置共用的校验逻辑。"""
 
 from urllib.parse import urlsplit
 
 
 def validate_base_url(value: str) -> str:
-    """Validate an Anthropic-compatible HTTP endpoint without contacting it."""
+    """在不发起连接的情况下校验 Anthropic 兼容 HTTP endpoint。"""
 
     normalized = value.strip()
     parsed = urlsplit(normalized)

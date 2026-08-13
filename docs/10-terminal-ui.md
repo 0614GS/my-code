@@ -24,6 +24,7 @@ NanoCodeApp
     └── StatusBar
 
 ProviderScreen (modal)
+ResumeScreen (modal)
         ↕
 ChatRuntime protocol
         ↕
@@ -49,3 +50,5 @@ Anthropic 适配器把 SSE 文本 delta 转换为 provider-neutral 事件，Agen
 当前 `/clear` 只清理已渲染消息，不删除 Transcript 或运行时上下文。长消息列表虚拟化尚未实现；模型增量、工具状态和权限请求均由 runtime 事件驱动，TUI 不轮询核心对象。
 
 `/provider` 打开独立的 ProviderScreen。URL、模型和 Profile ID 可见；API Key 使用 password Input，空值表示保留旧 Key，ProviderView 只暴露 `has_stored_key` 布尔值。保存后由 runtime 持久化并切换 ProviderRouter，TUI 不直接读写配置文件。环境变量覆盖仍优先于已保存值。
+
+`/resume` 打开独立的 ResumeScreen。列表只展示当前项目的其他可恢复会话：首行是第一次用户输入的归一化预览，次行右侧是相对修改时间；支持方向键、Enter 和 Esc。选择后由 runtime 严格加载目标会话并原子切换 session-scoped 状态，再把历史投影为 `HistoryEntry` 返回 TUI 重建消息组件。选择器和 TUI 均不读取 JSONL，也不持有核心消息类型。

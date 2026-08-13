@@ -1,4 +1,4 @@
-"""The uniform validation → permission → execution pipeline."""
+"""统一的校验 → 权限 → 执行管线。"""
 
 from nano_code.messages import ToolResultBlock, ToolUseBlock
 from nano_code.permissions import PermissionBehavior, PermissionPolicy
@@ -13,7 +13,7 @@ from nano_code.tools.result_store import ToolResultStore
 
 
 class ToolExecutor:
-    """Execute calls while preserving a tool-result for every normal failure."""
+    """执行调用，并为每个常规失败保留一条工具结果。"""
 
     def __init__(
         self,
@@ -32,19 +32,16 @@ class ToolExecutor:
     async def execute(self, call: ToolUseBlock) -> ToolResultBlock:
         tool = self.registry.get(call.name)
         if tool is None:
-            # Unknown names are reported to the model as protocol results instead
-            # of tearing down the whole agent loop.
+            # 未知工具名以协议结果形式报告给模型，而不是中断整个智能体循环。
             return self._error(call, f"Unknown tool: {call.name}")
 
-        # Validation must precede permission checks: never ask a user to approve
-        # malformed or semantically ambiguous input.
+        # 校验必须先于权限检查：绝不能请求用户批准格式错误或语义含混的输入。
         try:
             tool.validate_input(call.input)
         except (ToolInputError, ValueError, TypeError) as error:
             return self._error(call, f"Invalid input: {error}")
 
-        # Permission is a separate policy layer; Tool.execute is called only after
-        # both static policy and any required human confirmation succeed.
+        # 权限是独立策略层；只有静态策略及所需用户确认均通过后，才调用 Tool.execute。
         decision = await self.policy.decide(tool, call.input, self.context)
         if decision.behavior is PermissionBehavior.DENY:
             return self._error(call, f"Permission denied: {decision.message}")
@@ -66,15 +63,13 @@ class ToolExecutor:
                 )
 
         try:
-            # Tool-specific permission checks may normalize or constrain input;
-            # execution must consume the exact input that was approved.
+            # 工具专属权限检查可能规范化或约束输入；执行阶段必须使用获准的准确输入。
             approved_input = (
                 call.input if decision.updated_input is None else decision.updated_input
             )
             output = await tool.execute(approved_input, self.context)
 
-            # Externalize before constructing the API block so every later layer
-            # sees the same bounded, replayable content.
+            # 构造 API 块前先外置结果，使后续每一层看到相同、有界且可重放的内容。
             content = self.result_store.externalize(call.id, output.content)
             return ToolResultBlock(
                 tool_use_id=call.id,
@@ -84,16 +79,14 @@ class ToolExecutor:
         except (ToolInputError, ToolExecutionError, OSError, UnicodeError) as error:
             return self._error(call, f"{type(error).__name__}: {error}")
         except Exception as error:
-            # Unexpected exception text may contain credentials or implementation
-            # details. Preserve only the stable exception class for the model.
+            # 意外异常文本可能包含凭据或实现细节，只向模型保留稳定的异常类名。
             return self._error(
                 call, f"Unexpected {type(error).__name__} while executing {call.name}"
             )
 
     @staticmethod
     def _error(call: ToolUseBlock, message: str) -> ToolResultBlock:
-        # Keeping the original ID is non-negotiable: providers reject histories
-        # containing a tool_use without a matching tool_result.
+        # 必须保留原始 ID：provider 会拒绝包含 tool_use 却没有匹配 tool_result 的历史。
         return ToolResultBlock(
             tool_use_id=call.id,
             content=message,

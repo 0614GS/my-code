@@ -1,4 +1,4 @@
-"""Idempotent creation of the user-scoped runtime layout."""
+"""幂等创建用户级运行时目录结构。"""
 
 import os
 from dataclasses import dataclass
@@ -16,7 +16,7 @@ from nano_code.providers.profiles import (
 
 @dataclass(frozen=True, slots=True)
 class BootstrapResult:
-    """Observable initialization work, primarily for diagnostics and tests."""
+    """可观察的初始化结果，主要用于诊断和测试。"""
 
     created_settings: bool
     created_providers: bool
@@ -24,7 +24,7 @@ class BootstrapResult:
 
 
 def bootstrap_user_storage(paths: NanoCodePaths) -> BootstrapResult:
-    """Ensure required user files exist without touching project configuration."""
+    """确保必要的用户文件存在，同时不修改项目配置。"""
 
     paths.config_home.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(paths.config_home, 0o700)
@@ -39,8 +39,8 @@ def bootstrap_user_storage(paths: NanoCodePaths) -> BootstrapResult:
     else:
         user_settings = settings_store.load_scope(SettingsScope.USER)
 
-    # Copy legacy top-level model/baseUrl into the first profile. The old fields
-    # stay readable until the resolver migration lands, so startup is reversible.
+    # 将旧版顶层 model/baseUrl 复制到首个 profile。旧字段在解析器迁移完成前
+    # 仍保持可读，使启动过程可逆。
     default_profile = ProviderProfile(
         id=user_settings.active_provider or DEFAULT_PROVIDER_ID,
         model=user_settings.model or DEFAULT_MODEL,

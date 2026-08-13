@@ -1,4 +1,4 @@
-"""Textual application that renders nano-code without owning its runtime."""
+"""负责渲染 nano-code、但不持有运行时的 Textual 应用。"""
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -11,6 +11,9 @@ from nano_code.permissions import PermissionConfirmation
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.contracts import (
     ChatRuntime,
+    HistoryAssistantMessage,
+    HistoryToolCall,
+    HistoryUserMessage,
     PermissionRequest,
     TextDelta,
     ToolFinished,
@@ -18,6 +21,7 @@ from nano_code.tui.contracts import (
     TurnCompleted,
 )
 from nano_code.tui.provider_screen import ProviderScreen
+from nano_code.tui.resume_screen import ResumeScreen
 from nano_code.tui.widgets import (
     ActivityBar,
     AssistantMessage,
@@ -31,7 +35,7 @@ from nano_code.tui.widgets import (
 
 
 class NanoCodeApp(App[None]):
-    """Component-based terminal UI analogous to Claude Code's REPL shell."""
+    """类似 Claude Code REPL 外壳的组件化终端 UI。"""
 
     ENABLE_COMMAND_PALETTE = False
     CSS = """
@@ -142,6 +146,47 @@ class NanoCodeApp(App[None]):
     ProviderScreen {
         align: center middle;
         background: #000000 65%;
+    }
+
+    ResumeScreen {
+        align: center middle;
+        background: #000000 65%;
+    }
+
+    #resume-dialog {
+        width: 88%;
+        max-width: 100;
+        height: 70%;
+        min-height: 12;
+        padding: 1 2;
+        border: round #d97757;
+        background: #211f1e;
+    }
+
+    #resume-title {
+        height: 1;
+        color: #ffb38a;
+        text-style: bold;
+    }
+
+    #resume-description, #resume-hint {
+        height: 1;
+        color: #8f8882;
+    }
+
+    #resume-list {
+        height: 1fr;
+        margin: 1 0;
+        background: #211f1e;
+    }
+
+    #resume-list > .option-list--option {
+        height: 3;
+    }
+
+    #resume-list > .option-list--option-highlighted {
+        background: #56372d;
+        color: #fff8f2;
     }
 
     #provider-dialog {
@@ -359,6 +404,8 @@ class NanoCodeApp(App[None]):
                 await self._mount_message(SystemMessage(outcome.message))
             if outcome.open_provider_manager:
                 self._manage_providers()
+            if outcome.open_session_picker:
+                self._resume_session()
             if outcome.should_exit:
                 self.exit()
             return
@@ -442,6 +489,51 @@ class NanoCodeApp(App[None]):
         finally:
             self.query_one("#prompt", Input).focus()
 
+    @work(exclusive=True, group="resume-dialog")
+    async def _resume_session(self) -> None:
+        prompt = self.query_one("#prompt", Input)
+        prompt.disabled = True
+        try:
+            sessions = await self.runtime.list_sessions()
+            if not sessions:
+                await self._mount_message(
+                    SystemMessage("No conversations found to resume.")
+                )
+                return
+            session_id = await self.push_screen_wait(ResumeScreen(sessions))
+            if session_id is None:
+                return
+            resumed = await self.runtime.resume_session(session_id)
+            await self._render_history(resumed.history)
+            self.query_one(StatusBar).set_status(resumed.status)
+            welcome = self.query_one(WelcomePanel)
+            welcome.status = resumed.status
+            welcome.refresh()
+        except Exception as error:
+            await self._mount_message(
+                SystemMessage(f"Failed to resume conversation: {error}", error=True)
+            )
+        finally:
+            prompt.disabled = False
+            prompt.focus()
+
+    async def _render_history(
+        self,
+        history: tuple[
+            HistoryUserMessage | HistoryAssistantMessage | HistoryToolCall, ...
+        ],
+    ) -> None:
+        await self._clear_messages()
+        for entry in history:
+            if isinstance(entry, HistoryUserMessage):
+                await self._mount_message(UserMessage(entry.text))
+            elif isinstance(entry, HistoryAssistantMessage):
+                await self._mount_message(AssistantMessage(entry.text))
+            elif isinstance(entry, HistoryToolCall):
+                tool = ToolCallMessage(entry.tool_use_id, entry.name, entry.input)
+                tool.finish(entry.result, is_error=entry.is_error)
+                await self._mount_message(tool)
+
     async def _mount_message(
         self,
         message: UserMessage | AssistantMessage | SystemMessage | ToolCallMessage,
@@ -473,7 +565,7 @@ class NanoCodeApp(App[None]):
 
 
 class NanoCodeTui:
-    """Small launcher retained so the CLI does not depend on Textual's App API."""
+    """保留精简启动器，使 CLI 不依赖 Textual 的 App API。"""
 
     def __init__(self, runtime: ChatRuntime) -> None:
         self.app = NanoCodeApp(runtime)

@@ -1,4 +1,4 @@
-"""The model → tools → model loop for one persisted user turn."""
+"""单个持久化用户轮次中的模型 → 工具 → 模型循环。"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -31,7 +31,7 @@ from nano_code.tools.executor import ToolExecutor
 
 
 class AgentEngine:
-    """Own message history while delegating provider, tools, and persistence."""
+    """管理消息历史，并将 provider、工具和持久化职责委托给对应组件。"""
 
     def __init__(
         self,
@@ -54,14 +54,39 @@ class AgentEngine:
         self.max_turns = max_turns
         self.max_output_tokens = max_output_tokens
 
-        # The transcript is the durable source of truth. Repair an interrupted
-        # protocol round before accepting new input so resume never starts with a
-        # dangling tool_use that the provider would reject.
+        # 会话记录是持久化事实来源。接受新输入前先修复中断的协议轮次，
+        # 避免恢复时携带 provider 会拒绝的孤立 tool_use。
         self.messages = list(session_store.load())
         self._repair_trailing_tool_uses()
 
+    def resume(self, session_store: SessionStore) -> tuple[ChatMessage, ...]:
+        """校验并恢复另一会话；失败时保持当前引擎状态不变。"""
+
+        loaded = list(session_store.load())
+        if not loaded:
+            raise ValueError(
+                f"Session contains no messages: {session_store.session_id}"
+            )
+        repairs = _trailing_tool_repairs(loaded)
+        if repairs is not None:
+            repair_message = ChatMessage(
+                role="user",
+                origin="tool",
+                content=repairs,
+                parent_uuid=loaded[-1].uuid,
+                source_message_uuid=loaded[-1].uuid,
+            )
+            # 先完成目标会话的恢复写入，再切换内存状态，确保失败不会留下
+            # 一半属于旧会话、一半属于新会话的引擎。
+            session_store.append(repair_message)
+            loaded.append(repair_message)
+
+        self.session_store = session_store
+        self.messages = loaded
+        return tuple(loaded)
+
     async def submit(self, prompt: str) -> AgentTurnResult:
-        """Consume the observable loop and return its terminal value."""
+        """消费可观察循环并返回终态值。"""
 
         completed: AgentTurnResult | None = None
         async for event in self.submit_stream(prompt):
@@ -72,7 +97,7 @@ class AgentEngine:
         return completed
 
     async def submit_stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
-        """Run one turn while exposing ephemeral text and tool lifecycle events."""
+        """运行一个轮次，同时暴露临时文本和工具生命周期事件。"""
 
         if not prompt.strip():
             raise ValueError("Prompt must not be empty")
@@ -84,16 +109,14 @@ class AgentEngine:
             parent_uuid=self._last_uuid,
         )
 
-        # Persist before the first API request. A crash or network failure must not
-        # erase the prompt that initiated the turn.
+        # 首次 API 请求前先持久化；崩溃或网络故障不应抹去发起轮次的提示。
         self._append(user_message)
 
         input_tokens = 0
         output_tokens = 0
         final_text = ""
         for turn in range(1, self.max_turns + 1):
-            # Keep the full transcript for recovery, but derive a bounded API view
-            # independently on every iteration.
+            # 保留完整会话记录用于恢复，但每次迭代都独立生成有界 API 视图。
             projected = self.context_window.project(tuple(self.messages))
             request = ModelRequest(
                 system_prompt=self.system_prompt,
@@ -128,8 +151,7 @@ class AgentEngine:
                 parent_uuid=self._last_uuid,
             )
 
-            # Store the model's tool requests before executing them. This makes an
-            # interrupted process observable and repairable on the next resume.
+            # 执行前先存储模型的工具请求，使中断过程可观察，并能在下次恢复时修复。
             self._append(assistant_message)
             final_text = "\n".join(
                 block.text for block in response.content if isinstance(block, TextBlock)
@@ -138,7 +160,7 @@ class AgentEngine:
                 block for block in response.content if isinstance(block, ToolUseBlock)
             )
 
-            # Absence of tool calls is the explicit terminal condition for this MVP.
+            # 没有工具调用是当前 MVP 明确的终止条件。
             if not tool_calls:
                 turn_result = AgentTurnResult(
                     text=final_text,
@@ -150,8 +172,8 @@ class AgentEngine:
 
             results: list[ToolResultBlock] = []
             try:
-                # Calls are intentionally serial in the MVP. Parallel execution must
-                # later honor each tool's concurrency and context-mutation contract.
+                # MVP 刻意串行执行调用。未来并行执行必须遵守各工具的并发契约
+                # 与上下文变更契约。
                 for call in tool_calls:
                     yield AgentToolStarted(call.id, call.name, call.input)
                     tool_result = await self.tool_executor.execute(call)
@@ -163,8 +185,8 @@ class AgentEngine:
                         tool_result.is_error,
                     )
             except asyncio.CancelledError:
-                # Anthropic's protocol requires one result for every emitted tool_use,
-                # including calls that never started because the turn was cancelled.
+                # Anthropic 协议要求每个已发出的 tool_use 都有对应结果，
+                # 包括因轮次取消而尚未开始的调用。
                 completed_ids = {result.tool_use_id for result in results}
                 results.extend(
                     ToolResultBlock(
@@ -188,16 +210,15 @@ class AgentEngine:
         return self.messages[-1].uuid if self.messages else None
 
     def _append(self, message: ChatMessage) -> None:
-        # Durable-first ordering prevents in-memory history from getting ahead of
-        # the transcript if a write fails.
+        # 持久化优先的顺序可防止写入失败时内存历史领先于会话记录。
         self.session_store.append(message)
         self.messages.append(message)
 
     def _append_tool_results(
         self, results: list[ToolResultBlock], assistant_uuid: str
     ) -> None:
-        # Keep all results from one model response in a single user-role message.
-        # Inserting ordinary user text between tool_use and tool_result is invalid.
+        # 将一次模型响应的所有结果放在同一条 user 角色消息中。
+        # 在 tool_use 与 tool_result 之间插入普通用户文本不符合协议。
         tool_message = ChatMessage(
             role="user",
             origin="tool",
@@ -208,25 +229,35 @@ class AgentEngine:
         self._append(tool_message)
 
     def _repair_trailing_tool_uses(self) -> None:
-        """Close a tool protocol round left incomplete by a prior process exit."""
+        """闭合上次进程退出时遗留的不完整工具协议轮次。"""
 
-        if not self.messages:
+        repairs = _trailing_tool_repairs(self.messages)
+        if repairs is None:
             return
-        trailing = self.messages[-1]
-        if trailing.role != "assistant":
-            return
-        calls = [block for block in trailing.content if isinstance(block, ToolUseBlock)]
-        if not calls:
-            return
+        # 合成错误比重放可能有副作用的工具更安全：上个进程可能在退出前已完成副作用。
+        self._append_tool_results(list(repairs), self.messages[-1].uuid)
 
-        # A synthetic error is safer than replaying a possibly side-effecting tool:
-        # the previous process may have completed the effect just before it exited.
-        repairs = [
-            ToolResultBlock(
-                tool_use_id=call.id,
-                content="Tool execution was interrupted before the session resumed.",
-                is_error=True,
-            )
-            for call in calls
-        ]
-        self._append_tool_results(repairs, trailing.uuid)
+
+def _trailing_tool_repairs(
+    messages: list[ChatMessage],
+) -> tuple[ToolResultBlock, ...] | None:
+    """为末尾未闭合的工具请求构造协议修复结果。"""
+
+    if not messages:
+        return None
+    trailing = messages[-1]
+    if trailing.role != "assistant":
+        return None
+    calls = tuple(
+        block for block in trailing.content if isinstance(block, ToolUseBlock)
+    )
+    if not calls:
+        return None
+    return tuple(
+        ToolResultBlock(
+            tool_use_id=call.id,
+            content="Tool execution was interrupted before the session resumed.",
+            is_error=True,
+        )
+        for call in calls
+    )

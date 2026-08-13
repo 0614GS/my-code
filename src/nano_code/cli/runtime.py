@@ -1,5 +1,6 @@
-"""Composition root for CLI dependencies."""
+"""CLI 依赖的组合根。"""
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from uuid import uuid4
@@ -14,7 +15,14 @@ from nano_code.agent import (
 from nano_code.agent.prompt import build_system_prompt
 from nano_code.config import Settings
 from nano_code.context import ContextWindow
-from nano_code.messages import JsonObject
+from nano_code.messages import (
+    ChatMessage,
+    JsonObject,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    to_json_object,
+)
 from nano_code.permissions import PermissionConfirmation, PermissionPolicy
 from nano_code.permissions.models import PermissionDecision
 from nano_code.permissions.prompt import (
@@ -25,14 +33,19 @@ from nano_code.permissions.prompt import (
 from nano_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
 from nano_code.providers.profiles import ProviderProtocol
 from nano_code.providers.router import ProviderConnection, ProviderRouter
-from nano_code.sessions import SessionStore
+from nano_code.sessions import SessionCatalog, SessionStore, SessionSummary
 from nano_code.tools import Tool, ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
 from nano_code.tools.result_store import ToolResultStore
 from nano_code.tui import (
+    HistoryAssistantMessage,
+    HistoryEntry,
+    HistoryToolCall,
+    HistoryUserMessage,
     PermissionHandler,
     PermissionRequest,
+    ResumedSession,
     RuntimeStatus,
     TextDelta,
     ToolFinished,
@@ -49,15 +62,15 @@ def build_engine(
     *,
     permission_prompter: PermissionPrompter | None = None,
 ) -> AgentEngine:
-    """Wire concrete CLI adapters around the testable core."""
+    """围绕可测试核心装配具体 CLI 适配器。"""
 
-    # Keep concrete SDK, terminal, and filesystem choices in this composition root.
-    # The agent loop itself depends only on protocols and is testable with fakes.
+    # 将具体 SDK、终端和文件系统实现集中在组合根中。
+    # 智能体循环本身只依赖协议，可使用 fake 实现测试。
     actual_session_id = session_id or str(uuid4())
     session_store = SessionStore(settings.paths.project_state_dir, actual_session_id)
     registry = ToolRegistry(builtin_tools())
-    # Headless permission requests fail closed rather than assuming consent when
-    # stdin/stdout cannot present a trustworthy confirmation prompt.
+    # stdin/stdout 无法可靠展示确认提示时，无头模式权限请求按拒绝处理，
+    # 而不是假定用户已经同意。
     prompter = permission_prompter or (
         TerminalPrompter() if settings.interactive else HeadlessPrompter()
     )
@@ -92,7 +105,7 @@ def build_engine(
 
 
 class DeferredPermissionPrompter:
-    """Bridge core permission checks to the active frontend without importing it."""
+    """在不导入具体前端的情况下，将核心权限检查桥接到当前前端。"""
 
     def __init__(self) -> None:
         self._handler: PermissionHandler | None = None
@@ -115,7 +128,7 @@ class DeferredPermissionPrompter:
 
 
 class CliChatRuntime:
-    """Adapt the concrete engine to the narrow contract consumed by the TUI."""
+    """将具体引擎适配为 TUI 消费的窄接口。"""
 
     def __init__(
         self,
@@ -130,9 +143,13 @@ class CliChatRuntime:
             raise TypeError("CliChatRuntime requires a ProviderRouter")
         self.provider_router = engine.provider
         self.provider_manager = ProviderManager(settings.paths)
+        self.session_catalog = SessionCatalog(settings.paths.project_state_dir)
+        # 会话切换与模型轮次共享同一把锁，避免 JSONL 归属在流式响应途中改变。
+        self._session_lock = asyncio.Lock()
 
     async def submit(self, prompt: str) -> TurnResult:
-        result = await self.engine.submit(prompt)
+        async with self._session_lock:
+            result = await self.engine.submit(prompt)
         return TurnResult(
             text=result.text,
             turns=result.turns,
@@ -141,28 +158,29 @@ class CliChatRuntime:
         )
 
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
-        async for event in self.engine.submit_stream(prompt):
-            if isinstance(event, AgentTextDelta):
-                yield TextDelta(event.text)
-            elif isinstance(event, AgentToolStarted):
-                yield ToolStarted(event.tool_use_id, event.name, event.input)
-            elif isinstance(event, AgentToolFinished):
-                yield ToolFinished(
-                    event.tool_use_id,
-                    event.name,
-                    event.content,
-                    event.is_error,
-                )
-            elif isinstance(event, AgentTurnCompleted):
-                result = event.result
-                yield TurnCompleted(
-                    TurnResult(
-                        text=result.text,
-                        turns=result.turns,
-                        input_tokens=result.usage.input_tokens,
-                        output_tokens=result.usage.output_tokens,
+        async with self._session_lock:
+            async for event in self.engine.submit_stream(prompt):
+                if isinstance(event, AgentTextDelta):
+                    yield TextDelta(event.text)
+                elif isinstance(event, AgentToolStarted):
+                    yield ToolStarted(event.tool_use_id, event.name, event.input)
+                elif isinstance(event, AgentToolFinished):
+                    yield ToolFinished(
+                        event.tool_use_id,
+                        event.name,
+                        event.content,
+                        event.is_error,
                     )
-                )
+                elif isinstance(event, AgentTurnCompleted):
+                    result = event.result
+                    yield TurnCompleted(
+                        TurnResult(
+                            text=result.text,
+                            turns=result.turns,
+                            input_tokens=result.usage.input_tokens,
+                            output_tokens=result.usage.output_tokens,
+                        )
+                    )
 
     def status(self) -> RuntimeStatus:
         return RuntimeStatus(
@@ -194,3 +212,61 @@ class CliChatRuntime:
             credential_source=connection.credential_source,
         )
         return self.status()
+
+    async def list_sessions(self) -> tuple[SessionSummary, ...]:
+        return self.session_catalog.list(
+            exclude_session_id=self.engine.session_store.session_id,
+        )
+
+    async def resume_session(self, session_id: str) -> ResumedSession:
+        async with self._session_lock:
+            if session_id == self.engine.session_store.session_id:
+                raise ValueError("Session is already active")
+            store = SessionStore(self.settings.paths.project_state_dir, session_id)
+            messages = self.engine.resume(store)
+            # 工具结果目录与 transcript 必须作为同一个 session-scoped 状态切换。
+            self.engine.tool_executor.result_store = ToolResultStore(
+                self.settings.paths.tool_results_dir(session_id)
+            )
+            return ResumedSession(
+                status=self.status(),
+                history=_project_history(messages),
+            )
+
+
+def _project_history(messages: tuple[ChatMessage, ...]) -> tuple[HistoryEntry, ...]:
+    """将内部消息投影为只用于 TUI 展示的稳定历史记录。"""
+
+    results = {
+        block.tool_use_id: block
+        for message in messages
+        for block in message.content
+        if isinstance(block, ToolResultBlock)
+    }
+    history: list[HistoryEntry] = []
+    for message in messages:
+        if message.origin == "human":
+            text = "\n".join(
+                block.text for block in message.content if isinstance(block, TextBlock)
+            )
+            if text:
+                history.append(HistoryUserMessage(text))
+            continue
+        if message.origin != "model":
+            continue
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                if block.text:
+                    history.append(HistoryAssistantMessage(block.text))
+            elif isinstance(block, ToolUseBlock):
+                result = results.get(block.id)
+                history.append(
+                    HistoryToolCall(
+                        tool_use_id=block.id,
+                        name=block.name,
+                        input=to_json_object(block.input),
+                        result="" if result is None else result.content,
+                        is_error=result is None or result.is_error,
+                    )
+                )
+    return tuple(history)

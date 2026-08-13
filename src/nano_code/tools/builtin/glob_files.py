@@ -1,4 +1,4 @@
-"""Find workspace paths with a glob pattern."""
+"""使用 glob 模式查找工作区路径。"""
 
 from pathlib import Path
 

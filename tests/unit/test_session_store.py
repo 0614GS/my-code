@@ -1,10 +1,12 @@
 import json
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from nano_code.messages import ChatMessage, TextBlock
-from nano_code.sessions import SessionStore
+from nano_code.sessions import SessionCatalog, SessionStore
 
 _SESSION_ID = "12345678-1234-1234-1234-123456789abc"
 
@@ -56,3 +58,56 @@ def test_rejects_corrupt_transcript(tmp_path: Path) -> None:
 def test_rejects_non_uuid_session_id(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must be a UUID"):
         SessionStore(tmp_path, "../session")
+
+
+def test_load_returns_only_active_parent_chain(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path, _SESSION_ID)
+    root = ChatMessage(role="user", origin="human", content=(TextBlock("root"),))
+    abandoned = ChatMessage(
+        role="assistant",
+        origin="model",
+        content=(TextBlock("abandoned"),),
+        parent_uuid=root.uuid,
+    )
+    active = ChatMessage(
+        role="assistant",
+        origin="model",
+        content=(TextBlock("active"),),
+        parent_uuid=root.uuid,
+    )
+
+    store.append(root)
+    store.append(abandoned)
+    store.append(active)
+
+    assert store.load() == (root, active)
+
+
+def test_catalog_lists_valid_sessions_by_modified_time_and_first_prompt(
+    tmp_path: Path,
+) -> None:
+    older_id = "11111111-1111-1111-1111-111111111111"
+    newer_id = "22222222-2222-2222-2222-222222222222"
+    excluded_id = "33333333-3333-3333-3333-333333333333"
+    for session_id, prompt in (
+        (older_id, "older prompt\nwith spacing"),
+        (newer_id, "newer prompt"),
+        (excluded_id, "current prompt"),
+    ):
+        SessionStore(tmp_path, session_id).append(
+            ChatMessage(
+                role="user",
+                origin="human",
+                content=(TextBlock(prompt),),
+            )
+        )
+    os.utime(tmp_path / f"{older_id}.jsonl", (100, 100))
+    os.utime(tmp_path / f"{newer_id}.jsonl", (200, 200))
+    os.utime(tmp_path / f"{excluded_id}.jsonl", (300, 300))
+    (tmp_path / "not-a-session.jsonl").write_text("{}\n", encoding="utf-8")
+
+    sessions = SessionCatalog(tmp_path).list(exclude_session_id=excluded_id)
+
+    assert [session.session_id for session in sessions] == [newer_id, older_id]
+    assert sessions[1].title == "older prompt with spacing"
+    assert sessions[0].updated_at == datetime.fromtimestamp(200, UTC)

@@ -1,4 +1,4 @@
-"""Execute an explicitly permitted shell command in the workspace."""
+"""在工作区中执行已显式获准的 shell 命令。"""
 
 import asyncio
 import os
@@ -63,7 +63,7 @@ class BashTool(Tool):
     async def check_permissions(
         self, tool_input: JsonObject, context: ToolPermissionContext
     ) -> ToolPermissionResult:
-        """Interpret Bash-specific rules and command semantics for the policy."""
+        """为权限策略解释 Bash 专属规则和命令语义。"""
 
         command = required_string(tool_input, "command")
         analysis = analyze_bash_command(command, context.tool_context.cwd)
@@ -134,9 +134,9 @@ class BashTool(Tool):
         command: str,
         rules: tuple[PermissionRule, ...],
     ) -> tuple[PermissionRule, ...]:
-        # Exact rules may intentionally approve a complex full command. Prefix
-        # rules must be checked per subcommand, otherwise Bash(git:*) could also
-        # approve ``git status && rm file`` because the full string starts git.
+        # 精确规则可以有意批准完整的复杂命令。前缀规则必须逐条子命令检查，
+        # 否则 Bash(git:*) 会因为完整字符串以 git 开头而错误批准
+        # ``git status && rm file``。
         exact = tuple(
             rule
             for rule in rules
@@ -172,8 +172,8 @@ class BashTool(Tool):
         optional_int(tool_input, "timeout", 120, minimum=1, maximum=600)
 
     async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
-        # Permission has already been granted by ToolExecutor. This process is still
-        # not sandboxed: cwd scopes convenience, not operating-system capabilities.
+        # ToolExecutor 已授予权限，但该进程仍未被沙箱隔离：cwd 只限定默认目录，
+        # 并不限制操作系统能力。
         command = required_string(tool_input, "command")
         timeout = optional_int(
             tool_input,
@@ -185,15 +185,13 @@ class BashTool(Tool):
         process = await asyncio.create_subprocess_shell(
             command,
             cwd=context.cwd,
-            # The provider needs its credential, but agent-controlled child
-            # processes do not. Strip it even when the user chose an environment
-            # override so a Bash call cannot print the parent process's API key.
+            # provider 需要凭据，但智能体控制的子进程不需要。即使用户使用环境变量覆盖，
+            # 也应移除凭据，防止 Bash 调用打印父进程 API key。
             env=_subprocess_environment(),
-            # Merge streams to preserve the command's observable output order.
+            # 合并输出流，以保留命令输出的可观察顺序。
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            # A separate process group lets cancellation reach shell descendants,
-            # not just the immediate shell process.
+            # 独立进程组使取消信号可以传递到 shell 的后代，而不只到直接 shell 进程。
             start_new_session=os.name != "nt",
         )
         try:
@@ -205,7 +203,7 @@ class BashTool(Tool):
             await self._terminate(process)
             raise ToolExecutionError(f"Command timed out after {timeout}s") from error
         except asyncio.CancelledError:
-            # Never leave a command running after the owning agent turn is cancelled.
+            # 所属智能体轮次取消后，绝不能让命令继续运行。
             await self._terminate(process)
             raise
         except BaseException:
@@ -230,7 +228,7 @@ class BashTool(Tool):
         while chunk := await process.stdout.read(64 * 1024):
             size += len(chunk)
             if size > limit:
-                # Bound memory before the generic tool-result externalizer runs.
+                # 在通用工具结果外置逻辑运行前先限制内存占用。
                 raise ToolExecutionError(
                     f"Command output exceeded {limit // (1024 * 1024)} MiB"
                 )
@@ -242,8 +240,8 @@ class BashTool(Tool):
         if process.returncode is not None:
             return
         try:
-            # Give the process group a brief graceful shutdown window, then escalate
-            # to kill so timeout/cancellation cannot leak background processes.
+            # 先给进程组一个短暂的优雅退出窗口，再升级为 kill，
+            # 防止超时或取消遗留后台进程。
             if os.name != "nt":
                 os.killpg(process.pid, signal.SIGTERM)
             else:

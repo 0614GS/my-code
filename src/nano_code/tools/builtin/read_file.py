@@ -1,4 +1,4 @@
-"""Read a bounded range of lines from a workspace file."""
+"""读取工作区文件中有界的行范围。"""
 
 from pathlib import Path
 

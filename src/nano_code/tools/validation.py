@@ -1,4 +1,4 @@
-"""Input readers shared by tool implementations."""
+"""工具实现共用的输入读取辅助函数。"""
 
 from nano_code.messages import JsonObject
 from nano_code.tools.base import ToolInputError

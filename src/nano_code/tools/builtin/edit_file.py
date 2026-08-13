@@ -1,4 +1,4 @@
-"""Perform exact string replacement in a workspace file."""
+"""在工作区文件中执行精确字符串替换。"""
 
 from pathlib import Path
 

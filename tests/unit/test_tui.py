@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import pytest
 from textual.widgets import Input, OptionList
@@ -7,7 +8,17 @@ from textual.widgets import Input, OptionList
 from nano_code.permissions import PermissionConfirmation
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.providers.profiles import ProviderProtocol
-from nano_code.tui import NanoCodeApp, PermissionHandler, ProviderScreen, RuntimeStatus
+from nano_code.sessions import SessionSummary
+from nano_code.tui import (
+    HistoryAssistantMessage,
+    HistoryUserMessage,
+    NanoCodeApp,
+    PermissionHandler,
+    ProviderScreen,
+    ResumedSession,
+    ResumeScreen,
+    RuntimeStatus,
+)
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.contracts import (
     PermissionRequest,
@@ -23,6 +34,7 @@ from nano_code.tui.widgets import (
     PermissionPanel,
     SystemMessage,
     ToolCallMessage,
+    UserMessage,
 )
 
 
@@ -33,6 +45,8 @@ class FakeRuntime:
         self.request_permission = request_permission
         self.permission_result: PermissionConfirmation | None = None
         self.provider_updates: list[ProviderUpdate] = []
+        self.resumed_session_ids: list[str] = []
+        self.session_summaries: tuple[SessionSummary, ...] = ()
 
     async def submit(self, prompt: str) -> TurnResult:
         self.prompts.append(prompt)
@@ -89,6 +103,19 @@ class FakeRuntime:
         self.provider_updates.append(update)
         return self.status()
 
+    async def list_sessions(self) -> tuple[SessionSummary, ...]:
+        return self.session_summaries
+
+    async def resume_session(self, session_id: str) -> ResumedSession:
+        self.resumed_session_ids.append(session_id)
+        return ResumedSession(
+            status=self.status(),
+            history=(
+                HistoryUserMessage("old prompt"),
+                HistoryAssistantMessage("old response"),
+            ),
+        )
+
 
 def test_slash_registry_filters_candidates_by_prefix() -> None:
     matches = SlashCommandRegistry.default().matching("/st")
@@ -103,6 +130,15 @@ def test_provider_slash_command_requests_manager_screen() -> None:
 
     assert outcome is not None
     assert outcome.open_provider_manager is True
+
+
+def test_resume_slash_command_requests_session_picker() -> None:
+    outcome = SlashCommandRegistry.default().dispatch(
+        "/resume", status=FakeRuntime().status()
+    )
+
+    assert outcome is not None
+    assert outcome.open_session_picker is True
 
 
 @pytest.mark.asyncio
@@ -138,6 +174,35 @@ async def test_provider_slash_command_opens_profile_editor() -> None:
         assert isinstance(app.screen, ProviderScreen)
         assert app.screen.query_one("#provider-key", Input).password is True
         await pilot.press("escape")
+
+
+@pytest.mark.asyncio
+async def test_resume_picker_selects_session_and_replaces_conversation() -> None:
+    runtime = FakeRuntime()
+    session_id = "12345678-1234-1234-1234-123456789abc"
+    runtime.session_summaries = (
+        SessionSummary(
+            session_id=session_id,
+            title="Fix session resume",
+            updated_at=datetime.now(UTC),
+        ),
+    )
+    app = NanoCodeApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        app.query_one("#prompt", Input).value = "/resume"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ResumeScreen)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert runtime.resumed_session_ids == [session_id]
+        assert [message.prompt for message in app.query(UserMessage)] == ["old prompt"]
+        assert [message.source for message in app.query(AssistantMessage)] == [
+            "old response"
+        ]
 
 
 @pytest.mark.asyncio

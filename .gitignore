@@ -1,4 +1,4 @@
-# Python-generated files
+# Python 生成文件
 __pycache__/
 *.py[oc]
 build/
@@ -12,10 +12,10 @@ wheels/
 coverage.xml
 htmlcov/
 
-# Virtual environments
+# 虚拟环境
 .venv/
 
-# Local configuration
+# 本地配置
 .env
 .env.*
 !.env.example
@@ -24,10 +24,10 @@ htmlcov/
 **/.credentials.json
 *.log
 
-# Editors and operating systems
+# 编辑器与操作系统文件
 .idea/
 .vscode/
 .DS_Store
 
-# Read-only upstream source snapshot; never publish it with nano-code
+# 只读上游源码快照；禁止随 nano-code 一同发布
 /claude-code/

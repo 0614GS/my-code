@@ -1,4 +1,4 @@
-"""Fully resolved runtime configuration."""
+"""完整解析后的运行时配置。"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +40,6 @@ class Settings:
 
     @property
     def cwd(self) -> Path:
-        """Expose the canonical workspace without duplicating path state."""
+        """暴露规范化工作区，不重复维护路径状态。"""
 
         return self.paths.cwd

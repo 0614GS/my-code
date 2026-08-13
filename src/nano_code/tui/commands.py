@@ -1,4 +1,4 @@
-"""Declarative slash-command registry shared by all terminal frontends."""
+"""所有终端前端共用的声明式 slash 命令注册表。"""
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -12,6 +12,7 @@ class SlashCommandAction(StrEnum):
     STATUS = "status"
     AUTH = "auth"
     PROVIDER = "provider"
+    RESUME = "resume"
     CLEAR = "clear"
     EXIT = "exit"
 
@@ -30,10 +31,11 @@ class CommandOutcome:
     should_exit: bool = False
     clear_screen: bool = False
     open_provider_manager: bool = False
+    open_session_picker: bool = False
 
 
 class SlashCommandRegistry:
-    """Resolve local commands before ordinary prompts reach the model."""
+    """在普通提示到达模型前解析本地命令。"""
 
     def __init__(self, commands: tuple[SlashCommand, ...]) -> None:
         self.commands = commands
@@ -66,6 +68,12 @@ class SlashCommandRegistry:
                     SlashCommandAction.PROVIDER,
                 ),
                 SlashCommand(
+                    "resume",
+                    "Resume a previous conversation",
+                    SlashCommandAction.RESUME,
+                    aliases=("continue",),
+                ),
+                SlashCommand(
                     "clear", "Clear the terminal screen", SlashCommandAction.CLEAR
                 ),
                 SlashCommand(
@@ -78,7 +86,7 @@ class SlashCommandRegistry:
         )
 
     def dispatch(self, line: str, *, status: RuntimeStatus) -> CommandOutcome | None:
-        """Return ``None`` for model input and an outcome for slash input."""
+        """模型输入返回 ``None``，slash 输入返回本地执行结果。"""
 
         stripped = line.strip()
         if not stripped.startswith("/"):
@@ -106,6 +114,8 @@ class SlashCommandRegistry:
                 return CommandOutcome(_render_auth(status))
             case SlashCommandAction.PROVIDER:
                 return CommandOutcome(open_provider_manager=True)
+            case SlashCommandAction.RESUME:
+                return CommandOutcome(open_session_picker=True)
             case SlashCommandAction.CLEAR:
                 return CommandOutcome(clear_screen=True)
             case SlashCommandAction.EXIT:
@@ -121,7 +131,7 @@ class SlashCommandRegistry:
         return "\n".join(lines)
 
     def matching(self, text: str) -> tuple[SlashCommand, ...]:
-        """Return prefix matches for a slash token, preserving registry order."""
+        """按注册表顺序返回 slash token 的前缀匹配项。"""
 
         if not text.startswith("/") or any(character.isspace() for character in text):
             return ()

@@ -42,7 +42,7 @@ nano-code --provider company-gateway auth login
 
 `NANO_CODE_PROVIDER`、`NANO_CODE_API_KEY`、`ANTHROPIC_BASE_URL`、`--provider` 和 `--base-url` 可用于临时覆盖。
 
-交互模式使用 Textual 构建的组件化 TUI，支持流式 Markdown、工具调用及简略结果、运行状态和固定输入区。需要授权时，输入区会切换为 `Yes`、`No`、`No, and tell nano-code why` 三项内联选择；拒绝原因会返回模型。在输入框键入 `/` 会显示候选命令，可用方向键选择、Tab 补全、Enter 执行；`/provider` 可安全配置 Provider URL、模型和 API Key。单次 `-p` 模式不启动 TUI。
+交互模式使用 Textual 构建的组件化 TUI，支持流式 Markdown、工具调用及简略结果、运行状态和固定输入区。需要授权时，输入区会切换为 `Yes`、`No`、`No, and tell nano-code why` 三项内联选择；拒绝原因会返回模型。在输入框键入 `/` 会显示候选命令，可用方向键选择、Tab 补全、Enter 执行；`/provider` 可安全配置 Provider URL、模型和 API Key，`/resume` 可选择并恢复当前项目的历史会话。单次 `-p` 模式不启动 TUI。
 
 与 Claude Code 的目录边界一致，用户配置及运行状态默认放在 `~/.nano-code/`，可用 `NANO_CODE_CONFIG_DIR` 整体迁移。项目共享配置为 `.nano-code/settings.json`，本地覆盖为已忽略的 `.nano-code/settings.local.json`；读取配置不会主动创建这些目录。完整布局和优先级见 [docs/09-storage-and-settings.md](docs/09-storage-and-settings.md)，终端层边界见 [docs/10-terminal-ui.md](docs/10-terminal-ui.md)。
 

@@ -1,4 +1,4 @@
-"""Named connection profiles for Anthropic Messages-compatible services."""
+"""Anthropic Messages 兼容服务的具名连接 profile。"""
 
 import json
 import os
@@ -18,18 +18,18 @@ _PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 class ProviderProfileError(ValueError):
-    """A provider profile catalog is malformed or cannot be persisted."""
+    """provider profile 目录格式错误或无法持久化。"""
 
 
 class ProviderProtocol(StrEnum):
-    """Wire protocols understood by nano-code."""
+    """nano-code 支持的线路协议。"""
 
     ANTHROPIC_MESSAGES = "anthropic-messages"
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderProfile:
-    """Non-secret settings needed to construct a model-provider adapter."""
+    """构造模型 provider 适配器所需的非敏感设置。"""
 
     id: str
     model: str
@@ -54,7 +54,7 @@ class ProviderProfile:
 
 
 class ProviderProfileStore:
-    """Atomically persist user-owned provider profiles without credentials."""
+    """原子持久化用户所有且不含凭据的 provider profile。"""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -87,7 +87,7 @@ class ProviderProfileStore:
         return result
 
     def ensure_exists(self, default: ProviderProfile) -> bool:
-        """Create a catalog containing ``default`` and return whether it was new."""
+        """创建包含 ``default`` 的目录，并返回它是否为新建。"""
 
         if self.path.exists():
             self.load()

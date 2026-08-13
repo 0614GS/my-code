@@ -1,4 +1,4 @@
-"""Small, user-scoped credential store for direct API-key authentication."""
+"""用于 API key 直接认证的精简用户级凭据存储。"""
 
 import json
 import os
@@ -13,11 +13,11 @@ _SCHEMA_VERSION = 1
 
 
 class CredentialStoreError(ValueError):
-    """Credentials could not be read or persisted safely."""
+    """凭据无法被安全读取或持久化。"""
 
 
 class CredentialSource(StrEnum):
-    """Observable credential origins without exposing the credential itself."""
+    """不暴露凭据本身的可观察凭据来源。"""
 
     ENVIRONMENT = "environment"
     STORED = "stored"
@@ -31,7 +31,7 @@ class ResolvedCredential:
 
 
 class CredentialStore:
-    """Persist provider-scoped API keys outside shareable settings files."""
+    """在可共享设置文件之外持久化 provider 级 API key。"""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -56,7 +56,7 @@ class CredentialStore:
         self._write_keys(keys)
 
     def delete(self, provider_id: str = _DEFAULT_PROVIDER_ID) -> bool:
-        """Delete one provider key while preserving the credential catalog."""
+        """删除一个 provider 的 key，同时保留凭据目录。"""
 
         if not self.path.exists():
             return False
@@ -67,7 +67,7 @@ class CredentialStore:
         return removed
 
     def ensure_exists(self) -> bool:
-        """Create or migrate the private credential catalog."""
+        """创建或迁移私有凭据目录。"""
 
         if not self.path.exists():
             self._write_keys({})
@@ -91,8 +91,8 @@ class CredentialStore:
                 f"Credential file root must be an object: {self.path}"
             )
 
-        # The pre-provider MVP stored a single top-level key. Accept it long
-        # enough to perform a lossless migration during startup or the next write.
+        # 引入 provider 之前的 MVP 只存储一个顶层 key。暂时兼容该格式，
+        # 以便在启动或下次写入时完成无损迁移。
         if "anthropicApiKey" in raw:
             value = _parse_api_key(raw.get("anthropicApiKey"), self.path)
             return ({_DEFAULT_PROVIDER_ID: value} if value is not None else {}), True
@@ -169,7 +169,7 @@ def resolve_api_key(
     *,
     provider_id: str = _DEFAULT_PROVIDER_ID,
 ) -> ResolvedCredential:
-    """Resolve a temporary environment override before the durable login key."""
+    """优先解析临时环境变量覆盖，其次使用持久化登录 key。"""
 
     environment = os.environ if environ is None else environ
     environment_key = environment.get("NANO_CODE_API_KEY") or environment.get(

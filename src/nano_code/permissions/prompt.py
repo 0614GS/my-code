@@ -1,4 +1,4 @@
-"""Interactive and headless resolution of ``ask`` decisions."""
+"""交互与无头环境中对 ``ask`` 决策的处理。"""
 
 import json
 from collections.abc import Callable
@@ -13,12 +13,12 @@ class PermissionPrompter(Protocol):
     async def confirm(
         self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
     ) -> PermissionConfirmation:
-        """Return a structured response only after explicit human input."""
+        """仅在获得用户显式输入后返回结构化响应。"""
         ...
 
 
 class TerminalPrompter:
-    """Ask for one-time permission on stdin without blocking the event loop."""
+    """通过 stdin 请求一次性权限，同时不阻塞事件循环。"""
 
     def __init__(self, input_fn: Callable[[str], str] = input) -> None:
         self._input = input_fn
@@ -50,7 +50,7 @@ class TerminalPrompter:
 
 
 class HeadlessPrompter:
-    """Fail closed when no interactive permission UI exists."""
+    """不存在交互式权限 UI 时按拒绝处理。"""
 
     async def confirm(
         self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision

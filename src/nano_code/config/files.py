@@ -1,4 +1,4 @@
-"""Layered JSON settings loading and atomic persistence."""
+"""分层 JSON 设置加载与原子持久化。"""
 
 import json
 import os
@@ -12,12 +12,12 @@ from nano_code.providers.validation import validate_base_url
 
 
 class SettingsFileError(ValueError):
-    """A settings file exists but cannot be parsed or validated safely."""
+    """设置文件存在，但无法被安全解析或校验。"""
 
 
 @dataclass(frozen=True, slots=True)
 class StoredSettings:
-    """Settings supported by the MVP; ``None`` means no value at this layer."""
+    """MVP 支持的设置；``None`` 表示本层未提供该值。"""
 
     model: str | None = None
     base_url: str | None = None
@@ -28,7 +28,7 @@ class StoredSettings:
     context_chars: int | None = None
 
     def overlay(self, higher: "StoredSettings") -> "StoredSettings":
-        """Return this layer with every explicit higher-priority value applied."""
+        """返回应用了所有显式高优先级值后的当前层。"""
 
         return replace(
             self,
@@ -63,13 +63,13 @@ class StoredSettings:
 
 
 class SettingsStore:
-    """Read user, shared-project, and local-project settings in precedence order."""
+    """按优先级读取用户、项目共享和项目本地设置。"""
 
     def __init__(self, paths: NanoCodePaths) -> None:
         self.paths = paths
 
     def load(self) -> StoredSettings:
-        """Merge settings as user < project < local, matching Claude Code."""
+        """按照用户 < 项目 < 本地的顺序合并设置，与 Claude Code 保持一致。"""
 
         merged = StoredSettings()
         for scope in (
@@ -82,9 +82,8 @@ class SettingsStore:
 
     def load_scope(self, scope: SettingsScope) -> StoredSettings:
         if self._project_scope_is_unavailable(scope):
-            # Starting in $HOME makes ~/.nano-code both the global store and the
-            # apparent project directory. User data must never be reinterpreted
-            # using the less-trusted project validation rules.
+            # 从 $HOME 启动时，~/.nano-code 既像全局存储又像项目目录。
+            # 用户数据绝不能按可信度更低的项目校验规则重新解释。
             return StoredSettings()
         path = self.paths.settings_path(scope)
         if not path.exists():
@@ -99,7 +98,7 @@ class SettingsStore:
         return _parse_settings(raw, path=path, scope=scope)
 
     def write(self, scope: SettingsScope, settings: StoredSettings) -> None:
-        """Atomically replace one settings file with owner-only permissions."""
+        """以仅属主可访问的权限原子替换一个设置文件。"""
 
         if self._project_scope_is_unavailable(scope):
             raise SettingsFileError(
@@ -123,7 +122,7 @@ class SettingsStore:
         _atomic_json_write(path, document)
 
     def set_user_active_provider(self, provider_id: str) -> None:
-        """Merge an active Provider into user settings without dropping unknown keys."""
+        """将当前 provider 合并进用户设置，同时保留未知字段。"""
 
         if not provider_id.strip():
             raise SettingsFileError("activeProvider must be a non-empty string")
@@ -153,7 +152,7 @@ class SettingsStore:
 
 
 def _atomic_json_write(path: Path, document: object) -> None:
-    """Write one JSON document with owner-only permissions and atomic replace."""
+    """以仅属主可访问的权限原子写入一个 JSON 文档。"""
 
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary_path: Path | None = None
@@ -196,8 +195,8 @@ def _parse_settings(
     base_url = _optional_base_url(raw, path)
     active_provider = _optional_non_empty_string(raw, "activeProvider", path)
     if scope is not SettingsScope.USER and base_url is not None:
-        # A repository-controlled endpoint could receive the user's API key.
-        # Until workspace trust exists, provider routing is user-scoped only.
+        # 仓库控制的 endpoint 可能窃取用户 API key。在支持工作区信任前，
+        # provider 路由只能配置在用户作用域。
         raise SettingsFileError(f"baseUrl is only allowed in user settings: {path}")
     if scope is not SettingsScope.USER and active_provider is not None:
         raise SettingsFileError(
@@ -205,8 +204,7 @@ def _parse_settings(
         )
     permission_mode = _parse_permission_mode(raw, path)
     if scope is SettingsScope.PROJECT and permission_mode is PermissionMode.BYPASS:
-        # The MVP has no workspace-trust flow, so a checked-in file must not be
-        # able to disable the permission boundary merely by opening a repository.
+        # MVP 尚无工作区信任流程，因此仅打开仓库时，仓库内文件不得关闭权限边界。
         raise SettingsFileError(
             f"Shared project settings cannot enable bypassPermissions: {path}"
         )

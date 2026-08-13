@@ -1,4 +1,4 @@
-"""Command-line parsing without side effects."""
+"""无副作用的命令行参数解析。"""
 
 import argparse
 import os
@@ -81,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_args(argv: list[str] | None = None) -> CliOptions:
-    """Parse a normal chat invocation; retained as a focused public helper."""
+    """解析普通对话调用；作为职责明确的公共辅助函数保留。"""
 
     namespace = build_parser().parse_args(argv)
     if namespace.command is not None:
@@ -90,7 +90,7 @@ def parse_args(argv: list[str] | None = None) -> CliOptions:
 
 
 def parse_cli(argv: list[str] | None = None) -> ParsedOptions:
-    """Parse either a chat invocation or a top-level management command."""
+    """解析对话调用或顶层管理命令。"""
 
     namespace = build_parser().parse_args(argv)
     if namespace.command == "auth":
@@ -144,9 +144,8 @@ def _parse_chat_options(namespace: argparse.Namespace) -> CliOptions:
             f"Unknown provider {provider_id!r}; configured providers: {choices}"
         ) from error
 
-    # Resolve only after every file layer has loaded so explicit CLI values can
-    # remain distinguishable from parser defaults. Credentials deliberately use
-    # a separate user-only store; settings.json remains safe to share.
+    # 等所有文件层加载完成后再解析，以区分显式 CLI 参数和解析器默认值。
+    # 凭据刻意使用独立的用户专属存储，使 settings.json 可以安全共享。
     credential = resolve_api_key(
         CredentialStore(paths.credentials_path), provider_id=provider_id
     )

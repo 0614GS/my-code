@@ -1,10 +1,10 @@
-"""A minimal suffix projection that never cuts through a tool round."""
+"""不会截断工具轮次的最小后缀投影。"""
 
 from nano_code.messages import ChatMessage, TextBlock, ToolResultBlock, ToolUseBlock
 
 
 class ContextWindow:
-    """Select recent complete human turns under an estimated character budget."""
+    """在估算字符预算内选择最近的完整用户轮次。"""
 
     def __init__(self, max_chars: int = 160_000) -> None:
         if max_chars < 1:
@@ -15,17 +15,16 @@ class ContextWindow:
         if not messages:
             return ()
 
-        # Claude Code can cut at finer API-round boundaries because its compact
-        # pipeline can summarize and repair malformed rounds. Until nano-code has
-        # that machinery, a real human prompt is the conservative safe boundary.
+        # Claude Code 的 compact 流程能总结和修复异常轮次，因此可以在更细的
+        # API 轮次边界截断。在 nano-code 具备该机制前，真实用户提示是保守的安全边界。
         turn_starts = [
             index for index, message in enumerate(messages) if message.starts_human_turn
         ]
         if not turn_starts:
             raise ValueError("Conversation has no human turn boundary")
 
-        # The current human turn is mandatory. Walk backward only while complete
-        # older turns still fit; an earlier start can only increase the estimate.
+        # 当前用户轮次必须保留。仅在更早的完整轮次仍能容纳时向前扩展；
+        # 起点越早，估算值只会增大。
         selected_start = turn_starts[-1]
         selected_size = self._size(messages[selected_start:])
         for start in reversed(turn_starts[:-1]):
@@ -36,22 +35,22 @@ class ContextWindow:
             selected_size = candidate_size
 
         if selected_size > self.max_chars:
-            # Never slice the active turn to satisfy the budget: that could orphan a
-            # tool result or remove the instruction that gives the round meaning.
+            # 绝不为了满足预算而切割当前轮次，否则可能产生孤立工具结果，
+            # 或移除赋予该轮次语义的指令。
             raise ValueError(
                 "The current user turn exceeds the MVP context budget; "
                 "automatic summarization is not implemented yet"
             )
         selected = messages[selected_start:]
 
-        # Treat pairing validation as a final protocol firewall before an API call.
+        # 将配对校验作为 API 调用前最后一道协议防火墙。
         self._validate_tool_pairs(selected)
         return selected
 
     @staticmethod
     def _size(messages: tuple[ChatMessage, ...]) -> int:
-        # Character count is deliberately only an MVP estimate. Token-aware compact
-        # will replace this without changing the projection boundary contract.
+        # 字符数刻意只作为 MVP 阶段的估算。未来由 token 感知的 compact 替代，
+        # 但不会改变投影边界契约。
         size = 0
         for message in messages:
             for block in message.content:

@@ -6,13 +6,13 @@
 
 ## 本阶段包含
 
-- 带 slash 命令选择的轻量 TUI 和 `nano-code -p "..."` 单次运行；
+- 带 slash 命令选择、项目会话 `/resume` 的轻量 TUI，以及 `nano-code -p "..."` 单次运行；
 - 用户级 API Key 登录、状态、退出及环境变量临时覆盖；
 - 与 Agent Loop 解耦的模型 Provider 协议及 Anthropic 适配器；
 - Read、Glob、Grep、Write、Edit、Bash 六个内置工具；
 - 输入感知的工具权限协议、Bash 保守只读分析，以及 `default`、`acceptEdits`、`plan`、`dontAsk`、`bypassPermissions` 权限模式；
 - 无交互环境 fail closed，工作区文件路径防逃逸；
-- 追加式 JSONL Transcript、会话恢复和 UUID 父链；
+- 追加式 JSONL Transcript、轻量会话发现、活动父链恢复和运行时原子切换；
 - 与 Claude Code 同形的全局/项目存储布局和三级配置覆盖；
 - 基于完整用户回合的上下文后缀投影，避免切断 tool-use/result 配对；
 - 超大工具结果落盘并给模型返回稳定预览。

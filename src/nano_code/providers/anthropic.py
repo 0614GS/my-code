@@ -1,4 +1,4 @@
-"""Anthropic Messages API adapter."""
+"""Anthropic Messages API 适配器。"""
 
 from collections.abc import AsyncIterator, Iterable
 from typing import cast
@@ -31,7 +31,7 @@ from nano_code.providers.events import (
 
 
 class AnthropicProvider:
-    """Translate internal messages without leaking SDK types into the core."""
+    """转换内部消息，同时不让 SDK 类型泄漏到核心层。"""
 
     def __init__(
         self,
@@ -44,7 +44,7 @@ class AnthropicProvider:
         self.client = AsyncAnthropic(api_key=api_key, base_url=base_url)
 
     async def close(self) -> None:
-        """Release the SDK's underlying HTTP client."""
+        """释放 SDK 底层 HTTP 客户端。"""
 
         await self.client.close()
 
@@ -61,7 +61,7 @@ class AnthropicProvider:
         return self._response(response)
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
-        """Stream text for display, then emit the SDK's validated final snapshot."""
+        """流式输出展示文本，随后发出经 SDK 校验的最终快照。"""
 
         async with self.client.messages.stream(
             model=self.model,
@@ -81,8 +81,8 @@ class AnthropicProvider:
 
     @staticmethod
     def _messages(messages: Iterable[ChatMessage]) -> list[MessageParam]:
-        # This is the API projection boundary. Internal UUIDs, timestamps, and
-        # provenance stay in the transcript and are never sent to the provider.
+        # 这里是 API 投影边界。内部 UUID、时间戳和来源信息只留在会话记录中，
+        # 绝不发送给 provider。
         projected: list[MessageParam] = []
         for message in messages:
             content: list[
@@ -92,8 +92,8 @@ class AnthropicProvider:
                 if isinstance(block, TextBlock):
                     content.append({"type": "text", "text": block.text})
                 elif isinstance(block, ToolUseBlock):
-                    # JsonObject is recursively narrower than the SDK's object type;
-                    # the cast changes only static variance, not runtime data.
+                    # JsonObject 递归地比 SDK object 类型更窄；此 cast 只改变
+                    # 静态类型变体，不改变运行时数据。
                     content.append(
                         {
                             "type": "tool_use",
@@ -116,8 +116,8 @@ class AnthropicProvider:
 
     @staticmethod
     def _tools(request: ModelRequest) -> list[ToolParam]:
-        # Definitions arrive in registry order. Do not reorder them here because tool
-        # schema order contributes to the provider's cacheable prompt prefix.
+        # 定义按注册表顺序到达。此处不要重新排序，因为工具 schema 顺序会影响
+        # provider 可缓存的提示前缀。
         tools: list[ToolParam] = []
         for definition in request.tools:
             tools.append(
@@ -131,9 +131,8 @@ class AnthropicProvider:
 
     @staticmethod
     def _response(response: Message) -> ModelResponse:
-        # Thinking and server-tool blocks are outside the first MVP. If a response
-        # contains no supported text/tool_use block, ModelResponse fails explicitly
-        # instead of persisting a lossy empty assistant message.
+        # thinking 和服务端工具块不在首个 MVP 范围内。如果响应不含受支持的
+        # text/tool_use 块，ModelResponse 会显式失败，而不是持久化丢失信息的空消息。
         content: list[TextBlock | ToolUseBlock] = []
         for block in response.content:
             if block.type == "text":

@@ -1,12 +1,12 @@
-"""Provider-neutral message types used by the agent core."""
+"""智能体核心使用的 provider 无关消息类型。"""
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
-# Restrict cross-layer data to JSON rather than allowing Any. Provider payloads,
-# transcripts, and tool inputs can therefore be checked at every boundary.
+# 将跨层数据限制为 JSON，而不是允许 Any，使 provider payload、会话记录和
+# 工具输入都能在每个边界接受检查。
 type JsonValue = (
     None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 )
@@ -16,19 +16,19 @@ type MessageOrigin = Literal["human", "model", "tool", "system"]
 
 
 def utc_now() -> str:
-    """Return a compact, timezone-aware timestamp."""
+    """返回紧凑且包含时区的时间戳。"""
 
     return datetime.now(UTC).isoformat()
 
 
 def new_id() -> str:
-    """Return a stable local message identifier."""
+    """返回稳定的本地消息标识符。"""
 
     return str(uuid4())
 
 
 def to_json_value(value: object) -> JsonValue:
-    """Validate and copy an arbitrary value into the supported JSON domain."""
+    """校验任意值并将其复制到支持的 JSON 数据域。"""
 
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
@@ -45,7 +45,7 @@ def to_json_value(value: object) -> JsonValue:
 
 
 def to_json_object(value: object) -> JsonObject:
-    """Validate an arbitrary value as a JSON object."""
+    """将任意值作为 JSON 对象进行校验。"""
 
     converted = to_json_value(value)
     if not isinstance(converted, dict):
@@ -55,7 +55,7 @@ def to_json_object(value: object) -> JsonObject:
 
 @dataclass(frozen=True, slots=True)
 class TextBlock:
-    """A user or assistant text block."""
+    """用户或 assistant 文本块。"""
 
     text: str
     type: Literal["text"] = field(default="text", init=False)
@@ -63,22 +63,20 @@ class TextBlock:
 
 @dataclass(frozen=True, slots=True)
 class ToolUseBlock:
-    """A model request to invoke a named tool."""
+    """模型对具名工具的调用请求。"""
 
     id: str
     name: str
     input: JsonObject
-    # Literal discriminators give mypy the same narrowing role that tagged
-    # unions provide in the TypeScript reference implementation.
+    # Literal 判别字段让 mypy 获得与 TypeScript 参考实现中标签联合类型相同的收窄能力。
     type: Literal["tool_use"] = field(default="tool_use", init=False)
 
 
 @dataclass(frozen=True, slots=True)
 class ToolResultBlock:
-    """The result paired with one model tool request."""
+    """与一个模型工具请求配对的结果。"""
 
-    # tool_use_id is provider protocol identity; it is intentionally separate
-    # from the local transcript message UUID below.
+    # tool_use_id 是 provider 协议标识，刻意与下方本地会话消息 UUID 分离。
     tool_use_id: str
     content: str
     is_error: bool = False
@@ -91,25 +89,25 @@ type AssistantBlock = TextBlock | ToolUseBlock
 
 @dataclass(frozen=True, slots=True)
 class ChatMessage:
-    """One persisted message in the internal transcript."""
+    """内部会话记录中的一条持久化消息。"""
 
-    # role is the provider protocol role. origin records who actually created
-    # the message, because tool results also travel under the provider's user role.
+    # role 是 provider 协议角色。origin 记录消息的实际创建方，因为工具结果也以
+    # provider 的 user 角色传输。
     role: MessageRole
     content: tuple[ContentBlock, ...]
     origin: MessageOrigin
 
-    # Local UUIDs form the recoverable transcript chain independently of API IDs.
+    # 本地 UUID 独立于 API ID 构成可恢复的会话记录链。
     uuid: str = field(default_factory=new_id)
     parent_uuid: str | None = None
     timestamp: str = field(default_factory=utc_now)
-    # Tool-result messages retain a direct provenance edge to the assistant
-    # message that requested them; this becomes important for parallel calls.
+    # 工具结果消息保留指向发起请求的 assistant 消息的直接来源边；
+    # 这一点对并行调用尤为重要。
     source_message_uuid: str | None = None
 
     def __post_init__(self) -> None:
-        # Enforce provider-shape invariants at construction time so malformed
-        # messages cannot reach persistence and fail much later during sampling.
+        # 构造时强制执行 provider 消息形状不变量，避免异常消息进入持久化后
+        # 才在后续采样阶段失败。
         if not self.content:
             raise ValueError("A message must contain at least one content block")
         if self.role == "assistant" and any(
@@ -127,14 +125,14 @@ class ChatMessage:
 
     @property
     def starts_human_turn(self) -> bool:
-        """Whether this is a real user prompt and therefore a safe cut boundary."""
+        """是否为真实用户提示，即是否可作为安全截断边界。"""
 
         return self.role == "user" and self.origin == "human"
 
 
 @dataclass(frozen=True, slots=True)
 class TokenUsage:
-    """Provider token accounting for one model request."""
+    """一次模型请求的 provider token 用量。"""
 
     input_tokens: int = 0
     output_tokens: int = 0
@@ -142,7 +140,7 @@ class TokenUsage:
 
 @dataclass(frozen=True, slots=True)
 class ModelResponse:
-    """A provider-neutral assistant response."""
+    """与 provider 无关的 assistant 响应。"""
 
     content: tuple[AssistantBlock, ...]
     stop_reason: str

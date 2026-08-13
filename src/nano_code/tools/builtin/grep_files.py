@@ -1,4 +1,4 @@
-"""Search text files with a regular expression."""
+"""使用正则表达式搜索文本文件。"""
 
 import fnmatch
 import re
