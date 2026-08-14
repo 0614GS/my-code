@@ -10,10 +10,12 @@ from nano_code.messages.models import (
     MessageOrigin,
     MessageRole,
     TextBlock,
+    TokenUsage,
     ToolResultBlock,
     ToolUseBlock,
     to_json_object,
 )
+from nano_code.presentation import ToolResultPresentation
 
 
 class MessageDecodeError(ValueError):
@@ -32,19 +34,26 @@ def block_to_json(block: ContentBlock) -> JsonObject:
             "name": block.name,
             "input": block.input,
         }
-    return {
+    result: JsonObject = {
         "type": "tool_result",
         "tool_use_id": block.tool_use_id,
         "content": block.content,
         "is_error": block.is_error,
     }
+    if block.presentation is not None:
+        result["presentation"] = {
+            "summary": block.presentation.summary,
+            "detail": block.presentation.detail,
+            "truncated": block.presentation.truncated,
+        }
+    return result
 
 
 def message_to_json(message: ChatMessage) -> JsonObject:
     """编码一条内部消息用于 JSONL 持久化。"""
 
     # 磁盘记录版本独立于 provider SDK 类型，使会话迁移无需修改智能体内部数据类。
-    return {
+    result: JsonObject = {
         "type": "message",
         "version": 1,
         "uuid": message.uuid,
@@ -55,6 +64,14 @@ def message_to_json(message: ChatMessage) -> JsonObject:
         "source_message_uuid": message.source_message_uuid,
         "content": [block_to_json(block) for block in message.content],
     }
+    if message.usage is not None:
+        result["usage"] = {
+            "input_tokens": message.usage.input_tokens,
+            "output_tokens": message.usage.output_tokens,
+            "cache_creation_input_tokens": (message.usage.cache_creation_input_tokens),
+            "cache_read_input_tokens": message.usage.cache_read_input_tokens,
+        }
+    return result
 
 
 def _required_string(data: Mapping[str, object], key: str) -> str:
@@ -100,8 +117,59 @@ def block_from_json(value: object) -> ContentBlock:
             tool_use_id=_required_string(data, "tool_use_id"),
             content=_required_string(data, "content"),
             is_error=is_error,
+            presentation=_presentation_from_json(data.get("presentation")),
         )
     raise MessageDecodeError(f"Unsupported content block type: {block_type}")
+
+
+def _presentation_from_json(value: object) -> ToolResultPresentation | None:
+    """解析可选展示快照；旧版 Transcript 中不存在该字段。"""
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise MessageDecodeError("Tool presentation must be an object")
+    data: Mapping[str, object] = value
+    detail = data.get("detail")
+    if detail is not None and not isinstance(detail, str):
+        raise MessageDecodeError("Tool presentation detail must be a string or null")
+    truncated = data.get("truncated", False)
+    if not isinstance(truncated, bool):
+        raise MessageDecodeError("Tool presentation truncated must be a boolean")
+    return ToolResultPresentation(
+        summary=_required_string(data, "summary"),
+        detail=detail,
+        truncated=truncated,
+    )
+
+
+def _usage_from_json(value: object) -> TokenUsage | None:
+    """解析可选 provider usage；旧会话没有该字段。"""
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise MessageDecodeError("Message usage must be an object")
+    data: Mapping[str, object] = value
+    input_tokens = data.get("input_tokens")
+    output_tokens = data.get("output_tokens")
+    cache_creation = data.get("cache_creation_input_tokens", 0)
+    cache_read = data.get("cache_read_input_tokens", 0)
+    if (
+        not isinstance(input_tokens, int)
+        or isinstance(input_tokens, bool)
+        or not isinstance(output_tokens, int)
+        or isinstance(output_tokens, bool)
+        or not isinstance(cache_creation, int)
+        or isinstance(cache_creation, bool)
+        or not isinstance(cache_read, int)
+        or isinstance(cache_read, bool)
+    ):
+        raise MessageDecodeError("Message usage token counts must be integers")
+    try:
+        return TokenUsage(input_tokens, output_tokens, cache_creation, cache_read)
+    except ValueError as error:
+        raise MessageDecodeError(str(error)) from error
 
 
 def message_from_json(value: object) -> ChatMessage:
@@ -150,5 +218,6 @@ def message_from_json(value: object) -> ChatMessage:
         role=role,
         origin=origin,
         source_message_uuid=_optional_string(data, "source_message_uuid"),
+        usage=_usage_from_json(data.get("usage")),
         content=tuple(block_from_json(block) for block in raw_content),
     )

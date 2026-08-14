@@ -12,7 +12,10 @@
 | 风险属性 | `isReadOnly`、`isDestructive`、`isOpenWorld`、`checkPermissions` |
 | 执行与结果 | `validateInput`、`call`、`mapToolResultToToolResultBlockParam` |
 
-接口还包含 prompt 和大量 UI 渲染方法。这是产品层需求，不是工具执行内核的必要组成；阅读源码时应把协议/执行字段与展示字段分开理解。
+接口还包含 `getToolUseSummary`、`getActivityDescription`、
+`renderToolUseMessage` 和 `renderToolResultMessage` 等展示方法。关键思想不是让顶层
+执行器识别每种工具，而是由最了解领域输出的 Tool 提供展示语义；React/Ink 组件
+仍属于 Claude Code 前端实现，不能直接泄漏进 Python 核心层。
 
 ## 2. ToolResult
 
@@ -127,7 +130,9 @@ Bash 工具报错会取消并行 sibling，因为批量 shell 命令常存在隐
 5. 模型原始 tool input 与观察层派生 input 必须分开。
 6. 工具池排序和冲突规则必须稳定，否则会破坏 prompt cache。
 
-## 10. Python 实现的职责边界
+## 10. nano-code 的职责边界
+
+### 权限语义
 
 nano-code 保留静态 `risk` 作为默认分类，同时让工具按具体输入实现
 `is_read_only(input, context)` 和 `check_permissions(input, context)`。后者返回
@@ -138,6 +143,29 @@ nano-code 保留静态 `risk` 作为默认分类，同时让工具按具体输�
 Bash 的命令解析和参数白名单因此位于 `tools/builtin/bash_permissions.py`，而不是
 Executor。权限层批准了修改后的 input 时，Executor 必须把同一个 input 交给弹窗
 和执行阶段，避免“用户批准 A、工具执行 B”。
+
+### 双重结果投影
+
+一次 Tool 执行产生两种用途不同的结果：
+
+```text
+ToolOutput（领域输出 + metadata）
+  ├─ Tool.to_model_result()  → ToolResultBlock → Provider / Transcript
+  └─ Tool.present_result()   → ToolResultPresentation → Runtime event → TUI
+```
+
+`Tool` 同时通过 `present_use()` 提供显示名、调用摘要和活动描述。内置 Tool 从自己
+产生的结构化 `metadata` 中构造结果摘要；TUI 不按工具名分支，也不解析模型可见的
+结果字符串。`ToolExecutor` 只负责调用两种投影、结果外置和错误回退，因此新增工具
+无需修改 Executor 或 TUI。
+
+展示对象只包含文本、布尔值等前端无关数据，不依赖 Textual。实时事件和权限弹窗
+消费同一份调用展示对象；成功结果的展示快照随 `ToolResultBlock` 写入 Transcript，
+保证 `/resume` 不受后来展示算法变化影响。旧记录没有快照时，runtime 把旧结果交回
+对应 Tool 做兼容投影。未知工具或展示方法异常时，Executor 使用有界通用摘要。
+
+这一设计保留了 Claude Code 的“Tool 拥有展示语义”，同时维持
+Tool → Agent → Runtime → TUI 的单向依赖和核心 runtime 与具体前端解耦。
 
 ## 11. 主要源码入口
 

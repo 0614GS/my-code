@@ -1,22 +1,14 @@
 """智能体循环消费的 provider 无关边界。"""
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from nano_code.messages import ChatMessage, ModelResponse
+from nano_code.context.models import ContextPlan
+from nano_code.messages import ModelResponse
 from nano_code.providers.events import ModelStreamEvent
-from nano_code.tools.base import ToolDefinition
 
-
-@dataclass(frozen=True, slots=True)
-class ModelRequest:
-    """上下文投影后的一次完整模型请求。"""
-
-    system_prompt: str
-    messages: tuple[ChatMessage, ...]
-    tools: tuple[ToolDefinition, ...]
-    max_output_tokens: int
+# 对外保留 ModelRequest 名称；其领域含义现在由 context 包中的计划对象定义。
+ModelRequest = ContextPlan
 
 
 class ModelProvider(Protocol):

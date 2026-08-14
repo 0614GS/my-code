@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nano_code.messages import JsonObject
+from nano_code.presentation import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+    compact_text,
+)
 
 if TYPE_CHECKING:
     from nano_code.permissions.models import (
@@ -49,6 +54,7 @@ class ToolOutput:
 
     content: str
     is_error: bool = False
+    metadata: JsonObject = field(default_factory=dict)
 
 
 class ToolInputError(ValueError):
@@ -77,6 +83,65 @@ class Tool(ABC):
         """调度器支持并行后，该工具调用是否可以并行。"""
 
         return False
+
+    def user_facing_name(self, tool_input: JsonObject) -> str:
+        """返回面向用户的稳定工具名称。"""
+
+        del tool_input
+        return self.definition.name
+
+    def get_tool_use_summary(self, tool_input: JsonObject) -> str:
+        """返回紧凑视图中的调用摘要。"""
+
+        import json
+
+        return compact_text(
+            json.dumps(tool_input, ensure_ascii=False, separators=(",", ":"))
+        )
+
+    def get_activity_description(self, tool_input: JsonObject) -> str:
+        """返回工具执行期间的活动说明。"""
+
+        return f"Running {self.user_facing_name(tool_input)}"
+
+    def present_use(self, tool_input: JsonObject) -> ToolUsePresentation:
+        """组合供任意前端消费的工具调用展示数据。"""
+
+        return ToolUsePresentation(
+            display_name=self.user_facing_name(tool_input),
+            summary=self.get_tool_use_summary(tool_input),
+            activity=self.get_activity_description(tool_input),
+        )
+
+    def present_result(
+        self, tool_input: JsonObject, output: ToolOutput
+    ) -> ToolResultPresentation:
+        """将执行结果投影为前端无关的紧凑展示。"""
+
+        del tool_input
+        lines = [line.strip() for line in output.content.splitlines() if line.strip()]
+        if not lines:
+            summary = (
+                "failed with no details"
+                if output.is_error
+                else "completed with no output"
+            )
+        else:
+            summary = lines[0]
+        return ToolResultPresentation(summary=compact_text(summary))
+
+    def present_error(
+        self, tool_input: JsonObject, message: str
+    ) -> ToolResultPresentation:
+        """将校验、权限或执行错误投影为紧凑展示。"""
+
+        del tool_input
+        return ToolResultPresentation(summary=compact_text(message))
+
+    def to_model_result(self, output: ToolOutput) -> str:
+        """把工具原始输出序列化为发送给模型的内容。"""
+
+        return output.content
 
     def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
         """描述当前具体调用的副作用语义。

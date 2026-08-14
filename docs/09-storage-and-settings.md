@@ -72,6 +72,10 @@ Provider Profile 是一个命名连接配置，而不是另一套 SDK。当前�
 
 Provider 的模型和 Base URL 归入 `providers.json`；项目配置仍可用 `model` 覆盖模型，但不能定义或选择 Provider。旧版用户设置中的顶层 `model`、`baseUrl` 只作为首次创建 Provider Catalog 时的迁移来源。
 
+`contextChars` 是本地工作集触发 compact 的保守字符阈值，不代表 Provider 宣称的
+精确 token window。实际预算会优先使用最近一次模型响应的 usage，并为输出 token
+单独预留空间。
+
 未知字段会被忽略，已知字段类型错误则启动失败。`NANO_CODE_PROVIDER`/`--provider` 覆盖活动 Profile，`ANTHROPIC_BASE_URL`/`--base-url` 覆盖其 URL，`NANO_CODE_API_KEY` 或兼容的 `ANTHROPIC_API_KEY` 覆盖该 Profile 的持久化 Key。项目级和 local settings 均不能指定 Provider URL：MVP 尚无 workspace trust，仓库控制的地址可能接收用户的 API Key。共享项目配置同样禁止设置 `bypassPermissions`。
 
 配置和凭据写入接口使用同目录临时文件加原子替换；凭据目录为 `0700`，文件为 `0600`。持久化 Key 只传给 Provider，Bash 子进程会剥离 API 认证变量。会话 ID 必须是标准 UUID，避免路径穿越并保持恢复接口稳定。

@@ -11,7 +11,9 @@ from nano_code.permissions import PermissionConfirmation
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.contracts import (
     ChatRuntime,
+    ContextStatus,
     HistoryAssistantMessage,
+    HistorySystemMessage,
     HistoryToolCall,
     HistoryUserMessage,
     PermissionRequest,
@@ -406,6 +408,12 @@ class NanoCodeApp(App[None]):
                 self._manage_providers()
             if outcome.open_session_picker:
                 self._resume_session()
+            if outcome.show_context:
+                await self._mount_message(
+                    SystemMessage(_render_context_status(self.runtime.context_status()))
+                )
+            if outcome.compact_context:
+                self._compact_context()
             if outcome.should_exit:
                 self.exit()
             return
@@ -436,15 +444,16 @@ class NanoCodeApp(App[None]):
                         assistant = None
                     tool_message = ToolCallMessage(
                         event.tool_use_id,
-                        event.name,
-                        event.input,
+                        event.presentation,
                     )
                     tools[event.tool_use_id] = tool_message
                     await self._mount_message(tool_message)
                 elif isinstance(event, ToolFinished):
                     finished_message = tools.get(event.tool_use_id)
                     if finished_message is not None:
-                        finished_message.finish(event.content, is_error=event.is_error)
+                        finished_message.finish(
+                            event.presentation, is_error=event.is_error
+                        )
                         self._scroll_to_end()
                 elif isinstance(event, TurnCompleted):
                     completed = True
@@ -517,10 +526,39 @@ class NanoCodeApp(App[None]):
             prompt.disabled = False
             prompt.focus()
 
+    @work(exclusive=True, group="agent-turn")
+    async def _compact_context(self) -> None:
+        prompt = self.query_one("#prompt", Input)
+        activity = self.query_one(ActivityBar)
+        self._busy = True
+        prompt.disabled = True
+        activity.display = True
+        try:
+            status = await self.runtime.compact()
+            await self._mount_message(
+                SystemMessage(
+                    "Conversation compacted.\n" + _render_context_status(status)
+                )
+            )
+        except Exception as error:
+            await self._mount_message(
+                SystemMessage(f"Compaction failed: {error}", error=True)
+            )
+        finally:
+            activity.display = False
+            prompt.disabled = False
+            prompt.focus()
+            self._busy = False
+            self.query_one(StatusBar).set_status(self.runtime.status())
+
     async def _render_history(
         self,
         history: tuple[
-            HistoryUserMessage | HistoryAssistantMessage | HistoryToolCall, ...
+            HistoryUserMessage
+            | HistoryAssistantMessage
+            | HistorySystemMessage
+            | HistoryToolCall,
+            ...,
         ],
     ) -> None:
         await self._clear_messages()
@@ -529,8 +567,10 @@ class NanoCodeApp(App[None]):
                 await self._mount_message(UserMessage(entry.text))
             elif isinstance(entry, HistoryAssistantMessage):
                 await self._mount_message(AssistantMessage(entry.text))
+            elif isinstance(entry, HistorySystemMessage):
+                await self._mount_message(SystemMessage(entry.text))
             elif isinstance(entry, HistoryToolCall):
-                tool = ToolCallMessage(entry.tool_use_id, entry.name, entry.input)
+                tool = ToolCallMessage(entry.tool_use_id, entry.use)
                 tool.finish(entry.result, is_error=entry.is_error)
                 await self._mount_message(tool)
 
@@ -579,3 +619,23 @@ def _highlighted_command(palette: OptionList) -> str | None:
     if highlighted is None:
         return None
     return palette.get_option_at_index(highlighted).id
+
+
+def _render_context_status(status: ContextStatus) -> str:
+    return "\n".join(
+        (
+            f"Estimated input: {status.estimated_input_tokens} tokens",
+            f"Reserved output: {status.reserved_output_tokens} tokens",
+            f"Estimated total: {status.estimated_total_tokens} tokens",
+            (
+                "Characters: "
+                f"messages {status.message_chars} · system {status.system_chars} · "
+                f"tools {status.tool_schema_chars}"
+            ),
+            (
+                f"Working messages: {status.working_message_count} · "
+                f"microcompacts: {status.replacement_count} · "
+                f"compacts: {status.compact_count}"
+            ),
+        )
+    )

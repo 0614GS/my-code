@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
+from nano_code.presentation import ToolResultPresentation
+
 # 将跨层数据限制为 JSON，而不是允许 Any，使 provider payload、会话记录和
 # 工具输入都能在每个边界接受检查。
 type JsonValue = (
@@ -13,6 +15,36 @@ type JsonValue = (
 type JsonObject = dict[str, JsonValue]
 type MessageRole = Literal["user", "assistant"]
 type MessageOrigin = Literal["human", "model", "tool", "system"]
+
+
+@dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """一次模型请求的 provider token 用量。"""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+
+    def __post_init__(self) -> None:
+        if any(
+            value < 0
+            for value in (
+                self.input_tokens,
+                self.output_tokens,
+                self.cache_creation_input_tokens,
+                self.cache_read_input_tokens,
+            )
+        ):
+            raise ValueError("Token usage must not be negative")
+
+    @property
+    def total_input_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.cache_creation_input_tokens
+            + self.cache_read_input_tokens
+        )
 
 
 def utc_now() -> str:
@@ -80,6 +112,7 @@ class ToolResultBlock:
     tool_use_id: str
     content: str
     is_error: bool = False
+    presentation: ToolResultPresentation | None = None
     type: Literal["tool_result"] = field(default="tool_result", init=False)
 
 
@@ -104,6 +137,9 @@ class ChatMessage:
     # 工具结果消息保留指向发起请求的 assistant 消息的直接来源边；
     # 这一点对并行调用尤为重要。
     source_message_uuid: str | None = None
+    # 只有模型响应携带 usage。它是下一次请求预算的最近真实锚点，不能累加为
+    # 当前上下文大小。
+    usage: TokenUsage | None = None
 
     def __post_init__(self) -> None:
         # 构造时强制执行 provider 消息形状不变量，避免异常消息进入持久化后
@@ -122,6 +158,10 @@ class ChatMessage:
             isinstance(block, ToolResultBlock) for block in self.content
         ):
             raise ValueError("Tool-origin messages may contain only tool results")
+        if self.usage is not None and (
+            self.role != "assistant" or self.origin != "model"
+        ):
+            raise ValueError("Token usage is only valid on model assistant messages")
 
     @property
     def starts_human_turn(self) -> bool:
@@ -129,13 +169,11 @@ class ChatMessage:
 
         return self.role == "user" and self.origin == "human"
 
+    @property
+    def starts_context_segment(self) -> bool:
+        """是否可以作为模型工作集的语义起点。"""
 
-@dataclass(frozen=True, slots=True)
-class TokenUsage:
-    """一次模型请求的 provider token 用量。"""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
+        return self.role == "user" and self.origin in {"human", "system"}
 
 
 @dataclass(frozen=True, slots=True)

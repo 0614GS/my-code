@@ -31,13 +31,13 @@ ChatRuntime protocol
 CliChatRuntime ── AgentEngine
 ```
 
-TUI 只通过 `ChatRuntime` 的事件流提交输入、读取安全状态、配置无凭据展示 DTO 并注册权限处理器，不接触 Provider SDK、ToolExecutor、SessionStore 或 AgentEngine。CLI composition root 使用 `DeferredPermissionPrompter` 把核心权限询问转换成 UI DTO；无处理器时仍然 fail closed。
+TUI 只通过 `ChatRuntime` 的事件流提交输入、读取安全状态、配置无凭据展示 DTO 并注册权限处理器，不接触 Provider SDK、ToolExecutor、SessionStore 或 AgentEngine。CLI composition root 使用 `DeferredPermissionPrompter` 把核心权限询问转换成 UI DTO；无处理器时仍然 fail closed。DTO 只携带前端无关的 `ToolUsePresentation` 和 `ToolResultPresentation`，因此以后可以增加普通终端、Web 或测试前端而不修改 Agent。
 
 ## 流式显示与持久化边界
 
 Anthropic 适配器把 SSE 文本 delta 转换为 provider-neutral 事件，Agent 再投影成 TUI 事件。增量文本只进入临时 `AssistantMessage`，并以约 30 FPS 的短批次合并后交给 Rich Markdown 渲染；只有收到 SDK 的完整最终 Message 后，Agent 才验证并持久化 assistant message、读取完整工具参数和执行工具。连接中断时屏幕可保留部分文本用于反馈，但 Transcript 不写入半截响应。
 
-工具开始时创建稳定的 `ToolCallMessage`，结束时用相同 tool ID 原位更新。界面只显示识别参数、结果数量或首行预览；发送给模型和保存到 Transcript 的 tool result 不受 UI 截断影响。
+工具开始时创建稳定的 `ToolCallMessage`，结束时用相同 tool ID 原位更新。显示名、参数摘要、活动描述和结果预览由对应 Tool 在核心层投影；TUI 只选择颜色、布局和展开方式，不识别 `Read`、`Bash` 等具体工具，也不从原始 tool result 猜测摘要。发送给模型的内容和用户展示内容是独立投影，UI 截断不改变模型上下文。
 
 ## 权限输入
 
@@ -51,4 +51,9 @@ Anthropic 适配器把 SSE 文本 delta 转换为 provider-neutral 事件，Agen
 
 `/provider` 打开独立的 ProviderScreen。URL、模型和 Profile ID 可见；API Key 使用 password Input，空值表示保留旧 Key，ProviderView 只暴露 `has_stored_key` 布尔值。保存后由 runtime 持久化并切换 ProviderRouter，TUI 不直接读写配置文件。环境变量覆盖仍优先于已保存值。
 
-`/resume` 打开独立的 ResumeScreen。列表只展示当前项目的其他可恢复会话：首行是第一次用户输入的归一化预览，次行右侧是相对修改时间；支持方向键、Enter 和 Esc。选择后由 runtime 严格加载目标会话并原子切换 session-scoped 状态，再把历史投影为 `HistoryEntry` 返回 TUI 重建消息组件。选择器和 TUI 均不读取 JSONL，也不持有核心消息类型。
+`/resume` 打开独立的 ResumeScreen。列表只展示当前项目的其他可恢复会话：首行是第一次用户输入的归一化预览，次行右侧是相对修改时间；支持方向键、Enter 和 Esc。选择后由 runtime 严格加载目标会话并原子切换 session-scoped 状态，再把历史投影为 `HistoryEntry` 返回 TUI 重建消息组件。工具结果优先复用 Transcript 中的展示快照；旧记录才由 Tool 重新投影。选择器和 TUI 均不读取 JSONL，也不持有核心消息类型。
+
+`/context` 通过 runtime DTO 展示输入 token 估算、输出预留、system/tools/messages
+字符组成、工作集消息数和压缩次数，不会触发上下文变更。`/compact` 在普通 activity
+状态下执行手动摘要并显示新预算。TUI 不导入 ContextPlanner、CompactBoundary 或
+SessionStore；自动 compact 和 reactive compact 同样由 Agent 层决定。

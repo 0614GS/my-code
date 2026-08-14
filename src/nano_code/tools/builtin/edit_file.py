@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from nano_code.messages import JsonObject
+from nano_code.presentation import ToolResultPresentation
 from nano_code.tools.base import (
     Tool,
     ToolContext,
@@ -38,6 +39,24 @@ class EditFileTool(Tool):
     def risk(self) -> ToolRisk:
         return ToolRisk.WRITE
 
+    def get_tool_use_summary(self, tool_input: JsonObject) -> str:
+        return required_string(tool_input, "path")
+
+    def get_activity_description(self, tool_input: JsonObject) -> str:
+        return f"Editing {required_string(tool_input, 'path')}"
+
+    def present_result(
+        self, tool_input: JsonObject, output: ToolOutput
+    ) -> ToolResultPresentation:
+        del tool_input
+        path = output.metadata.get("path")
+        replacements = output.metadata.get("replacements")
+        if isinstance(path, str) and isinstance(replacements, int):
+            return ToolResultPresentation(
+                summary=f"Replaced {replacements} occurrence(s) in {path}"
+            )
+        return super().present_result({}, output)
+
     def validate_input(self, tool_input: JsonObject) -> None:
         required_string(tool_input, "path")
         required_string(tool_input, "old_string")
@@ -57,7 +76,8 @@ class EditFileTool(Tool):
         replacements = self._edit(path, old, new, replace_all)
         display_path = relative_display_path(context.cwd, path)
         return ToolOutput(
-            content=f"Replaced {replacements} occurrence(s) in {display_path}"
+            content=f"Replaced {replacements} occurrence(s) in {display_path}",
+            metadata={"path": display_path, "replacements": replacements},
         )
 
     @staticmethod

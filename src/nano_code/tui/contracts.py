@@ -6,6 +6,7 @@ from typing import Protocol
 
 from nano_code.messages import JsonObject
 from nano_code.permissions import PermissionConfirmation
+from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.sessions import SessionSummary
 
@@ -31,10 +32,25 @@ class RuntimeStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextStatus:
+    estimated_input_tokens: int
+    reserved_output_tokens: int
+    estimated_total_tokens: int
+    message_chars: int
+    system_chars: int
+    tool_schema_chars: int
+    message_limit_chars: int
+    working_message_count: int
+    replacement_count: int
+    compact_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class PermissionRequest:
     tool_name: str
     tool_input: JsonObject
     message: str
+    presentation: ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,16 +61,14 @@ class TextDelta:
 @dataclass(frozen=True, slots=True)
 class ToolStarted:
     tool_use_id: str
-    name: str
-    input: JsonObject
+    presentation: ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)
 class ToolFinished:
     tool_use_id: str
-    name: str
-    content: str
     is_error: bool
+    presentation: ToolResultPresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,15 +90,24 @@ class HistoryAssistantMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class HistorySystemMessage:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class HistoryToolCall:
     tool_use_id: str
-    name: str
-    input: JsonObject
-    result: str
+    use: ToolUsePresentation
+    result: ToolResultPresentation
     is_error: bool
 
 
-type HistoryEntry = HistoryUserMessage | HistoryAssistantMessage | HistoryToolCall
+type HistoryEntry = (
+    HistoryUserMessage
+    | HistoryAssistantMessage
+    | HistorySystemMessage
+    | HistoryToolCall
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +134,14 @@ class ChatRuntime(Protocol):
 
     def status(self) -> RuntimeStatus:
         """返回安全且不含凭据的运行时快照。"""
+        ...
+
+    def context_status(self) -> ContextStatus:
+        """返回不修改上下文的安全预算快照。"""
+        ...
+
+    async def compact(self) -> ContextStatus:
+        """执行一次手动 compact，并返回新的预算快照。"""
         ...
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:

@@ -11,7 +11,15 @@ from nano_code.agent.events import (
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.context import ContextWindow
+from nano_code.context import (
+    ContentReplacement,
+    ContextBudget,
+    ContextOverflow,
+    ContextPlan,
+    ContextPlanner,
+    ConversationSnapshot,
+)
+from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
     ChatMessage,
     TextBlock,
@@ -20,13 +28,13 @@ from nano_code.messages import (
     ToolUseBlock,
 )
 from nano_code.providers import (
+    ModelContextOverflow,
     ModelProvider,
-    ModelRequest,
     ModelResponseCompleted,
     ModelTextDelta,
     StreamingModelProvider,
 )
-from nano_code.sessions import SessionStore
+from nano_code.sessions import CompactBoundary, CompactTrigger, SessionStore
 from nano_code.tools.executor import ToolExecutor
 
 
@@ -38,52 +46,57 @@ class AgentEngine:
         provider: ModelProvider,
         tool_executor: ToolExecutor,
         session_store: SessionStore,
-        context_window: ContextWindow,
-        system_prompt: str,
+        context_planner: ContextPlanner,
+        compaction_service: CompactionService,
         *,
         max_turns: int = 12,
-        max_output_tokens: int = 8192,
     ) -> None:
         if max_turns < 1:
             raise ValueError("max_turns must be positive")
         self.provider = provider
         self.tool_executor = tool_executor
         self.session_store = session_store
-        self.context_window = context_window
-        self.system_prompt = system_prompt
+        self.context_planner = context_planner
+        self.compaction_service = compaction_service
         self.max_turns = max_turns
-        self.max_output_tokens = max_output_tokens
 
         # 会话记录是持久化事实来源。接受新输入前先修复中断的协议轮次，
         # 避免恢复时携带 provider 会拒绝的孤立 tool_use。
-        self.messages = list(session_store.load())
+        loaded = session_store.load()
+        self.messages = list(session_store.load_working_set(loaded))
+        self.content_replacements = _active_replacements(
+            session_store.load_content_replacements(), self.messages
+        )
         self._repair_trailing_tool_uses()
 
     def resume(self, session_store: SessionStore) -> tuple[ChatMessage, ...]:
         """校验并恢复另一会话；失败时保持当前引擎状态不变。"""
 
-        loaded = list(session_store.load())
-        if not loaded:
+        full_history = list(session_store.load())
+        if not full_history:
             raise ValueError(
                 f"Session contains no messages: {session_store.session_id}"
             )
-        repairs = _trailing_tool_repairs(loaded)
+        repairs = _trailing_tool_repairs(full_history)
         if repairs is not None:
             repair_message = ChatMessage(
                 role="user",
                 origin="tool",
                 content=repairs,
-                parent_uuid=loaded[-1].uuid,
-                source_message_uuid=loaded[-1].uuid,
+                parent_uuid=full_history[-1].uuid,
+                source_message_uuid=full_history[-1].uuid,
             )
             # 先完成目标会话的恢复写入，再切换内存状态，确保失败不会留下
             # 一半属于旧会话、一半属于新会话的引擎。
             session_store.append(repair_message)
-            loaded.append(repair_message)
+            full_history.append(repair_message)
 
         self.session_store = session_store
-        self.messages = loaded
-        return tuple(loaded)
+        self.messages = list(session_store.load_working_set(tuple(full_history)))
+        self.content_replacements = _active_replacements(
+            session_store.load_content_replacements(), self.messages
+        )
+        return tuple(full_history)
 
     async def submit(self, prompt: str) -> AgentTurnResult:
         """消费可观察循环并返回终态值。"""
@@ -117,31 +130,42 @@ class AgentEngine:
         final_text = ""
         for turn in range(1, self.max_turns + 1):
             # 保留完整会话记录用于恢复，但每次迭代都独立生成有界 API 视图。
-            projected = self.context_window.project(tuple(self.messages))
-            request = ModelRequest(
-                system_prompt=self.system_prompt,
-                messages=projected,
-                tools=self.tool_executor.registry.definitions,
-                max_output_tokens=self.max_output_tokens,
-            )
-            response = None
-            streamed_text = False
-            if isinstance(self.provider, StreamingModelProvider):
-                async for event in self.provider.stream(request):
-                    if isinstance(event, ModelTextDelta):
-                        streamed_text = True
-                        yield AgentTextDelta(event.text)
-                    elif isinstance(event, ModelResponseCompleted):
-                        response = event.response
-            else:
-                response = await self.provider.complete(request)
+            try:
+                request = self.context_planner.plan(self._context_snapshot())
+            except ContextOverflow:
+                await self.compact("auto")
+                request = self.context_planner.plan(self._context_snapshot())
+            self._commit_context_plan(request)
+            reactive_attempted = False
+            while True:
+                response = None
+                streamed_text = False
+                try:
+                    if isinstance(self.provider, StreamingModelProvider):
+                        async for event in self.provider.stream(request):
+                            if isinstance(event, ModelTextDelta):
+                                streamed_text = True
+                                yield AgentTextDelta(event.text)
+                            elif isinstance(event, ModelResponseCompleted):
+                                response = event.response
+                    else:
+                        response = await self.provider.complete(request)
+                except ModelContextOverflow:
+                    if reactive_attempted:
+                        raise
+                    reactive_attempted = True
+                    await self.compact("reactive")
+                    request = self.context_planner.plan(self._context_snapshot())
+                    self._commit_context_plan(request)
+                    continue
+                break
             if response is None:
                 raise RuntimeError("Provider stream ended without a final response")
             if not streamed_text:
                 for block in response.content:
                     if isinstance(block, TextBlock):
                         yield AgentTextDelta(block.text)
-            input_tokens += response.usage.input_tokens
+            input_tokens += response.usage.total_input_tokens
             output_tokens += response.usage.output_tokens
 
             assistant_message = ChatMessage(
@@ -149,6 +173,7 @@ class AgentEngine:
                 origin="model",
                 content=response.content,
                 parent_uuid=self._last_uuid,
+                usage=response.usage,
             )
 
             # 执行前先存储模型的工具请求，使中断过程可观察，并能在下次恢复时修复。
@@ -175,14 +200,17 @@ class AgentEngine:
                 # MVP 刻意串行执行调用。未来并行执行必须遵守各工具的并发契约
                 # 与上下文变更契约。
                 for call in tool_calls:
-                    yield AgentToolStarted(call.id, call.name, call.input)
-                    tool_result = await self.tool_executor.execute(call)
-                    results.append(tool_result)
+                    use_presentation = self.tool_executor.present_use(call)
+                    yield AgentToolStarted(
+                        call.id, call.name, call.input, use_presentation
+                    )
+                    outcome = await self.tool_executor.execute(call)
+                    results.append(outcome.result)
                     yield AgentToolFinished(
                         call.id,
                         call.name,
-                        tool_result.content,
-                        tool_result.is_error,
+                        outcome.result.is_error,
+                        outcome.presentation,
                     )
             except asyncio.CancelledError:
                 # Anthropic 协议要求每个已发出的 tool_use 都有对应结果，
@@ -193,6 +221,9 @@ class AgentEngine:
                         tool_use_id=call.id,
                         content="Tool execution was cancelled.",
                         is_error=True,
+                        presentation=self.tool_executor.present_error(
+                            call, "Tool execution was cancelled."
+                        ),
                     )
                     for call in tool_calls
                     if call.id not in completed_ids
@@ -203,6 +234,61 @@ class AgentEngine:
 
         raise RuntimeError(
             f"Agent reached max_turns={self.max_turns} after the last tool result"
+        )
+
+    async def compact(self, trigger: CompactTrigger = "manual") -> CompactBoundary:
+        """持久化摘要边界，并把运行时切换到压缩后的工作集。"""
+
+        if not self.messages:
+            raise ValueError("Cannot compact an empty conversation")
+        model_messages, replacements = self.context_planner.compaction_view(
+            self._context_snapshot()
+        )
+        for replacement in replacements:
+            self.session_store.append_content_replacement(replacement)
+            self.content_replacements[replacement.tool_use_id] = replacement
+
+        result = await self.compaction_service.summarize(model_messages)
+        parent_uuid = self.messages[-1].uuid
+        summary_message = ChatMessage(
+            role="user",
+            origin="system",
+            content=(
+                TextBlock(
+                    f"<conversation-summary>\n{result.summary}\n</conversation-summary>"
+                ),
+            ),
+            parent_uuid=parent_uuid,
+        )
+        boundary = CompactBoundary(
+            parent_uuid=parent_uuid,
+            summary_uuid=summary_message.uuid,
+            trigger=trigger,
+            pre_compact_chars=self.context_planner.window.size(tuple(self.messages)),
+        )
+        self.session_store.append_compact_boundary(boundary)
+        self._append(summary_message)
+        # Transcript 保留完整父链；运行时只需 summary 之后的模型工作集。
+        self.messages = [summary_message]
+        self.content_replacements = {}
+        return boundary
+
+    def context_budget(self) -> ContextBudget:
+        """返回当前工作集的只读预算报告。"""
+
+        return self.context_planner.inspect(self._context_snapshot())
+
+    def _commit_context_plan(self, plan: ContextPlan) -> None:
+        """在请求发出前持久化影响模型前缀的所有新决策。"""
+
+        for replacement in plan.new_content_replacements:
+            self.session_store.append_content_replacement(replacement)
+            self.content_replacements[replacement.tool_use_id] = replacement
+
+    def _context_snapshot(self) -> ConversationSnapshot:
+        return ConversationSnapshot(
+            messages=tuple(self.messages),
+            content_replacements=tuple(self.content_replacements.values()),
         )
 
     @property
@@ -261,3 +347,22 @@ def _trailing_tool_repairs(
         )
         for call in calls
     )
+
+
+def _active_replacements(
+    replacements: tuple[ContentReplacement, ...],
+    messages: list[ChatMessage],
+) -> dict[str, ContentReplacement]:
+    """只把当前 compact 工作集仍引用的替换加载进内存。"""
+
+    tool_ids = {
+        block.tool_use_id
+        for message in messages
+        for block in message.content
+        if isinstance(block, ToolResultBlock)
+    }
+    return {
+        replacement.tool_use_id: replacement
+        for replacement in replacements
+        if replacement.tool_use_id in tool_ids
+    }

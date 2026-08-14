@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from nano_code.messages import JsonObject
+from nano_code.presentation import ToolResultPresentation
 from nano_code.tools.base import (
     Tool,
     ToolContext,
@@ -51,6 +52,24 @@ class ReadFileTool(Tool):
     def concurrency_safe(self) -> bool:
         return True
 
+    def get_tool_use_summary(self, tool_input: JsonObject) -> str:
+        return required_string(tool_input, "path")
+
+    def get_activity_description(self, tool_input: JsonObject) -> str:
+        return f"Reading {required_string(tool_input, 'path')}"
+
+    def present_result(
+        self, tool_input: JsonObject, output: ToolOutput
+    ) -> ToolResultPresentation:
+        del tool_input
+        path = output.metadata.get("path")
+        line_count = output.metadata.get("line_count")
+        if isinstance(path, str) and isinstance(line_count, int):
+            return ToolResultPresentation(
+                summary=f"Read {line_count} line(s) from {path}"
+            )
+        return super().present_result({}, output)
+
     def validate_input(self, tool_input: JsonObject) -> None:
         required_string(tool_input, "path")
         optional_int(tool_input, "offset", 1, minimum=1, maximum=10_000_000)
@@ -64,7 +83,11 @@ class ReadFileTool(Tool):
         limit = optional_int(tool_input, "limit", 2000, minimum=1, maximum=5000)
         content = self._read(path, offset, limit)
         display_path = relative_display_path(context.cwd, path)
-        return ToolOutput(content=f"{display_path}\n{content}")
+        line_count = sum(1 for line in content.splitlines() if "\t" in line)
+        return ToolOutput(
+            content=f"{display_path}\n{content}",
+            metadata={"path": display_path, "line_count": line_count},
+        )
 
     @staticmethod
     def _read(path: Path, offset: int, limit: int) -> str:

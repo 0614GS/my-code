@@ -127,4 +127,15 @@ nano-code 将“列出会话”和“恢复会话”分开处理：
 4. `AgentEngine.resume()` 先完成目标会话校验及未闭合工具轮修复，再替换内存状态；失败时保留原会话。
 5. runtime 在同一临界区切换 transcript、消息历史和工具结果目录，TUI 只接收展示 DTO，不接触 `ChatMessage` 或 JSONL。
 
-这对应 Claude Code 的轻量日志列表、选中后完整加载、集中恢复 session-scoped 状态三层设计。nano-code 当前没有 compact、fork 和并行工具兄弟分支，因此活动链算法仍保持更小的范围。
+这对应 Claude Code 的轻量日志列表、选中后完整加载、集中恢复 session-scoped 状态三层设计。nano-code 当前仍没有 fork 和并行工具兄弟分支，因此活动链算法保持更小的范围。
+
+工具结果额外保存可选的 `presentation` 快照。它不是发送给 Anthropic Messages API
+的内容，而是 Tool 在执行当时生成的前端无关摘要；恢复 UI 时优先复用它，从而避免
+升级展示逻辑后历史会话突然改变。该字段在 version 1 中保持可选，旧 JSONL 缺少它
+仍可严格加载，并由对应 Tool 从旧 `content` 生成兼容展示。
+
+JSONL 还可追加两类上下文记录。`content_replacement` 按 tool ID 冻结模型可见的
+microcompact 占位文本，原始工具结果保持不变；`compact_boundary` 记录压缩前父节点、
+summary UUID、触发原因和压缩前字符量。boundary 先于 summary 写入，进程若在两次
+追加之间退出，恢复器会忽略缺少 summary 的不完整边界。历史 UI 读取完整活动父链，
+Agent 工作集则从最后一个有效 summary 开始。

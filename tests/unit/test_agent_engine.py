@@ -11,7 +11,14 @@ from nano_code.agent import (
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.context import ContextWindow
+from nano_code.context import (
+    ContextPlanner,
+    ContextWindow,
+    PromptAssembler,
+    PromptSection,
+    PromptStability,
+)
+from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
     ChatMessage,
     ModelResponse,
@@ -22,6 +29,7 @@ from nano_code.messages import (
 from nano_code.permissions import PermissionMode, PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
 from nano_code.providers import (
+    ModelContextOverflow,
     ModelRequest,
     ModelResponseCompleted,
     ModelTextDelta,
@@ -57,7 +65,26 @@ class FakeProvider:
         yield ModelResponseCompleted(response)
 
 
-def build_engine(tmp_path: Path, provider: FakeProvider) -> AgentEngine:
+class ReactiveOverflowProvider(FakeProvider):
+    def __init__(self, responses: list[ModelResponse]) -> None:
+        super().__init__(responses)
+        self._overflow_pending = True
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        if self._overflow_pending:
+            self._overflow_pending = False
+            self.requests.append(request)
+            raise ModelContextOverflow("test overflow")
+        async for event in super().stream(request):
+            yield event
+
+
+def build_engine(
+    tmp_path: Path,
+    provider: FakeProvider,
+    *,
+    context_chars: int = 160_000,
+) -> AgentEngine:
     store = SessionStore(tmp_path / "state", _SESSION_ID)
     registry = ToolRegistry(builtin_tools())
     executor = ToolExecutor(
@@ -71,9 +98,104 @@ def build_engine(tmp_path: Path, provider: FakeProvider) -> AgentEngine:
         provider=provider,
         tool_executor=executor,
         session_store=store,
-        context_window=ContextWindow(),
-        system_prompt="test",
+        context_planner=ContextPlanner(
+            window=ContextWindow(context_chars),
+            prompt=PromptAssembler(
+                (PromptSection("test", "test", PromptStability.STATIC),)
+            ),
+            tools=registry.definitions,
+            max_output_tokens=8192,
+        ),
+        compaction_service=CompactionService(provider),
     )
+
+
+@pytest.mark.asyncio
+async def test_overflow_compacts_to_persisted_boundary_and_releases_working_set(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path / "state", _SESSION_ID)
+    old_user = ChatMessage(role="user", origin="human", content=(TextBlock("x" * 200),))
+    old_answer = ChatMessage(
+        role="assistant",
+        origin="model",
+        content=(TextBlock("old answer"),),
+        parent_uuid=old_user.uuid,
+    )
+    store.append(old_user)
+    store.append(old_answer)
+    provider = FakeProvider(
+        [
+            ModelResponse(
+                content=(TextBlock("short continuation summary"),),
+                stop_reason="end_turn",
+            ),
+            ModelResponse(content=(TextBlock("continued"),), stop_reason="end_turn"),
+        ]
+    )
+    engine = build_engine(tmp_path, provider, context_chars=150)
+
+    result = await engine.submit("new")
+
+    assert result.text == "continued"
+    assert len(provider.requests) == 2
+    assert provider.requests[0].tools == ()
+    assert "compact coding-agent" in provider.requests[0].system_prompt
+    active_store = engine.session_store
+    boundaries = active_store.load_compact_boundaries()
+    assert len(boundaries) == 1
+    assert boundaries[0].trigger == "auto"
+    full_history = active_store.load()
+    working_set = active_store.load_working_set(full_history)
+    assert len(full_history) == 5
+    assert len(working_set) == 2
+    assert working_set[0].origin == "system"
+    summary_block = working_set[0].content[0]
+    assert isinstance(summary_block, TextBlock)
+    assert "short continuation summary" in summary_block.text
+    assert engine.messages == list(working_set)
+
+    resumed_engine = build_engine(tmp_path, FakeProvider([]), context_chars=150)
+    assert resumed_engine.messages == list(working_set)
+
+
+@pytest.mark.asyncio
+async def test_provider_overflow_triggers_one_reactive_compact(tmp_path: Path) -> None:
+    provider = ReactiveOverflowProvider(
+        [
+            ModelResponse(
+                content=(TextBlock("reactive summary"),), stop_reason="end_turn"
+            ),
+            ModelResponse(content=(TextBlock("recovered"),), stop_reason="end_turn"),
+        ]
+    )
+    engine = build_engine(tmp_path, provider)
+
+    result = await engine.submit("hello")
+
+    assert result.text == "recovered"
+    assert len(provider.requests) == 3
+    assert engine.session_store.load_compact_boundaries()[0].trigger == "reactive"
+
+
+@pytest.mark.asyncio
+async def test_failed_compaction_does_not_write_boundary_or_release_messages(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path / "state", _SESSION_ID)
+    original = ChatMessage(role="user", origin="human", content=(TextBlock("keep me"),))
+    store.append(original)
+    provider = FakeProvider(
+        [ModelResponse(content=(TextBlock("   "),), stop_reason="end_turn")]
+    )
+    engine = build_engine(tmp_path, provider)
+
+    with pytest.raises(RuntimeError, match="no text summary"):
+        await engine.compact()
+
+    assert engine.messages == [original]
+    assert engine.session_store.load_compact_boundaries() == ()
+    assert engine.session_store.load() == (original,)
 
 
 @pytest.mark.asyncio
@@ -106,6 +228,7 @@ async def test_runs_tool_round_and_persists_protocol_pair(tmp_path: Path) -> Non
     assert tool_result.type == "tool_result"
     assert tool_result.tool_use_id == "tool-1"
     assert "hello" in tool_result.content
+    assert tool_result.presentation is None
     assert len(engine.session_store.load()) == 4
 
 

@@ -16,10 +16,9 @@ from textual.widgets import Input, Label, LoadingIndicator, OptionList, Static
 from textual.widgets.option_list import Option
 
 from nano_code import __version__
-from nano_code.messages import JsonObject
 from nano_code.permissions import PermissionConfirmation
+from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.tui.contracts import PermissionRequest, RuntimeStatus
-from nano_code.tui.tool_display import tool_call_summary, tool_result_summary
 
 
 class WelcomePanel(Static):
@@ -97,16 +96,15 @@ class AssistantMessage(Static):
 class ToolCallMessage(Static):
     """工具执行完成时原地更新的一行稳定展示。"""
 
-    def __init__(self, tool_use_id: str, name: str, tool_input: JsonObject) -> None:
+    def __init__(self, tool_use_id: str, presentation: ToolUsePresentation) -> None:
         super().__init__(classes="message tool-call")
         self.tool_use_id = tool_use_id
-        self.tool_name = name
-        self.summary = tool_call_summary(name, tool_input)
-        self.result: str | None = None
+        self.presentation = presentation
+        self.result: ToolResultPresentation | None = None
         self.is_error = False
 
-    def finish(self, content: str, *, is_error: bool) -> None:
-        self.result = tool_result_summary(self.tool_name, content, is_error=is_error)
+    def finish(self, presentation: ToolResultPresentation, *, is_error: bool) -> None:
+        self.result = presentation
         self.is_error = is_error
         self.set_class(is_error, "error")
         self.refresh()
@@ -116,14 +114,17 @@ class ToolCallMessage(Static):
         marker_style = "#ff7b72" if self.is_error else "#d97757"
         line = Text.assemble(
             (f"{marker} ", f"bold {marker_style}"),
-            (self.tool_name, "bold #d9d3cd"),
-            (f"({self.summary})", "#a9a19a"),
+            (self.presentation.display_name, "bold #d9d3cd"),
+            (f"({self.presentation.summary})", "#a9a19a"),
         )
         if self.result is not None:
             line.append("\n  ⎿ ", style="dim")
             line.append(
-                self.result, style="#8f8882" if not self.is_error else "#ff7b72"
+                self.result.summary,
+                style="#8f8882" if not self.is_error else "#ff7b72",
             )
+            if self.result.detail:
+                line.append(f"\n     {self.result.detail}", style="dim")
         return line
 
 
@@ -190,11 +191,8 @@ class PermissionPanel(Vertical):
         if self._future is not None:
             raise RuntimeError("A permission request is already active")
         detail = Text.assemble(
-            (request.tool_name, "bold #d9d3cd"),
-            (
-                f"({tool_call_summary(request.tool_name, request.tool_input)})",
-                "#a9a19a",
-            ),
+            (request.presentation.display_name, "bold #d9d3cd"),
+            (f"({request.presentation.summary})", "#a9a19a"),
             (f"\n{request.message}", "#8f8882"),
         )
         self.query_one("#permission-detail", Static).update(detail)

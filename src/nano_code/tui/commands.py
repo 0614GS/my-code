@@ -10,6 +10,8 @@ from nano_code.tui.contracts import RuntimeStatus
 class SlashCommandAction(StrEnum):
     HELP = "help"
     STATUS = "status"
+    CONTEXT = "context"
+    COMPACT = "compact"
     AUTH = "auth"
     PROVIDER = "provider"
     RESUME = "resume"
@@ -32,6 +34,8 @@ class CommandOutcome:
     clear_screen: bool = False
     open_provider_manager: bool = False
     open_session_picker: bool = False
+    show_context: bool = False
+    compact_context: bool = False
 
 
 class SlashCommandRegistry:
@@ -58,6 +62,16 @@ class SlashCommandRegistry:
                     "status",
                     "Show session and runtime status",
                     SlashCommandAction.STATUS,
+                ),
+                SlashCommand(
+                    "context",
+                    "Show context budget and compaction state",
+                    SlashCommandAction.CONTEXT,
+                ),
+                SlashCommand(
+                    "compact",
+                    "Compact the current conversation",
+                    SlashCommandAction.COMPACT,
                 ),
                 SlashCommand(
                     "auth", "Show authentication status", SlashCommandAction.AUTH
@@ -110,6 +124,10 @@ class SlashCommandRegistry:
                 return CommandOutcome(self.render_help())
             case SlashCommandAction.STATUS:
                 return CommandOutcome(_render_status(status))
+            case SlashCommandAction.CONTEXT:
+                return CommandOutcome(show_context=True)
+            case SlashCommandAction.COMPACT:
+                return CommandOutcome(compact_context=True)
             case SlashCommandAction.AUTH:
                 return CommandOutcome(_render_auth(status))
             case SlashCommandAction.PROVIDER:

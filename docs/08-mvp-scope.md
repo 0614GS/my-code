@@ -14,7 +14,8 @@
 - 无交互环境 fail closed，工作区文件路径防逃逸；
 - 追加式 JSONL Transcript、轻量会话发现、活动父链恢复和运行时原子切换；
 - 与 Claude Code 同形的全局/项目存储布局和三级配置覆盖；
-- 基于完整用户回合的上下文后缀投影，避免切断 tool-use/result 配对；
+- Transcript、内存工作集和 `ContextPlan` 三层上下文边界；
+- assistant usage 持久化、可观察预算、稳定 microcompact 和完整/响应式 compact；
 - 超大工具结果落盘并给模型返回稳定预览。
 - Anthropic SSE 文本流、TUI 增量 Markdown 和工具调用状态展示；
 - 底部内联权限选择及可返回模型的拒绝反馈。
@@ -27,10 +28,10 @@
 | Message | API 投影与 Transcript 分离 | `src/types/message.ts`、`utils/messages.ts` |
 | Tool | schema、风险属性、执行和结果映射分层 | `src/Tool.ts`、`services/tools/toolExecution.ts` |
 | Permission | 工具特定判断与全局裁决分层，deny/ask 优先，headless ask 自动拒绝 | `types/permissions.ts`、`utils/permissions/permissions.ts` |
-| Context | 只按完整 API round 裁剪 | `services/compact/grouping.ts` |
+| Context | 不静默裁剪，使用可重放 microcompact、显式 boundary 和摘要工作集 | `services/compact/`、`utils/messages.ts` |
 
-当前快照的 `groupMessagesByApiRound()` 已使用 assistant response ID 建立比人类回合更细的边界。MVP 尚无摘要注入和断裂修复，因此先采用更保守的人类回合边界：它同样不会切断 API round，但单个长回合超限时会明确失败。实现 compact 时应重新对齐该分组算法。
+请求投影会合并相邻同 role 消息，并严格校验 tool-use/result 配对。超限不会删除旧轮次：先尝试稳定工具结果替换，再生成 compact summary；Provider 返回明确的上下文错误时最多响应式重试一次。
 
 ## 延后实现
 
-流式文本响应已经实现，但工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 不会执行或持久化。并行 safe 工具、LLM 摘要 compact、Hooks、MCP/deferred tools、细粒度权限规则持久化以及 OS 级 sandbox 仍不属于第一阶段。Bash 的只读判定只减少可证明安全命令的确认次数，不等价于进程隔离；在 sandbox 完成前不应把 `bypassPermissions` 作为默认模式。
+流式文本响应已经实现，但工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 不会执行或持久化。并行 safe 工具、cached microcompact、compact 后文件/plan/skill 工作集重建、Hooks、MCP/deferred tools、细粒度权限规则持久化以及 OS 级 sandbox 仍不属于当前阶段。Bash 的只读判定只减少可证明安全命令的确认次数，不等价于进程隔离；在 sandbox 完成前不应把 `bypassPermissions` 作为默认模式。

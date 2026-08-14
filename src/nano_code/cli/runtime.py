@@ -14,7 +14,14 @@ from nano_code.agent import (
 )
 from nano_code.agent.prompt import build_system_prompt
 from nano_code.config import Settings
-from nano_code.context import ContextWindow
+from nano_code.context import (
+    ContextPlanner,
+    ContextWindow,
+    PromptAssembler,
+    PromptSection,
+    PromptStability,
+)
+from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
     ChatMessage,
     JsonObject,
@@ -30,6 +37,7 @@ from nano_code.permissions.prompt import (
     PermissionPrompter,
     TerminalPrompter,
 )
+from nano_code.presentation import generic_tool_use_presentation
 from nano_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
 from nano_code.providers.profiles import ProviderProtocol
 from nano_code.providers.router import ProviderConnection, ProviderRouter
@@ -39,8 +47,10 @@ from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
 from nano_code.tools.result_store import ToolResultStore
 from nano_code.tui import (
+    ContextStatus,
     HistoryAssistantMessage,
     HistoryEntry,
+    HistorySystemMessage,
     HistoryToolCall,
     HistoryUserMessage,
     PermissionHandler,
@@ -97,10 +107,22 @@ def build_engine(
         provider=provider,
         tool_executor=tool_executor,
         session_store=session_store,
-        context_window=ContextWindow(settings.context_chars),
-        system_prompt=build_system_prompt(settings.cwd),
+        context_planner=ContextPlanner(
+            window=ContextWindow(settings.context_chars),
+            prompt=PromptAssembler(
+                (
+                    PromptSection(
+                        key="nano-code.core",
+                        content=build_system_prompt(settings.cwd),
+                        stability=PromptStability.SESSION,
+                    ),
+                )
+            ),
+            tools=registry.definitions,
+            max_output_tokens=settings.max_output_tokens,
+        ),
+        compaction_service=CompactionService(provider),
         max_turns=settings.max_turns,
-        max_output_tokens=settings.max_output_tokens,
     )
 
 
@@ -118,11 +140,18 @@ class DeferredPermissionPrompter:
     ) -> PermissionConfirmation:
         if self._handler is None:
             return PermissionConfirmation(False)
+        try:
+            presentation = tool.present_use(tool_input)
+        except Exception:
+            presentation = generic_tool_use_presentation(
+                tool.definition.name, tool_input
+            )
         return await self._handler(
             PermissionRequest(
                 tool_name=tool.definition.name,
                 tool_input=tool_input,
                 message=decision.message,
+                presentation=presentation,
             )
         )
 
@@ -163,13 +192,12 @@ class CliChatRuntime:
                 if isinstance(event, AgentTextDelta):
                     yield TextDelta(event.text)
                 elif isinstance(event, AgentToolStarted):
-                    yield ToolStarted(event.tool_use_id, event.name, event.input)
+                    yield ToolStarted(event.tool_use_id, event.presentation)
                 elif isinstance(event, AgentToolFinished):
                     yield ToolFinished(
                         event.tool_use_id,
-                        event.name,
-                        event.content,
                         event.is_error,
+                        event.presentation,
                     )
                 elif isinstance(event, AgentTurnCompleted):
                     result = event.result
@@ -193,6 +221,26 @@ class CliChatRuntime:
             credential_source=self.settings.credential_source.value,
             message_count=len(self.engine.messages),
         )
+
+    def context_status(self) -> ContextStatus:
+        budget = self.engine.context_budget()
+        return ContextStatus(
+            estimated_input_tokens=budget.estimated_input_tokens,
+            reserved_output_tokens=budget.reserved_output_tokens,
+            estimated_total_tokens=budget.estimated_total_tokens,
+            message_chars=budget.message_chars,
+            system_chars=budget.system_chars,
+            tool_schema_chars=budget.tool_schema_chars,
+            message_limit_chars=budget.message_limit_chars,
+            working_message_count=len(self.engine.messages),
+            replacement_count=len(self.engine.content_replacements),
+            compact_count=len(self.engine.session_store.load_compact_boundaries()),
+        )
+
+    async def compact(self) -> ContextStatus:
+        async with self._session_lock:
+            await self.engine.compact("manual")
+            return self.context_status()
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:
         self.permission_prompter.set_handler(handler)
@@ -230,43 +278,56 @@ class CliChatRuntime:
             )
             return ResumedSession(
                 status=self.status(),
-                history=_project_history(messages),
+                history=self._project_history(messages),
             )
 
+    def _project_history(
+        self, messages: tuple[ChatMessage, ...]
+    ) -> tuple[HistoryEntry, ...]:
+        """将内部消息投影为只用于 TUI 展示的稳定历史记录。"""
 
-def _project_history(messages: tuple[ChatMessage, ...]) -> tuple[HistoryEntry, ...]:
-    """将内部消息投影为只用于 TUI 展示的稳定历史记录。"""
-
-    results = {
-        block.tool_use_id: block
-        for message in messages
-        for block in message.content
-        if isinstance(block, ToolResultBlock)
-    }
-    history: list[HistoryEntry] = []
-    for message in messages:
-        if message.origin == "human":
-            text = "\n".join(
-                block.text for block in message.content if isinstance(block, TextBlock)
-            )
-            if text:
-                history.append(HistoryUserMessage(text))
-            continue
-        if message.origin != "model":
-            continue
-        for block in message.content:
-            if isinstance(block, TextBlock):
-                if block.text:
-                    history.append(HistoryAssistantMessage(block.text))
-            elif isinstance(block, ToolUseBlock):
-                result = results.get(block.id)
-                history.append(
-                    HistoryToolCall(
-                        tool_use_id=block.id,
-                        name=block.name,
-                        input=to_json_object(block.input),
-                        result="" if result is None else result.content,
-                        is_error=result is None or result.is_error,
-                    )
+        results = {
+            block.tool_use_id: block
+            for message in messages
+            for block in message.content
+            if isinstance(block, ToolResultBlock)
+        }
+        history: list[HistoryEntry] = []
+        for message in messages:
+            if message.origin == "human":
+                text = "\n".join(
+                    block.text
+                    for block in message.content
+                    if isinstance(block, TextBlock)
                 )
-    return tuple(history)
+                if text:
+                    history.append(HistoryUserMessage(text))
+                continue
+            if message.origin == "system":
+                history.append(HistorySystemMessage("Conversation compacted"))
+                continue
+            if message.origin != "model":
+                continue
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    if block.text:
+                        history.append(HistoryAssistantMessage(block.text))
+                elif isinstance(block, ToolUseBlock):
+                    call = ToolUseBlock(
+                        block.id,
+                        block.name,
+                        to_json_object(block.input),
+                    )
+                    result = results.get(block.id)
+                    result_presentation = (
+                        self.engine.tool_executor.present_stored_result(call, result)
+                    )
+                    history.append(
+                        HistoryToolCall(
+                            tool_use_id=block.id,
+                            use=self.engine.tool_executor.present_use(call),
+                            result=result_presentation,
+                            is_error=result is None or result.is_error,
+                        )
+                    )
+        return tuple(history)

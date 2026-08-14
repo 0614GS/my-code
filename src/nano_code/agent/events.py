@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from nano_code.agent.engine_types import AgentTurnResult
 from nano_code.messages import JsonObject
+from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,14 +17,15 @@ class AgentToolStarted:
     tool_use_id: str
     name: str
     input: JsonObject
+    presentation: ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)
 class AgentToolFinished:
     tool_use_id: str
     name: str
-    content: str
     is_error: bool
+    presentation: ToolResultPresentation
 
 
 @dataclass(frozen=True, slots=True)

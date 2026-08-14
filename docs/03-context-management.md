@@ -139,7 +139,39 @@ boundary
 4. 摘要后要重建工作集，不能假设摘要等价于原始操作上下文。
 5. 同一历史前缀的替换决策必须可重放且字节稳定。
 
-## 11. 主要源码入口
+## 11. nano-code 的三层实现
+
+nano-code 现在显式区分三种数据形态：
+
+```text
+SessionStore / JSONL（完整事实）
+  → AgentEngine working set（最后一个 compact summary 之后）
+  → ContextPlanner / ContextPlan（单次模型请求）
+```
+
+`ChatMessage` 保存 UUID、父链、origin、时间戳和 assistant usage；
+`ModelMessage` 只保留 role 与模型可见 content。`ContextPlanner` 从不可变
+`ConversationSnapshot` 生成 prompt sections、稳定工具顺序、规范化消息和
+`ContextBudget`，Agent Loop 不再直接拼装请求。相邻同 role 消息在投影时合并，
+重复、孤立或未闭合的工具调用在进入 Provider 前失败。
+
+预算优先以最近一次 assistant 的真实 input、cache creation/read 与 output usage
+为锚点，只对
+其后新增消息作字符估算；没有 usage 的旧会话才估算完整 system、tool schema 和
+messages。`contextChars` 当前仍是触发 compact 的保守字符阈值，不冒充精确的模型
+token 上限，`/context` 会同时显示字符组成和 token 估算。
+
+microcompact 只处理旧的 Read、Bash、Grep、Glob 结果。原文不改写，JSONL 追加
+`content_replacement`，每次按 tool ID 重放同一占位文本。完整 compact 使用独立、
+无工具的模型请求；摘要成功后依次追加 `compact_boundary` 和 summary message，随后
+仅释放内存中的旧工作集。摘要失败不会产生有效 boundary。Provider 明确报告上下文
+超限时最多执行一次 reactive compact。
+
+当前有意未实现 cached microcompact、preserved tail、文件/plan/skill 工作集重建和
+compact hooks。这些能力以后应接入现有 planner、boundary 和 replay 边界，而不是
+重新进入 Agent Loop 添加工具特定分支。
+
+## 12. 主要源码入口
 
 - `claude-code/src/query.ts`
 - `claude-code/src/utils/{context,tokens,toolResultStorage,messages}.ts`

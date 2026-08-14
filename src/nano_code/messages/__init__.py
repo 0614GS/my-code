@@ -2,8 +2,10 @@
 
 from nano_code.messages.models import (
     ChatMessage,
+    ContentBlock,
     JsonObject,
     JsonValue,
+    MessageRole,
     ModelResponse,
     TextBlock,
     TokenUsage,
@@ -14,9 +16,11 @@ from nano_code.messages.models import (
 
 __all__ = [
     "ChatMessage",
+    "ContentBlock",
     "JsonObject",
     "JsonValue",
     "ModelResponse",
+    "MessageRole",
     "TextBlock",
     "TokenUsage",
     "ToolResultBlock",

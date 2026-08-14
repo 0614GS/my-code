@@ -6,10 +6,12 @@ import pytest
 from textual.widgets import Input, OptionList
 
 from nano_code.permissions import PermissionConfirmation
+from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.providers.profiles import ProviderProtocol
 from nano_code.sessions import SessionSummary
 from nano_code.tui import (
+    ContextStatus,
     HistoryAssistantMessage,
     HistoryUserMessage,
     NanoCodeApp,
@@ -47,6 +49,7 @@ class FakeRuntime:
         self.provider_updates: list[ProviderUpdate] = []
         self.resumed_session_ids: list[str] = []
         self.session_summaries: tuple[SessionSummary, ...] = ()
+        self.compact_calls = 0
 
     async def submit(self, prompt: str) -> TurnResult:
         self.prompts.append(prompt)
@@ -56,17 +59,21 @@ class FakeRuntime:
         self.prompts.append(prompt)
         if self.request_permission:
             assert self.permission_handler is not None
-            yield ToolStarted("tool-1", "Write", {"path": "a.txt"})
+            use = ToolUsePresentation("Write", "a.txt", "Writing a.txt")
+            yield ToolStarted("tool-1", use)
             self.permission_result = await self.permission_handler(
-                PermissionRequest("Write", {"path": "a.txt"}, "Allow this write?")
+                PermissionRequest("Write", {"path": "a.txt"}, "Allow this write?", use)
             )
             yield ToolFinished(
                 "tool-1",
-                "Write",
-                "Wrote 4 bytes to a.txt"
-                if self.permission_result.allowed
-                else "Permission denied",
                 not self.permission_result.allowed,
+                ToolResultPresentation(
+                    summary=(
+                        "Wrote 4 bytes to a.txt"
+                        if self.permission_result.allowed
+                        else "Permission denied"
+                    )
+                ),
             )
         yield TextDelta("**model ")
         yield TextDelta("response**")
@@ -83,6 +90,24 @@ class FakeRuntime:
             credential_source="stored",
             message_count=len(self.prompts) * 2,
         )
+
+    def context_status(self) -> ContextStatus:
+        return ContextStatus(
+            estimated_input_tokens=100,
+            reserved_output_tokens=20,
+            estimated_total_tokens=120,
+            message_chars=200,
+            system_chars=50,
+            tool_schema_chars=75,
+            message_limit_chars=1000,
+            working_message_count=2,
+            replacement_count=1,
+            compact_count=self.compact_calls,
+        )
+
+    async def compact(self) -> ContextStatus:
+        self.compact_calls += 1
+        return self.context_status()
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:
         self.permission_handler = handler
@@ -141,6 +166,17 @@ def test_resume_slash_command_requests_session_picker() -> None:
     assert outcome.open_session_picker is True
 
 
+def test_context_and_compact_commands_request_runtime_actions() -> None:
+    registry = SlashCommandRegistry.default()
+    status = FakeRuntime().status()
+
+    context = registry.dispatch("/context", status=status)
+    compact = registry.dispatch("/compact", status=status)
+
+    assert context is not None and context.show_context is True
+    assert compact is not None and compact.compact_context is True
+
+
 @pytest.mark.asyncio
 async def test_tui_dispatches_selected_slash_command_locally() -> None:
     runtime = FakeRuntime()
@@ -160,6 +196,27 @@ async def test_tui_dispatches_selected_slash_command_locally() -> None:
 
         assert runtime.prompts == []
         assert len(app.query(SystemMessage)) == 1
+
+
+@pytest.mark.asyncio
+async def test_context_and_compact_render_runtime_diagnostics() -> None:
+    runtime = FakeRuntime()
+    app = NanoCodeApp(runtime)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        app.query_one("#prompt", Input).value = "/context"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "Estimated input: 100 tokens" in str(
+            app.query(SystemMessage)[-1].render()
+        )
+
+        app.query_one("#prompt", Input).value = "/compact"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert runtime.compact_calls == 1
+        assert "Conversation compacted" in str(app.query(SystemMessage)[-1].render())
 
 
 @pytest.mark.asyncio
@@ -244,7 +301,12 @@ async def test_permission_request_uses_inline_panel_and_returns_explicit_choice(
     async with app.run_test(size=(100, 32)) as pilot:
         permission = asyncio.create_task(
             app._ask_permission(
-                PermissionRequest("Write", {"path": "a.txt"}, "Allow this write?")
+                PermissionRequest(
+                    "Write",
+                    {"path": "a.txt"},
+                    "Allow this write?",
+                    ToolUsePresentation("Write", "a.txt", "Writing a.txt"),
+                )
             )
         )
         await pilot.pause()
@@ -264,7 +326,12 @@ async def test_permission_feedback_is_returned_to_runtime() -> None:
     async with app.run_test(size=(100, 32)) as pilot:
         permission = asyncio.create_task(
             app._ask_permission(
-                PermissionRequest("Bash", {"command": "git push"}, "Run command?")
+                PermissionRequest(
+                    "Bash",
+                    {"command": "git push"},
+                    "Run command?",
+                    ToolUsePresentation("Bash", "git push", "Running command"),
+                )
             )
         )
         await pilot.pause()
@@ -294,6 +361,6 @@ async def test_tui_streams_markdown_and_updates_tool_result_in_place() -> None:
 
         tool = app.query_one(ToolCallMessage)
         assistant = app.query_one(AssistantMessage)
-        assert tool.result == "Wrote 4 bytes to a.txt"
+        assert tool.result == ToolResultPresentation(summary="Wrote 4 bytes to a.txt")
         assert assistant.source == "**model response**"
         assert runtime.permission_result == PermissionConfirmation(True)

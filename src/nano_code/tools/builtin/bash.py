@@ -11,6 +11,7 @@ from nano_code.permissions import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
+from nano_code.presentation import ToolResultPresentation, compact_text
 from nano_code.tools.base import (
     Tool,
     ToolContext,
@@ -55,6 +56,25 @@ class BashTool(Tool):
     @property
     def risk(self) -> ToolRisk:
         return ToolRisk.EXECUTE
+
+    def get_tool_use_summary(self, tool_input: JsonObject) -> str:
+        return compact_text(required_string(tool_input, "command"))
+
+    def get_activity_description(self, tool_input: JsonObject) -> str:
+        return f"Running {self.get_tool_use_summary(tool_input)}"
+
+    def present_result(
+        self, tool_input: JsonObject, output: ToolOutput
+    ) -> ToolResultPresentation:
+        del tool_input
+        exit_code = output.metadata.get("exit_code")
+        preview = output.metadata.get("preview")
+        if isinstance(exit_code, int) and isinstance(preview, str):
+            return ToolResultPresentation(
+                summary=compact_text(f"exit_code: {exit_code} · {preview}"),
+                truncated=bool(output.metadata.get("has_more_output")),
+            )
+        return super().present_result({}, output)
 
     def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
         command = required_string(tool_input, "command")
@@ -214,9 +234,15 @@ class BashTool(Tool):
         text = output.decode("utf-8", errors="replace")
         if not text:
             text = "<no output>"
+        output_lines = [line.strip() for line in text.splitlines() if line.strip()]
         return ToolOutput(
             content=f"exit_code: {exit_code}\n{text}",
             is_error=exit_code != 0,
+            metadata={
+                "exit_code": exit_code,
+                "preview": output_lines[0] if output_lines else "no output",
+                "has_more_output": len(output_lines) > 1,
+            },
         )
 
     @staticmethod

@@ -9,10 +9,15 @@ from nano_code.cli.runtime import (
     build_engine,
 )
 from nano_code.config import NanoCodePaths, Settings
-from nano_code.messages import ChatMessage, TextBlock
+from nano_code.messages import ChatMessage, TextBlock, ToolResultBlock, ToolUseBlock
 from nano_code.permissions import PermissionMode
+from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.sessions import SessionStore
-from nano_code.tui import HistoryAssistantMessage, HistoryUserMessage
+from nano_code.tui import (
+    HistoryAssistantMessage,
+    HistoryToolCall,
+    HistoryUserMessage,
+)
 
 _CURRENT_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 _TARGET_SESSION_ID = "22222222-2222-2222-2222-222222222222"
@@ -81,4 +86,59 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     )
     assert runtime.engine.tool_executor.result_store.root == (
         runtime.settings.paths.tool_results_dir(_TARGET_SESSION_ID)
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    store = SessionStore(
+        runtime.settings.paths.project_state_dir,
+        _TARGET_SESSION_ID,
+    )
+    user = ChatMessage(
+        role="user",
+        origin="human",
+        content=(TextBlock("read it"),),
+    )
+    assistant = ChatMessage(
+        role="assistant",
+        origin="model",
+        content=(ToolUseBlock("read-1", "Read", {"path": "old.py"}),),
+        parent_uuid=user.uuid,
+    )
+    snapshot = ToolResultPresentation(
+        summary="Historical read summary",
+        detail="Stored at execution time",
+    )
+    result = ChatMessage(
+        role="user",
+        origin="tool",
+        content=(
+            ToolResultBlock(
+                "read-1",
+                "model-visible historical content",
+                presentation=snapshot,
+            ),
+        ),
+        parent_uuid=assistant.uuid,
+        source_message_uuid=assistant.uuid,
+    )
+    for message in (user, assistant, result):
+        store.append(message)
+
+    resumed = await runtime.resume_session(_TARGET_SESSION_ID)
+
+    assert resumed.history == (
+        HistoryUserMessage("read it"),
+        HistoryToolCall(
+            tool_use_id="read-1",
+            use=ToolUsePresentation(
+                display_name="Read",
+                summary="old.py",
+                activity="Reading old.py",
+            ),
+            result=snapshot,
+            is_error=False,
+        ),
     )

@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator, Iterable
 from typing import cast
 
-from anthropic import AsyncAnthropic
+from anthropic import AsyncAnthropic, BadRequestError
 from anthropic.types import (
     Message,
     MessageParam,
@@ -13,8 +13,8 @@ from anthropic.types import (
     ToolUseBlockParam,
 )
 
+from nano_code.context import ModelMessage
 from nano_code.messages import (
-    ChatMessage,
     ModelResponse,
     TextBlock,
     TokenUsage,
@@ -23,6 +23,7 @@ from nano_code.messages import (
 )
 from nano_code.messages.models import to_json_object
 from nano_code.providers.base import ModelRequest
+from nano_code.providers.errors import ModelContextOverflow
 from nano_code.providers.events import (
     ModelResponseCompleted,
     ModelStreamEvent,
@@ -49,13 +50,17 @@ class AnthropicProvider:
         await self.client.close()
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
-        response = await self.client.messages.create(
-            model=self.model,
-            max_tokens=request.max_output_tokens,
-            system=request.system_prompt,
-            messages=self._messages(request.messages),
-            tools=self._tools(request),
-        )
+        try:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=request.max_output_tokens,
+                system=request.system_prompt,
+                messages=self._messages(request.messages),
+                tools=self._tools(request),
+            )
+        except BadRequestError as error:
+            _raise_context_overflow(error)
+            raise
         if not isinstance(response, Message):
             raise TypeError("Expected a non-streaming Anthropic Message")
         return self._response(response)
@@ -63,26 +68,29 @@ class AnthropicProvider:
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """流式输出展示文本，随后发出经 SDK 校验的最终快照。"""
 
-        async with self.client.messages.stream(
-            model=self.model,
-            max_tokens=request.max_output_tokens,
-            system=request.system_prompt,
-            messages=self._messages(request.messages),
-            tools=self._tools(request),
-        ) as stream:
-            async for event in stream:
-                if (
-                    event.type == "content_block_delta"
-                    and event.delta.type == "text_delta"
-                ):
-                    yield ModelTextDelta(event.delta.text)
-            final_message = cast(Message, await stream.get_final_message())
+        try:
+            async with self.client.messages.stream(
+                model=self.model,
+                max_tokens=request.max_output_tokens,
+                system=request.system_prompt,
+                messages=self._messages(request.messages),
+                tools=self._tools(request),
+            ) as stream:
+                async for event in stream:
+                    if (
+                        event.type == "content_block_delta"
+                        and event.delta.type == "text_delta"
+                    ):
+                        yield ModelTextDelta(event.delta.text)
+                final_message = cast(Message, await stream.get_final_message())
+        except BadRequestError as error:
+            _raise_context_overflow(error)
+            raise
         yield ModelResponseCompleted(self._response(final_message))
 
     @staticmethod
-    def _messages(messages: Iterable[ChatMessage]) -> list[MessageParam]:
-        # 这里是 API 投影边界。内部 UUID、时间戳和来源信息只留在会话记录中，
-        # 绝不发送给 provider。
+    def _messages(messages: Iterable[ModelMessage]) -> list[MessageParam]:
+        # 上下文层已经移除了 Transcript 元数据并校验协议；适配器只转换 SDK 类型。
         projected: list[MessageParam] = []
         for message in messages:
             content: list[
@@ -151,5 +159,24 @@ class AnthropicProvider:
             usage=TokenUsage(
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                cache_creation_input_tokens=(
+                    response.usage.cache_creation_input_tokens or 0
+                ),
+                cache_read_input_tokens=response.usage.cache_read_input_tokens or 0,
             ),
         )
+
+
+def _raise_context_overflow(error: BadRequestError) -> None:
+    """只把明确的上下文长度错误映射为可恢复核心错误。"""
+
+    message = str(error).casefold()
+    markers = (
+        "prompt is too long",
+        "context window",
+        "context_length_exceeded",
+        "too many tokens",
+        "input length",
+    )
+    if any(marker in message for marker in markers):
+        raise ModelContextOverflow("Model context window exceeded") from error

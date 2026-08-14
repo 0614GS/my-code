@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from nano_code.messages import JsonObject
+from nano_code.presentation import ToolResultPresentation, compact_text
 from nano_code.tools.base import (
     Tool,
     ToolContext,
@@ -59,6 +60,29 @@ class GrepTool(Tool):
     def concurrency_safe(self) -> bool:
         return True
 
+    def get_tool_use_summary(self, tool_input: JsonObject) -> str:
+        pattern = required_string(tool_input, "pattern")
+        path = optional_string(tool_input, "path", ".")
+        return pattern if path == "." else f"{pattern} · {path}"
+
+    def get_activity_description(self, tool_input: JsonObject) -> str:
+        return f"Searching for {required_string(tool_input, 'pattern')}"
+
+    def present_result(
+        self, tool_input: JsonObject, output: ToolOutput
+    ) -> ToolResultPresentation:
+        del tool_input
+        count = output.metadata.get("match_count")
+        first = output.metadata.get("first_match")
+        if count == 0:
+            return ToolResultPresentation(summary="no matches")
+        if isinstance(count, int) and isinstance(first, str):
+            return ToolResultPresentation(
+                summary=f"{count} match(es) · {compact_text(first)}",
+                truncated=count > 1,
+            )
+        return super().present_result({}, output)
+
     def validate_input(self, tool_input: JsonObject) -> None:
         pattern = required_string(tool_input, "pattern")
         self._compile(pattern, optional_bool(tool_input, "case_sensitive", True))
@@ -79,7 +103,13 @@ class GrepTool(Tool):
         file_glob = optional_string(tool_input, "glob", "*")
         limit = optional_int(tool_input, "max_results", 100, minimum=1, maximum=500)
         matches = self._grep(context.cwd, base, regex, file_glob, limit)
-        return ToolOutput(content="\n".join(matches) if matches else "<no matches>")
+        return ToolOutput(
+            content="\n".join(matches) if matches else "<no matches>",
+            metadata={
+                "match_count": len(matches),
+                "first_match": matches[0] if matches else None,
+            },
+        )
 
     @staticmethod
     def _compile(pattern: str, case_sensitive: bool) -> re.Pattern[str]:
