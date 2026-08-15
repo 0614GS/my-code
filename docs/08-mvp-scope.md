@@ -6,7 +6,7 @@
 
 ## 本阶段包含
 
-- 带 slash 命令选择、项目会话 `/resume` 的轻量 TUI，以及 `nano-code -p "..."` 单次运行；
+- 带 slash 命令选择、项目会话 `/resume` 的轻量 TUI，以及 `nanocode -p "..."` 单次运行；
 - 用户级 API Key 登录、状态、退出及环境变量临时覆盖；
 - 与 Agent Loop 解耦的模型 Provider 协议及 Anthropic 适配器；
 - Read、Glob、Grep、Write、Edit、Bash 六个内置工具；

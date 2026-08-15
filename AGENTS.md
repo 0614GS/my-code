@@ -9,8 +9,8 @@
 使用 uv 和 Python 3.12 或更高版本：
 
 - `uv sync`：创建或更新项目的 `.venv`。
-- `uv run nano-code --help`：检查 CLI 入口。
-- `uv run nano-code -p "prompt"`：执行一次非交互式对话。
+- `uv run nanocode --help`：检查 CLI 入口。
+- `uv run nanocode -p "prompt"`：执行一次非交互式对话。
 - `uv run ruff format .`：格式化 Python 文件。
 - `uv run ruff check .`：执行代码规范检查。
 - `uv run mypy src`：执行静态类型检查。

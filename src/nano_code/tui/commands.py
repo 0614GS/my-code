@@ -181,8 +181,8 @@ def _render_status(status: RuntimeStatus) -> str:
 
 def _render_auth(status: RuntimeStatus) -> str:
     if status.credential_source == "none":
-        return "Not logged in. Run `nano-code auth login` outside the TUI."
+        return "Not logged in. Run `nanocode auth login` outside the TUI."
     return (
         f"Authentication source: {status.credential_source}. "
-        "Use `nano-code auth status` for details."
+        "Use `nanocode auth status` for details."
     )

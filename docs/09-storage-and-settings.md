@@ -22,7 +22,7 @@ nano-code 采用 Claude Code 的分离方式：运行状态归入用户目录，
 
 项目目录名由规范化后的绝对路径生成：非 ASCII 字母或数字替换为 `-`；超长名称保留 200 字符前缀并追加稳定哈希。`NANO_CODE_CONFIG_DIR` 可替换整个 `~/.nano-code` 根目录。
 
-路径解析和读取配置没有写副作用。Transcript 在第一条消息持久化时创建；`tool-results/` 仅在结果超过内联上限时创建。因此，仅运行 `nano-code --help` 或解析一次配置不会生成空目录。
+路径解析和读取配置没有写副作用。Transcript 在第一条消息持久化时创建；`tool-results/` 仅在结果超过内联上限时创建。因此，仅运行 `nanocode --help` 或解析一次配置不会生成空目录。
 
 真正启动聊天或认证命令时会幂等初始化用户目录：创建缺失的 `settings.json`、`providers.json`、空 `.credentials.json` 和 `projects/`，但不会创建仓库内的 `.nano-code/`。已有文件只校验、不覆盖；损坏的 JSON 会导致启动失败。旧版顶层 `baseUrl` 和 `anthropicApiKey` 会复制或迁移到默认 `anthropic` Provider。
 
@@ -80,7 +80,7 @@ Provider 的模型和 Base URL 归入 `providers.json`；项目配置仍可用 `
 
 配置和凭据写入接口使用同目录临时文件加原子替换；凭据目录为 `0700`，文件为 `0600`。持久化 Key 只传给 Provider，Bash 子进程会剥离 API 认证变量。会话 ID 必须是标准 UUID，避免路径穿越并保持恢复接口稳定。
 
-凭据生命周期由 `nano-code auth login/status/logout` 管理，命令默认作用于活动 Profile，也可通过 `nano-code --provider <id> auth ...` 指定。当前故意不实现 OAuth 和跨平台系统密钥环；未来可在 `CredentialStore` 后增加 Keychain、Secret Service 或 Credential Manager 适配器，而不改变 CLI 和 runtime。
+凭据生命周期由 `nanocode auth login/status/logout` 管理，命令默认作用于活动 Profile，也可通过 `nanocode --provider <id> auth ...` 指定。当前故意不实现 OAuth 和跨平台系统密钥环；未来可在 `CredentialStore` 后增加 Keychain、Secret Service 或 Credential Manager 适配器，而不改变 CLI 和 runtime。
 
 ## 与参考实现的差异
 

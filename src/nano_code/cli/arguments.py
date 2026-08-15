@@ -48,7 +48,7 @@ type ParsedOptions = CliOptions | AuthOptions
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="nano-code",
+        prog="nanocode",
         description="A small coding agent for learning Claude Code's architecture.",
     )
     parser.add_argument("-p", "--print", dest="prompt", help="run one prompt and exit")

@@ -2,20 +2,34 @@
 
 一个用于学习 coding agent 架构的 Python 项目。它借鉴 Claude Code 的上下文、工具和权限边界，但以小型、可测试的 Python 实现表达，而不是完整复刻产品功能。
 
+## 安装并启动
+
+使用 uv 安装命令行工具后，可以直接用 `nanocode` 启动：
+
+```bash
+uv tool install --editable .
+nanocode --help
+nanocode
+nanocode -p "解释这个项目的结构"
+```
+
+`--editable` 适合本地开发；如果只想安装当前版本，可去掉该选项。卸载命令为
+`uv tool uninstall nano-code`。
+
 ## 开发
 
 ```bash
 uv sync --group dev
-uv run nano-code --help
-uv run nano-code
-uv run nano-code -p "解释这个项目的结构"
+uv run nanocode --help
+uv run nanocode
+uv run nanocode -p "解释这个项目的结构"
 ```
 
 首次使用可把 API Key 保存到用户级凭据文件：
 
 ```bash
-nano-code auth login
-nano-code auth status
+nanocode auth login
+nanocode auth status
 ```
 
 Key 按 Provider 保存在 `~/.nano-code/.credentials.json`，文件权限为 `0600`，不会进入项目配置或 Transcript。Anthropic-compatible 服务定义在用户级 `providers.json`；底层仍使用 Anthropic SDK。
@@ -36,8 +50,8 @@ Key 按 Provider 保存在 `~/.nano-code/.credentials.json`，文件权限为 `0
 ```
 
 ```bash
-nano-code --provider company-gateway
-nano-code --provider company-gateway auth login
+nanocode --provider company-gateway
+nanocode --provider company-gateway auth login
 ```
 
 `NANO_CODE_PROVIDER`、`NANO_CODE_API_KEY`、`ANTHROPIC_BASE_URL`、`--provider` 和 `--base-url` 可用于临时覆盖。

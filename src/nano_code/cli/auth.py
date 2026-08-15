@@ -29,7 +29,7 @@ def run_auth_command(
             if credential.source is CredentialSource.NONE:
                 print(
                     f"Provider {options.provider_id!r} has no API key. "
-                    "Run `nano-code auth login`."
+                    "Run `nanocode auth login`."
                 )
                 return 1
             print(

@@ -4,7 +4,13 @@ from pathlib import Path
 import pytest
 
 from nano_code.auth import CredentialSource, CredentialStore
-from nano_code.cli.arguments import AuthAction, AuthOptions, parse_args, parse_cli
+from nano_code.cli.arguments import (
+    AuthAction,
+    AuthOptions,
+    build_parser,
+    parse_args,
+    parse_cli,
+)
 from nano_code.permissions import PermissionMode
 
 
@@ -17,6 +23,10 @@ def clear_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "NANO_CODE_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def test_parser_uses_installed_command_name() -> None:
+    assert build_parser().prog == "nanocode"
 
 
 def test_cli_resolves_file_environment_and_flag_precedence(
