@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from nano_code.agent import ToolDefinition
 from nano_code.messages import JsonObject, ToolUseBlock
 from nano_code.permissions import (
     PermissionConfirmation,
@@ -16,7 +17,6 @@ from nano_code.presentation import ToolResultPresentation
 from nano_code.tools import (
     Tool,
     ToolContext,
-    ToolDefinition,
     ToolRegistry,
     ToolRisk,
 )

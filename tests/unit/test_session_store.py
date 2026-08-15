@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.context import ContentReplacement
+from nano_code.agent import CompactBoundary, ContentReplacement
 from nano_code.messages import (
     ChatMessage,
     SystemContextBlock,
@@ -14,7 +14,7 @@ from nano_code.messages import (
     ToolResultBlock,
 )
 from nano_code.presentation import ToolResultPresentation
-from nano_code.sessions import CompactBoundary, SessionCatalog, SessionStore
+from nano_code.sessions import SessionCatalog, SessionStore
 
 _SESSION_ID = "12345678-1234-1234-1234-123456789abc"
 

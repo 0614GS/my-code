@@ -1,12 +1,15 @@
 import pytest
 
-from nano_code.context import (
+from nano_code.agent import (
     ContextOverflow,
+    ConversationSnapshot,
+    ModelMessage,
+    ToolDefinition,
+)
+from nano_code.context import (
     ContextPlanner,
     ContextWindow,
-    ConversationSnapshot,
     MicrocompactPolicy,
-    ModelMessage,
     ModelMessageProjector,
 )
 from nano_code.messages import (
@@ -17,7 +20,6 @@ from nano_code.messages import (
     ToolUseBlock,
 )
 from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
-from nano_code.tools.base import ToolDefinition
 
 
 def user(text: str, parent: str | None = None) -> ChatMessage:

@@ -2,9 +2,10 @@
 
 from pathlib import Path
 
+from nano_code.agent.contracts.tool import ToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.presentation import ToolResultPresentation
-from nano_code.tools.base import Tool, ToolContext, ToolDefinition, ToolOutput, ToolRisk
+from nano_code.tools.base import Tool, ToolContext, ToolOutput, ToolRisk
 from nano_code.tools.paths import relative_display_path, resolve_workspace_path
 from nano_code.tools.validation import required_string
 

@@ -93,6 +93,17 @@ Schema 错误、语义错误、未知工具、权限拒绝和执行异常都会�
 
 实现位于 `claude-code/src/services/tools/toolOrchestration.ts`。
 
+## 7.1 nano-code 的 ToolInteractionPort
+
+nano-code 将一次 assistant 工具轮次收敛到 `ToolInteractionPort`。它只暴露串行
+`run_round()`、调用展示和历史结果展示；`ToolRoundExecutor` 是现有 `ToolExecutor`
+的适配器，负责按顺序执行、生成开始/结束事件、绑定 session-scoped 结果目录，并在
+取消时为尚未完成的每个 `tool_use` 补上错误 `tool_result`。AgentEngine 只消费这些
+事件并决定是否进入下一模型轮，不识别具体工具或权限实现。
+
+本轮仍保持 MVP 的串行策略。未来并行调度、并发安全工具和取消屏障应只修改
+`ToolRoundExecutor`，不扩张 AgentEngine 的职责。
+
 ## 7. 流式调度
 
 `StreamingToolExecutor` 在模型还在输出时接收完整 tool block。每个调用经历：

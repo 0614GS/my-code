@@ -6,7 +6,7 @@ from nano_code.auth import CredentialSource
 from nano_code.cli.runtime import (
     CliChatRuntime,
     DeferredPermissionPrompter,
-    build_engine,
+    build_runtime,
 )
 from nano_code.config import NanoCodePaths, Settings
 from nano_code.messages import ChatMessage, TextBlock, ToolResultBlock, ToolUseBlock
@@ -43,12 +43,11 @@ def _build_runtime(tmp_path: Path) -> CliChatRuntime:
         credential_source=CredentialSource.NONE,
     )
     prompter = DeferredPermissionPrompter()
-    engine = build_engine(
+    return build_runtime(
         settings,
         _CURRENT_SESSION_ID,
         permission_prompter=prompter,
     )
-    return CliChatRuntime(engine, settings, prompter)
 
 
 @pytest.mark.asyncio
@@ -84,9 +83,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
         HistoryUserMessage("historical question"),
         HistoryAssistantMessage("historical answer"),
     )
-    assert runtime.engine.tool_executor.result_store.root == (
-        runtime.settings.paths.tool_results_dir(_TARGET_SESSION_ID)
-    )
+    assert runtime.status().session_id == _TARGET_SESSION_ID
 
 
 @pytest.mark.asyncio

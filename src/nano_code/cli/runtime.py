@@ -1,31 +1,31 @@
-"""CLI 依赖的组合根。"""
+"""CLI composition root 与 TUI 使用的 application adapter。"""
 
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
+from pathlib import Path
+from typing import Protocol
 from uuid import uuid4
 
 from nano_code.agent import (
     AgentEngine,
+    AgentHistoryAssistantMessage,
+    AgentHistorySystemMessage,
+    AgentHistoryToolCall,
+    AgentHistoryUserMessage,
+    AgentInboundPort,
+    AgentSessionView,
     AgentTextDelta,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
+    ConversationState,
 )
-from nano_code.config import Settings
-from nano_code.context import (
-    ContextPlanner,
-    ContextWindow,
-)
+from nano_code.agent.ports import SessionRepository
+from nano_code.config import NanoCodePaths, Settings
+from nano_code.context import CompactionCoordinator, ContextPlanner, ContextWindow
 from nano_code.context.compaction import CompactionService
-from nano_code.messages import (
-    ChatMessage,
-    JsonObject,
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
-    to_json_object,
-)
+from nano_code.messages import JsonObject
 from nano_code.permissions import PermissionConfirmation, PermissionPolicy
 from nano_code.permissions.models import PermissionDecision
 from nano_code.permissions.prompt import (
@@ -42,6 +42,7 @@ from nano_code.sessions import SessionCatalog, SessionStore, SessionSummary
 from nano_code.tools import Tool, ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
+from nano_code.tools.interaction import ToolRoundExecutor
 from nano_code.tools.result_store import ToolResultStore
 from nano_code.tui import (
     ContextStatus,
@@ -63,16 +64,60 @@ from nano_code.tui import (
 )
 
 
-def build_engine(
+class ProviderControlPort(Protocol):
+    """CliChatRuntime 使用的 provider profile/application 能力。"""
+
+    def providers(self, active_provider_id: str) -> tuple[ProviderView, ...]: ...
+
+    async def configure(self, update: ProviderUpdate) -> ProviderConnection: ...
+
+
+class SessionSourcePort(Protocol):
+    """CliChatRuntime 使用的 session catalog 与 repository factory。"""
+
+    def list(self, *, exclude_session_id: str) -> tuple[SessionSummary, ...]: ...
+
+    def open(self, session_id: str) -> SessionRepository: ...
+
+
+class CliProviderController:
+    """把 profile 持久化和活跃 ProviderRouter 切换组合成 CLI adapter。"""
+
+    def __init__(self, paths: NanoCodePaths, router: ProviderRouter) -> None:
+        self._manager = ProviderManager(paths)
+        self._router = router
+
+    def providers(self, active_provider_id: str) -> tuple[ProviderView, ...]:
+        return self._manager.list(active_provider_id)
+
+    async def configure(self, update: ProviderUpdate) -> ProviderConnection:
+        connection = self._manager.configure(update)
+        await self._router.switch(connection)
+        return connection
+
+
+class ProjectSessionSource:
+    """当前项目的 session 发现与 JSONL repository factory。"""
+
+    def __init__(self, project_state_dir: Path) -> None:
+        self._project_state_dir = project_state_dir
+        self._catalog = SessionCatalog(project_state_dir)
+
+    def list(self, *, exclude_session_id: str) -> tuple[SessionSummary, ...]:
+        return self._catalog.list(exclude_session_id=exclude_session_id)
+
+    def open(self, session_id: str) -> SessionRepository:
+        return SessionStore(self._project_state_dir, session_id)
+
+
+def _build_engine_parts(
     settings: Settings,
     session_id: str | None = None,
     *,
     permission_prompter: PermissionPrompter | None = None,
-) -> AgentEngine:
-    """围绕可测试核心装配具体 CLI 适配器。"""
+) -> tuple[AgentEngine, ProviderRouter]:
+    """只在 composition root 装配具体 SDK、文件系统和内置工具。"""
 
-    # 将具体 SDK、终端和文件系统实现集中在组合根中。
-    # 智能体循环本身只依赖协议，可使用 fake 实现测试。
     actual_session_id = session_id or str(uuid4())
     session_store = SessionStore(settings.paths.project_state_dir, actual_session_id)
     registry = ToolRegistry(builtin_tools())
@@ -100,19 +145,43 @@ def build_engine(
             credential_source=settings.credential_source,
         )
     )
-    return AgentEngine(
-        provider=provider,
-        tool_executor=tool_executor,
-        session_store=session_store,
-        context_planner=ContextPlanner(
-            window=ContextWindow(settings.context_chars),
-            prompt=default_prompt_registry(settings.cwd),
-            tools=registry.definitions,
-            max_output_tokens=settings.max_output_tokens,
+    context = ContextPlanner(
+        window=ContextWindow(settings.context_chars),
+        prompt=default_prompt_registry(settings.cwd),
+        tools=registry.definitions,
+        max_output_tokens=settings.max_output_tokens,
+    )
+    tool_interaction = ToolRoundExecutor(
+        tool_executor,
+        result_store_factory=lambda active_id: ToolResultStore(
+            settings.paths.tool_results_dir(active_id)
         ),
-        compaction_service=CompactionService(provider),
+    )
+    engine = AgentEngine(
+        model_turn=provider,
+        tool_interaction=tool_interaction,
+        conversation=ConversationState(session_store),
+        context=context,
+        compactor=CompactionCoordinator(context, CompactionService(provider)),
         max_turns=settings.max_turns,
     )
+    return engine, provider
+
+
+def build_engine(
+    settings: Settings,
+    session_id: str | None = None,
+    *,
+    permission_prompter: PermissionPrompter | None = None,
+) -> AgentEngine:
+    """围绕可测试核心装配 Agent inbound port 的具体实现。"""
+
+    engine, _ = _build_engine_parts(
+        settings,
+        session_id,
+        permission_prompter=permission_prompter,
+    )
+    return engine
 
 
 class DeferredPermissionPrompter:
@@ -145,29 +214,51 @@ class DeferredPermissionPrompter:
         )
 
 
+def build_runtime(
+    settings: Settings,
+    session_id: str | None = None,
+    *,
+    permission_prompter: DeferredPermissionPrompter | None = None,
+) -> "CliChatRuntime":
+    """构造 TUI 使用的 application adapter。"""
+
+    prompter = permission_prompter or DeferredPermissionPrompter()
+    engine, provider = _build_engine_parts(
+        settings,
+        session_id,
+        permission_prompter=prompter,
+    )
+    return CliChatRuntime(
+        agent=engine,
+        settings=settings,
+        permission_prompter=prompter,
+        provider_control=CliProviderController(settings.paths, provider),
+        session_source=ProjectSessionSource(settings.paths.project_state_dir),
+    )
+
+
 class CliChatRuntime:
-    """将具体引擎适配为 TUI 消费的窄接口。"""
+    """将 Agent inbound port 适配为 TUI 消费的窄接口。"""
 
     def __init__(
         self,
-        engine: AgentEngine,
+        agent: AgentInboundPort,
         settings: Settings,
         permission_prompter: DeferredPermissionPrompter,
+        provider_control: ProviderControlPort,
+        session_source: SessionSourcePort,
     ) -> None:
-        self.engine = engine
+        self.agent = agent
         self.settings = settings
         self.permission_prompter = permission_prompter
-        if not isinstance(engine.provider, ProviderRouter):
-            raise TypeError("CliChatRuntime requires a ProviderRouter")
-        self.provider_router = engine.provider
-        self.provider_manager = ProviderManager(settings.paths)
-        self.session_catalog = SessionCatalog(settings.paths.project_state_dir)
+        self.provider_control = provider_control
+        self.session_source = session_source
         # 会话切换与模型轮次共享同一把锁，避免 JSONL 归属在流式响应途中改变。
         self._session_lock = asyncio.Lock()
 
     async def submit(self, prompt: str) -> TurnResult:
         async with self._session_lock:
-            result = await self.engine.submit(prompt)
+            result = await self.agent.submit(prompt)
         return TurnResult(
             text=result.text,
             turns=result.turns,
@@ -177,7 +268,7 @@ class CliChatRuntime:
 
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
         async with self._session_lock:
-            async for event in self.engine.submit_stream(prompt):
+            async for event in self.agent.stream(prompt):
                 if isinstance(event, AgentTextDelta):
                     yield TextDelta(event.text)
                 elif isinstance(event, AgentToolStarted):
@@ -201,18 +292,19 @@ class CliChatRuntime:
 
     def status(self) -> RuntimeStatus:
         return RuntimeStatus(
-            session_id=self.engine.session_store.session_id,
+            session_id=self.agent.session_id,
             cwd=str(self.settings.cwd),
             provider_id=self.settings.provider_id,
             base_url=self.settings.base_url,
             model=self.settings.model,
             permission_mode=self.settings.permission_mode.value,
             credential_source=self.settings.credential_source.value,
-            message_count=len(self.engine.messages),
+            message_count=self.agent.message_count,
         )
 
     def context_status(self) -> ContextStatus:
-        budget = self.engine.context_budget()
+        state = self.agent.context_state()
+        budget = state.budget
         return ContextStatus(
             estimated_input_tokens=budget.estimated_input_tokens,
             reserved_output_tokens=budget.reserved_output_tokens,
@@ -221,25 +313,24 @@ class CliChatRuntime:
             system_chars=budget.system_chars,
             tool_schema_chars=budget.tool_schema_chars,
             message_limit_chars=budget.message_limit_chars,
-            working_message_count=len(self.engine.messages),
-            replacement_count=len(self.engine.content_replacements),
-            compact_count=len(self.engine.session_store.load_compact_boundaries()),
+            working_message_count=state.working_message_count,
+            replacement_count=state.replacement_count,
+            compact_count=state.compact_count,
         )
 
     async def compact(self) -> ContextStatus:
         async with self._session_lock:
-            await self.engine.compact("manual")
+            await self.agent.compact("manual")
             return self.context_status()
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:
         self.permission_prompter.set_handler(handler)
 
     def providers(self) -> tuple[ProviderView, ...]:
-        return self.provider_manager.list(self.settings.provider_id)
+        return self.provider_control.providers(self.settings.provider_id)
 
     async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
-        connection = self.provider_manager.configure(update)
-        await self.provider_router.switch(connection)
+        connection = await self.provider_control.configure(update)
         self.settings = replace(
             self.settings,
             provider_id=connection.id,
@@ -251,72 +342,48 @@ class CliChatRuntime:
         return self.status()
 
     async def list_sessions(self) -> tuple[SessionSummary, ...]:
-        return self.session_catalog.list(
-            exclude_session_id=self.engine.session_store.session_id,
-        )
+        return self.session_source.list(exclude_session_id=self.agent.session_id)
 
     async def resume_session(self, session_id: str) -> ResumedSession:
         async with self._session_lock:
-            if session_id == self.engine.session_store.session_id:
+            if session_id == self.agent.session_id:
                 raise ValueError("Session is already active")
-            store = SessionStore(self.settings.paths.project_state_dir, session_id)
-            messages = self.engine.resume(store)
-            # 工具结果目录与 transcript 必须作为同一个 session-scoped 状态切换。
-            self.engine.tool_executor.result_store = ToolResultStore(
-                self.settings.paths.tool_results_dir(session_id)
-            )
+            view = self.agent.resume(self.session_source.open(session_id))
             return ResumedSession(
-                status=self.status(),
-                history=self._project_history(messages),
+                status=self._status_for(view),
+                history=self._project_history(view),
             )
 
-    def _project_history(
-        self, messages: tuple[ChatMessage, ...]
-    ) -> tuple[HistoryEntry, ...]:
-        """将内部消息投影为只用于 TUI 展示的稳定历史记录。"""
+    def _status_for(self, view: AgentSessionView) -> RuntimeStatus:
+        state = view.state
+        return RuntimeStatus(
+            session_id=state.session_id,
+            cwd=str(self.settings.cwd),
+            provider_id=self.settings.provider_id,
+            base_url=self.settings.base_url,
+            model=self.settings.model,
+            permission_mode=self.settings.permission_mode.value,
+            credential_source=self.settings.credential_source.value,
+            message_count=state.message_count,
+        )
 
-        results = {
-            block.tool_use_id: block
-            for message in messages
-            for block in message.content
-            if isinstance(block, ToolResultBlock)
-        }
+    @staticmethod
+    def _project_history(view: AgentSessionView) -> tuple[HistoryEntry, ...]:
         history: list[HistoryEntry] = []
-        for message in messages:
-            if message.origin == "human":
-                text = "\n".join(
-                    block.text
-                    for block in message.content
-                    if isinstance(block, TextBlock)
+        for entry in view.history:
+            if isinstance(entry, AgentHistoryUserMessage):
+                history.append(HistoryUserMessage(entry.text))
+            elif isinstance(entry, AgentHistoryAssistantMessage):
+                history.append(HistoryAssistantMessage(entry.text))
+            elif isinstance(entry, AgentHistorySystemMessage):
+                history.append(HistorySystemMessage(entry.text))
+            elif isinstance(entry, AgentHistoryToolCall):
+                history.append(
+                    HistoryToolCall(
+                        tool_use_id=entry.tool_use_id,
+                        use=entry.use,
+                        result=entry.result,
+                        is_error=entry.is_error,
+                    )
                 )
-                if text:
-                    history.append(HistoryUserMessage(text))
-                continue
-            if message.origin == "system":
-                history.append(HistorySystemMessage("Conversation compacted"))
-                continue
-            if message.origin != "model":
-                continue
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    if block.text:
-                        history.append(HistoryAssistantMessage(block.text))
-                elif isinstance(block, ToolUseBlock):
-                    call = ToolUseBlock(
-                        block.id,
-                        block.name,
-                        to_json_object(block.input),
-                    )
-                    result = results.get(block.id)
-                    result_presentation = (
-                        self.engine.tool_executor.present_stored_result(call, result)
-                    )
-                    history.append(
-                        HistoryToolCall(
-                            tool_use_id=block.id,
-                            use=self.engine.tool_executor.present_use(call),
-                            result=result_presentation,
-                            is_error=result is None or result.is_error,
-                        )
-                    )
         return tuple(history)

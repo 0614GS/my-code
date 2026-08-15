@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from nano_code.context.models import ModelContentBlock, ModelMessage
+from nano_code.agent.contracts.model import ModelContentBlock, ModelMessage
 from nano_code.messages import (
     ChatMessage,
     ContentBlock,

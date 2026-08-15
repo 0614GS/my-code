@@ -2,7 +2,8 @@
 
 from collections.abc import Iterable
 
-from nano_code.tools.base import Tool, ToolDefinition
+from nano_code.agent.contracts.tool import ToolDefinition
+from nano_code.tools.base import Tool
 
 
 class ToolRegistry:

@@ -8,6 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from nano_code.agent.contracts.tool import ToolDefinition as _ToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.presentation import (
     ToolResultPresentation,
@@ -28,15 +29,6 @@ class ToolRisk(StrEnum):
     READ = "read"
     WRITE = "write"
     EXECUTE = "execute"
-
-
-@dataclass(frozen=True, slots=True)
-class ToolDefinition:
-    """暴露给模型的稳定工具标识和 schema。"""
-
-    name: str
-    description: str
-    input_schema: JsonObject
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +62,7 @@ class Tool(ABC):
 
     @property
     @abstractmethod
-    def definition(self) -> ToolDefinition:
+    def definition(self) -> _ToolDefinition:
         """返回模型可见的定义。"""
 
     @property

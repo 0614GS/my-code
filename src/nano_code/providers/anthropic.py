@@ -13,7 +13,14 @@ from anthropic.types import (
     ToolUseBlockParam,
 )
 
-from nano_code.context import ModelMessage
+from nano_code.agent.contracts.context import ContextPlan
+from nano_code.agent.contracts.model import (
+    ModelMessage,
+    ModelResponseCompleted,
+    ModelStreamEvent,
+    ModelTextDelta,
+)
+from nano_code.agent.errors import ModelContextOverflow
 from nano_code.messages import (
     ModelResponse,
     TextBlock,
@@ -23,13 +30,7 @@ from nano_code.messages import (
 )
 from nano_code.messages.models import to_json_object
 from nano_code.prompts import PromptStability, SystemPrompt
-from nano_code.providers.base import ModelRequest, ProviderCapabilities
-from nano_code.providers.errors import ModelContextOverflow
-from nano_code.providers.events import (
-    ModelResponseCompleted,
-    ModelStreamEvent,
-    ModelTextDelta,
-)
+from nano_code.providers.base import ProviderCapabilities
 
 
 class AnthropicProvider:
@@ -68,7 +69,7 @@ class AnthropicProvider:
 
         await self.client.close()
 
-    async def complete(self, request: ModelRequest) -> ModelResponse:
+    async def complete(self, request: ContextPlan) -> ModelResponse:
         try:
             response = await self.client.messages.create(
                 model=self.model,
@@ -84,7 +85,7 @@ class AnthropicProvider:
             raise TypeError("Expected a non-streaming Anthropic Message")
         return self._response(response)
 
-    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+    async def stream(self, request: ContextPlan) -> AsyncIterator[ModelStreamEvent]:
         """流式输出展示文本，随后发出经 SDK 校验的最终快照。"""
 
         try:
@@ -147,7 +148,7 @@ class AnthropicProvider:
         return _system_prompt_param(prompt, self.capabilities)
 
     @staticmethod
-    def _tools(request: ModelRequest) -> list[ToolParam]:
+    def _tools(request: ContextPlan) -> list[ToolParam]:
         # 定义按注册表顺序到达。此处不要重新排序，因为工具 schema 顺序会影响
         # provider 可缓存的提示前缀。
         tools: list[ToolParam] = []

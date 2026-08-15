@@ -1,5 +1,6 @@
 """上下文消息预算的最终防线。"""
 
+from nano_code.agent.errors import ContextOverflow as _ContextOverflow
 from nano_code.messages import (
     ChatMessage,
     SystemContextBlock,
@@ -25,7 +26,7 @@ class ContextWindow:
             raise ValueError("Conversation has no context segment boundary")
         current_chars = self.size(messages)
         if current_chars > self.max_chars:
-            raise ContextOverflow(current_chars, self.max_chars)
+            raise _ContextOverflow(current_chars, self.max_chars)
         return messages
 
     @staticmethod
@@ -46,12 +47,4 @@ class ContextWindow:
         return size
 
 
-class ContextOverflow(RuntimeError):
-    """microcompact 后的工作集仍无法放入请求预算。"""
-
-    def __init__(self, current_chars: int, max_chars: int) -> None:
-        self.current_chars = current_chars
-        self.max_chars = max_chars
-        super().__init__(
-            f"Context requires {current_chars} chars but the limit is {max_chars}"
-        )
+__all__ = ["ContextWindow"]

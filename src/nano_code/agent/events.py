@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.agent.engine_types import AgentTurnResult
+from nano_code.agent.contracts.inbound import AgentTurnResult
 from nano_code.messages import JsonObject
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 

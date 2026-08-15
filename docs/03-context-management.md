@@ -178,3 +178,15 @@ compact hooks。这些能力以后应接入现有 planner、boundary 和 replay 
 - `claude-code/src/services/compact/{autoCompact,microCompact,compact,grouping}.ts`
 - `claude-code/src/utils/queryContext.ts`
 - `claude-code/src/services/api/claude.ts`
+
+## 13. ContextPort 与压缩协调
+
+AgentEngine 只依赖 `ContextPort` 的四个能力：`plan`、`inspect`、
+`compaction_view` 和 `measure`。默认实现仍是 `ContextPlanner`；窗口、提示词、工具
+schema、microcompact 和 API 投影都留在 context 包内，Engine 不读取其 `window` 等
+内部对象。
+
+完整 compact 由 `CompactionCoordinator` 实现 `Compactor`：它请求
+`ContextPort.compaction_view()`，调用 `CompactionService` 生成摘要，构造 summary
+message 和 boundary，并返回尚未写入的 `CompactionOutcome`。实际追加和工作集替换
+由 `ConversationState` 完成，避免摘要生成失败或持久化失败时提前改变会话内存。

@@ -93,3 +93,29 @@
 - `claude-code/src/services/api/claude.ts`
 - `claude-code/src/services/tools/StreamingToolExecutor.ts`
 - `claude-code/src/services/tools/toolOrchestration.ts`
+
+## 8. nano-code 的用户回合边界
+
+当前 Python 实现把 `AgentEngine` 收敛为用户回合状态机：写入用户消息、请求
+`ContextPort`、通过 `ModelTurnPort` 消费统一模型事件、判断工具轮是否继续、处理
+overflow/取消/max-turns，并发出 `AgentEvent`。会话事实由 `ConversationState` 管理，
+工具轮由 `ToolInteractionPort` 管理，摘要由 `Compactor` 管理。
+
+六边形边界由 `nano_code.agent` 统一声明：CLI/TUI 通过 `AgentInboundPort` 调用
+`submit`、`stream`、状态查询、compact 和 resume；Engine 通过下列 outbound port
+请求外部能力。`context`、`providers`、`sessions` 和 `tools` 只实现这些协议或重新
+导出它们，不拥有 Agent-facing port 的第二份声明。
+
+| Port | 方向 | 适配器职责 |
+| --- | --- | --- |
+| `AgentInboundPort` | inbound | 驱动用户回合、状态查询、compact 与 session resume |
+| `ContextPort` | outbound | 从 `ConversationSnapshot` 生成请求、预算和 compact 视图 |
+| `ModelTurnPort` / `ModelCompletionPort` | outbound | 流式用户回合与完整摘要模型请求 |
+| `ToolInteractionPort` | outbound | 串行工具轮、取消闭合和展示 DTO |
+| `SessionRepository` | outbound | 提供快照及追加式 Transcript 写入 |
+| `Compactor` | outbound | 返回尚未持久化的摘要提交计划 |
+
+`ProviderRouter` 在 provider 边界把完整响应 fallback 适配为最终事件，所以 Engine
+不再判断某个具体 provider 是否支持流式。`ModelCompletionPort.complete()` 仍保留给
+`CompactionService` 这种独立摘要请求使用。CLI/TUI 只消费 runtime DTO 和 Engine 的
+只读状态访问器，不读取 SessionStore、ToolExecutor 或 ContextPlanner 的内部字段。

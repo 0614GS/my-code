@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from nano_code.context.models import ContentReplacement
+from nano_code.agent.contracts.session import ContentReplacement
 from nano_code.messages import (
     ChatMessage,
     SystemContextBlock,

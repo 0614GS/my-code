@@ -2,16 +2,16 @@
 
 import json
 
+from nano_code.agent.contracts.context import (
+    ContextBudget,
+    ContextPlan,
+)
+from nano_code.agent.contracts.model import ModelMessage
+from nano_code.agent.contracts.session import ContentReplacement, ConversationSnapshot
+from nano_code.agent.contracts.tool import ToolDefinition
 from nano_code.context.microcompact import (
     MicrocompactPolicy,
     apply_content_replacements,
-)
-from nano_code.context.models import (
-    ContentReplacement,
-    ContextBudget,
-    ContextPlan,
-    ConversationSnapshot,
-    ModelMessage,
 )
 from nano_code.context.projection import ModelMessageProjector
 from nano_code.context.window import ContextWindow
@@ -23,7 +23,6 @@ from nano_code.messages import (
     ToolUseBlock,
 )
 from nano_code.prompts import PromptRegistry, SystemPrompt
-from nano_code.tools.base import ToolDefinition
 
 
 class ContextPlanner:
@@ -82,6 +81,11 @@ class ContextPlanner:
 
         effective_messages, proposed = self._effective_messages(snapshot)
         return self.projector.project(effective_messages), proposed
+
+    def measure(self, messages: tuple[ChatMessage, ...]) -> int:
+        """返回上下文窗口使用的保守字符测量。"""
+
+        return self.window.size(messages)
 
     def _effective_messages(
         self, snapshot: ConversationSnapshot, *, propose: bool = True

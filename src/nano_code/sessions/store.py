@@ -6,15 +6,21 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
-from nano_code.context.models import ContentReplacement
+from nano_code.agent.contracts.session import (
+    CompactBoundary,
+    CompactTrigger,
+    ContentReplacement,
+    SessionSnapshot,
+)
 from nano_code.messages import ChatMessage
 from nano_code.messages.codec import message_from_json, message_to_json
-from nano_code.sessions.models import CompactBoundary, CompactTrigger
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+
+__all__ = ["SessionStore", "is_session_id"]
 
 
 def is_session_id(value: str) -> bool:
@@ -41,12 +47,14 @@ class SessionStore:
         self._known_ids: set[str] | None = None
         self._content_replacements: dict[str, ContentReplacement] | None = None
         self._compact_boundaries: dict[str, CompactBoundary] | None = None
+        self._pending_compact_boundaries: dict[str, CompactBoundary] | None = None
 
     def load(self) -> tuple[ChatMessage, ...]:
         if not self.path.exists():
             self._known_ids = set()
             self._content_replacements = {}
             self._compact_boundaries = {}
+            self._pending_compact_boundaries = {}
             return ()
 
         messages: list[ChatMessage] = []
@@ -113,7 +121,19 @@ class SessionStore:
             if boundary.parent_uuid in active_ids
             and boundary.summary_uuid in active_ids
         }
+        self._pending_compact_boundaries = {}
         return active
+
+    def snapshot(self) -> SessionSnapshot:
+        """一次读取会话历史、工作集和结构化上下文记录。"""
+
+        history = self.load()
+        return SessionSnapshot(
+            history=history,
+            working_set=self.load_working_set(history),
+            content_replacements=self.load_content_replacements(),
+            compact_boundaries=self.load_compact_boundaries(),
+        )
 
     def load_content_replacements(self) -> tuple[ContentReplacement, ...]:
         """返回按首次写入顺序排列的稳定模型投影决策。"""
@@ -164,6 +184,7 @@ class SessionStore:
 
         # 仅在持久化写入成功后更新内存索引。
         self._known_ids.add(message.uuid)
+        self._activate_pending_boundaries()
 
     def append_content_replacement(self, replacement: ContentReplacement) -> None:
         """幂等追加一次工具结果替换，不改写原始消息。"""
@@ -197,9 +218,13 @@ class SessionStore:
             self.load()
         assert self._known_ids is not None
         assert self._compact_boundaries is not None
+        if self._pending_compact_boundaries is None:
+            self._pending_compact_boundaries = {}
         if boundary.parent_uuid not in self._known_ids:
             raise ValueError(f"Unknown compact parent UUID: {boundary.parent_uuid}")
         previous = self._compact_boundaries.get(boundary.id)
+        if previous is None:
+            previous = self._pending_compact_boundaries.get(boundary.id)
         if previous is not None:
             if previous != boundary:
                 raise ValueError(f"Conflicting compact boundary: {boundary.id}")
@@ -215,7 +240,23 @@ class SessionStore:
                 "pre_compact_chars": boundary.pre_compact_chars,
             }
         )
-        self._compact_boundaries[boundary.id] = boundary
+        self._pending_compact_boundaries[boundary.id] = boundary
+        self._activate_pending_boundaries()
+
+    def _activate_pending_boundaries(self) -> None:
+        """仅在 boundary 指向的 summary 已成功写入后使其生效。"""
+
+        if self._known_ids is None or self._compact_boundaries is None:
+            return
+        if self._pending_compact_boundaries is None:
+            return
+        for boundary_id, boundary in tuple(self._pending_compact_boundaries.items()):
+            if (
+                boundary.parent_uuid in self._known_ids
+                and boundary.summary_uuid in self._known_ids
+            ):
+                self._compact_boundaries[boundary_id] = boundary
+                del self._pending_compact_boundaries[boundary_id]
 
     def _append_record(self, record: object) -> None:
         """以仅属主可访问权限追加一个自包含 JSONL 记录。"""

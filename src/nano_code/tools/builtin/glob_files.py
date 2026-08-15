@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
+from nano_code.agent.contracts.tool import ToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.presentation import ToolResultPresentation, compact_text
 from nano_code.tools.base import (
     Tool,
     ToolContext,
-    ToolDefinition,
     ToolInputError,
     ToolOutput,
     ToolRisk,

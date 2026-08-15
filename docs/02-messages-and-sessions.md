@@ -139,3 +139,22 @@ microcompact 占位文本，原始工具结果保持不变；`compact_boundary` 
 summary UUID、触发原因和压缩前字符量。boundary 先于 summary 写入，进程若在两次
 追加之间退出，恢复器会忽略缺少 summary 的不完整边界。历史 UI 读取完整活动父链，
 Agent 工作集则从最后一个有效 summary 开始。
+
+## 11. 会话状态边界
+
+`SessionRepository` 是 JSONL 实现向 Agent 暴露的最小接口：一次
+`snapshot()` 返回活动历史、compact 后工作集、内容替换和有效 boundary；追加消息、
+替换和 boundary 仍是三个显式操作。`SessionStore` 负责解析和校验记录，
+`ConversationState` 负责工作集、持久化优先追加、未闭合 tool-use 修复和会话切换。
+
+`ConversationState` 的所有状态变更都遵循“先写 repository，再刷新内存”。恢复目标
+会话时，目标日志的完整解析和修复完成前不会替换当前 repository；compact 提交则固定
+按以下顺序执行：
+
+```text
+content replacements → compact boundary → summary message → working set replacement
+```
+
+因此摘要模型失败不会写入 boundary，后续 JSONL 写入失败也不会让当前进程先使用一份
+未持久化的工作集。`SessionSnapshot` 是这个边界的唯一读取入口，AgentEngine 不再
+组合多个 JSONL 读取步骤。

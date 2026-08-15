@@ -28,7 +28,7 @@ ResumeScreen (modal)
         ↕
 ChatRuntime protocol
         ↕
-CliChatRuntime ── AgentEngine
+CliChatRuntime ── AgentInboundPort ← AgentEngine
 ```
 
 TUI 只通过 `ChatRuntime` 的事件流提交输入、读取安全状态、配置无凭据展示 DTO 并注册权限处理器，不接触 Provider SDK、ToolExecutor、SessionStore 或 AgentEngine。CLI composition root 使用 `DeferredPermissionPrompter` 把核心权限询问转换成 UI DTO；无处理器时仍然 fail closed。DTO 只携带前端无关的 `ToolUsePresentation` 和 `ToolResultPresentation`，因此以后可以增加普通终端、Web 或测试前端而不修改 Agent。
@@ -57,3 +57,8 @@ Anthropic 适配器把 SSE 文本 delta 转换为 provider-neutral 事件，Agen
 字符组成、工作集消息数和压缩次数，不会触发上下文变更。`/compact` 在普通 activity
 状态下执行手动摘要并显示新预算。TUI 不导入 ContextPlanner、CompactBoundary 或
 SessionStore；自动 compact 和 reactive compact 同样由 Agent 层决定。
+
+CLI 组合根把 `ProviderRouter`、`ToolRoundExecutor`、`ConversationState`、
+`ContextPlanner` 和 `CompactionCoordinator` 装配进 `AgentEngine`。`CliChatRuntime`
+只通过 Engine 的 `session_id`、工作集/计数访问器、预算方法和工具展示端口生成 DTO；
+session 切换时由 runtime 在同一锁内切换 Transcript 与工具结果目录。

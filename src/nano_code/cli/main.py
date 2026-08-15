@@ -9,9 +9,9 @@ from nano_code.agent import AgentEngine
 from nano_code.cli.arguments import AuthOptions, CliOptions, parse_cli
 from nano_code.cli.auth import run_auth_command
 from nano_code.cli.runtime import (
-    CliChatRuntime,
     DeferredPermissionPrompter,
     build_engine,
+    build_runtime,
 )
 from nano_code.config import bootstrap_user_storage
 from nano_code.tui import NanoCodeTui
@@ -28,12 +28,11 @@ async def run(options: CliOptions) -> int:
         await _submit(engine, options.prompt)
         return 0
     permission_prompter = DeferredPermissionPrompter()
-    engine = build_engine(
+    runtime = build_runtime(
         options.settings,
         options.session_id,
         permission_prompter=permission_prompter,
     )
-    runtime = CliChatRuntime(engine, options.settings, permission_prompter)
     await NanoCodeTui(runtime).run()
     return 0
 

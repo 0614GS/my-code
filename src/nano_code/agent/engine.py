@@ -1,9 +1,31 @@
-"""单个持久化用户轮次中的模型 → 工具 → 模型循环。"""
+"""单个持久化用户轮次中的模型 → 工具 → 模型状态机。"""
 
 import asyncio
 from collections.abc import AsyncIterator
 
-from nano_code.agent.engine_types import AgentTurnResult
+from nano_code.agent.contracts.context import ContextPlan
+from nano_code.agent.contracts.inbound import (
+    AgentContextState,
+    AgentHistoryAssistantMessage,
+    AgentHistorySystemMessage,
+    AgentHistoryToolCall,
+    AgentHistoryUserMessage,
+    AgentSessionView,
+    AgentState,
+    AgentTurnResult,
+)
+from nano_code.agent.contracts.model import (
+    ModelResponseCompleted,
+    ModelTextDelta,
+)
+from nano_code.agent.contracts.session import CompactBoundary, CompactTrigger
+from nano_code.agent.contracts.tool import (
+    ToolCallFinished,
+    ToolCallStarted,
+    ToolRoundCompleted,
+)
+from nano_code.agent.conversation import ConversationState
+from nano_code.agent.errors import ContextOverflow, ModelContextOverflow
 from nano_code.agent.events import (
     AgentEvent,
     AgentTextDelta,
@@ -11,108 +33,93 @@ from nano_code.agent.events import (
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.context import (
-    ContentReplacement,
-    ContextBudget,
-    ContextOverflow,
-    ContextPlan,
-    ContextPlanner,
-    ConversationSnapshot,
+from nano_code.agent.ports import (
+    AgentInboundPort,
+    Compactor,
+    ContextPort,
+    ModelTurnPort,
+    SessionRepository,
+    ToolInteractionPort,
 )
-from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
     ChatMessage,
-    SystemContextBlock,
+    ModelResponse,
     TextBlock,
     TokenUsage,
     ToolResultBlock,
     ToolUseBlock,
 )
-from nano_code.providers import (
-    ModelContextOverflow,
-    ModelProvider,
-    ModelResponseCompleted,
-    ModelTextDelta,
-    StreamingModelProvider,
-)
-from nano_code.sessions import CompactBoundary, CompactTrigger, SessionStore
-from nano_code.tools.executor import ToolExecutor
 
 
-class AgentEngine:
-    """管理消息历史，并将 provider、工具和持久化职责委托给对应组件。"""
+class AgentEngine(AgentInboundPort):
+    """只编排用户回合；会话、上下文、模型和工具均通过核心 ports 接入。"""
 
     def __init__(
         self,
-        provider: ModelProvider,
-        tool_executor: ToolExecutor,
-        session_store: SessionStore,
-        context_planner: ContextPlanner,
-        compaction_service: CompactionService,
         *,
+        model_turn: ModelTurnPort,
+        tool_interaction: ToolInteractionPort,
+        conversation: ConversationState,
+        context: ContextPort,
+        compactor: Compactor,
         max_turns: int = 12,
     ) -> None:
         if max_turns < 1:
             raise ValueError("max_turns must be positive")
-        self.provider = provider
-        self.tool_executor = tool_executor
-        self.session_store = session_store
-        self.context_planner = context_planner
-        self.compaction_service = compaction_service
+        self._model_turn = model_turn
+        self._tool_interaction = tool_interaction
+        self._conversation = conversation
+        self._context = context
+        self._compactor = compactor
         self.max_turns = max_turns
+        self._tool_interaction.bind_session(self._conversation.session_id)
 
-        # 会话记录是持久化事实来源。接受新输入前先修复中断的协议轮次，
-        # 避免恢复时携带 provider 会拒绝的孤立 tool_use。
-        loaded = session_store.load()
-        self.messages = list(session_store.load_working_set(loaded))
-        self.content_replacements = _active_replacements(
-            session_store.load_content_replacements(), self.messages
-        )
-        self._repair_trailing_tool_uses()
+    @property
+    def session_id(self) -> str:
+        """当前 Agent 与之绑定的 session。"""
 
-    def resume(self, session_store: SessionStore) -> tuple[ChatMessage, ...]:
-        """校验并恢复另一会话；失败时保持当前引擎状态不变。"""
+        return self._conversation.session_id
 
-        full_history = list(session_store.load())
-        if not full_history:
-            raise ValueError(
-                f"Session contains no messages: {session_store.session_id}"
-            )
-        repairs = _trailing_tool_repairs(full_history)
-        if repairs is not None:
-            repair_message = ChatMessage(
-                role="user",
-                origin="tool",
-                content=repairs,
-                parent_uuid=full_history[-1].uuid,
-                source_message_uuid=full_history[-1].uuid,
-            )
-            # 先完成目标会话的恢复写入，再切换内存状态，确保失败不会留下
-            # 一半属于旧会话、一半属于新会话的引擎。
-            session_store.append(repair_message)
-            full_history.append(repair_message)
+    @property
+    def working_messages(self) -> tuple[ChatMessage, ...]:
+        """当前模型工作集的只读快照。"""
 
-        self.session_store = session_store
-        self.messages = list(session_store.load_working_set(tuple(full_history)))
-        self.content_replacements = _active_replacements(
-            session_store.load_content_replacements(), self.messages
-        )
-        return tuple(full_history)
+        return self._conversation.working_messages
+
+    @property
+    def message_count(self) -> int:
+        return self._conversation.message_count
+
+    @property
+    def content_replacement_count(self) -> int:
+        return self._conversation.content_replacement_count
+
+    @property
+    def compact_count(self) -> int:
+        return self._conversation.compact_count
 
     async def submit(self, prompt: str) -> AgentTurnResult:
         """消费可观察循环并返回终态值。"""
 
         completed: AgentTurnResult | None = None
-        async for event in self.submit_stream(prompt):
+        async for event in self.stream(prompt):
             if isinstance(event, AgentTurnCompleted):
                 completed = event.result
         if completed is None:
             raise RuntimeError("Agent stream ended without a completed turn")
         return completed
 
-    async def submit_stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
-        """运行一个轮次，同时暴露临时文本和工具生命周期事件。"""
+    def stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        """运行一个用户回合，同时暴露文本和工具生命周期事件。"""
 
+        return self._stream(prompt)
+
+    def submit_stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        """兼容旧调用名；新的 inbound port 使用 ``stream``。"""
+
+        return self.stream(prompt)
+
+    async def _stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
         if not prompt.strip():
             raise ValueError("Prompt must not be empty")
 
@@ -122,53 +129,46 @@ class AgentEngine:
             content=(TextBlock(prompt),),
             parent_uuid=self._last_uuid,
         )
-
-        # 首次 API 请求前先持久化；崩溃或网络故障不应抹去发起轮次的提示。
-        self._append(user_message)
+        # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
+        self._conversation.append(user_message)
 
         input_tokens = 0
         output_tokens = 0
-        final_text = ""
         for turn in range(1, self.max_turns + 1):
-            # 保留完整会话记录用于恢复，但每次迭代都独立生成有界 API 视图。
-            try:
-                request = self.context_planner.plan(self._context_snapshot())
-            except ContextOverflow:
-                await self.compact("auto")
-                request = self.context_planner.plan(self._context_snapshot())
-            self._commit_context_plan(request)
+            request = await self._plan_with_proactive_compact()
             reactive_attempted = False
             while True:
-                response = None
+                response: ModelResponse | None = None
                 streamed_text = False
                 try:
-                    if isinstance(self.provider, StreamingModelProvider):
-                        async for event in self.provider.stream(request):
-                            if isinstance(event, ModelTextDelta):
-                                streamed_text = True
-                                yield AgentTextDelta(event.text)
-                            elif isinstance(event, ModelResponseCompleted):
-                                response = event.response
-                    else:
-                        response = await self.provider.complete(request)
+                    async for model_event in self._model_turn.stream(request):
+                        if isinstance(model_event, ModelTextDelta):
+                            streamed_text = True
+                            yield AgentTextDelta(model_event.text)
+                        elif isinstance(model_event, ModelResponseCompleted):
+                            if response is not None:
+                                raise RuntimeError(
+                                    "Provider stream returned multiple final responses"
+                                )
+                            response = model_event.response
                 except ModelContextOverflow:
                     if reactive_attempted:
                         raise
                     reactive_attempted = True
                     await self.compact("reactive")
-                    request = self.context_planner.plan(self._context_snapshot())
-                    self._commit_context_plan(request)
+                    request = await self._plan_request()
                     continue
                 break
+
             if response is None:
                 raise RuntimeError("Provider stream ended without a final response")
             if not streamed_text:
                 for block in response.content:
                     if isinstance(block, TextBlock):
                         yield AgentTextDelta(block.text)
+
             input_tokens += response.usage.total_input_tokens
             output_tokens += response.usage.output_tokens
-
             assistant_message = ChatMessage(
                 role="assistant",
                 origin="model",
@@ -176,195 +176,217 @@ class AgentEngine:
                 parent_uuid=self._last_uuid,
                 usage=response.usage,
             )
+            # 先持久化 assistant 的完整 tool_use，再进入执行阶段。
+            self._conversation.append(assistant_message)
 
-            # 执行前先存储模型的工具请求，使中断过程可观察，并能在下次恢复时修复。
-            self._append(assistant_message)
             final_text = "\n".join(
                 block.text for block in response.content if isinstance(block, TextBlock)
             ).strip()
             tool_calls = tuple(
                 block for block in response.content if isinstance(block, ToolUseBlock)
             )
-
-            # 没有工具调用是当前 MVP 明确的终止条件。
             if not tool_calls:
-                turn_result = AgentTurnResult(
-                    text=final_text,
-                    turns=turn,
-                    usage=TokenUsage(input_tokens, output_tokens),
+                yield AgentTurnCompleted(
+                    AgentTurnResult(
+                        text=final_text,
+                        turns=turn,
+                        usage=TokenUsage(input_tokens, output_tokens),
+                    )
                 )
-                yield AgentTurnCompleted(turn_result)
                 return
 
+            result_message: ChatMessage | None = None
             results: list[ToolResultBlock] = []
+            round_cancelled = False
             try:
-                # MVP 刻意串行执行调用。未来并行执行必须遵守各工具的并发契约
-                # 与上下文变更契约。
-                for call in tool_calls:
-                    use_presentation = self.tool_executor.present_use(call)
-                    yield AgentToolStarted(
-                        call.id, call.name, call.input, use_presentation
-                    )
-                    outcome = await self.tool_executor.execute(call)
-                    results.append(outcome.result)
-                    yield AgentToolFinished(
-                        call.id,
-                        call.name,
-                        outcome.result.is_error,
-                        outcome.presentation,
-                    )
+                async for tool_event in self._tool_interaction.run_round(
+                    tool_calls, assistant_message
+                ):
+                    if isinstance(tool_event, ToolCallStarted):
+                        yield AgentToolStarted(
+                            tool_event.call.id,
+                            tool_event.call.name,
+                            tool_event.call.input,
+                            tool_event.presentation,
+                        )
+                    elif isinstance(tool_event, ToolCallFinished):
+                        results.append(tool_event.result)
+                        yield AgentToolFinished(
+                            tool_event.call.id,
+                            tool_event.call.name,
+                            tool_event.result.is_error,
+                            tool_event.presentation,
+                        )
+                    elif isinstance(tool_event, ToolRoundCompleted):
+                        result_message = tool_event.message
+                        results = list(tool_event.results)
+                        round_cancelled = tool_event.cancelled
+
+                if result_message is None:
+                    if not results:
+                        raise RuntimeError("Tool round ended without results")
+                    self._conversation.append_tool_results(results, assistant_message)
+                else:
+                    self._conversation.append(result_message)
             except asyncio.CancelledError:
-                # Anthropic 协议要求每个已发出的 tool_use 都有对应结果，
-                # 包括因轮次取消而尚未开始的调用。
-                completed_ids = {result.tool_use_id for result in results}
-                results.extend(
-                    ToolResultBlock(
-                        tool_use_id=call.id,
-                        content="Tool execution was cancelled.",
-                        is_error=True,
-                        presentation=self.tool_executor.present_error(
-                            call, "Tool execution was cancelled."
-                        ),
+                # 自定义 ToolInteractionPort 也必须满足协议闭合；适配器通常
+                # 已经发出了所有取消结果，这里只负责兜底并持久化一次。
+                if result_message is None:
+                    results = _cancelled_results(
+                        tool_calls,
+                        self._tool_interaction,
+                        results,
                     )
-                    for call in tool_calls
-                    if call.id not in completed_ids
-                )
-                self._append_tool_results(results, assistant_message.uuid)
+                    self._conversation.append_tool_results(results, assistant_message)
+                else:
+                    self._conversation.append(result_message)
                 raise
-            self._append_tool_results(results, assistant_message.uuid)
+            if round_cancelled:
+                raise asyncio.CancelledError
 
         raise RuntimeError(
             f"Agent reached max_turns={self.max_turns} after the last tool result"
         )
 
+    def state(self) -> AgentState:
+        """返回当前 session 的只读状态。"""
+
+        return AgentState(
+            session_id=self._conversation.session_id,
+            message_count=self._conversation.message_count,
+            history_message_count=self._conversation.history_message_count,
+            content_replacement_count=self._conversation.content_replacement_count,
+            compact_count=self._conversation.compact_count,
+        )
+
+    def context_state(self) -> AgentContextState:
+        """返回当前工作集的预算报告。"""
+
+        return AgentContextState(
+            budget=self._context.inspect(self._conversation.context_snapshot()),
+            working_message_count=self._conversation.message_count,
+            replacement_count=self._conversation.content_replacement_count,
+            compact_count=self._conversation.compact_count,
+        )
+
     async def compact(self, trigger: CompactTrigger = "manual") -> CompactBoundary:
-        """持久化摘要边界，并把运行时切换到压缩后的工作集。"""
+        """生成并原子提交一次摘要边界。"""
 
-        if not self.messages:
-            raise ValueError("Cannot compact an empty conversation")
-        model_messages, replacements = self.context_planner.compaction_view(
-            self._context_snapshot()
+        outcome = await self._compactor.compact(
+            self._conversation.context_snapshot(), trigger
         )
-        for replacement in replacements:
-            self.session_store.append_content_replacement(replacement)
-            self.content_replacements[replacement.tool_use_id] = replacement
+        return self._conversation.commit_compaction(outcome)
 
-        result = await self.compaction_service.summarize(model_messages)
-        parent_uuid = self.messages[-1].uuid
-        summary_message = ChatMessage(
-            role="user",
-            origin="system",
-            content=(
-                SystemContextBlock(
-                    kind="conversation_summary",
-                    content=result.summary,
-                ),
-            ),
-            parent_uuid=parent_uuid,
+    def resume(self, repository: SessionRepository) -> AgentSessionView:
+        """校验并恢复另一会话，失败时保持当前状态。"""
+
+        messages = self._conversation.resume(repository)
+        self._tool_interaction.bind_session(repository.session_id)
+        return AgentSessionView(
+            state=self.state(),
+            history=self._project_history(messages),
         )
-        boundary = CompactBoundary(
-            parent_uuid=parent_uuid,
-            summary_uuid=summary_message.uuid,
-            trigger=trigger,
-            pre_compact_chars=self.context_planner.window.size(tuple(self.messages)),
-        )
-        self.session_store.append_compact_boundary(boundary)
-        self._append(summary_message)
-        # Transcript 保留完整父链；运行时只需 summary 之后的模型工作集。
-        self.messages = [summary_message]
-        self.content_replacements = {}
-        return boundary
 
-    def context_budget(self) -> ContextBudget:
-        """返回当前工作集的只读预算报告。"""
+    def _project_history(
+        self, messages: tuple[ChatMessage, ...]
+    ) -> tuple[
+        AgentHistoryUserMessage
+        | AgentHistoryAssistantMessage
+        | AgentHistorySystemMessage
+        | AgentHistoryToolCall,
+        ...,
+    ]:
+        results = {
+            block.tool_use_id: block
+            for message in messages
+            for block in message.content
+            if isinstance(block, ToolResultBlock)
+        }
+        history: list[
+            AgentHistoryUserMessage
+            | AgentHistoryAssistantMessage
+            | AgentHistorySystemMessage
+            | AgentHistoryToolCall
+        ] = []
+        for message in messages:
+            if message.origin == "human":
+                text = "\n".join(
+                    block.text
+                    for block in message.content
+                    if isinstance(block, TextBlock)
+                )
+                if text:
+                    history.append(AgentHistoryUserMessage(text))
+                continue
+            if message.origin == "system":
+                history.append(AgentHistorySystemMessage("Conversation compacted"))
+                continue
+            if message.origin != "model":
+                continue
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    if block.text:
+                        history.append(AgentHistoryAssistantMessage(block.text))
+                elif isinstance(block, ToolUseBlock):
+                    result = results.get(block.id)
+                    history.append(
+                        AgentHistoryToolCall(
+                            tool_use_id=block.id,
+                            use=self._tool_interaction.present_use(block),
+                            result=self._tool_interaction.present_stored_result(
+                                block, result
+                            ),
+                            is_error=result is None or result.is_error,
+                        )
+                    )
+        return tuple(history)
 
-        return self.context_planner.inspect(self._context_snapshot())
+    async def _plan_with_proactive_compact(self) -> ContextPlan:
+        try:
+            return await self._plan_request()
+        except ContextOverflow:
+            await self.compact("auto")
+            return await self._plan_request()
 
-    def _commit_context_plan(self, plan: ContextPlan) -> None:
-        """在请求发出前持久化影响模型前缀的所有新决策。"""
-
-        for replacement in plan.new_content_replacements:
-            self.session_store.append_content_replacement(replacement)
-            self.content_replacements[replacement.tool_use_id] = replacement
-
-    def _context_snapshot(self) -> ConversationSnapshot:
-        return ConversationSnapshot(
-            messages=tuple(self.messages),
-            content_replacements=tuple(self.content_replacements.values()),
-        )
+    async def _plan_request(self) -> ContextPlan:
+        request = self._context.plan(self._conversation.context_snapshot())
+        for replacement in request.new_content_replacements:
+            self._conversation.append_content_replacement(replacement)
+        return request
 
     @property
     def _last_uuid(self) -> str | None:
-        return self.messages[-1].uuid if self.messages else None
-
-    def _append(self, message: ChatMessage) -> None:
-        # 持久化优先的顺序可防止写入失败时内存历史领先于会话记录。
-        self.session_store.append(message)
-        self.messages.append(message)
-
-    def _append_tool_results(
-        self, results: list[ToolResultBlock], assistant_uuid: str
-    ) -> None:
-        # 将一次模型响应的所有结果放在同一条 user 角色消息中。
-        # 在 tool_use 与 tool_result 之间插入普通用户文本不符合协议。
-        tool_message = ChatMessage(
-            role="user",
-            origin="tool",
-            content=tuple(results),
-            parent_uuid=self._last_uuid,
-            source_message_uuid=assistant_uuid,
+        return (
+            self._conversation.working_messages[-1].uuid
+            if self._conversation.working_messages
+            else None
         )
-        self._append(tool_message)
-
-    def _repair_trailing_tool_uses(self) -> None:
-        """闭合上次进程退出时遗留的不完整工具协议轮次。"""
-
-        repairs = _trailing_tool_repairs(self.messages)
-        if repairs is None:
-            return
-        # 合成错误比重放可能有副作用的工具更安全：上个进程可能在退出前已完成副作用。
-        self._append_tool_results(list(repairs), self.messages[-1].uuid)
 
 
-def _trailing_tool_repairs(
-    messages: list[ChatMessage],
-) -> tuple[ToolResultBlock, ...] | None:
-    """为末尾未闭合的工具请求构造协议修复结果。"""
-
-    if not messages:
-        return None
-    trailing = messages[-1]
-    if trailing.role != "assistant":
-        return None
-    calls = tuple(
-        block for block in trailing.content if isinstance(block, ToolUseBlock)
-    )
-    if not calls:
-        return None
-    return tuple(
-        ToolResultBlock(
+def _cancelled_results(
+    calls: tuple[ToolUseBlock, ...],
+    interaction: ToolInteractionPort,
+    existing: list[ToolResultBlock],
+) -> list[ToolResultBlock]:
+    message = "Tool execution was cancelled."
+    by_id = {result.tool_use_id: result for result in existing}
+    results: list[ToolResultBlock] = []
+    for call in calls:
+        if call.id in by_id:
+            results.append(by_id[call.id])
+            continue
+        result = ToolResultBlock(
             tool_use_id=call.id,
-            content="Tool execution was interrupted before the session resumed.",
+            content=message,
             is_error=True,
         )
-        for call in calls
-    )
-
-
-def _active_replacements(
-    replacements: tuple[ContentReplacement, ...],
-    messages: list[ChatMessage],
-) -> dict[str, ContentReplacement]:
-    """只把当前 compact 工作集仍引用的替换加载进内存。"""
-
-    tool_ids = {
-        block.tool_use_id
-        for message in messages
-        for block in message.content
-        if isinstance(block, ToolResultBlock)
-    }
-    return {
-        replacement.tool_use_id: replacement
-        for replacement in replacements
-        if replacement.tool_use_id in tool_ids
-    }
+        presentation = interaction.present_stored_result(call, result)
+        results.append(
+            ToolResultBlock(
+                tool_use_id=result.tool_use_id,
+                content=result.content,
+                is_error=True,
+                presentation=presentation,
+            )
+        )
+    return results

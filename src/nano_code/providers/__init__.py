@@ -1,20 +1,10 @@
 """模型 provider 协议与适配器。"""
 
-from nano_code.providers.base import (
-    ModelProvider,
-    ModelRequest,
-    ProviderCapabilities,
-    StreamingModelProvider,
-)
-from nano_code.providers.errors import ModelContextOverflow
-from nano_code.providers.events import ModelResponseCompleted, ModelTextDelta
+from nano_code.providers.base import ProviderCapabilities
+from nano_code.providers.turn import CompleteModelTurnAdapter, ModelTurnAdapter
 
 __all__ = [
-    "ModelProvider",
-    "ModelContextOverflow",
-    "ModelRequest",
-    "ModelResponseCompleted",
-    "ModelTextDelta",
+    "CompleteModelTurnAdapter",
+    "ModelTurnAdapter",
     "ProviderCapabilities",
-    "StreamingModelProvider",
 ]
