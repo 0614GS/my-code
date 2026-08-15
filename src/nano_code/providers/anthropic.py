@@ -22,7 +22,8 @@ from nano_code.messages import (
     ToolUseBlock,
 )
 from nano_code.messages.models import to_json_object
-from nano_code.providers.base import ModelRequest
+from nano_code.prompts import PromptStability, SystemPrompt
+from nano_code.providers.base import ModelRequest, ProviderCapabilities
 from nano_code.providers.errors import ModelContextOverflow
 from nano_code.providers.events import (
     ModelResponseCompleted,
@@ -43,6 +44,24 @@ class AnthropicProvider:
     ) -> None:
         self.model = model
         self.client = AsyncAnthropic(api_key=api_key, base_url=base_url)
+        # 自定义 endpoint 对 Anthropic 扩展字段的实现程度未知，默认保持兼容。
+        self._capabilities = self.capabilities_for(base_url)
+
+    @staticmethod
+    def capabilities_for(base_url: str | None) -> ProviderCapabilities:
+        """官方 endpoint 支持缓存；兼容线路由各自适配器后续声明。"""
+
+        if base_url is None:
+            return ProviderCapabilities(
+                system_prompt_blocks=True,
+                prompt_caching=True,
+                max_prompt_cache_breakpoints=2,
+            )
+        return ProviderCapabilities()
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return self._capabilities
 
     async def close(self) -> None:
         """释放 SDK 底层 HTTP 客户端。"""
@@ -54,7 +73,7 @@ class AnthropicProvider:
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=request.max_output_tokens,
-                system=request.system_prompt,
+                system=self._system(request.system_prompt),
                 messages=self._messages(request.messages),
                 tools=self._tools(request),
             )
@@ -72,7 +91,7 @@ class AnthropicProvider:
             async with self.client.messages.stream(
                 model=self.model,
                 max_tokens=request.max_output_tokens,
-                system=request.system_prompt,
+                system=self._system(request.system_prompt),
                 messages=self._messages(request.messages),
                 tools=self._tools(request),
             ) as stream:
@@ -86,7 +105,7 @@ class AnthropicProvider:
         except BadRequestError as error:
             _raise_context_overflow(error)
             raise
-        yield ModelResponseCompleted(self._response(final_message))
+        yield ModelResponseCompleted(response=self._response(final_message))
 
     @staticmethod
     def _messages(messages: Iterable[ModelMessage]) -> list[MessageParam]:
@@ -121,6 +140,11 @@ class AnthropicProvider:
                     )
             projected.append({"role": message.role, "content": content})
         return projected
+
+    def _system(self, prompt: SystemPrompt) -> str | list[TextBlockParam]:
+        """按 provider 自身能力消费核心提供的稳定性信息。"""
+
+        return _system_prompt_param(prompt, self.capabilities)
 
     @staticmethod
     def _tools(request: ModelRequest) -> list[ToolParam]:
@@ -165,6 +189,32 @@ class AnthropicProvider:
                 cache_read_input_tokens=response.usage.cache_read_input_tokens or 0,
             ),
         )
+
+
+def _system_prompt_param(
+    prompt: SystemPrompt,
+    capabilities: ProviderCapabilities,
+) -> str | list[TextBlockParam]:
+    """将稳定片段映射到 Anthropic system 参数，便于独立验证。"""
+
+    if not capabilities.prompt_caching:
+        return prompt.text
+
+    blocks: list[TextBlockParam] = [
+        {"type": "text", "text": section.content} for section in prompt.sections
+    ]
+    boundaries: list[int] = []
+    for stability in (PromptStability.STATIC, PromptStability.SESSION):
+        matching = [
+            index
+            for index, section in enumerate(prompt.sections)
+            if section.stability is stability
+        ]
+        if matching:
+            boundaries.append(matching[-1])
+    for index in boundaries[: capabilities.max_prompt_cache_breakpoints]:
+        blocks[index]["cache_control"] = {"type": "ephemeral"}
+    return blocks
 
 
 def _raise_context_overflow(error: BadRequestError) -> None:

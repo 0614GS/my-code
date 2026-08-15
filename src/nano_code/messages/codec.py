@@ -9,6 +9,8 @@ from nano_code.messages.models import (
     JsonValue,
     MessageOrigin,
     MessageRole,
+    SystemContextBlock,
+    SystemContextKind,
     TextBlock,
     TokenUsage,
     ToolResultBlock,
@@ -27,6 +29,12 @@ def block_to_json(block: ContentBlock) -> JsonObject:
 
     if isinstance(block, TextBlock):
         return {"type": "text", "text": block.text}
+    if isinstance(block, SystemContextBlock):
+        return {
+            "type": "system_context",
+            "kind": block.kind,
+            "content": block.content,
+        }
     if isinstance(block, ToolUseBlock):
         return {
             "type": "tool_use",
@@ -99,6 +107,18 @@ def block_from_json(value: object) -> ContentBlock:
     block_type = _required_string(data, "type")
     if block_type == "text":
         return TextBlock(text=_required_string(data, "text"))
+    if block_type == "system_context":
+        raw_kind = _required_string(data, "kind")
+        if raw_kind == "system_reminder":
+            kind: SystemContextKind = "system_reminder"
+        elif raw_kind == "conversation_summary":
+            kind = "conversation_summary"
+        else:
+            raise MessageDecodeError(f"Unsupported system context kind: {raw_kind}")
+        return SystemContextBlock(
+            kind=kind,
+            content=_required_string(data, "content"),
+        )
     if block_type == "tool_use":
         try:
             tool_input = to_json_object(data.get("input"))

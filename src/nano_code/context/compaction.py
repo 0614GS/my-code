@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from nano_code.context.models import ContextPlan, ModelMessage
 from nano_code.messages import TextBlock, TokenUsage
+from nano_code.prompts import SystemPrompt
 from nano_code.providers.base import ModelProvider
 
 _COMPACTION_SYSTEM_PROMPT = """You compact coding-agent conversations.
@@ -33,7 +34,10 @@ class CompactionService:
     async def summarize(self, messages: tuple[ModelMessage, ...]) -> CompactionResult:
         response = await self.provider.complete(
             ContextPlan(
-                system_prompt=_COMPACTION_SYSTEM_PROMPT,
+                system_prompt=SystemPrompt.from_text(
+                    _COMPACTION_SYSTEM_PROMPT,
+                    key="nano-code.compaction",
+                ),
                 messages=_append_summary_request(messages),
                 tools=(),
                 max_output_tokens=self.max_output_tokens,

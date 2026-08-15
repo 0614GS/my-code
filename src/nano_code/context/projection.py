@@ -2,8 +2,16 @@
 
 from dataclasses import replace
 
-from nano_code.context.models import ModelMessage
-from nano_code.messages import ChatMessage, ToolResultBlock, ToolUseBlock
+from nano_code.context.models import ModelContentBlock, ModelMessage
+from nano_code.messages import (
+    ChatMessage,
+    ContentBlock,
+    SystemContextBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
+from nano_code.prompts.rendering import render_system_context
 
 
 class ModelMessageProjector:
@@ -13,12 +21,7 @@ class ModelMessageProjector:
         projected: list[ModelMessage] = []
         for message in messages:
             # 展示快照属于 Transcript/UI，不进入模型可见的领域投影。
-            content = tuple(
-                replace(block, presentation=None)
-                if isinstance(block, ToolResultBlock)
-                else block
-                for block in message.content
-            )
+            content = tuple(_project_block(block) for block in message.content)
             candidate = ModelMessage(role=message.role, content=content)
             if projected and projected[-1].role == candidate.role:
                 previous = projected[-1]
@@ -59,3 +62,13 @@ class ModelMessageProjector:
         if pending:
             unresolved = ", ".join(sorted(pending))
             raise ValueError(f"Unresolved tool use in context: {unresolved}")
+
+
+def _project_block(block: ContentBlock) -> ModelContentBlock:
+    """在唯一边界移除本地展示数据并渲染可信上下文。"""
+
+    if isinstance(block, SystemContextBlock):
+        return TextBlock(render_system_context(block))
+    if isinstance(block, ToolResultBlock):
+        return replace(block, presentation=None)
+    return block

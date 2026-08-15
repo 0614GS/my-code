@@ -22,6 +22,7 @@ from nano_code.context import (
 from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
     ChatMessage,
+    SystemContextBlock,
     TextBlock,
     TokenUsage,
     ToolResultBlock,
@@ -254,8 +255,9 @@ class AgentEngine:
             role="user",
             origin="system",
             content=(
-                TextBlock(
-                    f"<conversation-summary>\n{result.summary}\n</conversation-summary>"
+                SystemContextBlock(
+                    kind="conversation_summary",
+                    content=result.summary,
                 ),
             ),
             parent_uuid=parent_uuid,

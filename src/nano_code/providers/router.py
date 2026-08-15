@@ -11,6 +11,7 @@ from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.base import (
     ModelProvider,
     ModelRequest,
+    ProviderCapabilities,
     StreamingModelProvider,
 )
 from nano_code.providers.events import ModelResponseCompleted, ModelStreamEvent
@@ -55,6 +56,14 @@ class ProviderRouter:
     @property
     def connection(self) -> ProviderConnection:
         return self._connection
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        """无需提前创建网络客户端即可暴露当前连接能力。"""
+
+        match self._connection.protocol:
+            case ProviderProtocol.ANTHROPIC_MESSAGES:
+                return AnthropicProvider.capabilities_for(self._connection.base_url)
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         # 在一次完整请求期间持有锁，使 profile 切换成为明确的轮次间操作，

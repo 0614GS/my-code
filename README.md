@@ -55,7 +55,7 @@ uv run mypy
 uv run pytest
 ```
 
-架构阅读笔记从 [docs/README.md](docs/README.md) 开始；当前实现边界见 [docs/08-mvp-scope.md](docs/08-mvp-scope.md)。`claude-code/` 仅是本地只读参考源码，已被 `.gitignore` 排除，禁止提交或发布。
+架构阅读笔记从 [docs/README.md](docs/README.md) 开始；当前实现边界见 [docs/08-mvp-scope.md](docs/08-mvp-scope.md)，提示词职责见 [docs/11-prompt-management.md](docs/11-prompt-management.md)。`claude-code/` 仅是本地只读参考源码，已被 `.gitignore` 排除，禁止提交或发布。
 
 ## 当前安全边界
 

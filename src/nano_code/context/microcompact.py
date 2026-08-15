@@ -3,7 +3,12 @@
 from dataclasses import replace
 
 from nano_code.context.models import ContentReplacement
-from nano_code.messages import ChatMessage, ToolResultBlock, ToolUseBlock
+from nano_code.messages import (
+    ChatMessage,
+    SystemContextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 
 _ELIGIBLE_TOOLS = frozenset({"Bash", "Glob", "Grep", "Read"})
 
@@ -114,6 +119,8 @@ def _effective_message_chars(
                 )
             elif isinstance(block, ToolUseBlock):
                 size += len(block.name) + len(str(block.input))
+            elif isinstance(block, SystemContextBlock):
+                size += len(block.content)
             else:
                 size += len(block.text)
     return size

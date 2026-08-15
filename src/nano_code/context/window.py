@@ -1,6 +1,12 @@
 """上下文消息预算的最终防线。"""
 
-from nano_code.messages import ChatMessage, TextBlock, ToolResultBlock, ToolUseBlock
+from nano_code.messages import (
+    ChatMessage,
+    SystemContextBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 
 
 class ContextWindow:
@@ -31,6 +37,8 @@ class ContextWindow:
             for block in message.content:
                 if isinstance(block, TextBlock):
                     size += len(block.text)
+                elif isinstance(block, SystemContextBlock):
+                    size += len(block.content)
                 elif isinstance(block, ToolUseBlock):
                     size += len(block.name) + len(str(block.input))
                 elif isinstance(block, ToolResultBlock):

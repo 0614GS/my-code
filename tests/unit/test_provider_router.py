@@ -2,12 +2,15 @@ import pytest
 
 from nano_code.auth import CredentialSource
 from nano_code.messages import ModelResponse, TextBlock, TokenUsage
-from nano_code.providers import ModelRequest
+from nano_code.prompts import SystemPrompt
+from nano_code.providers import ModelRequest, ProviderCapabilities
 from nano_code.providers.profiles import ProviderProtocol
 from nano_code.providers.router import ProviderConnection, ProviderRouter
 
 
 class FakeProvider:
+    capabilities = ProviderCapabilities()
+
     def __init__(self, provider_id: str) -> None:
         self.provider_id = provider_id
         self.closed = False
@@ -36,7 +39,7 @@ def connection(provider_id: str) -> ProviderConnection:
 
 def empty_request() -> ModelRequest:
     return ModelRequest(
-        system_prompt="system",
+        system_prompt=SystemPrompt.from_text("system"),
         messages=(),
         tools=(),
         max_output_tokens=10,

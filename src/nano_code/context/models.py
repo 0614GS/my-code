@@ -1,18 +1,16 @@
 """上下文规划阶段使用的不可变值对象。"""
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 
-from nano_code.messages import ChatMessage, ContentBlock, MessageRole
+from nano_code.messages import (
+    ChatMessage,
+    MessageRole,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
+from nano_code.prompts import SystemPrompt
 from nano_code.tools.base import ToolDefinition
-
-
-class PromptStability(StrEnum):
-    """提示词片段在多次请求之间的预期稳定范围。"""
-
-    STATIC = "static"
-    SESSION = "session"
-    TURN = "turn"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,21 +46,6 @@ class ContentReplacement:
 
 
 @dataclass(frozen=True, slots=True)
-class PromptSection:
-    """具有稳定身份和缓存语义的一段 system prompt。"""
-
-    key: str
-    content: str
-    stability: PromptStability
-
-    def __post_init__(self) -> None:
-        if not self.key.strip():
-            raise ValueError("Prompt section key must not be empty")
-        if not self.content.strip():
-            raise ValueError("Prompt section content must not be empty")
-
-
-@dataclass(frozen=True, slots=True)
 class ConversationSnapshot:
     """ContextPlanner 某一时刻读取的会话工作集快照。"""
 
@@ -70,12 +53,15 @@ class ConversationSnapshot:
     content_replacements: tuple[ContentReplacement, ...] = field(default_factory=tuple)
 
 
+type ModelContentBlock = TextBlock | ToolUseBlock | ToolResultBlock
+
+
 @dataclass(frozen=True, slots=True)
 class ModelMessage:
     """仅包含模型协议所需字段，不携带 Transcript 本地元数据。"""
 
     role: MessageRole
-    content: tuple[ContentBlock, ...]
+    content: tuple[ModelContentBlock, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,11 +90,10 @@ class ContextBudget:
 class ContextPlan:
     """经过上下文策略处理、可交给任意 provider 的请求计划。"""
 
-    system_prompt: str
+    system_prompt: SystemPrompt
     messages: tuple[ModelMessage, ...]
     tools: tuple[ToolDefinition, ...]
     max_output_tokens: int
-    prompt_sections: tuple[PromptSection, ...] = field(default_factory=tuple)
     budget: ContextBudget | None = None
     new_content_replacements: tuple[ContentReplacement, ...] = field(
         default_factory=tuple

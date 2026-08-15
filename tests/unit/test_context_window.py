@@ -8,9 +8,6 @@ from nano_code.context import (
     MicrocompactPolicy,
     ModelMessage,
     ModelMessageProjector,
-    PromptAssembler,
-    PromptSection,
-    PromptStability,
 )
 from nano_code.messages import (
     ChatMessage,
@@ -19,6 +16,7 @@ from nano_code.messages import (
     ToolResultBlock,
     ToolUseBlock,
 )
+from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
 from nano_code.tools.base import ToolDefinition
 
 
@@ -79,21 +77,21 @@ def test_projection_rejects_orphan_tool_result() -> None:
 def test_context_planner_builds_observable_request_without_mutating_snapshot() -> None:
     message = user("hello")
     snapshot = ConversationSnapshot((message,))
-    section = PromptSection("core", "system", PromptStability.STATIC)
+    section = PromptSection("core", PromptStability.STATIC, lambda: "system")
     tool = ToolDefinition("Read", "Read a file", {"type": "object"})
     planner = ContextPlanner(
         window=ContextWindow(max_chars=100),
-        prompt=PromptAssembler((section,)),
+        prompt=PromptRegistry((section,)),
         tools=(tool,),
         max_output_tokens=50,
     )
 
     plan = planner.plan(snapshot)
 
-    assert plan.system_prompt == "system"
-    assert plan.messages == (ModelMessage("user", message.content),)
+    assert plan.system_prompt.text == "system"
+    assert plan.messages == (ModelMessage("user", (TextBlock("hello"),)),)
     assert plan.tools == (tool,)
-    assert plan.prompt_sections == (section,)
+    assert plan.system_prompt.sections[0].key == section.key
     assert plan.budget is not None
     assert plan.budget.message_chars == len("hello")
     assert plan.budget.system_chars == len("system")
@@ -101,14 +99,14 @@ def test_context_planner_builds_observable_request_without_mutating_snapshot() -
     assert snapshot.messages == (message,)
 
 
-def test_prompt_assembler_rejects_duplicate_section_keys() -> None:
+def test_prompt_registry_rejects_duplicate_section_keys() -> None:
     sections = (
-        PromptSection("core", "first", PromptStability.STATIC),
-        PromptSection("core", "second", PromptStability.SESSION),
+        PromptSection("core", PromptStability.STATIC, lambda: "first"),
+        PromptSection("core", PromptStability.SESSION, lambda: "second"),
     )
 
     with pytest.raises(ValueError, match="must be unique"):
-        PromptAssembler(sections)
+        PromptRegistry(sections)
 
 
 def test_model_projection_merges_adjacent_roles_without_local_metadata() -> None:
@@ -134,8 +132,8 @@ def test_budget_uses_latest_real_usage_plus_only_new_messages() -> None:
     latest = user("next", assistant.uuid)
     planner = ContextPlanner(
         window=ContextWindow(max_chars=1000),
-        prompt=PromptAssembler(
-            (PromptSection("core", "system", PromptStability.STATIC),)
+        prompt=PromptRegistry(
+            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
         tools=(),
         max_output_tokens=50,
@@ -178,8 +176,8 @@ def test_microcompact_replaces_old_result_without_mutating_transcript() -> None:
     )
     planner = ContextPlanner(
         window=ContextWindow(max_chars=1000),
-        prompt=PromptAssembler(
-            (PromptSection("core", "system", PromptStability.STATIC),)
+        prompt=PromptRegistry(
+            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
         tools=(),
         max_output_tokens=50,

@@ -14,25 +14,25 @@ from nano_code.agent import (
 from nano_code.context import (
     ContextPlanner,
     ContextWindow,
-    PromptAssembler,
-    PromptSection,
-    PromptStability,
 )
 from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
     ChatMessage,
     ModelResponse,
+    SystemContextBlock,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
 )
 from nano_code.permissions import PermissionMode, PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
+from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
 from nano_code.providers import (
     ModelContextOverflow,
     ModelRequest,
     ModelResponseCompleted,
     ModelTextDelta,
+    ProviderCapabilities,
 )
 from nano_code.providers.events import ModelStreamEvent
 from nano_code.sessions import SessionStore
@@ -46,6 +46,8 @@ _OTHER_SESSION_ID = "87654321-4321-4321-4321-cba987654321"
 
 
 class FakeProvider:
+    capabilities = ProviderCapabilities()
+
     def __init__(self, responses: list[ModelResponse]) -> None:
         self.responses = responses
         self.requests: list[ModelRequest] = []
@@ -100,8 +102,8 @@ def build_engine(
         session_store=store,
         context_planner=ContextPlanner(
             window=ContextWindow(context_chars),
-            prompt=PromptAssembler(
-                (PromptSection("test", "test", PromptStability.STATIC),)
+            prompt=PromptRegistry(
+                (PromptSection("test", PromptStability.STATIC, lambda: "test"),)
             ),
             tools=registry.definitions,
             max_output_tokens=8192,
@@ -140,7 +142,7 @@ async def test_overflow_compacts_to_persisted_boundary_and_releases_working_set(
     assert result.text == "continued"
     assert len(provider.requests) == 2
     assert provider.requests[0].tools == ()
-    assert "compact coding-agent" in provider.requests[0].system_prompt
+    assert "compact coding-agent" in provider.requests[0].system_prompt.text
     active_store = engine.session_store
     boundaries = active_store.load_compact_boundaries()
     assert len(boundaries) == 1
@@ -151,8 +153,9 @@ async def test_overflow_compacts_to_persisted_boundary_and_releases_working_set(
     assert len(working_set) == 2
     assert working_set[0].origin == "system"
     summary_block = working_set[0].content[0]
-    assert isinstance(summary_block, TextBlock)
-    assert "short continuation summary" in summary_block.text
+    assert isinstance(summary_block, SystemContextBlock)
+    assert summary_block.kind == "conversation_summary"
+    assert "short continuation summary" in summary_block.content
     assert engine.messages == list(working_set)
 
     resumed_engine = build_engine(tmp_path, FakeProvider([]), context_chars=150)

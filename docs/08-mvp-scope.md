@@ -15,6 +15,7 @@
 - 追加式 JSONL Transcript、轻量会话发现、活动父链恢复和运行时原子切换；
 - 与 Claude Code 同形的全局/项目存储布局和三级配置覆盖；
 - Transcript、内存工作集和 `ContextPlan` 三层上下文边界；
+- 分段提示词、static/session/turn 生命周期和 provider 自声明缓存能力；
 - assistant usage 持久化、可观察预算、稳定 microcompact 和完整/响应式 compact；
 - 超大工具结果落盘并给模型返回稳定预览。
 - Anthropic SSE 文本流、TUI 增量 Markdown 和工具调用状态展示；
@@ -29,8 +30,9 @@
 | Tool | schema、风险属性、执行和结果映射分层 | `src/Tool.ts`、`services/tools/toolExecution.ts` |
 | Permission | 工具特定判断与全局裁决分层，deny/ask 优先，headless ask 自动拒绝 | `types/permissions.ts`、`utils/permissions/permissions.ts` |
 | Context | 不静默裁剪，使用可重放 microcompact、显式 boundary 和摘要工作集 | `services/compact/`、`utils/messages.ts` |
+| Prompt | 稳定前缀、动态片段和消息级 reminder 分层投影 | `constants/prompts.ts`、`utils/messages.ts` |
 
-请求投影会合并相邻同 role 消息，并严格校验 tool-use/result 配对。超限不会删除旧轮次：先尝试稳定工具结果替换，再生成 compact summary；Provider 返回明确的上下文错误时最多响应式重试一次。
+请求投影会合并相邻同 role 消息，并严格校验 tool-use/result 配对。提示词来源由 Registry 按生命周期解析；结构化 system context 只在请求边界渲染 XML，provider 自行决定是否映射缓存断点。超限不会删除旧轮次：先尝试稳定工具结果替换，再生成 compact summary；Provider 返回明确的上下文错误时最多响应式重试一次。
 
 ## 延后实现
 

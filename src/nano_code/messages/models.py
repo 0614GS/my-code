@@ -15,6 +15,7 @@ type JsonValue = (
 type JsonObject = dict[str, JsonValue]
 type MessageRole = Literal["user", "assistant"]
 type MessageOrigin = Literal["human", "model", "tool", "system"]
+type SystemContextKind = Literal["system_reminder", "conversation_summary"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +95,19 @@ class TextBlock:
 
 
 @dataclass(frozen=True, slots=True)
+class SystemContextBlock:
+    """由核心创建、在请求投影时才渲染为 XML 的上下文说明。"""
+
+    kind: SystemContextKind
+    content: str
+    type: Literal["system_context"] = field(default="system_context", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.content.strip():
+            raise ValueError("System context content must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class ToolUseBlock:
     """模型对具名工具的调用请求。"""
 
@@ -116,7 +130,7 @@ class ToolResultBlock:
     type: Literal["tool_result"] = field(default="tool_result", init=False)
 
 
-type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock
+type ContentBlock = TextBlock | SystemContextBlock | ToolUseBlock | ToolResultBlock
 type AssistantBlock = TextBlock | ToolUseBlock
 
 
@@ -147,9 +161,10 @@ class ChatMessage:
         if not self.content:
             raise ValueError("A message must contain at least one content block")
         if self.role == "assistant" and any(
-            isinstance(block, ToolResultBlock) for block in self.content
+            isinstance(block, (SystemContextBlock, ToolResultBlock))
+            for block in self.content
         ):
-            raise ValueError("Assistant messages cannot contain tool results")
+            raise ValueError("Assistant messages cannot contain system/tool results")
         if self.role == "user" and any(
             isinstance(block, ToolUseBlock) for block in self.content
         ):
@@ -158,6 +173,12 @@ class ChatMessage:
             isinstance(block, ToolResultBlock) for block in self.content
         ):
             raise ValueError("Tool-origin messages may contain only tool results")
+        if any(isinstance(block, SystemContextBlock) for block in self.content) and (
+            self.role != "user" or self.origin != "system"
+        ):
+            raise ValueError(
+                "System context blocks require a system-origin user message"
+            )
         if self.usage is not None and (
             self.role != "assistant" or self.origin != "model"
         ):

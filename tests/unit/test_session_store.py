@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from nano_code.context import ContentReplacement
-from nano_code.messages import ChatMessage, TextBlock, TokenUsage, ToolResultBlock
+from nano_code.messages import (
+    ChatMessage,
+    SystemContextBlock,
+    TextBlock,
+    TokenUsage,
+    ToolResultBlock,
+)
 from nano_code.presentation import ToolResultPresentation
 from nano_code.sessions import CompactBoundary, SessionCatalog, SessionStore
 
@@ -79,6 +85,29 @@ def test_assistant_usage_round_trips_with_transcript(tmp_path: Path) -> None:
     store.append(message)
 
     assert store.load() == (message,)
+
+
+def test_system_context_round_trips_without_persisting_rendered_xml(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path, _SESSION_ID)
+    message = ChatMessage(
+        role="user",
+        origin="system",
+        content=(
+            SystemContextBlock(
+                kind="conversation_summary",
+                content="Continue from the verified state.",
+            ),
+        ),
+    )
+
+    store.append(message)
+
+    assert store.load() == (message,)
+    transcript = store.path.read_text(encoding="utf-8")
+    assert '"type": "system_context"' in transcript
+    assert "<conversation-summary>" not in transcript
 
 
 def test_content_replacement_is_append_only_and_round_trips(tmp_path: Path) -> None:

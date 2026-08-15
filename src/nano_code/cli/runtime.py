@@ -12,14 +12,10 @@ from nano_code.agent import (
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.agent.prompt import build_system_prompt
 from nano_code.config import Settings
 from nano_code.context import (
     ContextPlanner,
     ContextWindow,
-    PromptAssembler,
-    PromptSection,
-    PromptStability,
 )
 from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
@@ -38,6 +34,7 @@ from nano_code.permissions.prompt import (
     TerminalPrompter,
 )
 from nano_code.presentation import generic_tool_use_presentation
+from nano_code.prompts import default_prompt_registry
 from nano_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
 from nano_code.providers.profiles import ProviderProtocol
 from nano_code.providers.router import ProviderConnection, ProviderRouter
@@ -109,15 +106,7 @@ def build_engine(
         session_store=session_store,
         context_planner=ContextPlanner(
             window=ContextWindow(settings.context_chars),
-            prompt=PromptAssembler(
-                (
-                    PromptSection(
-                        key="nano-code.core",
-                        content=build_system_prompt(settings.cwd),
-                        stability=PromptStability.SESSION,
-                    ),
-                )
-            ),
+            prompt=default_prompt_registry(settings.cwd),
             tools=registry.definitions,
             max_output_tokens=settings.max_output_tokens,
         ),

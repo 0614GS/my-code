@@ -14,9 +14,15 @@ from nano_code.context.models import (
     ModelMessage,
 )
 from nano_code.context.projection import ModelMessageProjector
-from nano_code.context.prompt import PromptAssembler
 from nano_code.context.window import ContextWindow
-from nano_code.messages import ChatMessage, TextBlock, ToolResultBlock, ToolUseBlock
+from nano_code.messages import (
+    ChatMessage,
+    SystemContextBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
+from nano_code.prompts import PromptRegistry, SystemPrompt
 from nano_code.tools.base import ToolDefinition
 
 
@@ -27,7 +33,7 @@ class ContextPlanner:
         self,
         *,
         window: ContextWindow,
-        prompt: PromptAssembler,
+        prompt: PromptRegistry,
         tools: tuple[ToolDefinition, ...],
         max_output_tokens: int,
         projector: ModelMessageProjector | None = None,
@@ -50,14 +56,13 @@ class ContextPlanner:
         effective_messages, proposed = self._effective_messages(snapshot)
         selected = self.window.project(effective_messages)
         messages = self.projector.project(selected)
-        system_prompt = self.prompt.render()
+        system_prompt = self.prompt.resolve()
         budget = self._budget(selected, messages, system_prompt)
         return ContextPlan(
             system_prompt=system_prompt,
             messages=messages,
             tools=self.tools,
             max_output_tokens=self.max_output_tokens,
-            prompt_sections=self.prompt.sections,
             budget=budget,
             new_content_replacements=proposed,
         )
@@ -67,7 +72,7 @@ class ContextPlanner:
 
         effective_messages, _ = self._effective_messages(snapshot, propose=False)
         model_messages = self.projector.project(effective_messages)
-        system_prompt = self.prompt.render()
+        system_prompt = self.prompt.resolve()
         return self._budget(effective_messages, model_messages, system_prompt)
 
     def compaction_view(
@@ -96,17 +101,17 @@ class ContextPlanner:
         self,
         messages: tuple[ChatMessage, ...],
         model_messages: tuple[ModelMessage, ...],
-        system_prompt: str,
+        system_prompt: SystemPrompt,
     ) -> ContextBudget:
         actual_input, incremental_tokens, estimated_input = _estimate_input_tokens(
             messages,
-            system_prompt,
+            system_prompt.text,
             self.tools,
         )
         return ContextBudget(
             message_limit_chars=self.window.max_chars,
             message_chars=_message_chars(model_messages),
-            system_chars=len(system_prompt),
+            system_chars=len(system_prompt.text),
             tool_schema_chars=_tool_schema_chars(self.tools),
             reserved_output_tokens=self.max_output_tokens,
             last_actual_input_tokens=actual_input,
@@ -176,11 +181,15 @@ def _chat_message_chars(messages: tuple[ChatMessage, ...]) -> int:
     return sum(_block_chars(block) for message in messages for block in message.content)
 
 
-def _block_chars(block: TextBlock | ToolUseBlock | ToolResultBlock) -> int:
+def _block_chars(
+    block: TextBlock | SystemContextBlock | ToolUseBlock | ToolResultBlock,
+) -> int:
     if isinstance(block, TextBlock):
         return len(block.text)
     if isinstance(block, ToolUseBlock):
         return len(block.name) + len(str(block.input))
+    if isinstance(block, SystemContextBlock):
+        return len(block.content)
     return len(block.content)
 
 
