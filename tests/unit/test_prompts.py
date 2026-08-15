@@ -10,6 +10,7 @@ from nano_code.prompts import (
     PromptStability,
     SystemPrompt,
     default_prompt_registry,
+    defaults,
 )
 from nano_code.prompts.rendering import render_system_context
 
@@ -65,6 +66,56 @@ def test_default_prompt_keeps_workspace_out_of_static_prefix(tmp_path: Path) -> 
     assert str(tmp_path) not in static_text
     assert str(tmp_path) in session_text
     assert prompt.text == "\n\n".join(item.content for item in prompt.sections)
+
+
+def test_default_static_prompt_has_nano_code_guidance_only(tmp_path: Path) -> None:
+    prompt = default_prompt_registry(tmp_path).resolve()
+
+    static_sections = tuple(
+        section
+        for section in prompt.sections
+        if section.stability is PromptStability.STATIC
+    )
+    assert tuple(section.key for section in static_sections) == (
+        "nano-code.identity",
+        "nano-code.system",
+        "nano-code.task-guidance",
+        "nano-code.safety",
+        "nano-code.tools",
+        "nano-code.response-style",
+    )
+    static_text = "\n".join(section.content for section in static_sections)
+    assert all(
+        tool in static_text
+        for tool in ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
+    )
+    lowered = static_text.casefold()
+    assert all(term not in lowered for term in ("hooks", "skills", "mcp", "subagent"))
+
+
+def test_environment_prompt_has_fixed_runtime_order_and_direct_git_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("SHELL", "/bin/test-shell")
+    monkeypatch.setattr(defaults.sys, "platform", "test-platform")
+    monkeypatch.setattr(defaults.platform, "system", lambda: "TestOS")
+    monkeypatch.setattr(defaults.platform, "release", lambda: "1.2")
+
+    without_local_git = default_prompt_registry(workspace).resolve().sections[-1]
+    assert without_local_git.content.splitlines() == [
+        f"Workspace: {workspace.resolve()}",
+        "Git repository: no",
+        "Platform: test-platform",
+        "Shell: /bin/test-shell",
+        "OS: TestOS 1.2",
+    ]
+
+    (workspace / ".git").write_text("gitdir: ../repo/.git\n", encoding="utf-8")
+    with_local_git = default_prompt_registry(workspace).resolve().sections[-1]
+    assert with_local_git.content.splitlines()[1] == "Git repository: yes"
 
 
 def test_system_context_is_structured_until_model_projection() -> None:

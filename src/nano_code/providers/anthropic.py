@@ -76,7 +76,7 @@ class AnthropicProvider(ModelCompletionPort):
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=self._system(request.system_prompt),
-                messages=self._messages(request.messages),
+                messages=self._request_messages(request),
                 tools=self._tools(request),
             )
         except BadRequestError as error:
@@ -94,7 +94,7 @@ class AnthropicProvider(ModelCompletionPort):
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=self._system(request.system_prompt),
-                messages=self._messages(request.messages),
+                messages=self._request_messages(request),
                 tools=self._tools(request),
             ) as stream:
                 async for event in stream:
@@ -142,6 +142,14 @@ class AnthropicProvider(ModelCompletionPort):
                     )
             projected.append({"role": message.role, "content": content})
         return projected
+
+    @staticmethod
+    def _request_messages(request: ContextPlan) -> list[MessageParam]:
+        """Place non-history workspace context before the conversation history."""
+
+        return AnthropicProvider._messages(
+            (*request.workspace_context, *request.messages)
+        )
 
     def _system(self, prompt: SystemPrompt) -> str | list[TextBlockParam]:
         """按 provider 自身能力消费核心提供的稳定性信息。"""

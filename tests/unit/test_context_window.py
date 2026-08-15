@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from nano_code.agent import (
@@ -99,6 +101,62 @@ def test_context_planner_builds_observable_request_without_mutating_snapshot() -
     assert plan.budget.system_chars == len("system")
     assert plan.budget.last_actual_input_tokens is None
     assert snapshot.messages == (message,)
+
+
+def test_workspace_context_is_cached_budgeted_and_excluded_from_compaction() -> None:
+    message = user("hello")
+    workspace_message = ModelMessage("user", (TextBlock("workspace facts"),))
+
+    class Resolver:
+        calls = 0
+
+        def resolve(self) -> tuple[ModelMessage, ...]:
+            self.calls += 1
+            return (workspace_message,)
+
+    resolver = Resolver()
+    planner = ContextPlanner(
+        window=ContextWindow(max_chars=100),
+        prompt=PromptRegistry(
+            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
+        ),
+        tools=(),
+        max_output_tokens=50,
+        workspace_context_resolver=resolver,
+    )
+
+    plan = planner.plan(ConversationSnapshot((message,)))
+    budget = planner.inspect(ConversationSnapshot((message,)))
+    compact_messages, replacements = planner.compaction_view(
+        ConversationSnapshot((message,))
+    )
+
+    assert resolver.calls == 1
+    assert plan.workspace_context == (workspace_message,)
+    assert budget.workspace_context_chars == len("workspace facts")
+    assert budget.estimated_input_chars == (
+        len("hello") + len("system") + len("workspace facts")
+    )
+    assert compact_messages == (ModelMessage("user", (TextBlock("hello"),)),)
+    assert replacements == ()
+
+
+def test_planner_without_workspace_resolver_does_not_read_agents_file(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "AGENTS.md").write_text("unrequested instructions", encoding="utf-8")
+    planner = ContextPlanner(
+        window=ContextWindow(max_chars=100),
+        prompt=PromptRegistry(
+            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
+        ),
+        tools=(),
+        max_output_tokens=50,
+    )
+
+    plan = planner.plan(ConversationSnapshot((user("hello"),)))
+
+    assert plan.workspace_context == ()
 
 
 def test_prompt_registry_rejects_duplicate_section_keys() -> None:

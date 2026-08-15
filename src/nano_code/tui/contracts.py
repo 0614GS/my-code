@@ -43,6 +43,7 @@ class ContextStatus:
     working_message_count: int
     replacement_count: int
     compact_count: int
+    workspace_context_chars: int = 0
 
 
 @dataclass(frozen=True, slots=True)

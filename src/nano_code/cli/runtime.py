@@ -23,7 +23,12 @@ from nano_code.agent import (
 from nano_code.agent.ports.inbound import AgentInboundPort
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.config import NanoCodePaths, Settings
-from nano_code.context import CompactionCoordinator, ContextPlanner, ContextWindow
+from nano_code.context import (
+    AgentsWorkspaceContextResolver,
+    CompactionCoordinator,
+    ContextPlanner,
+    ContextWindow,
+)
 from nano_code.context.compaction import CompactionService
 from nano_code.messages import JsonObject
 from nano_code.permissions import PermissionConfirmation, PermissionPolicy
@@ -150,6 +155,7 @@ def _build_engine_parts(
         prompt=default_prompt_registry(settings.cwd),
         tools=registry.definitions,
         max_output_tokens=settings.max_output_tokens,
+        workspace_context_resolver=AgentsWorkspaceContextResolver(settings.cwd),
     )
     tool_round = ToolRoundExecutor(
         tool_executor,
@@ -312,6 +318,7 @@ class CliChatRuntime:
             message_chars=budget.message_chars,
             system_chars=budget.system_chars,
             tool_schema_chars=budget.tool_schema_chars,
+            workspace_context_chars=budget.workspace_context_chars,
             message_limit_chars=budget.message_limit_chars,
             working_message_count=state.working_message_count,
             replacement_count=state.replacement_count,

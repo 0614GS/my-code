@@ -21,10 +21,16 @@ class ContextBudget:
     last_actual_input_tokens: int | None
     incremental_tokens: int
     estimated_input_tokens: int
+    workspace_context_chars: int = 0
 
     @property
     def estimated_input_chars(self) -> int:
-        return self.message_chars + self.system_chars + self.tool_schema_chars
+        return (
+            self.message_chars
+            + self.system_chars
+            + self.tool_schema_chars
+            + self.workspace_context_chars
+        )
 
     @property
     def estimated_total_tokens(self) -> int:
@@ -43,6 +49,7 @@ class ContextPlan:
     new_content_replacements: tuple[ContentReplacement, ...] = field(
         default_factory=tuple
     )
+    workspace_context: tuple[ModelMessage, ...] = ()
 
 
 __all__ = ["ContextBudget", "ContextPlan"]

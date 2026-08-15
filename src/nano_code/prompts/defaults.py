@@ -1,57 +1,85 @@
-"""nano-code 默认提示词片段。"""
+"""Assembly of nano-code's default prompt sections."""
 
+import os
+import platform
+import sys
 from pathlib import Path
 
+from nano_code.constants.prompts import (
+    IDENTITY_PROMPT,
+    RESPONSE_STYLE_PROMPT,
+    SAFETY_PROMPT,
+    SYSTEM_PROMPT,
+    TASK_GUIDANCE_PROMPT,
+    TOOLS_PROMPT,
+)
 from nano_code.prompts.models import PromptSection, PromptStability
 from nano_code.prompts.registry import PromptRegistry
 
-_IDENTITY = """You are nano-code, a concise coding agent.
-Inspect relevant files before changing them, and base decisions on observed facts."""
 
-_TOOL_USE = """Use the available tools to inspect and modify the workspace.
-Prefer small, focused changes and run verification proportionate to the risk."""
+def _environment_prompt(cwd: Path) -> str:
+    """Return the session-stable runtime facts in a fixed order."""
 
-_SAFETY = """Keep file operations within the workspace.
-Never modify .git, .nano-code."""
-
-_RESPONSE_STYLE = """Report outcomes clearly and mention unresolved failures.
-Avoid repeating tool output when a concise explanation is sufficient."""
-
-
-def _literal(content: str) -> str:
-    return content
+    workspace = cwd.resolve()
+    git_marker = workspace / ".git"
+    is_git_repository = git_marker.is_dir() or git_marker.is_file()
+    shell = os.environ.get("SHELL") or os.environ.get("COMSPEC") or "unknown"
+    platform_name = sys.platform or "unknown"
+    os_type = platform.system() or "unknown"
+    os_version = platform.release() or "unknown"
+    return "\n".join(
+        (
+            f"Workspace: {workspace}",
+            f"Git repository: {'yes' if is_git_repository else 'no'}",
+            f"Platform: {platform_name}",
+            f"Shell: {shell}",
+            f"OS: {os_type} {os_version}",
+        )
+    )
 
 
 def default_prompt_registry(cwd: Path) -> PromptRegistry:
-    """构造默认片段；路径只进入 session 稳定区。"""
+    """Construct the default sections; runtime facts stay in session scope."""
 
-    workspace = str(cwd)
     return PromptRegistry(
         (
             PromptSection(
                 "nano-code.identity",
                 PromptStability.STATIC,
-                lambda: _literal(_IDENTITY),
+                lambda: IDENTITY_PROMPT,
             ),
             PromptSection(
-                "nano-code.tools",
+                "nano-code.system",
                 PromptStability.STATIC,
-                lambda: _literal(_TOOL_USE),
+                lambda: SYSTEM_PROMPT,
+            ),
+            PromptSection(
+                "nano-code.task-guidance",
+                PromptStability.STATIC,
+                lambda: TASK_GUIDANCE_PROMPT,
             ),
             PromptSection(
                 "nano-code.safety",
                 PromptStability.STATIC,
-                lambda: _literal(_SAFETY),
+                lambda: SAFETY_PROMPT,
+            ),
+            PromptSection(
+                "nano-code.tools",
+                PromptStability.STATIC,
+                lambda: TOOLS_PROMPT,
             ),
             PromptSection(
                 "nano-code.response-style",
                 PromptStability.STATIC,
-                lambda: _literal(_RESPONSE_STYLE),
+                lambda: RESPONSE_STYLE_PROMPT,
             ),
             PromptSection(
                 "nano-code.environment",
                 PromptStability.SESSION,
-                lambda: f"The current workspace is {workspace}.",
+                lambda: _environment_prompt(cwd),
             ),
         )
     )
+
+
+__all__ = ["default_prompt_registry"]
