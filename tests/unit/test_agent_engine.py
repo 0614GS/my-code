@@ -16,11 +16,11 @@ from nano_code.agent import (
     ModelResponseCompleted,
     ModelStreamEvent,
     ModelTextDelta,
-    ToolInteractionPort,
     ToolRoundCompleted,
     ToolRoundEvent,
 )
 from nano_code.agent.errors import ModelContextOverflow
+from nano_code.agent.ports.tool import ToolRoundPort
 from nano_code.context import CompactionCoordinator, ContextPlanner, ContextWindow
 from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
@@ -39,8 +39,8 @@ from nano_code.sessions import SessionStore
 from nano_code.tools import ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
-from nano_code.tools.interaction import ToolRoundExecutor
 from nano_code.tools.result_store import ToolResultStore
+from nano_code.tools.round_executor import ToolRoundExecutor
 
 _SESSION_ID = "12345678-1234-1234-1234-123456789abc"
 _OTHER_SESSION_ID = "87654321-4321-4321-4321-cba987654321"
@@ -91,7 +91,7 @@ def build_engine(
     provider: FakeProvider,
     *,
     context_chars: int = 160_000,
-    tool_interaction: ToolInteractionPort | None = None,
+    tool_round: ToolRoundPort | None = None,
 ) -> AgentEngine:
     store = SessionStore(tmp_path / "state", _SESSION_ID)
     registry = ToolRegistry(builtin_tools())
@@ -112,7 +112,7 @@ def build_engine(
     )
     return AgentEngine(
         model_turn=provider,
-        tool_interaction=tool_interaction or ToolRoundExecutor(executor),
+        tool_round=tool_round or ToolRoundExecutor(executor),
         conversation=ConversationState(store),
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(provider)),
@@ -358,7 +358,7 @@ async def test_cancellation_persists_results_for_every_tool_use(tmp_path: Path) 
     engine = build_engine(
         tmp_path,
         provider,
-        tool_interaction=CancellingInteraction(),
+        tool_round=CancellingInteraction(),
     )
 
     with pytest.raises(asyncio.CancelledError):

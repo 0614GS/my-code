@@ -7,7 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from nano_code.agent.contracts.context import ContextPlan
 from nano_code.agent.contracts.model import ModelStreamEvent
-from nano_code.agent.ports import ModelCompletionPort
+from nano_code.agent.ports.model import ModelCompletionPort, ModelTurnPort
 from nano_code.auth import CredentialSource
 from nano_code.messages import ModelResponse
 from nano_code.providers.anthropic import AnthropicProvider
@@ -43,7 +43,7 @@ class _StreamingProvider(Protocol):
         """可选的原生 streaming adapter 能力。"""
 
 
-class ProviderRouter:
+class ProviderRouter(ModelTurnPort, ModelCompletionPort):
     """串行化请求与切换，同时保持智能体循环协议。"""
 
     def __init__(

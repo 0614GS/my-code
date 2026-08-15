@@ -12,6 +12,7 @@ from nano_code.agent.contracts.session import (
     ContentReplacement,
     SessionSnapshot,
 )
+from nano_code.agent.ports.session import SessionRepository
 from nano_code.messages import ChatMessage
 from nano_code.messages.codec import message_from_json, message_to_json
 
@@ -29,13 +30,13 @@ def is_session_id(value: str) -> bool:
     return _UUID_PATTERN.fullmatch(value) is not None
 
 
-class SessionStore:
+class SessionStore(SessionRepository):
     """在 Claude Code 风格的项目级目录中持久化一个会话。"""
 
     def __init__(self, project_state_dir: Path, session_id: str) -> None:
         if not is_session_id(session_id):
             raise ValueError("session_id must be a UUID")
-        self.session_id = session_id
+        self._session_id = session_id
         self.project_state_dir = project_state_dir
         # 会话记录文件与 session 目录同处项目目录下；大型工具结果存放在后者的
         # ``tool-results/`` 子目录中。
@@ -48,6 +49,10 @@ class SessionStore:
         self._content_replacements: dict[str, ContentReplacement] | None = None
         self._compact_boundaries: dict[str, CompactBoundary] | None = None
         self._pending_compact_boundaries: dict[str, CompactBoundary] | None = None
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
 
     def load(self) -> tuple[ChatMessage, ...]:
         if not self.path.exists():

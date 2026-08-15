@@ -13,7 +13,6 @@ from nano_code.agent import (
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
-    AgentInboundPort,
     AgentSessionView,
     AgentTextDelta,
     AgentToolFinished,
@@ -21,7 +20,8 @@ from nano_code.agent import (
     AgentTurnCompleted,
     ConversationState,
 )
-from nano_code.agent.ports import SessionRepository
+from nano_code.agent.ports.inbound import AgentInboundPort
+from nano_code.agent.ports.session import SessionRepository
 from nano_code.config import NanoCodePaths, Settings
 from nano_code.context import CompactionCoordinator, ContextPlanner, ContextWindow
 from nano_code.context.compaction import CompactionService
@@ -42,8 +42,8 @@ from nano_code.sessions import SessionCatalog, SessionStore, SessionSummary
 from nano_code.tools import Tool, ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
-from nano_code.tools.interaction import ToolRoundExecutor
 from nano_code.tools.result_store import ToolResultStore
+from nano_code.tools.round_executor import ToolRoundExecutor
 from nano_code.tui import (
     ContextStatus,
     HistoryAssistantMessage,
@@ -151,7 +151,7 @@ def _build_engine_parts(
         tools=registry.definitions,
         max_output_tokens=settings.max_output_tokens,
     )
-    tool_interaction = ToolRoundExecutor(
+    tool_round = ToolRoundExecutor(
         tool_executor,
         result_store_factory=lambda active_id: ToolResultStore(
             settings.paths.tool_results_dir(active_id)
@@ -159,7 +159,7 @@ def _build_engine_parts(
     )
     engine = AgentEngine(
         model_turn=provider,
-        tool_interaction=tool_interaction,
+        tool_round=tool_round,
         conversation=ConversationState(session_store),
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(provider)),

@@ -99,7 +99,7 @@
 当前 Python 实现把 `AgentEngine` 收敛为用户回合状态机：写入用户消息、请求
 `ContextPort`、通过 `ModelTurnPort` 消费统一模型事件、判断工具轮是否继续、处理
 overflow/取消/max-turns，并发出 `AgentEvent`。会话事实由 `ConversationState` 管理，
-工具轮由 `ToolInteractionPort` 管理，摘要由 `Compactor` 管理。
+工具轮由 `ToolRoundPort` 管理，摘要由 `Compactor` 管理。
 
 六边形边界由 `nano_code.agent` 统一声明：CLI/TUI 通过 `AgentInboundPort` 调用
 `submit`、`stream`、状态查询、compact 和 resume；Engine 通过下列 outbound port
@@ -111,7 +111,7 @@ overflow/取消/max-turns，并发出 `AgentEvent`。会话事实由 `Conversati
 | `AgentInboundPort` | inbound | 驱动用户回合、状态查询、compact 与 session resume |
 | `ContextPort` | outbound | 从 `ConversationSnapshot` 生成请求、预算和 compact 视图 |
 | `ModelTurnPort` / `ModelCompletionPort` | outbound | 流式用户回合与完整摘要模型请求 |
-| `ToolInteractionPort` | outbound | 串行工具轮、取消闭合和展示 DTO |
+| `ToolRoundPort` | outbound | 串行工具轮、取消闭合和展示 DTO |
 | `SessionRepository` | outbound | 提供快照及追加式 Transcript 写入 |
 | `Compactor` | outbound | 返回尚未持久化的摘要提交计划 |
 

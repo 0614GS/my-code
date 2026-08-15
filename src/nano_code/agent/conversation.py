@@ -9,7 +9,7 @@ from nano_code.agent.contracts.session import (
     ConversationSnapshot,
     SessionSnapshot,
 )
-from nano_code.agent.ports import SessionRepository
+from nano_code.agent.ports.session import SessionRepository
 from nano_code.messages import ChatMessage, ToolResultBlock, ToolUseBlock
 
 

@@ -11,7 +11,9 @@ from nano_code.agent.contracts.session import (
     CompactTrigger,
     ConversationSnapshot,
 )
-from nano_code.agent.ports import ContextPort, ModelCompletionPort
+from nano_code.agent.ports.compaction import CompactorPort
+from nano_code.agent.ports.context import ContextPort
+from nano_code.agent.ports.model import ModelCompletionPort
 from nano_code.messages import ChatMessage, SystemContextBlock, TextBlock, TokenUsage
 from nano_code.prompts import SystemPrompt
 
@@ -67,7 +69,7 @@ class CompactionService:
         return CompactionResult(summary=summary, usage=response.usage)
 
 
-class CompactionCoordinator:
+class CompactionCoordinator(CompactorPort):
     """连接 ContextPort 与摘要服务的纯编排适配器。
 
     摘要和边界都在这里构造，但直到调用方把返回的 outcome 交给

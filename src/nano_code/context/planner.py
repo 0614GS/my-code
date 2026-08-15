@@ -9,6 +9,7 @@ from nano_code.agent.contracts.context import (
 from nano_code.agent.contracts.model import ModelMessage
 from nano_code.agent.contracts.session import ContentReplacement, ConversationSnapshot
 from nano_code.agent.contracts.tool import ToolDefinition
+from nano_code.agent.ports.context import ContextPort
 from nano_code.context.microcompact import (
     MicrocompactPolicy,
     apply_content_replacements,
@@ -25,7 +26,7 @@ from nano_code.messages import (
 from nano_code.prompts import PromptRegistry, SystemPrompt
 
 
-class ContextPlanner:
+class ContextPlanner(ContextPort):
     """集中编排 prompt、工具和消息投影，不修改会话事实。"""
 
     def __init__(

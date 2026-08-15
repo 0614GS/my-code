@@ -33,14 +33,12 @@ from nano_code.agent.events import (
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.agent.ports import (
-    AgentInboundPort,
-    Compactor,
-    ContextPort,
-    ModelTurnPort,
-    SessionRepository,
-    ToolInteractionPort,
-)
+from nano_code.agent.ports.compaction import CompactorPort
+from nano_code.agent.ports.context import ContextPort
+from nano_code.agent.ports.inbound import AgentInboundPort
+from nano_code.agent.ports.model import ModelTurnPort
+from nano_code.agent.ports.session import SessionRepository
+from nano_code.agent.ports.tool import ToolRoundPort
 from nano_code.messages import (
     ChatMessage,
     ModelResponse,
@@ -58,21 +56,21 @@ class AgentEngine(AgentInboundPort):
         self,
         *,
         model_turn: ModelTurnPort,
-        tool_interaction: ToolInteractionPort,
+        tool_round: ToolRoundPort,
         conversation: ConversationState,
         context: ContextPort,
-        compactor: Compactor,
+        compactor: CompactorPort,
         max_turns: int = 12,
     ) -> None:
         if max_turns < 1:
             raise ValueError("max_turns must be positive")
         self._model_turn = model_turn
-        self._tool_interaction = tool_interaction
+        self._tool_round = tool_round
         self._conversation = conversation
         self._context = context
         self._compactor = compactor
         self.max_turns = max_turns
-        self._tool_interaction.bind_session(self._conversation.session_id)
+        self._tool_round.bind_session(self._conversation.session_id)
 
     @property
     def session_id(self) -> str:
@@ -199,7 +197,7 @@ class AgentEngine(AgentInboundPort):
             results: list[ToolResultBlock] = []
             round_cancelled = False
             try:
-                async for tool_event in self._tool_interaction.run_round(
+                async for tool_event in self._tool_round.run_round(
                     tool_calls, assistant_message
                 ):
                     if isinstance(tool_event, ToolCallStarted):
@@ -229,12 +227,12 @@ class AgentEngine(AgentInboundPort):
                 else:
                     self._conversation.append(result_message)
             except asyncio.CancelledError:
-                # 自定义 ToolInteractionPort 也必须满足协议闭合；适配器通常
+                # 自定义 ToolRoundPort 也必须满足协议闭合；适配器通常
                 # 已经发出了所有取消结果，这里只负责兜底并持久化一次。
                 if result_message is None:
                     results = _cancelled_results(
                         tool_calls,
-                        self._tool_interaction,
+                        self._tool_round,
                         results,
                     )
                     self._conversation.append_tool_results(results, assistant_message)
@@ -281,7 +279,7 @@ class AgentEngine(AgentInboundPort):
         """校验并恢复另一会话，失败时保持当前状态。"""
 
         messages = self._conversation.resume(repository)
-        self._tool_interaction.bind_session(repository.session_id)
+        self._tool_round.bind_session(repository.session_id)
         return AgentSessionView(
             state=self.state(),
             history=self._project_history(messages),
@@ -332,8 +330,8 @@ class AgentEngine(AgentInboundPort):
                     history.append(
                         AgentHistoryToolCall(
                             tool_use_id=block.id,
-                            use=self._tool_interaction.present_use(block),
-                            result=self._tool_interaction.present_stored_result(
+                            use=self._tool_round.present_use(block),
+                            result=self._tool_round.present_stored_result(
                                 block, result
                             ),
                             is_error=result is None or result.is_error,
@@ -365,7 +363,7 @@ class AgentEngine(AgentInboundPort):
 
 def _cancelled_results(
     calls: tuple[ToolUseBlock, ...],
-    interaction: ToolInteractionPort,
+    tool_round: ToolRoundPort,
     existing: list[ToolResultBlock],
 ) -> list[ToolResultBlock]:
     message = "Tool execution was cancelled."
@@ -380,7 +378,7 @@ def _cancelled_results(
             content=message,
             is_error=True,
         )
-        presentation = interaction.present_stored_result(call, result)
+        presentation = tool_round.present_stored_result(call, result)
         results.append(
             ToolResultBlock(
                 tool_use_id=result.tool_use_id,

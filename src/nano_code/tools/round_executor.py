@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
-from typing import Protocol
 
 from nano_code.agent.contracts.tool import (
     ToolCallFinished as _ToolCallFinished,
@@ -16,37 +15,18 @@ from nano_code.agent.contracts.tool import (
 from nano_code.agent.contracts.tool import (
     ToolRoundEvent as _ToolRoundEvent,
 )
+from nano_code.agent.ports.tool import ToolRoundPort
 from nano_code.messages import ChatMessage, ToolResultBlock, ToolUseBlock
 from nano_code.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
     compact_text,
 )
-from nano_code.tools.executor import ToolExecutionOutcome
+from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from nano_code.tools.result_store import ToolResultStore
 
 
-class _ToolExecutorShape(Protocol):
-    """ToolRoundExecutor 的 adapter 内部依赖，不是 Agent-facing port。"""
-
-    result_store: ToolResultStore
-
-    def present_use(self, call: ToolUseBlock) -> ToolUsePresentation: ...
-
-    def present_error(
-        self, call: ToolUseBlock, message: str
-    ) -> ToolResultPresentation: ...
-
-    def present_stored_result(
-        self,
-        call: ToolUseBlock,
-        result: ToolResultBlock | None,
-    ) -> ToolResultPresentation: ...
-
-    async def execute(self, call: ToolUseBlock) -> ToolExecutionOutcome: ...
-
-
-class ToolRoundExecutor:
+class ToolRoundExecutor(ToolRoundPort):
     """把现有 ToolExecutor 包装成 Agent-owned 工具轮次 port。
 
     调度策略刻意保留当前 MVP 的串行语义。以后增加并行调度时，只需要替换
@@ -55,7 +35,7 @@ class ToolRoundExecutor:
 
     def __init__(
         self,
-        executor: _ToolExecutorShape,
+        executor: ToolExecutor,
         result_store_factory: Callable[[str], ToolResultStore] | None = None,
     ) -> None:
         self.executor = executor

@@ -14,8 +14,8 @@ from nano_code.permissions.prompt import HeadlessPrompter
 from nano_code.tools import ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
-from nano_code.tools.interaction import ToolRoundExecutor
 from nano_code.tools.result_store import ToolResultStore
+from nano_code.tools.round_executor import ToolRoundExecutor
 
 
 def build_round_executor(tmp_path: Path) -> ToolRoundExecutor:

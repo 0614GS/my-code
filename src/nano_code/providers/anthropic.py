@@ -21,6 +21,7 @@ from nano_code.agent.contracts.model import (
     ModelTextDelta,
 )
 from nano_code.agent.errors import ModelContextOverflow
+from nano_code.agent.ports.model import ModelCompletionPort
 from nano_code.messages import (
     ModelResponse,
     TextBlock,
@@ -33,7 +34,7 @@ from nano_code.prompts import PromptStability, SystemPrompt
 from nano_code.providers.base import ProviderCapabilities
 
 
-class AnthropicProvider:
+class AnthropicProvider(ModelCompletionPort):
     """转换内部消息，同时不让 SDK 类型泄漏到核心层。"""
 
     def __init__(

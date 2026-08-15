@@ -44,15 +44,12 @@ from nano_code.agent.events import (
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.agent.ports import (
-    AgentInboundPort,
-    Compactor,
-    ContextPort,
-    ModelCompletionPort,
-    ModelTurnPort,
-    SessionRepository,
-    ToolInteractionPort,
-)
+from nano_code.agent.ports.compaction import CompactorPort
+from nano_code.agent.ports.context import ContextPort
+from nano_code.agent.ports.inbound import AgentInboundPort
+from nano_code.agent.ports.model import ModelCompletionPort, ModelTurnPort
+from nano_code.agent.ports.session import SessionRepository
+from nano_code.agent.ports.tool import ToolRoundPort
 
 __all__ = [
     "AgentContextState",
@@ -74,7 +71,7 @@ __all__ = [
     "CompactBoundary",
     "CompactTrigger",
     "CompactionOutcome",
-    "Compactor",
+    "CompactorPort",
     "ContentReplacement",
     "ContextBudget",
     "ContextPlan",
@@ -95,7 +92,7 @@ __all__ = [
     "ToolCallFinished",
     "ToolCallStarted",
     "ToolDefinition",
-    "ToolInteractionPort",
+    "ToolRoundPort",
     "ToolRoundCompleted",
     "ToolRoundEvent",
 ]

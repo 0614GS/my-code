@@ -7,10 +7,10 @@ from nano_code.agent.contracts.model import (
     ModelResponseCompleted,
     ModelStreamEvent,
 )
-from nano_code.agent.ports import ModelCompletionPort
+from nano_code.agent.ports.model import ModelCompletionPort, ModelTurnPort
 
 
-class CompleteModelTurnAdapter:
+class CompleteModelTurnAdapter(ModelTurnPort):
     """为 legacy/简单 provider 提供单事件的流式兼容层。"""
 
     def __init__(self, provider: ModelCompletionPort) -> None:
