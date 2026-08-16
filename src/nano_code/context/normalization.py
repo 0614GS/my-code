@@ -8,6 +8,7 @@ from nano_code.agent.contracts.model import (
     ModelToolUseBlock,
     ModelUserMessage,
 )
+from nano_code.agent.contracts.session import DeliveredContextAttachment
 from nano_code.messages import (
     AssistantMessage,
     ContextAttachment,
@@ -28,10 +29,11 @@ class ModelInputNormalizer:
         user_context: tuple[UserContextDocument, ...],
         history: tuple[ConversationMessage, ...],
         attachments: tuple[ContextAttachment, ...],
+        runtime_attachments: tuple[DeliveredContextAttachment, ...] = (),
     ) -> tuple[ModelMessage, ...]:
         candidates = [
             *(_context_message(item) for item in user_context),
-            *(_conversation_message(item) for item in history),
+            *_conversation_history(history, runtime_attachments),
             *(_context_message(item) for item in attachments),
         ]
         result = _merge_adjacent(tuple(candidates))
@@ -39,12 +41,14 @@ class ModelInputNormalizer:
         return result
 
     def normalize_transcript(
-        self, messages: tuple[ConversationMessage, ...]
+        self,
+        messages: tuple[ConversationMessage, ...],
+        runtime_attachments: tuple[DeliveredContextAttachment, ...] = (),
     ) -> tuple[ModelMessage, ...]:
         """Compact 使用的 history-only 视图。"""
 
         result = _merge_adjacent(
-            tuple(_conversation_message(item) for item in messages)
+            tuple(_conversation_history(messages, runtime_attachments))
         )
         self._validate_tool_pairs(result)
         return result
@@ -117,6 +121,25 @@ def _context_message(
             for block in message.content
         )
     )
+
+
+def _conversation_history(
+    messages: tuple[ConversationMessage, ...],
+    runtime_attachments: tuple[DeliveredContextAttachment, ...],
+) -> list[ModelMessage]:
+    by_anchor: dict[str, list[ContextAttachment]] = {}
+    for delivery in runtime_attachments:
+        by_anchor.setdefault(delivery.after_message_uuid, []).append(
+            delivery.attachment
+        )
+    projected: list[ModelMessage] = []
+    for message in messages:
+        projected.append(_conversation_message(message))
+        projected.extend(
+            _context_message(attachment)
+            for attachment in by_anchor.get(message.uuid, ())
+        )
+    return projected
 
 
 def _merge_adjacent(messages: tuple[ModelMessage, ...]) -> tuple[ModelMessage, ...]:

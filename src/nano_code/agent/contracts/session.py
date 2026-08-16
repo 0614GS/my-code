@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 from uuid import uuid4
 
-from nano_code.messages import ConversationMessage
+from nano_code.messages import ContextAttachment, ConversationMessage
 
 CompactTrigger = Literal["auto", "manual", "reactive"]
 
@@ -43,10 +43,33 @@ class ContentReplacement:
 
 @dataclass(frozen=True, slots=True)
 class ConversationSnapshot:
-    """ContextPort 某一时刻读取的会话工作集快照。"""
+    """ContextPort 某一时刻读取的会话事实与模型工作集快照。
+
+    ``messages`` 是 compact 后的模型工作集；``session_history`` 仅供需要从
+    完整运行时事实派生状态的 attachment source 使用。``runtime_attachments``
+    保留本进程已经交付、但不写 Transcript 的上下文。
+    """
 
     messages: tuple[ConversationMessage, ...]
     content_replacements: tuple[ContentReplacement, ...] = field(default_factory=tuple)
+    session_history: tuple[ConversationMessage, ...] = field(default_factory=tuple)
+    runtime_attachments: tuple["DeliveredContextAttachment", ...] = field(
+        default_factory=tuple
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveredContextAttachment:
+    """已进入模型历史、但不写入 Transcript 的运行时 attachment。"""
+
+    after_message_uuid: str
+    attachment: ContextAttachment
+
+    def __post_init__(self) -> None:
+        if not self.after_message_uuid:
+            raise ValueError("Runtime attachment anchor must not be empty")
+        if self.attachment.lifecycle != "session_runtime":
+            raise ValueError("Delivered attachments must use session_runtime lifecycle")
 
 
 @dataclass(frozen=True, slots=True)

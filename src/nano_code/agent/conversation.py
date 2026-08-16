@@ -7,11 +7,13 @@ from nano_code.agent.contracts.session import (
     CompactBoundary,
     ContentReplacement,
     ConversationSnapshot,
+    DeliveredContextAttachment,
     SessionSnapshot,
 )
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.messages import (
     AssistantMessage,
+    ContextAttachment,
     ConversationMessage,
     ToolCall,
     ToolResult,
@@ -33,6 +35,7 @@ class ConversationState:
         self._all_replacements: dict[str, ContentReplacement]
         self._all_boundaries: dict[str, CompactBoundary]
         self._active_replacements: dict[str, ContentReplacement]
+        self._runtime_attachments: tuple[DeliveredContextAttachment, ...] = ()
         self._replace_snapshot(repository.load())
         self._repair_trailing_tool_uses()
 
@@ -83,9 +86,30 @@ class ConversationState:
     def context_snapshot(self) -> ConversationSnapshot:
         """返回交给 ContextPort 的不可变工作集快照。"""
 
+        working_ids = {message.uuid for message in self._snapshot.working_set}
         return ConversationSnapshot(
             messages=self._snapshot.working_set,
             content_replacements=self.content_replacements,
+            session_history=self._snapshot.history,
+            runtime_attachments=tuple(
+                delivery
+                for delivery in self._runtime_attachments
+                if delivery.after_message_uuid in working_ids
+            ),
+        )
+
+    def append_runtime_attachments(
+        self, attachments: tuple[ContextAttachment, ...]
+    ) -> None:
+        """把已发送 attachment 留在本次进程的会话历史中，不写 Transcript。"""
+
+        if not attachments:
+            return
+        if not self._snapshot.history:
+            raise ValueError("Runtime attachments require a conversation anchor")
+        anchor = self._snapshot.history[-1].uuid
+        self._runtime_attachments += tuple(
+            DeliveredContextAttachment(anchor, attachment) for attachment in attachments
         )
 
     def append(self, message: ConversationMessage) -> None:
@@ -189,6 +213,8 @@ class ConversationState:
         # 目标的所有 IO 和协议修复在这里已经完成；切换引用是最后一步。
         self._repository = repository
         self._replace_snapshot(target_snapshot)
+        # CC 的普通 attachment 不写 Transcript；切换或恢复 session 时不存在可重放事实。
+        self._runtime_attachments = ()
         return target_snapshot.history
 
     def _replace_snapshot(self, snapshot: SessionSnapshot) -> None:

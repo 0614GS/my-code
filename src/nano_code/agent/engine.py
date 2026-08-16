@@ -5,13 +5,13 @@ from collections.abc import AsyncIterator
 
 from nano_code.agent.contracts.context import ContextPlan
 from nano_code.agent.contracts.inbound import (
-    AgentContextState,
+    AgentContextStatus,
     AgentHistoryAssistantMessage,
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
     AgentSessionView,
-    AgentState,
+    AgentStatus,
     AgentTurnResult,
 )
 from nano_code.agent.contracts.model import (
@@ -32,6 +32,7 @@ from nano_code.agent.errors import ContextOverflow, ModelContextOverflow
 from nano_code.agent.events import (
     AgentEvent,
     AgentTextDelta,
+    AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
@@ -53,6 +54,8 @@ from nano_code.messages import (
     ToolResult,
     ToolResultsMessage,
 )
+from nano_code.todos.models import TodoItem
+from nano_code.todos.projection import project_todos
 
 
 class AgentEngine(AgentInboundPort):
@@ -77,30 +80,6 @@ class AgentEngine(AgentInboundPort):
         self._compactor = compactor
         self.max_turns = max_turns
         self._tool_round.bind_session(self._conversation.session_id)
-
-    @property
-    def session_id(self) -> str:
-        """当前 Agent 与之绑定的 session。"""
-
-        return self._conversation.session_id
-
-    @property
-    def working_messages(self) -> tuple[ConversationMessage, ...]:
-        """当前模型工作集的只读快照。"""
-
-        return self._conversation.working_messages
-
-    @property
-    def message_count(self) -> int:
-        return self._conversation.message_count
-
-    @property
-    def content_replacement_count(self) -> int:
-        return self._conversation.content_replacement_count
-
-    @property
-    def compact_count(self) -> int:
-        return self._conversation.compact_count
 
     async def submit(self, prompt: str) -> AgentTurnResult:
         """消费可观察循环并返回终态值。"""
@@ -202,6 +181,7 @@ class AgentEngine(AgentInboundPort):
             result_message: ToolResultsMessage | None = None
             results: list[ToolResult] = []
             round_cancelled = False
+            todos_before = self._todos
             try:
                 async for tool_event in self._tool_round.run_round(
                     tool_calls, assistant_message
@@ -232,6 +212,9 @@ class AgentEngine(AgentInboundPort):
                     self._conversation.append_tool_results(results, assistant_message)
                 else:
                     self._conversation.append(result_message)
+                todos_after = self._todos
+                if todos_after != todos_before:
+                    yield AgentTodoListUpdated(todos_after)
             except asyncio.CancelledError:
                 # 自定义 ToolRoundPort 也必须满足协议闭合；适配器通常
                 # 已经发出了所有取消结果，这里只负责兜底并持久化一次。
@@ -244,6 +227,9 @@ class AgentEngine(AgentInboundPort):
                     self._conversation.append_tool_results(results, assistant_message)
                 else:
                     self._conversation.append(result_message)
+                todos_after = self._todos
+                if todos_after != todos_before:
+                    yield AgentTodoListUpdated(todos_after)
                 raise
             if round_cancelled:
                 raise asyncio.CancelledError
@@ -252,21 +238,22 @@ class AgentEngine(AgentInboundPort):
             f"Agent reached max_turns={self.max_turns} after the last tool result"
         )
 
-    def state(self) -> AgentState:
+    def status(self) -> AgentStatus:
         """返回当前 session 的只读状态。"""
 
-        return AgentState(
+        return AgentStatus(
             session_id=self._conversation.session_id,
-            message_count=self._conversation.message_count,
+            working_message_count=self._conversation.message_count,
             history_message_count=self._conversation.history_message_count,
             content_replacement_count=self._conversation.content_replacement_count,
             compact_count=self._conversation.compact_count,
+            todos=self._todos,
         )
 
-    def context_state(self) -> AgentContextState:
+    def context_status(self) -> AgentContextStatus:
         """返回当前工作集的预算报告。"""
 
-        return AgentContextState(
+        return AgentContextStatus(
             budget=self._context.inspect(self._conversation.context_snapshot()),
             working_message_count=self._conversation.message_count,
             replacement_count=self._conversation.content_replacement_count,
@@ -287,7 +274,7 @@ class AgentEngine(AgentInboundPort):
         messages = self._conversation.resume(repository)
         self._tool_round.bind_session(repository.session_id)
         return AgentSessionView(
-            state=self.state(),
+            status=self.status(),
             history=self._project_history(messages),
         )
 
@@ -351,6 +338,7 @@ class AgentEngine(AgentInboundPort):
         request = self._context.plan(self._conversation.context_snapshot())
         for replacement in request.new_content_replacements:
             self._conversation.append_content_replacement(replacement)
+        self._conversation.append_runtime_attachments(request.new_runtime_attachments)
         return request
 
     @property
@@ -360,6 +348,10 @@ class AgentEngine(AgentInboundPort):
             if self._conversation.working_messages
             else None
         )
+
+    @property
+    def _todos(self) -> tuple[TodoItem, ...]:
+        return project_todos(self._conversation.history).todos
 
 
 def _cancelled_results(

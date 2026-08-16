@@ -18,6 +18,7 @@ from textual.widgets.option_list import Option
 from nano_code import __version__
 from nano_code.permissions import PermissionConfirmation
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
+from nano_code.todos.models import TodoItem
 from nano_code.tui.contracts import PermissionRequest, RuntimeStatus
 
 
@@ -134,10 +135,88 @@ class SystemMessage(Static):
         super().__init__(content, classes=classes, markup=False)
 
 
+class TodoPanel(Static):
+    """当前 session TodoList 的可折叠、前端本地展示。"""
+
+    def __init__(self, todos: tuple[TodoItem, ...]) -> None:
+        super().__init__()
+        self.todos = todos
+        self.expanded = bool(todos)
+        self.display = bool(todos)
+
+    def set_todos(
+        self,
+        todos: tuple[TodoItem, ...],
+        *,
+        reset_session: bool = False,
+    ) -> None:
+        was_empty = not self.todos
+        self.todos = todos
+        if reset_session or (was_empty and todos):
+            self.expanded = bool(todos)
+        elif not todos:
+            self.expanded = False
+        self.display = bool(todos)
+        self.refresh(layout=True)
+
+    def toggle(self) -> None:
+        if not self.todos:
+            return
+        self.expanded = not self.expanded
+        self.refresh(layout=True)
+
+    def render(self) -> RenderableType:
+        pending = sum(todo.status == "pending" for todo in self.todos)
+        in_progress = sum(todo.status == "in_progress" for todo in self.todos)
+        completed = sum(todo.status == "completed" for todo in self.todos)
+        header = Text.assemble(
+            ("Tasks", "bold #d9d3cd"),
+            (
+                f"  {in_progress} in progress · {pending} pending · {completed} done",
+                "#8f8882",
+            ),
+            ("  Ctrl+T", "dim"),
+        )
+        if not self.expanded:
+            active = next(
+                (todo.content for todo in self.todos if todo.status == "in_progress"),
+                None,
+            )
+            if active is not None:
+                header.append(f"\n  ● {active}", style="#d97757")
+            return header
+
+        lines: list[Text] = [header]
+        for todo in self.todos:
+            if todo.status == "completed":
+                lines.append(Text(f"  ✓ {todo.content}", style="dim strike"))
+            elif todo.status == "in_progress":
+                lines.append(Text(f"  ● {todo.content}", style="#ffb38a"))
+            else:
+                lines.append(Text(f"  ○ {todo.content}", style="#a9a19a"))
+        return Group(*lines)
+
+
 class ActivityBar(Horizontal):
+    def __init__(self, todos: tuple[TodoItem, ...] = ()) -> None:
+        super().__init__()
+        self.todos = todos
+
     def compose(self) -> ComposeResult:
         yield LoadingIndicator()
-        yield Label("nano-code is working…")
+        yield Label(self._activity_text())
+
+    def set_todos(self, todos: tuple[TodoItem, ...]) -> None:
+        self.todos = todos
+        self.query_one(Label).update(self._activity_text())
+
+    def _activity_text(self) -> str:
+        active = next(
+            (todo for todo in self.todos if todo.status == "in_progress"), None
+        )
+        return (
+            f"{active.active_form}…" if active is not None else "nano-code is working…"
+        )
 
 
 class StatusBar(Static):
@@ -152,8 +231,11 @@ class StatusBar(Static):
                 ("  ·  ", "dim"),
                 (status.permission_mode, "dim"),
                 ("  ·  ", "dim"),
-                (f"{status.message_count} messages", "dim"),
-                ("    / for commands", "#a59c94"),
+                (f"{status.working_message_count} messages", "dim"),
+                (
+                    "    Ctrl+T todos" if status.todos else "    / for commands",
+                    "#a59c94",
+                ),
             )
         )
 

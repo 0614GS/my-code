@@ -177,6 +177,14 @@ microcompact 只处理旧的 Read、Bash、Grep、Glob 结果。原文不改写�
 compact hooks。这些能力以后应接入现有 planner、boundary 和 replay 边界，而不是
 重新进入 Agent Loop 添加工具特定分支。
 
+Todo reminder 已作为 session-runtime attachment 接入。当前 TodoList 从
+`ConversationSnapshot.session_history` 中最后一次成功 `TodoWrite` 投影；提醒触发则读取
+当前模型 working set，并分别要求“距最近 TodoWrite 至少 10 个 assistant turns”和
+“距最近 runtime reminder 至少 10 个 assistant turns”。已发送 reminder 按原位置留在
+当前进程的模型历史中，参与后续请求和 compact，但不写 JSONL；resume 或切换 session
+后 delivery history 清空。这样保留 Claude Code 的 AppState/内存消息语义，而不把
+attachment 错当成持久化 ConversationMessage。
+
 ## 12. 主要源码入口
 
 - `claude-code/src/query.ts`

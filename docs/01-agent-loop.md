@@ -102,7 +102,7 @@ overflow/取消/max-turns，并发出 `AgentEvent`。会话事实由 `Conversati
 工具轮由 `ToolRoundPort` 管理，摘要由 `Compactor` 管理。
 
 六边形边界由 `nano_code.agent` 统一声明：CLI/TUI 通过 `AgentInboundPort` 调用
-`submit`、`stream`、状态查询、compact 和 resume；Engine 通过下列 outbound port
+`submit`、`stream`、`status`、`context_status`、compact 和 resume；Engine 通过下列 outbound port
 请求外部能力。`context`、`providers`、`sessions` 和 `tools` 只实现这些协议或重新
 导出它们，不拥有 Agent-facing port 的第二份声明。
 
@@ -117,8 +117,14 @@ overflow/取消/max-turns，并发出 `AgentEvent`。会话事实由 `Conversati
 
 `ProviderRouter` 在 provider 边界把完整响应 fallback 适配为最终事件，所以 Engine
 不再判断某个具体 provider 是否支持流式。`ModelCompletionPort.complete()` 仍保留给
-`CompactionService` 这种独立摘要请求使用。CLI/TUI 只消费 runtime DTO 和 Engine 的
-只读状态访问器，不读取 SessionStore、ToolExecutor 或 ContextPlanner 的内部字段。
+`CompactionService` 这种独立摘要请求使用。`AgentStatus` 是一次只读查询结果，不是
+可变状态容器；port 不再同时暴露 session ID、消息数组和计数 property。CLI/TUI 只
+消费 runtime DTO，不读取 ConversationMessage、SessionStore、ToolExecutor 或
+ContextPlanner 的内部字段。
+
+TodoList 同时通过 `AgentStatus.todos` 快照和 `AgentTodoListUpdated` 流事件暴露。事件
+只会在包含成功 TodoWrite 的工具结果消息完成持久化并进入 `ConversationState` 后产生，
+所以前端不会看到尚未提交或最终失败的状态。
 
 `ConversationState` 在构造或显式 resume 时从 `SessionRepository.load()` hydration
 一次。此后每次模型请求都从内存会话状态投影；Transcript 是崩溃恢复日志，

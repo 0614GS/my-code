@@ -2,6 +2,7 @@
 
 from nano_code.messages.context import (
     ContextAttachment,
+    ContextAttachmentLifecycle,
     ContextContent,
     ContextInstruction,
     ContextInstructionKind,
@@ -29,6 +30,7 @@ __all__ = [
     "AssistantContent",
     "AssistantMessage",
     "ContextAttachment",
+    "ContextAttachmentLifecycle",
     "ContextContent",
     "ContextInstruction",
     "ContextInstructionKind",

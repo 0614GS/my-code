@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
+from rich.console import Console
 from textual.widgets import Input, OptionList
 
 from nano_code.permissions import PermissionConfirmation
@@ -10,6 +11,7 @@ from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.providers.profiles import ProviderProtocol
 from nano_code.sessions import SessionSummary
+from nano_code.todos import TodoItem
 from nano_code.tui import (
     ContextStatus,
     HistoryAssistantMessage,
@@ -20,6 +22,7 @@ from nano_code.tui import (
     ResumedSession,
     ResumeScreen,
     RuntimeStatus,
+    TodoListUpdated,
 )
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.contracts import (
@@ -32,9 +35,11 @@ from nano_code.tui.contracts import (
     TurnResult,
 )
 from nano_code.tui.widgets import (
+    ActivityBar,
     AssistantMessage,
     PermissionPanel,
     SystemMessage,
+    TodoPanel,
     ToolCallMessage,
     UserMessage,
 )
@@ -50,6 +55,8 @@ class FakeRuntime:
         self.resumed_session_ids: list[str] = []
         self.session_summaries: tuple[SessionSummary, ...] = ()
         self.compact_calls = 0
+        self.todos: tuple[TodoItem, ...] = ()
+        self.todo_update: tuple[TodoItem, ...] | None = None
 
     async def submit(self, prompt: str) -> TurnResult:
         self.prompts.append(prompt)
@@ -75,6 +82,9 @@ class FakeRuntime:
                     )
                 ),
             )
+        if self.todo_update is not None:
+            self.todos = self.todo_update
+            yield TodoListUpdated(self.todos)
         yield TextDelta("**model ")
         yield TextDelta("response**")
         yield TurnCompleted(TurnResult("**model response**", 1, 10, 2))
@@ -88,7 +98,8 @@ class FakeRuntime:
             model="test-model",
             permission_mode="default",
             credential_source="stored",
-            message_count=len(self.prompts) * 2,
+            working_message_count=len(self.prompts) * 2,
+            todos=self.todos,
         )
 
     def context_status(self) -> ContextStatus:
@@ -364,3 +375,62 @@ async def test_tui_streams_markdown_and_updates_tool_result_in_place() -> None:
         assert tool.result == ToolResultPresentation(summary="Wrote 4 bytes to a.txt")
         assert assistant.source == "**model response**"
         assert runtime.permission_result == PermissionConfirmation(True)
+
+
+@pytest.mark.asyncio
+async def test_tui_updates_and_toggles_todo_panel_during_turn() -> None:
+    runtime = FakeRuntime()
+    runtime.todo_update = (
+        TodoItem("Inspect implementation", "completed", "Inspecting implementation"),
+        TodoItem("Run tests", "in_progress", "Running tests"),
+        TodoItem("Write docs", "pending", "Writing docs"),
+    )
+    app = NanoCodeApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        panel = app.query_one(TodoPanel)
+        assert panel.display is False
+
+        app.query_one("#prompt", Input).value = "continue"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert panel.display is True
+        assert panel.expanded is True
+        assert panel.todos == runtime.todo_update
+        console = Console(width=100, color_system=None)
+        with console.capture() as capture:
+            console.print(panel.render())
+        assert "✓ Inspect implementation" in capture.get()
+        activity = app.query_one(ActivityBar)
+        assert "Running tests" in str(activity.query_one("Label").render())
+
+        await pilot.press("ctrl+t")
+        assert panel.expanded is False
+
+        runtime.todo_update = (TodoItem("Write docs", "in_progress", "Writing docs"),)
+        app.query_one("#prompt", Input).value = "continue again"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert panel.todos == runtime.todo_update
+        assert panel.expanded is False
+
+
+@pytest.mark.asyncio
+async def test_tui_hides_panel_when_todos_are_cleared() -> None:
+    runtime = FakeRuntime()
+    runtime.todos = (TodoItem("Run tests", "in_progress", "Running tests"),)
+    runtime.todo_update = ()
+    app = NanoCodeApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        panel = app.query_one(TodoPanel)
+        assert panel.display is True
+
+        app.query_one("#prompt", Input).value = "finish"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert panel.todos == ()
+        assert panel.display is False

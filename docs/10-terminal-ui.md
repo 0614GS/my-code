@@ -16,6 +16,7 @@ NanoCodeApp
 │   ├── AssistantMessage (Markdown)
 │   ├── ToolCallMessage (in-place status)
 │   └── SystemMessage
+├── TodoPanel (collapsible, session-scoped projection)
 └── composer
     ├── OptionList (slash commands)
     ├── ActivityBar
@@ -31,13 +32,18 @@ ChatRuntime protocol
 CliChatRuntime ── AgentInboundPort ← AgentEngine
 ```
 
-TUI 只通过 `ChatRuntime` 的事件流提交输入、读取安全状态、配置无凭据展示 DTO 并注册权限处理器，不接触 Provider SDK、ToolExecutor、SessionStore 或 AgentEngine。CLI composition root 使用 `DeferredPermissionPrompter` 把核心权限询问转换成 UI DTO；无处理器时仍然 fail closed。DTO 只携带前端无关的 `ToolUsePresentation` 和 `ToolResultPresentation`，因此以后可以增加普通终端、Web 或测试前端而不修改 Agent。
+TUI 只通过 `ChatRuntime` 的事件流提交输入、读取安全状态、配置无凭据展示 DTO 并注册权限处理器，不接触 Provider SDK、ToolExecutor、SessionStore 或 AgentEngine。CLI composition root 使用 `DeferredPermissionPrompter` 把核心权限询问转换成 UI DTO；无处理器时仍然 fail closed。DTO 携带前端无关的工具 presentation 和 TodoItem，因此以后可以增加普通终端、Web 或测试前端而不修改 Agent。
 
 ## 流式显示与持久化边界
 
 Anthropic 适配器把 SSE 文本 delta 转换为 provider-neutral 事件，Agent 再投影成 TUI 事件。增量文本只进入临时 `AssistantMessage`，并以约 30 FPS 的短批次合并后交给 Rich Markdown 渲染；只有收到 SDK 的完整最终 Message 后，Agent 才验证并持久化 assistant message、读取完整工具参数和执行工具。连接中断时屏幕可保留部分文本用于反馈，但 Transcript 不写入半截响应。
 
 工具开始时创建稳定的 `ToolCallMessage`，结束时用相同 tool ID 原位更新。显示名、参数摘要、活动描述和结果预览由对应 Tool 在核心层投影；TUI 只选择颜色、布局和展开方式，不识别 `Read`、`Bash` 等具体工具，也不从原始 tool result 猜测摘要。发送给模型的内容和用户展示内容是独立投影，UI 截断不改变模型上下文。
+
+TodoPanel 的初始值来自 `RuntimeStatus.todos`，resume 使用目标 session 的同一快照；回合
+内则消费 `TodoListUpdated`。非空列表首次出现时展开，Ctrl+T 在完整列表与计数/当前项
+摘要之间切换，空列表自动隐藏。混合列表保留 completed 项并弱化显示；ActivityBar
+优先使用 in-progress 项的 `active_form`。面板有界滚动，长列表不会占满会话区域。
 
 ## 权限输入
 
@@ -60,5 +66,5 @@ SessionStore；自动 compact 和 reactive compact 同样由 Agent 层决定。
 
 CLI 组合根把 `ProviderRouter`、`ToolRoundExecutor`、`ConversationState`、
 `ContextPlanner` 和 `CompactionCoordinator` 装配进 `AgentEngine`。`CliChatRuntime`
-只通过 Engine 的 `session_id`、工作集/计数访问器、预算方法和工具展示端口生成 DTO；
-session 切换时由 runtime 在同一锁内切换 Transcript 与工具结果目录。
+只通过 `AgentInboundPort` 的 status/context status、事件和 session 操作生成 DTO；session
+切换时由 runtime 在同一锁内切换 Transcript 与工具结果目录。

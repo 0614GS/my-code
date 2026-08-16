@@ -67,7 +67,12 @@ class ContextPlanner(ContextPort):
         selected = self.window.ensure_fits(effective)
         user_context = self._get_user_context()
         attachments = self._get_attachments(snapshot)
-        model_messages = self.normalizer.normalize(user_context, selected, attachments)
+        model_messages = self.normalizer.normalize(
+            user_context,
+            selected,
+            attachments,
+            snapshot.runtime_attachments,
+        )
         system_prompt = self.prompt.resolve()
         budget = self._budget(
             selected, model_messages, user_context, attachments, system_prompt
@@ -78,13 +83,23 @@ class ContextPlanner(ContextPort):
             ),
             budget=budget,
             new_content_replacements=proposed,
+            new_runtime_attachments=tuple(
+                attachment
+                for attachment in attachments
+                if attachment.lifecycle == "session_runtime"
+            ),
         )
 
     def inspect(self, snapshot: ConversationSnapshot) -> ContextBudget:
         effective, _ = self._effective_messages(snapshot, propose=False)
         user_context = self._get_user_context()
         attachments = self._get_attachments(snapshot)
-        messages = self.normalizer.normalize(user_context, effective, attachments)
+        messages = self.normalizer.normalize(
+            user_context,
+            effective,
+            attachments,
+            snapshot.runtime_attachments,
+        )
         return self._budget(
             effective, messages, user_context, attachments, self.prompt.resolve()
         )
@@ -93,7 +108,12 @@ class ContextPlanner(ContextPort):
         self, snapshot: ConversationSnapshot
     ) -> tuple[tuple[ModelMessage, ...], tuple[ContentReplacement, ...]]:
         effective, proposed = self._effective_messages(snapshot)
-        return self.normalizer.normalize_transcript(effective), proposed
+        return (
+            self.normalizer.normalize_transcript(
+                effective, snapshot.runtime_attachments
+            ),
+            proposed,
+        )
 
     def measure(self, messages: tuple[ConversationMessage, ...]) -> int:
         return self.window.size(messages)

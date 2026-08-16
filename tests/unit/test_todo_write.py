@@ -1,0 +1,321 @@
+from pathlib import Path
+
+import pytest
+
+from nano_code.agent import ConversationSnapshot, ModelTextBlock
+from nano_code.agent.contracts.session import DeliveredContextAttachment
+from nano_code.context import (
+    AttachmentResolver,
+    ContextPlanner,
+    ContextWindow,
+)
+from nano_code.messages import (
+    AssistantMessage,
+    ContextInstruction,
+    HumanMessage,
+    TextContent,
+    TokenUsage,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
+)
+from nano_code.permissions import PermissionMode, PermissionPolicy
+from nano_code.permissions.prompt import HeadlessPrompter
+from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
+from nano_code.todos import TodoReminderSource, parse_todo_input
+from nano_code.todos.projection import project_todos
+from nano_code.tools import ToolContext, ToolRegistry
+from nano_code.tools.builtin.todo_write import TodoWriteTool
+from nano_code.tools.executor import ToolExecutor
+from nano_code.tools.result_store import ToolResultStore
+
+
+def _todo_input(status: str = "in_progress") -> dict:
+    return {
+        "todos": [
+            {
+                "content": "Run tests",
+                "status": status,
+                "activeForm": "Running tests",
+            }
+        ]
+    }
+
+
+def _assistant(*content: TextContent | ToolCall) -> AssistantMessage:
+    return AssistantMessage(content=content, usage=TokenUsage())
+
+
+def _history_after_todo(turns: int, *, status: str = "in_progress") -> tuple:
+    assistant = _assistant(ToolCall("todo-1", "TodoWrite", _todo_input(status)))
+    messages = [
+        HumanMessage("work"),
+        assistant,
+        ToolResultsMessage(
+            content=(ToolResult("todo-1", "updated"),),
+            source_assistant_uuid=assistant.uuid,
+        ),
+    ]
+    messages.extend(_assistant(TextContent(f"turn {index}")) for index in range(turns))
+    return tuple(messages)
+
+
+def test_todo_input_and_model_schema_are_strict() -> None:
+    tool = TodoWriteTool()
+
+    todos = parse_todo_input(_todo_input())
+
+    assert todos[0].content == "Run tests"
+    assert todos[0].active_form == "Running tests"
+    assert tool.definition.name == "TodoWrite"
+    assert tool.definition.input_schema["additionalProperties"] is False
+
+    with pytest.raises(ValueError, match="only 'todos'"):
+        parse_todo_input({**_todo_input(), "extra": True})
+    with pytest.raises(ValueError, match="status"):
+        parse_todo_input(_todo_input("blocked"))
+    with pytest.raises(ValueError, match="activeForm"):
+        parse_todo_input(
+            {
+                "todos": [
+                    {
+                        "content": "Run tests",
+                        "status": "pending",
+                        "activeForm": "",
+                    }
+                ]
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_todo_write_executes_without_permission_prompt(tmp_path: Path) -> None:
+    tool = TodoWriteTool()
+    executor = ToolExecutor(
+        ToolRegistry((tool,)),
+        PermissionPolicy(PermissionMode.DEFAULT),
+        HeadlessPrompter(),
+        ToolContext(tmp_path),
+        ToolResultStore(tmp_path / "results"),
+    )
+
+    outcome = await executor.execute(ToolCall("todo", "TodoWrite", _todo_input()))
+
+    assert not outcome.result.is_error
+    assert "modified successfully" in outcome.result.content
+    assert outcome.presentation.summary == "Updated 1 todo(s)"
+
+
+@pytest.mark.asyncio
+async def test_invalid_todo_write_becomes_protocol_error(tmp_path: Path) -> None:
+    executor = ToolExecutor(
+        ToolRegistry((TodoWriteTool(),)),
+        PermissionPolicy(PermissionMode.BYPASS),
+        HeadlessPrompter(),
+        ToolContext(tmp_path),
+        ToolResultStore(tmp_path / "results"),
+    )
+
+    outcome = await executor.execute(
+        ToolCall("todo", "TodoWrite", {"todos": [{"content": "missing fields"}]})
+    )
+
+    assert outcome.result.is_error
+    assert outcome.result.tool_use_id == "todo"
+    assert "Invalid input" in outcome.result.content
+
+
+def test_todo_projection_uses_latest_call_and_clears_all_completed() -> None:
+    active = project_todos(_history_after_todo(3))
+    completed = project_todos(_history_after_todo(3, status="completed"))
+
+    assert [todo.content for todo in active.todos] == ["Run tests"]
+    assert active.assistant_turns_since_write == 3
+    assert completed.todos == ()
+    assert completed.assistant_turns_since_write == 3
+
+
+def test_failed_todo_write_does_not_replace_last_successful_state() -> None:
+    history = list(_history_after_todo(2))
+    failed = _assistant(ToolCall("todo-failed", "TodoWrite", {"todos": "invalid"}))
+    history.extend(
+        (
+            failed,
+            ToolResultsMessage(
+                content=(ToolResult("todo-failed", "invalid", is_error=True),),
+                source_assistant_uuid=failed.uuid,
+            ),
+        )
+    )
+
+    projection = project_todos(tuple(history))
+
+    assert [todo.content for todo in projection.todos] == ["Run tests"]
+    assert projection.assistant_turns_since_write == 0
+
+
+def test_todo_reminder_uses_independent_write_and_delivery_thresholds() -> None:
+    source = TodoReminderSource()
+    history10 = _history_after_todo(10)
+    assert source(ConversationSnapshot(_history_after_todo(9))) == ()
+
+    attachments = source(ConversationSnapshot(history10, session_history=history10))
+    assert len(attachments) == 1
+    assert attachments[0].source == "todo_reminder"
+    instruction = attachments[0].content[0]
+    assert isinstance(instruction, ContextInstruction)
+    assert "1. [in_progress] Run tests" in instruction.content
+    assert "NEVER mention this reminder" in instruction.content
+    assert attachments[0].lifecycle == "session_runtime"
+
+    delivery = DeliveredContextAttachment(history10[-1].uuid, attachments[0])
+    history11 = history10 + (_assistant(TextContent("turn 11")),)
+    assert (
+        source(
+            ConversationSnapshot(
+                history11,
+                session_history=history11,
+                runtime_attachments=(delivery,),
+            )
+        )
+        == ()
+    )
+
+    history20 = history10 + tuple(
+        _assistant(TextContent(f"later {index}")) for index in range(10)
+    )
+    assert (
+        len(
+            source(
+                ConversationSnapshot(
+                    history20,
+                    session_history=history20,
+                    runtime_attachments=(delivery,),
+                )
+            )
+        )
+        == 1
+    )
+
+    # reminder 不持久化：恢复时没有 delivery history，已经超过阈值会立即提醒，
+    # 而不是等到 turns_since_write 恰好能被 10 整除。
+    history15 = history10 + tuple(
+        _assistant(TextContent(f"resumed {index}")) for index in range(5)
+    )
+    assert len(source(ConversationSnapshot(history15, session_history=history15))) == 1
+
+
+def test_todo_reminder_uses_full_session_history_after_compaction() -> None:
+    history = _history_after_todo(10)
+    compact_working_set = tuple(
+        _assistant(TextContent(f"post-compact {index}")) for index in range(10)
+    )
+
+    attachments = TodoReminderSource()(
+        ConversationSnapshot(
+            compact_working_set,
+            session_history=history,
+        )
+    )
+
+    assert len(attachments) == 1
+    instruction = attachments[0].content[0]
+    assert isinstance(instruction, ContextInstruction)
+    assert "Run tests" in instruction.content
+
+
+def test_todo_reminder_without_prior_write_starts_after_ten_assistant_turns() -> None:
+    history = tuple(_assistant(TextContent(str(index))) for index in range(10))
+
+    attachments = TodoReminderSource()(
+        ConversationSnapshot(history, session_history=history)
+    )
+
+    assert len(attachments) == 1
+    instruction = attachments[0].content[0]
+    assert isinstance(instruction, ContextInstruction)
+    assert "existing contents" not in instruction.content
+
+
+def test_context_planner_attaches_reminder_but_compaction_excludes_it() -> None:
+    history = _history_after_todo(10)
+    tool = TodoWriteTool()
+    planner = ContextPlanner(
+        window=ContextWindow(20_000),
+        prompt=PromptRegistry(
+            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
+        ),
+        tools=(tool.definition,),
+        max_output_tokens=100,
+        attachment_resolver=AttachmentResolver((TodoReminderSource(),)),
+    )
+    snapshot = ConversationSnapshot(history, session_history=history)
+
+    plan = planner.plan(snapshot)
+    request_text = [
+        block.text
+        for message in plan.request.messages
+        for block in message.content
+        if isinstance(block, ModelTextBlock)
+    ]
+    compact_messages, _ = planner.compaction_view(snapshot)
+    compact_text = [
+        block.text
+        for message in compact_messages
+        for block in message.content
+        if isinstance(block, ModelTextBlock)
+    ]
+
+    assert any("<system-reminder>" in text for text in request_text)
+    assert len(plan.new_runtime_attachments) == 1
+    assert not any("TodoWrite tool hasn't been used" in text for text in compact_text)
+
+
+def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
+    history10 = _history_after_todo(10)
+    attachment = TodoReminderSource()(
+        ConversationSnapshot(history10, session_history=history10)
+    )[0]
+    delivery = DeliveredContextAttachment(history10[-1].uuid, attachment)
+    later = _assistant(TextContent("after reminder"))
+    history = history10 + (later,)
+    planner = ContextPlanner(
+        window=ContextWindow(20_000),
+        prompt=PromptRegistry(
+            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
+        ),
+        tools=(TodoWriteTool().definition,),
+        max_output_tokens=100,
+        attachment_resolver=AttachmentResolver((TodoReminderSource(),)),
+    )
+
+    snapshot = ConversationSnapshot(
+        history,
+        session_history=history,
+        runtime_attachments=(delivery,),
+    )
+    messages = planner.plan(snapshot).request.messages
+
+    reminder_index = next(
+        index
+        for index, message in enumerate(messages)
+        if any(
+            isinstance(block, ModelTextBlock)
+            and "TodoWrite tool hasn't been used" in block.text
+            for block in message.content
+        )
+    )
+    later_index = next(
+        index
+        for index, message in enumerate(messages)
+        if ModelTextBlock("after reminder") in message.content
+    )
+    assert reminder_index < later_index
+
+    compact_messages, _ = planner.compaction_view(snapshot)
+    assert any(
+        isinstance(block, ModelTextBlock)
+        and "TodoWrite tool hasn't been used" in block.text
+        for message in compact_messages
+        for block in message.content
+    )

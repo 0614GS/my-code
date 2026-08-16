@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from nano_code.agent.contracts.inbound import AgentTurnResult
 from nano_code.messages import JsonObject
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
+from nano_code.todos.models import TodoItem
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,10 +30,21 @@ class AgentToolFinished:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentTodoListUpdated:
+    """已提交的会话事实产生了新的 TodoList 投影。"""
+
+    todos: tuple[TodoItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class AgentTurnCompleted:
     result: AgentTurnResult
 
 
 type AgentEvent = (
-    AgentTextDelta | AgentToolStarted | AgentToolFinished | AgentTurnCompleted
+    AgentTextDelta
+    | AgentToolStarted
+    | AgentToolFinished
+    | AgentTodoListUpdated
+    | AgentTurnCompleted
 )

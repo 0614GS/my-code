@@ -2,6 +2,7 @@
 
 from textual import on, work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.events import Key
 from textual.widgets import Input, OptionList
@@ -18,6 +19,7 @@ from nano_code.tui.contracts import (
     HistoryUserMessage,
     PermissionRequest,
     TextDelta,
+    TodoListUpdated,
     ToolFinished,
     ToolStarted,
     TurnCompleted,
@@ -30,6 +32,7 @@ from nano_code.tui.widgets import (
     PermissionPanel,
     StatusBar,
     SystemMessage,
+    TodoPanel,
     ToolCallMessage,
     UserMessage,
     WelcomePanel,
@@ -40,6 +43,7 @@ class NanoCodeApp(App[None]):
     """类似 Claude Code REPL 外壳的组件化终端 UI。"""
 
     ENABLE_COMMAND_PALETTE = False
+    BINDINGS = [Binding("ctrl+t", "toggle_todos", "Toggle todos", show=False)]
     CSS = """
     Screen {
         background: #171717;
@@ -51,6 +55,17 @@ class NanoCodeApp(App[None]):
         padding: 1 2 0 2;
         scrollbar-color: #6f625a;
         scrollbar-background: #171717;
+    }
+
+    TodoPanel {
+        display: none;
+        width: 100%;
+        height: auto;
+        max-height: 10;
+        overflow-y: auto;
+        padding: 0 3;
+        border-top: solid #3a3532;
+        background: #1e1c1b;
     }
 
     WelcomePanel {
@@ -328,9 +343,10 @@ class NanoCodeApp(App[None]):
         status = self.runtime.status()
         with VerticalScroll(id="conversation"):
             yield WelcomePanel(status)
+        yield TodoPanel(status.todos)
         with Vertical(id="composer"):
             yield OptionList(id="command-palette", compact=True)
-            yield ActivityBar()
+            yield ActivityBar(status.todos)
             yield PermissionPanel()
             yield Input(
                 placeholder="Ask nano-code anything, or type / for commands",
@@ -340,6 +356,9 @@ class NanoCodeApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one("#prompt", Input).focus()
+
+    def action_toggle_todos(self) -> None:
+        self.query_one(TodoPanel).toggle()
 
     @on(Input.Changed, "#prompt")
     def update_slash_suggestions(self, event: Input.Changed) -> None:
@@ -455,6 +474,9 @@ class NanoCodeApp(App[None]):
                             event.presentation, is_error=event.is_error
                         )
                         self._scroll_to_end()
+                elif isinstance(event, TodoListUpdated):
+                    self.query_one(TodoPanel).set_todos(event.todos)
+                    activity.set_todos(event.todos)
                 elif isinstance(event, TurnCompleted):
                     completed = True
         except Exception as error:
@@ -468,7 +490,10 @@ class NanoCodeApp(App[None]):
             prompt.disabled = False
             prompt.focus()
             self._busy = False
-            self.query_one(StatusBar).set_status(self.runtime.status())
+            status = self.runtime.status()
+            self.query_one(StatusBar).set_status(status)
+            self.query_one(TodoPanel).set_todos(status.todos)
+            activity.set_todos(status.todos)
 
     @work(exclusive=True, group="provider-dialog")
     async def _manage_providers(self) -> None:
@@ -485,6 +510,8 @@ class NanoCodeApp(App[None]):
             )
         else:
             self.query_one(StatusBar).set_status(status)
+            self.query_one(TodoPanel).set_todos(status.todos)
+            self.query_one(ActivityBar).set_todos(status.todos)
             welcome = self.query_one(WelcomePanel)
             welcome.status = status
             welcome.refresh()
@@ -515,6 +542,10 @@ class NanoCodeApp(App[None]):
             resumed = await self.runtime.resume_session(session_id)
             await self._render_history(resumed.history)
             self.query_one(StatusBar).set_status(resumed.status)
+            self.query_one(TodoPanel).set_todos(
+                resumed.status.todos, reset_session=True
+            )
+            self.query_one(ActivityBar).set_todos(resumed.status.todos)
             welcome = self.query_one(WelcomePanel)
             welcome.status = resumed.status
             welcome.refresh()
@@ -549,7 +580,10 @@ class NanoCodeApp(App[None]):
             prompt.disabled = False
             prompt.focus()
             self._busy = False
-            self.query_one(StatusBar).set_status(self.runtime.status())
+            runtime_status = self.runtime.status()
+            self.query_one(StatusBar).set_status(runtime_status)
+            self.query_one(TodoPanel).set_todos(runtime_status.todos)
+            activity.set_todos(runtime_status.todos)
 
     async def _render_history(
         self,

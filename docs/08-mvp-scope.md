@@ -9,7 +9,7 @@
 - 带 slash 命令选择、项目会话 `/resume` 的轻量 TUI，以及 `nanocode -p "..."` 单次运行；
 - 用户级 API Key 登录、状态、退出及环境变量临时覆盖；
 - 与 Agent Loop 解耦的模型 Provider 协议及 Anthropic 适配器；
-- Read、Glob、Grep、Write、Edit、Bash 六个内置工具；
+- Read、Glob、Grep、Write、Edit、Bash 和 TodoWrite 七个内置工具；
 - 输入感知的工具权限协议、Bash 保守只读分析，以及 `default`、`acceptEdits`、`plan`、`dontAsk`、`bypassPermissions` 权限模式；
 - 无交互环境 fail closed，工作区文件路径防逃逸；
 - 追加式 JSONL Transcript、轻量会话发现、活动父链恢复和运行时原子切换；
@@ -18,6 +18,9 @@
 - 分段提示词、static/session/turn 生命周期和 provider 自声明缓存能力；
 - assistant usage 持久化、可观察预算、稳定 microcompact 和完整/响应式 compact；
 - 超大工具结果落盘并给模型返回稳定预览。
+- 基于完整 session history 投影的 TodoWrite 状态，以及采用独立 10/10 turn 阈值、
+  仅保留在当前进程模型历史中的 todo reminder；
+- 通过快照与提交后事件同步、支持 Ctrl+T 折叠的 TUI TodoList；
 - Anthropic SSE 文本流、TUI 增量 Markdown 和工具调用状态展示；
 - 底部内联权限选择及可返回模型的拒绝反馈。
 

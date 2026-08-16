@@ -4,14 +4,13 @@ from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
 from nano_code.agent.contracts.inbound import (
-    AgentContextState,
+    AgentContextStatus,
     AgentSessionView,
-    AgentState,
+    AgentStatus,
     AgentTurnResult,
 )
 from nano_code.agent.contracts.session import CompactBoundary, CompactTrigger
 from nano_code.agent.events import AgentEvent
-from nano_code.messages import ConversationMessage
 
 from .session import SessionRepository
 
@@ -19,25 +18,6 @@ from .session import SessionRepository
 @runtime_checkable
 class AgentInboundPort(Protocol):
     """CLI、TUI 或其它 driving adapter 可使用的 Agent 能力。"""
-
-    @property
-    def session_id(self) -> str:
-        """当前绑定 session 的稳定标识。"""
-        ...
-
-    @property
-    def working_messages(self) -> tuple[ConversationMessage, ...]:
-        """当前 compact 工作集的只读快照。"""
-        ...
-
-    @property
-    def message_count(self) -> int: ...
-
-    @property
-    def content_replacement_count(self) -> int: ...
-
-    @property
-    def compact_count(self) -> int: ...
 
     async def submit(self, prompt: str) -> AgentTurnResult:
         """运行一个用户回合并等待终态。"""
@@ -47,11 +27,11 @@ class AgentInboundPort(Protocol):
         """运行一个用户回合并产生可观察事件。"""
         ...
 
-    def state(self) -> AgentState:
+    def status(self) -> AgentStatus:
         """返回当前 session 的只读状态。"""
         ...
 
-    def context_state(self) -> AgentContextState:
+    def context_status(self) -> AgentContextStatus:
         """返回当前上下文预算和 compact 诊断。"""
         ...
 

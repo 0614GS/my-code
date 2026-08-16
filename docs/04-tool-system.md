@@ -185,3 +185,19 @@ Tool → Agent → Runtime → TUI 的单向依赖和核心 runtime 与具体前
 - `claude-code/src/services/tools/{toolExecution,toolOrchestration,StreamingToolExecutor}.ts`
 - `claude-code/src/utils/toolPool.ts`
 - `claude-code/src/utils/toolResultStorage.ts`
+
+## 12. TodoWrite 与运行时状态
+
+`TodoWrite` 接收完整列表，每项包含 `content`、`activeForm` 和
+`pending | in_progress | completed` 状态。输入使用严格 schema；工具不访问工作区或
+外部系统，因此无需权限确认。成功结果只向模型确认更新，TUI 展示由工具自己的
+presentation 投影生成。
+
+Todo 不新增独立持久化 record。assistant message 中已经持久化的原始 tool call input
+是恢复事实；运行时从 `ConversationState` 的完整活动历史投影最新列表。全部项目为
+completed 时，运行时可见列表清空，但 Transcript 保留原始调用。这样新建、resume、
+分支和 compact 都服从相同事实来源，不需要重复读取磁盘或维护第二份 todo 文件。
+
+Agent inbound 边界用 `AgentStatus.todos` 提供启动/resume 快照，并在工具轮持久化后用
+`AgentTodoListUpdated` 提供即时变更。多个 TodoWrite 位于同一工具轮时只发布最终投影；
+失败调用不覆盖此前列表。TUI 只消费结构化 TodoItem，不解析工具调用或结果文本。

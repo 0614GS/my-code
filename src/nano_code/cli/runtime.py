@@ -15,6 +15,7 @@ from nano_code.agent import (
     AgentHistoryUserMessage,
     AgentSessionView,
     AgentTextDelta,
+    AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
@@ -25,6 +26,7 @@ from nano_code.agent.ports.session import SessionRepository
 from nano_code.config import NanoCodePaths, Settings
 from nano_code.context import (
     AgentsUserContextResolver,
+    AttachmentResolver,
     CompactionCoordinator,
     ContextPlanner,
     ContextWindow,
@@ -44,6 +46,7 @@ from nano_code.providers.manager import ProviderManager, ProviderUpdate, Provide
 from nano_code.providers.profiles import ProviderProtocol
 from nano_code.providers.router import ProviderConnection, ProviderRouter
 from nano_code.sessions import SessionCatalog, SessionStore, SessionSummary
+from nano_code.todos import TodoReminderSource
 from nano_code.tools import Tool, ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
@@ -61,6 +64,7 @@ from nano_code.tui import (
     ResumedSession,
     RuntimeStatus,
     TextDelta,
+    TodoListUpdated,
     ToolFinished,
     ToolStarted,
     TurnCompleted,
@@ -125,6 +129,7 @@ def _build_engine_parts(
 
     actual_session_id = session_id or str(uuid4())
     session_store = SessionStore(settings.paths.project_state_dir, actual_session_id)
+    conversation = ConversationState(session_store)
     registry = ToolRegistry(builtin_tools())
     # stdin/stdout 无法可靠展示确认提示时，无头模式权限请求按拒绝处理，
     # 而不是假定用户已经同意。
@@ -156,6 +161,7 @@ def _build_engine_parts(
         tools=registry.definitions,
         max_output_tokens=settings.max_output_tokens,
         user_context_resolver=AgentsUserContextResolver(settings.cwd),
+        attachment_resolver=AttachmentResolver((TodoReminderSource(),)),
     )
     tool_round = ToolRoundExecutor(
         tool_executor,
@@ -166,7 +172,7 @@ def _build_engine_parts(
     engine = AgentEngine(
         model_turn=provider,
         tool_round=tool_round,
-        conversation=ConversationState(session_store),
+        conversation=conversation,
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(provider)),
         max_turns=settings.max_turns,
@@ -285,6 +291,8 @@ class CliChatRuntime:
                         event.is_error,
                         event.presentation,
                     )
+                elif isinstance(event, AgentTodoListUpdated):
+                    yield TodoListUpdated(event.todos)
                 elif isinstance(event, AgentTurnCompleted):
                     result = event.result
                     yield TurnCompleted(
@@ -297,20 +305,22 @@ class CliChatRuntime:
                     )
 
     def status(self) -> RuntimeStatus:
+        agent_status = self.agent.status()
         return RuntimeStatus(
-            session_id=self.agent.session_id,
+            session_id=agent_status.session_id,
             cwd=str(self.settings.cwd),
             provider_id=self.settings.provider_id,
             base_url=self.settings.base_url,
             model=self.settings.model,
             permission_mode=self.settings.permission_mode.value,
             credential_source=self.settings.credential_source.value,
-            message_count=self.agent.message_count,
+            working_message_count=agent_status.working_message_count,
+            todos=agent_status.todos,
         )
 
     def context_status(self) -> ContextStatus:
-        state = self.agent.context_state()
-        budget = state.budget
+        status = self.agent.context_status()
+        budget = status.budget
         return ContextStatus(
             estimated_input_tokens=budget.estimated_input_tokens,
             reserved_output_tokens=budget.reserved_output_tokens,
@@ -321,9 +331,9 @@ class CliChatRuntime:
             user_context_chars=budget.user_context_chars,
             attachment_chars=budget.attachment_chars,
             message_limit_chars=budget.message_limit_chars,
-            working_message_count=state.working_message_count,
-            replacement_count=state.replacement_count,
-            compact_count=state.compact_count,
+            working_message_count=status.working_message_count,
+            replacement_count=status.replacement_count,
+            compact_count=status.compact_count,
         )
 
     async def compact(self) -> ContextStatus:
@@ -350,11 +360,13 @@ class CliChatRuntime:
         return self.status()
 
     async def list_sessions(self) -> tuple[SessionSummary, ...]:
-        return self.session_source.list(exclude_session_id=self.agent.session_id)
+        return self.session_source.list(
+            exclude_session_id=self.agent.status().session_id
+        )
 
     async def resume_session(self, session_id: str) -> ResumedSession:
         async with self._session_lock:
-            if session_id == self.agent.session_id:
+            if session_id == self.agent.status().session_id:
                 raise ValueError("Session is already active")
             view = self.agent.resume(self.session_source.open(session_id))
             return ResumedSession(
@@ -363,16 +375,17 @@ class CliChatRuntime:
             )
 
     def _status_for(self, view: AgentSessionView) -> RuntimeStatus:
-        state = view.state
+        status = view.status
         return RuntimeStatus(
-            session_id=state.session_id,
+            session_id=status.session_id,
             cwd=str(self.settings.cwd),
             provider_id=self.settings.provider_id,
             base_url=self.settings.base_url,
             model=self.settings.model,
             permission_mode=self.settings.permission_mode.value,
             credential_source=self.settings.credential_source.value,
-            message_count=state.message_count,
+            working_message_count=status.working_message_count,
+            todos=status.todos,
         )
 
     @staticmethod

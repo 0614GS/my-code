@@ -6,14 +6,14 @@ from nano_code.agent.contracts.context import (
     ContextPlan,
 )
 from nano_code.agent.contracts.inbound import (
-    AgentContextState,
+    AgentContextStatus,
     AgentHistoryAssistantMessage,
     AgentHistoryEntry,
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
     AgentSessionView,
-    AgentState,
+    AgentStatus,
     AgentTurnResult,
 )
 from nano_code.agent.contracts.model import (
@@ -49,6 +49,7 @@ from nano_code.agent.errors import ContextOverflow, ModelContextOverflow
 from nano_code.agent.events import (
     AgentEvent,
     AgentTextDelta,
+    AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
@@ -61,7 +62,7 @@ from nano_code.agent.ports.session import SessionRepository
 from nano_code.agent.ports.tool import ToolRoundPort
 
 __all__ = [
-    "AgentContextState",
+    "AgentContextStatus",
     "AgentEngine",
     "AgentEvent",
     "AgentHistoryAssistantMessage",
@@ -71,8 +72,9 @@ __all__ = [
     "AgentHistoryUserMessage",
     "AgentInboundPort",
     "AgentSessionView",
-    "AgentState",
+    "AgentStatus",
     "AgentTextDelta",
+    "AgentTodoListUpdated",
     "AgentToolFinished",
     "AgentToolStarted",
     "AgentTurnCompleted",

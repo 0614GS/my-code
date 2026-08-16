@@ -11,6 +11,8 @@ from nano_code.agent.contracts.session import (
 )
 from nano_code.messages import (
     AssistantMessage,
+    ContextAttachment,
+    ContextInstruction,
     ConversationSummaryMessage,
     HumanMessage,
     TextContent,
@@ -186,3 +188,29 @@ def test_external_transcript_append_is_visible_only_after_new_load(
     assert state.history == (human,)
     reloaded = ConversationState(SessionStore(tmp_path, session_id))
     assert reloaded.history == (human, external)
+
+
+def test_runtime_attachment_enters_snapshot_without_persistence_and_clears_on_resume(
+    tmp_path: Path,
+) -> None:
+    current = _store(tmp_path, "11")
+    state = ConversationState(current)
+    human = HumanMessage("current")
+    state.append(human)
+    reminder = ContextAttachment(
+        "todo_reminder",
+        (ContextInstruction("remember todos"),),
+        lifecycle="session_runtime",
+    )
+
+    state.append_runtime_attachments((reminder,))
+
+    snapshot = state.context_snapshot()
+    assert snapshot.runtime_attachments[0].after_message_uuid == human.uuid
+    assert snapshot.runtime_attachments[0].attachment == reminder
+    assert current.load().history == (human,)
+
+    target = _store(tmp_path, "12")
+    target.append(HumanMessage("target"))
+    state.resume(target)
+    assert state.context_snapshot().runtime_attachments == ()

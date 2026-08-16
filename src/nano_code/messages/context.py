@@ -1,4 +1,4 @@
-"""不持久化、仅在一次模型请求中注入的上下文。"""
+"""不持久化、按 request 或当前进程 session 生命周期注入的上下文。"""
 
 from dataclasses import dataclass, field
 from typing import Literal
@@ -6,6 +6,7 @@ from typing import Literal
 from nano_code.messages.conversation import TextContent
 
 type ContextInstructionKind = Literal["system_reminder"]
+type ContextAttachmentLifecycle = Literal["request", "session_runtime"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +29,7 @@ type ContextContent = TextContent | ContextInstruction
 class ContextAttachment:
     source: str
     content: tuple[ContextContent, ...]
+    lifecycle: ContextAttachmentLifecycle = "request"
 
     def __post_init__(self) -> None:
         if not self.source.strip() or not self.content:
@@ -56,6 +58,7 @@ class UserContextDocument:
 
 __all__ = [
     "ContextAttachment",
+    "ContextAttachmentLifecycle",
     "ContextContent",
     "ContextInstruction",
     "ContextInstructionKind",

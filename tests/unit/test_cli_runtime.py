@@ -81,7 +81,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
 
     assert [session.session_id for session in sessions] == [_TARGET_SESSION_ID]
     assert resumed.status.session_id == _TARGET_SESSION_ID
-    assert resumed.status.message_count == 2
+    assert resumed.status.working_message_count == 2
     assert resumed.history == (
         HistoryUserMessage("historical question"),
         HistoryAssistantMessage("historical answer"),
@@ -135,3 +135,44 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
             is_error=False,
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_resume_projects_todos_into_runtime_status(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    store = SessionStore(
+        runtime.settings.paths.project_state_dir,
+        _TARGET_SESSION_ID,
+    )
+    user = HumanMessage(content="track it")
+    assistant = AssistantMessage(
+        content=(
+            ToolCall(
+                "todo-1",
+                "TodoWrite",
+                {
+                    "todos": [
+                        {
+                            "content": "Run tests",
+                            "status": "in_progress",
+                            "activeForm": "Running tests",
+                        }
+                    ]
+                },
+            ),
+        ),
+        usage=TokenUsage(),
+        parent_uuid=user.uuid,
+    )
+    result = ToolResultsMessage(
+        content=(ToolResult("todo-1", "updated"),),
+        parent_uuid=assistant.uuid,
+        source_assistant_uuid=assistant.uuid,
+    )
+    for message in (user, assistant, result):
+        store.append(message)
+
+    resumed = await runtime.resume_session(_TARGET_SESSION_ID)
+
+    assert len(resumed.status.todos) == 1
+    assert resumed.status.todos[0].active_form == "Running tests"

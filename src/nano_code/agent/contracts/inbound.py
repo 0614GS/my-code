@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from nano_code.messages import TokenUsage
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
+from nano_code.todos.models import TodoItem
 
 from .context import ContextBudget
 
@@ -18,18 +19,19 @@ class AgentTurnResult:
 
 
 @dataclass(frozen=True, slots=True)
-class AgentState:
-    """Agent inbound port 暴露的会话状态。"""
+class AgentStatus:
+    """Agent inbound port 暴露的只读会话状态。"""
 
     session_id: str
-    message_count: int
+    working_message_count: int
     history_message_count: int
     content_replacement_count: int
     compact_count: int
+    todos: tuple[TodoItem, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class AgentContextState:
+class AgentContextStatus:
     """Agent inbound port 暴露的上下文诊断。"""
 
     budget: ContextBudget
@@ -73,18 +75,18 @@ type AgentHistoryEntry = (
 class AgentSessionView:
     """恢复会话后同时返回状态和 UI 无关的历史投影。"""
 
-    state: AgentState
+    status: AgentStatus
     history: tuple[AgentHistoryEntry, ...]
 
 
 __all__ = [
-    "AgentContextState",
+    "AgentContextStatus",
     "AgentHistoryAssistantMessage",
     "AgentHistoryEntry",
     "AgentHistorySystemMessage",
     "AgentHistoryToolCall",
     "AgentHistoryUserMessage",
     "AgentSessionView",
-    "AgentState",
+    "AgentStatus",
     "AgentTurnResult",
 ]

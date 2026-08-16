@@ -9,6 +9,7 @@ from nano_code.permissions import PermissionConfirmation
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.sessions import SessionSummary
+from nano_code.todos.models import TodoItem
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +29,8 @@ class RuntimeStatus:
     model: str
     permission_mode: str
     credential_source: str
-    message_count: int
+    working_message_count: int
+    todos: tuple[TodoItem, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +76,18 @@ class ToolFinished:
 
 
 @dataclass(frozen=True, slots=True)
+class TodoListUpdated:
+    todos: tuple[TodoItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TurnCompleted:
     result: TurnResult
 
 
-type TurnEvent = TextDelta | ToolStarted | ToolFinished | TurnCompleted
+type TurnEvent = (
+    TextDelta | ToolStarted | ToolFinished | TodoListUpdated | TurnCompleted
+)
 
 
 @dataclass(frozen=True, slots=True)

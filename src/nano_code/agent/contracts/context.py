@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass, field
 
+from nano_code.messages import ContextAttachment
+
 from .model import ModelRequest
 from .session import ContentReplacement
 
@@ -43,6 +45,9 @@ class ContextPlan:
     request: ModelRequest
     budget: ContextBudget | None = None
     new_content_replacements: tuple[ContentReplacement, ...] = field(
+        default_factory=tuple
+    )
+    new_runtime_attachments: tuple[ContextAttachment, ...] = field(
         default_factory=tuple
     )
 

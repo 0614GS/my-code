@@ -1,6 +1,7 @@
 import ast
 from pathlib import Path
 
+import nano_code.agent as agent_api
 import nano_code.context as context_adapter
 import nano_code.providers as provider_adapter
 import nano_code.sessions as session_adapter
@@ -25,6 +26,7 @@ from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.router import ProviderRouter
 from nano_code.providers.turn import CompleteModelTurnAdapter
 from nano_code.sessions import SessionStore
+from nano_code.tools.builtin.todo_write import TodoWriteTool
 from nano_code.tools.round_executor import ToolRoundExecutor
 
 _AGENT_ROOT = Path(__file__).parents[2] / "src" / "nano_code" / "agent"
@@ -120,6 +122,14 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert not hasattr(CompactionOutcome, "summary_text")
     assert "results" not in ToolRoundCompleted.__dataclass_fields__
     assert not hasattr(AgentEngine, "submit_stream")
+    assert not hasattr(AgentEngine, "state")
+    assert not hasattr(AgentEngine, "context_state")
+    assert not hasattr(AgentEngine, "working_messages")
+    assert not hasattr(AgentInboundPort, "session_id")
+    assert not hasattr(AgentInboundPort, "message_count")
+    assert not hasattr(agent_api, "AgentState")
+    assert not hasattr(agent_api, "AgentContextState")
     assert not hasattr(ConversationState, "messages")
     assert hasattr(SessionRepository, "load")
     assert not hasattr(SessionRepository, "snapshot")
+    assert TodoWriteTool().definition.name == "TodoWrite"
