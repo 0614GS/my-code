@@ -10,7 +10,7 @@
   → 限制聚合工具结果大小
   → 可选 snip / microcompact / context collapse
   → 必要时 auto compact
-  → 注入 user context、system context
+  → 注入 system prompt、user context、attachments
   → normalizeMessagesForAPI
 ```
 
@@ -20,14 +20,18 @@
 
 模型上下文不只有对话消息，还包括：
 
-- system prompt；
-- user context，例如 cwd、代码库信息和记忆；
+- system prompt，包括静态指导和运行环境信息；
+- user context，例如 `AGENTS.md` 等 instruction/memory 内容；
 - system context；
 - 工具描述和 JSON Schema；
-- 对话消息、tool result 与 attachment；
+- 对话消息、tool result 与 request-scoped attachment；
 - 为 thinking 和本轮输出预留的 token。
 
 `fetchSystemPromptParts()` 并行构造稳定的 prompt 前缀，见 `claude-code/src/utils/queryContext.ts`。自定义 system prompt 是替换默认 prompt，append prompt 才是追加。
+
+当前 nano-code 的 request-scoped attachment 由同步的 `AttachmentResolver` 聚合：source
+按声明顺序接收当前 `ConversationSnapshot`，每次请求重新执行；单个 source 失败只记录异常并
+跳过该 source，不影响其他 source。
 
 ## 3. Token 计量
 
@@ -157,8 +161,8 @@ SessionStore / JSONL（完整事实）
 
 预算优先以最近一次 assistant 的真实 input、cache creation/read 与 output usage
 为锚点，只对
-其后新增消息作字符估算；没有 usage 的旧会话才估算完整 system、tool schema 和
-messages。`contextChars` 当前仍是触发 compact 的保守字符阈值，不冒充精确的模型
+其后新增消息和当前 request-scoped attachments 作字符估算；没有 usage 的旧会话才估算完整
+system、user context、tool schema、messages 和 attachments。`contextChars` 当前仍是触发 compact 的保守字符阈值，不冒充精确的模型
 token 上限，`/context` 会同时显示字符组成和 token 估算。
 
 microcompact 只处理旧的 Read、Bash、Grep、Glob 结果。原文不改写，JSONL 追加

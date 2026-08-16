@@ -1,20 +1,19 @@
-"""Provider-neutral workspace context supplied to model requests."""
+"""Provider-neutral user context supplied to model requests."""
 
 from pathlib import Path
 from typing import Protocol
 
-from nano_code.agent.contracts.context import EphemeralContextMessage
-from nano_code.messages import SystemContextBlock
+from nano_code.messages import SystemContextBlock, UserContextMessage
 
 
-class WorkspaceContextResolver(Protocol):
-    """Resolve non-history context that belongs to the current workspace."""
+class UserContextResolver(Protocol):
+    """Resolve non-history context for model requests."""
 
-    def resolve(self) -> tuple[EphemeralContextMessage, ...]: ...
+    def resolve(self) -> tuple[UserContextMessage, ...]: ...
 
 
-class AgentsWorkspaceContextResolver:
-    """Load the workspace-root ``AGENTS.md`` as session context.
+class AgentsUserContextResolver:
+    """Load the workspace-root ``AGENTS.md`` as user context.
 
     Discovery is intentionally limited to the configured workspace root. The
     resolver does not walk parent directories, follow additional instruction
@@ -26,7 +25,7 @@ class AgentsWorkspaceContextResolver:
     def __init__(self, cwd: Path) -> None:
         self.cwd = cwd.resolve()
 
-    def resolve(self) -> tuple[EphemeralContextMessage, ...]:
+    def resolve(self) -> tuple[UserContextMessage, ...]:
         """Return the workspace instructions, or no context when absent."""
 
         path = self.cwd / "AGENTS.md"
@@ -39,8 +38,8 @@ class AgentsWorkspaceContextResolver:
             return ()
 
         return (
-            EphemeralContextMessage(
-                role="user",
+            UserContextMessage(
+                source="AGENTS.md",
                 content=(
                     SystemContextBlock(
                         kind="system_reminder",
@@ -51,10 +50,10 @@ class AgentsWorkspaceContextResolver:
         )
 
 
-class EmptyWorkspaceContextResolver:
-    """Resolver for callers that explicitly do not provide workspace context."""
+class EmptyUserContextResolver:
+    """Resolver for callers that explicitly do not provide user context."""
 
-    def resolve(self) -> tuple[EphemeralContextMessage, ...]:
+    def resolve(self) -> tuple[UserContextMessage, ...]:
         return ()
 
 
@@ -70,7 +69,7 @@ def _format_agents_context(content: str) -> str:
 
 
 __all__ = [
-    "AgentsWorkspaceContextResolver",
-    "EmptyWorkspaceContextResolver",
-    "WorkspaceContextResolver",
+    "AgentsUserContextResolver",
+    "EmptyUserContextResolver",
+    "UserContextResolver",
 ]

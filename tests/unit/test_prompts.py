@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import nano_code.prompts.system as system
 from nano_code.context import ModelInputNormalizer
 from nano_code.messages import SystemContextBlock, TextBlock, TranscriptMessage
 from nano_code.messages.xml import render_system_context
@@ -10,8 +11,7 @@ from nano_code.prompts import (
     PromptSection,
     PromptStability,
     SystemPrompt,
-    default_prompt_registry,
-    defaults,
+    build_system_prompt_registry,
 )
 
 
@@ -51,7 +51,7 @@ def test_registry_rejects_unstable_prefix_order() -> None:
 
 
 def test_default_prompt_keeps_workspace_out_of_static_prefix(tmp_path: Path) -> None:
-    prompt = default_prompt_registry(tmp_path).resolve()
+    prompt = build_system_prompt_registry(tmp_path).resolve()
 
     static_text = "\n".join(
         section.content
@@ -69,7 +69,7 @@ def test_default_prompt_keeps_workspace_out_of_static_prefix(tmp_path: Path) -> 
 
 
 def test_default_static_prompt_has_nano_code_guidance_only(tmp_path: Path) -> None:
-    prompt = default_prompt_registry(tmp_path).resolve()
+    prompt = build_system_prompt_registry(tmp_path).resolve()
 
     static_sections = tuple(
         section
@@ -100,11 +100,11 @@ def test_environment_prompt_has_fixed_runtime_order_and_direct_git_check(
     workspace.mkdir()
     (tmp_path / ".git").mkdir()
     monkeypatch.setenv("SHELL", "/bin/test-shell")
-    monkeypatch.setattr(defaults.sys, "platform", "test-platform")
-    monkeypatch.setattr(defaults.platform, "system", lambda: "TestOS")
-    monkeypatch.setattr(defaults.platform, "release", lambda: "1.2")
+    monkeypatch.setattr(system.sys, "platform", "test-platform")
+    monkeypatch.setattr(system.platform, "system", lambda: "TestOS")
+    monkeypatch.setattr(system.platform, "release", lambda: "1.2")
 
-    without_local_git = default_prompt_registry(workspace).resolve().sections[-1]
+    without_local_git = build_system_prompt_registry(workspace).resolve().sections[-1]
     assert without_local_git.content.splitlines() == [
         f"Workspace: {workspace.resolve()}",
         "Git repository: no",
@@ -114,7 +114,7 @@ def test_environment_prompt_has_fixed_runtime_order_and_direct_git_check(
     ]
 
     (workspace / ".git").write_text("gitdir: ../repo/.git\n", encoding="utf-8")
-    with_local_git = default_prompt_registry(workspace).resolve().sections[-1]
+    with_local_git = build_system_prompt_registry(workspace).resolve().sections[-1]
     assert with_local_git.content.splitlines()[1] == "Git repository: yes"
 
 

@@ -5,7 +5,6 @@ import pytest
 from nano_code.agent import (
     ContextOverflow,
     ConversationSnapshot,
-    EphemeralContextMessage,
     ModelInputMessage,
     ToolDefinition,
 )
@@ -22,6 +21,7 @@ from nano_code.messages import (
     ToolResultBlock,
     ToolUseBlock,
     TranscriptMessage,
+    UserContextMessage,
 )
 from nano_code.messages.xml import render_system_context
 from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
@@ -106,10 +106,10 @@ def test_context_planner_builds_observable_request_without_mutating_snapshot() -
     assert snapshot.messages == (message,)
 
 
-def test_workspace_context_is_cached_budgeted_and_excluded_from_compaction() -> None:
+def test_user_context_is_cached_budgeted_and_excluded_from_compaction() -> None:
     message = user("hello")
-    workspace_message = EphemeralContextMessage(
-        role="user",
+    workspace_message = UserContextMessage(
+        source="AGENTS.md",
         content=(
             SystemContextBlock(kind="system_reminder", content="workspace facts"),
         ),
@@ -122,7 +122,7 @@ def test_workspace_context_is_cached_budgeted_and_excluded_from_compaction() -> 
     class Resolver:
         calls = 0
 
-        def resolve(self) -> tuple[EphemeralContextMessage, ...]:
+        def resolve(self) -> tuple[UserContextMessage, ...]:
             self.calls += 1
             return (workspace_message,)
 
@@ -134,7 +134,7 @@ def test_workspace_context_is_cached_budgeted_and_excluded_from_compaction() -> 
         ),
         tools=(),
         max_output_tokens=50,
-        workspace_context_resolver=resolver,
+        user_context_resolver=resolver,
     )
 
     plan = planner.plan(ConversationSnapshot((message,)))
@@ -144,8 +144,8 @@ def test_workspace_context_is_cached_budgeted_and_excluded_from_compaction() -> 
     )
 
     assert resolver.calls == 1
-    assert plan.workspace_context == (normalized_workspace,)
-    assert budget.workspace_context_chars == len(
+    assert plan.user_context == (normalized_workspace,)
+    assert budget.user_context_chars == len(
         normalized_workspace.content[0].text
     )
     assert budget.estimated_input_chars == (
@@ -155,7 +155,7 @@ def test_workspace_context_is_cached_budgeted_and_excluded_from_compaction() -> 
     assert replacements == ()
 
 
-def test_planner_without_workspace_resolver_does_not_read_agents_file(
+def test_planner_without_user_context_resolver_does_not_read_agents_file(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "AGENTS.md").write_text("unrequested instructions", encoding="utf-8")
@@ -170,7 +170,7 @@ def test_planner_without_workspace_resolver_does_not_read_agents_file(
 
     plan = planner.plan(ConversationSnapshot((user("hello"),)))
 
-    assert plan.workspace_context == ()
+    assert plan.user_context == ()
 
 
 def test_prompt_registry_rejects_duplicate_section_keys() -> None:

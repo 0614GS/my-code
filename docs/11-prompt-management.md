@@ -6,7 +6,7 @@ nano-code 不把提示词当成 Agent Loop 中的一段常量字符串。模型�
 
 ```text
 constants/prompts.py 的静态文本
-  → prompts/defaults.py 组装 PromptSection
+  → prompts/system.py 组装 PromptSection
   → PromptRegistry 解析与生命周期缓存
   → SystemPrompt 请求值对象
   → ContextPlanner 组合消息、工具和预算
@@ -46,28 +46,37 @@ provider 决定是否把稳定边界转换为协议缓存点。官方 Anthropic 
 缓存能力不是用户偏好，因此不进入 settings、provider profile 或 TUI。未来 provider
 可以采用不同缓存协议，而无需修改 PromptRegistry 或 Agent Loop。
 
-## 4. Workspace context
+## 4. User context 与 attachments
 
-`WorkspaceContextResolver` 是独立于 provider 的上下文来源接口，返回一组未渲染的
-`EphemeralContextMessage`。`ContextPlanner` 在自己的生命周期内缓存 resolver 结果，并通过
-`ModelInputNormalizer` 将其规范化到 `ContextPlan.workspace_context`；预算统计使用规范化后
+`UserContextResolver` 是独立于 provider 的上下文来源接口，返回一组未渲染的
+`UserContextMessage`。消息带有来源名和 `TextBlock | SystemContextBlock` 内容，但没有
+Transcript UUID、父链或时间戳。`ContextPlanner` 在自己的生命周期内缓存 user context，
+并通过 `ModelInputNormalizer` 将其规范化到 `ContextPlan.user_context`；预算统计使用规范化后
 的模型可见文本，因此包含 XML wrapper 的字符量。
 
-Anthropic 请求把 workspace context 放在普通会话消息之前。它不是 Transcript 事实，
-不会写入 JSONL，也不会进入 `compaction_view()` 或 compact summary。当前组合根显式
-装配 `AgentsWorkspaceContextResolver`，只读取 `Settings.cwd / AGENTS.md`。非空文件会
+Anthropic 请求的顺序是 `user_context → conversation messages → attachments`。AGENTS context
+不是 Transcript 事实，不会写入 JSONL，也不会进入 `compaction_view()` 或 compact summary。当前组合根显式
+装配 `AgentsUserContextResolver`，只读取 `Settings.cwd / AGENTS.md`。非空文件会
 作为一条前置 user 消息注入，并使用 CC 风格的 `<system-reminder>` 包裹，包含
 `# AGENTS.md` 来源标识和“仅在相关时使用”的提醒。
 
 文件缺失或为空时不注入 context；文件存在但无法读取或不是有效 UTF-8 时显式失败。
 resolver 不遍历父目录，不读取 `CLAUDE.md`、`.claude/` 或规则目录，也不解析 include。
 
+`AttachmentResolver` 是一个同步、无状态的 concrete 聚合器，接收按声明顺序排列的
+`AttachmentSource`。每个 source 都收到当前 `ConversationSnapshot`，返回一组
+`AttachmentMessage`；每次请求都会重新执行 source，不做 session 缓存。source 的结果会先
+整体收集，source 失败时记录异常并跳过该 source，其他 source 仍然生效。无 source 的
+`AttachmentResolver()` 返回空 tuple。attachment 同样只在模型请求边界投影为 user message，
+不进入 Transcript 或 compact summary；未来的动态 reminder 可以复用现有
+`SystemContextBlock(kind="system_reminder")`。
+
 ## 5. XML 上下文块
 
 compact summary 和类似 reminder 的内部说明使用 `SystemContextBlock` 保存。XML 标签和
 wrapper 集中位于 `messages/xml.py`；Transcript 记录结构化 kind 与 content，
 `ModelInputNormalizer` 到请求边界才渲染 `<conversation-summary>` 或
-`<system-reminder>`。所有可信 workspace context 也经过同一规范化路径。
+`<system-reminder>`。所有可信 user context 和 attachment 也经过同一规范化路径。
 
 XML 只是帮助模型识别语义的文本协议，不是可信执行通道。普通用户和工具输出中的同名
 标签不会升级成内部上下文块；可信性来自消息 origin、强类型构造和统一规范化路径。

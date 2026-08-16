@@ -57,18 +57,21 @@ def test_anthropic_cache_breakpoints_end_static_and_session_prefixes() -> None:
     assert "cache_control" not in blocks[3]
 
 
-def test_workspace_context_is_serialized_before_conversation_messages() -> None:
-    workspace = ModelInputMessage("user", (TextBlock("workspace facts"),))
+def test_user_context_and_attachments_surround_conversation_messages() -> None:
+    user_context = ModelInputMessage("user", (TextBlock("user context"),))
     history = ModelInputMessage("assistant", (TextBlock("history"),))
+    attachment = ModelInputMessage("user", (TextBlock("attachment"),))
     request = ContextPlan(
         system_prompt=SystemPrompt.from_text("system"),
         messages=(history,),
         tools=(),
         max_output_tokens=10,
-        workspace_context=(workspace,),
+        user_context=(user_context,),
+        attachments=(attachment,),
     )
 
     normalized = AnthropicProvider._request_messages(request)
 
-    assert normalized[0]["content"][0]["text"] == "workspace facts"
+    assert normalized[0]["content"][0]["text"] == "user context"
     assert normalized[1]["content"][0]["text"] == "history"
+    assert normalized[2]["content"][0]["text"] == "attachment"

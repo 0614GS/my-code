@@ -145,10 +145,10 @@ class AnthropicProvider(ModelCompletionPort):
 
     @staticmethod
     def _request_messages(request: ContextPlan) -> list[MessageParam]:
-        """Place non-history workspace context before the conversation history."""
+        """Place user context, history, and request attachments in order."""
 
         return AnthropicProvider._messages(
-            (*request.workspace_context, *request.messages)
+            (*request.user_context, *request.messages, *request.attachments)
         )
 
     def _system(self, prompt: SystemPrompt) -> str | list[TextBlockParam]:

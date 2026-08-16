@@ -4,8 +4,6 @@ from nano_code.agent.contracts.compaction import CompactionOutcome
 from nano_code.agent.contracts.context import (
     ContextBudget,
     ContextPlan,
-    EphemeralContextContentBlock,
-    EphemeralContextMessage,
 )
 from nano_code.agent.contracts.inbound import (
     AgentContextState,
@@ -86,8 +84,6 @@ __all__ = [
     "ContextOverflow",
     "ModelCompletionPort",
     "ModelContextOverflow",
-    "EphemeralContextContentBlock",
-    "EphemeralContextMessage",
     "ModelInputContentBlock",
     "ModelInputMessage",
     "ModelResponseCompleted",

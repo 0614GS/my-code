@@ -2,9 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import EphemeralContextMessage
-from nano_code.context import AgentsWorkspaceContextResolver
-from nano_code.messages import SystemContextBlock
+from nano_code.context import AgentsUserContextResolver
+from nano_code.messages import SystemContextBlock, UserContextMessage
 
 
 def test_agents_resolver_loads_and_wraps_workspace_instructions(
@@ -17,11 +16,11 @@ def test_agents_resolver_loads_and_wraps_workspace_instructions(
         encoding="utf-8",
     )
 
-    resolved = AgentsWorkspaceContextResolver(workspace).resolve()
+    resolved = AgentsUserContextResolver(workspace).resolve()
 
     assert resolved == (
-        EphemeralContextMessage(
-            role="user",
+        UserContextMessage(
+            source="AGENTS.md",
             content=(
                 SystemContextBlock(
                     kind="system_reminder",
@@ -52,7 +51,7 @@ def test_agents_resolver_only_reads_the_workspace_root_file(
         "Use this file.\n@include.md", encoding="utf-8"
     )
 
-    resolved = AgentsWorkspaceContextResolver(workspace).resolve()
+    resolved = AgentsUserContextResolver(workspace).resolve()
 
     assert len(resolved) == 1
     block = resolved[0].content[0]
@@ -69,7 +68,7 @@ def test_agents_resolver_returns_empty_for_missing_or_blank_file(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    resolver = AgentsWorkspaceContextResolver(workspace)
+    resolver = AgentsUserContextResolver(workspace)
 
     assert resolver.resolve() == ()
 
@@ -82,7 +81,7 @@ def test_agents_resolver_propagates_invalid_file_errors(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     path = workspace / "AGENTS.md"
-    resolver = AgentsWorkspaceContextResolver(workspace)
+    resolver = AgentsUserContextResolver(workspace)
 
     path.mkdir()
     with pytest.raises(IsADirectoryError):

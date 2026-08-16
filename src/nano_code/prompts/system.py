@@ -1,4 +1,4 @@
-"""Assembly of nano-code's default prompt sections."""
+"""System-prompt content and its request-lifetime section assembly."""
 
 import os
 import platform
@@ -38,8 +38,8 @@ def _environment_prompt(cwd: Path) -> str:
     )
 
 
-def default_prompt_registry(cwd: Path) -> PromptRegistry:
-    """Construct the default sections; runtime facts stay in session scope."""
+def build_system_prompt_registry(cwd: Path) -> PromptRegistry:
+    """Build the system-prompt sections for one workspace session."""
 
     return PromptRegistry(
         (
@@ -82,4 +82,4 @@ def default_prompt_registry(cwd: Path) -> PromptRegistry:
     )
 
 
-__all__ = ["default_prompt_registry"]
+__all__ = ["build_system_prompt_registry"]

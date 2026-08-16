@@ -630,7 +630,8 @@ def _render_context_status(status: ContextStatus) -> str:
             (
                 "Characters: "
                 f"messages {status.message_chars} · system {status.system_chars} · "
-                f"workspace {status.workspace_context_chars} · "
+                f"user context {status.user_context_chars} · "
+                f"attachments {status.attachment_chars} · "
                 f"tools {status.tool_schema_chars}"
             ),
             (

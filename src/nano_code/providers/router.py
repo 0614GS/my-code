@@ -41,6 +41,7 @@ class _ClosableProvider(Protocol):
 class _StreamingProvider(Protocol):
     def stream(self, request: ContextPlan) -> AsyncIterator[ModelStreamEvent]:
         """可选的原生 streaming adapter 能力。"""
+        ...
 
 
 class ProviderRouter(ModelTurnPort, ModelCompletionPort):

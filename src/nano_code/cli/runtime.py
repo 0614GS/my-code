@@ -24,7 +24,7 @@ from nano_code.agent.ports.inbound import AgentInboundPort
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.config import NanoCodePaths, Settings
 from nano_code.context import (
-    AgentsWorkspaceContextResolver,
+    AgentsUserContextResolver,
     CompactionCoordinator,
     ContextPlanner,
     ContextWindow,
@@ -39,7 +39,7 @@ from nano_code.permissions.prompt import (
     TerminalPrompter,
 )
 from nano_code.presentation import generic_tool_use_presentation
-from nano_code.prompts import default_prompt_registry
+from nano_code.prompts import build_system_prompt_registry
 from nano_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
 from nano_code.providers.profiles import ProviderProtocol
 from nano_code.providers.router import ProviderConnection, ProviderRouter
@@ -152,10 +152,10 @@ def _build_engine_parts(
     )
     context = ContextPlanner(
         window=ContextWindow(settings.context_chars),
-        prompt=default_prompt_registry(settings.cwd),
+        prompt=build_system_prompt_registry(settings.cwd),
         tools=registry.definitions,
         max_output_tokens=settings.max_output_tokens,
-        workspace_context_resolver=AgentsWorkspaceContextResolver(settings.cwd),
+        user_context_resolver=AgentsUserContextResolver(settings.cwd),
     )
     tool_round = ToolRoundExecutor(
         tool_executor,
@@ -318,7 +318,8 @@ class CliChatRuntime:
             message_chars=budget.message_chars,
             system_chars=budget.system_chars,
             tool_schema_chars=budget.tool_schema_chars,
-            workspace_context_chars=budget.workspace_context_chars,
+            user_context_chars=budget.user_context_chars,
+            attachment_chars=budget.attachment_chars,
             message_limit_chars=budget.message_limit_chars,
             working_message_count=state.working_message_count,
             replacement_count=state.replacement_count,

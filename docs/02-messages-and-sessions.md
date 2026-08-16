@@ -38,6 +38,11 @@
 
 因此，UI 需要什么、磁盘保存什么、模型看到什么，不能由同一个 `list` 的简单切片决定。
 
+nano-code 将非 Transcript 的模型输入进一步分成两条管线：`UserContextMessage` 在会话
+生命周期内缓存并作为历史之前的 user message，`AttachmentMessage` 按请求解析并追加在
+历史之后。二者只在 `ModelInputNormalizer` 中投影为 `ModelInputMessage`，不进入 JSONL、
+父链或 compact view。
+
 ## 3. 四类 ID
 
 源码同时使用几种不同身份：

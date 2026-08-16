@@ -10,22 +10,24 @@ from nano_code.agent.contracts.model import ModelInputMessage
 from nano_code.agent.contracts.session import ContentReplacement, ConversationSnapshot
 from nano_code.agent.contracts.tool import ToolDefinition
 from nano_code.agent.ports.context import ContextPort
+from nano_code.context.attachments import AttachmentResolver
 from nano_code.context.microcompact import (
     MicrocompactPolicy,
     apply_content_replacements,
 )
 from nano_code.context.normalization import ModelInputNormalizer
-from nano_code.context.window import ContextWindow
-from nano_code.context.workspace import (
-    EmptyWorkspaceContextResolver,
-    WorkspaceContextResolver,
+from nano_code.context.user_context import (
+    EmptyUserContextResolver,
+    UserContextResolver,
 )
+from nano_code.context.window import ContextWindow
 from nano_code.messages import (
     SystemContextBlock,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
     TranscriptMessage,
+    UserContextMessage,
 )
 from nano_code.prompts import PromptRegistry, SystemPrompt
 
@@ -42,7 +44,8 @@ class ContextPlanner(ContextPort):
         max_output_tokens: int,
         normalizer: ModelInputNormalizer | None = None,
         microcompact: MicrocompactPolicy | None = None,
-        workspace_context_resolver: WorkspaceContextResolver | None = None,
+        user_context_resolver: UserContextResolver | None = None,
+        attachment_resolver: AttachmentResolver | None = None,
     ) -> None:
         if max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
@@ -54,10 +57,17 @@ class ContextPlanner(ContextPort):
         self.microcompact = microcompact or MicrocompactPolicy.for_window(
             window.max_chars
         )
-        self.workspace_context_resolver = (
-            workspace_context_resolver or EmptyWorkspaceContextResolver()
+        self.user_context_resolver = (
+            user_context_resolver
+            if user_context_resolver is not None
+            else EmptyUserContextResolver()
         )
-        self._workspace_context_cache: tuple[ModelInputMessage, ...] | None = None
+        self.attachment_resolver = (
+            attachment_resolver
+            if attachment_resolver is not None
+            else AttachmentResolver()
+        )
+        self._user_context_cache: tuple[UserContextMessage, ...] | None = None
 
     def plan(self, snapshot: ConversationSnapshot) -> ContextPlan:
         """生成不可变请求计划；当前阶段保持既有窗口选择行为。"""
@@ -66,11 +76,13 @@ class ContextPlanner(ContextPort):
         selected = self.window.ensure_fits(effective_messages)
         messages = self.normalizer.normalize_transcript(selected)
         system_prompt = self.prompt.resolve()
-        workspace_context = self._get_workspace_context()
+        user_context = self._get_user_context()
+        attachments = self._get_attachments(snapshot)
         budget = self._budget(
             selected,
             messages,
-            workspace_context,
+            user_context,
+            attachments,
             system_prompt,
         )
         return ContextPlan(
@@ -80,7 +92,8 @@ class ContextPlanner(ContextPort):
             max_output_tokens=self.max_output_tokens,
             budget=budget,
             new_content_replacements=proposed,
-            workspace_context=workspace_context,
+            user_context=user_context,
+            attachments=attachments,
         )
 
     def inspect(self, snapshot: ConversationSnapshot) -> ContextBudget:
@@ -92,7 +105,8 @@ class ContextPlanner(ContextPort):
         return self._budget(
             effective_messages,
             model_messages,
-            self._get_workspace_context(),
+            self._get_user_context(),
+            self._get_attachments(snapshot),
             system_prompt,
         )
 
@@ -109,15 +123,20 @@ class ContextPlanner(ContextPort):
 
         return self.window.size(messages)
 
-    def _get_workspace_context(self) -> tuple[ModelInputMessage, ...]:
-        """Resolve workspace context once for this planner/session lifetime."""
+    def _get_user_context(self) -> tuple[ModelInputMessage, ...]:
+        """Resolve user context once for this planner/session lifetime."""
 
-        if self._workspace_context_cache is None:
-            resolved = tuple(self.workspace_context_resolver.resolve())
-            self._workspace_context_cache = self.normalizer.normalize_context(
-                resolved
-            )
-        return self._workspace_context_cache
+        if self._user_context_cache is None:
+            self._user_context_cache = tuple(self.user_context_resolver.resolve())
+        return self.normalizer.normalize_user_context(self._user_context_cache)
+
+    def _get_attachments(
+        self, snapshot: ConversationSnapshot
+    ) -> tuple[ModelInputMessage, ...]:
+        """Resolve attachments for the current request without session caching."""
+
+        resolved = self.attachment_resolver.resolve(snapshot)
+        return self.normalizer.normalize_attachments(resolved)
 
     def _effective_messages(
         self, snapshot: ConversationSnapshot, *, propose: bool = True
@@ -137,7 +156,8 @@ class ContextPlanner(ContextPort):
         self,
         messages: tuple[TranscriptMessage, ...],
         model_messages: tuple[ModelInputMessage, ...],
-        workspace_context: tuple[ModelInputMessage, ...],
+        user_context: tuple[ModelInputMessage, ...],
+        attachments: tuple[ModelInputMessage, ...],
         system_prompt: SystemPrompt,
     ) -> ContextBudget:
         actual_input, incremental_tokens, estimated_input = _estimate_input_tokens(
@@ -145,7 +165,8 @@ class ContextPlanner(ContextPort):
             model_messages,
             system_prompt.text,
             self.tools,
-            workspace_context,
+            user_context,
+            attachments,
         )
         return ContextBudget(
             message_limit_chars=self.window.max_chars,
@@ -156,7 +177,8 @@ class ContextPlanner(ContextPort):
             last_actual_input_tokens=actual_input,
             incremental_tokens=incremental_tokens,
             estimated_input_tokens=estimated_input,
-            workspace_context_chars=_message_chars(workspace_context),
+            user_context_chars=_message_chars(user_context),
+            attachment_chars=_message_chars(attachments),
         )
 
 
@@ -198,7 +220,8 @@ def _estimate_input_tokens(
     model_messages: tuple[ModelInputMessage, ...],
     system_prompt: str,
     tools: tuple[ToolDefinition, ...],
-    workspace_context: tuple[ModelInputMessage, ...],
+    user_context: tuple[ModelInputMessage, ...],
+    attachments: tuple[ModelInputMessage, ...],
 ) -> tuple[int | None, int, int]:
     """使用最近真实 usage，并只估算该响应之后新增的上下文。"""
 
@@ -207,6 +230,9 @@ def _estimate_input_tokens(
         if usage is None:
             continue
         incremental_chars = _transcript_message_chars(messages[index + 1 :])
+        # Attachments are request-scoped, so they are not represented by the
+        # usage anchor from a previous request.
+        incremental_chars += _message_chars(attachments)
         incremental_tokens = _chars_to_tokens(incremental_chars)
         actual_input = usage.total_input_tokens
         estimated = actual_input + usage.output_tokens + incremental_tokens
@@ -214,9 +240,10 @@ def _estimate_input_tokens(
 
     total_chars = (
         len(system_prompt)
-        + _message_chars(workspace_context)
+        + _message_chars(user_context)
         + _tool_schema_chars(tools)
         + _message_chars(model_messages)
+        + _message_chars(attachments)
     )
     estimated = _chars_to_tokens(total_chars)
     return None, estimated, estimated

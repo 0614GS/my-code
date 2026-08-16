@@ -2,18 +2,17 @@
 
 from dataclasses import replace
 
-from nano_code.agent.contracts.context import (
-    EphemeralContextContentBlock,
-    EphemeralContextMessage,
-)
 from nano_code.agent.contracts.model import ModelInputContentBlock, ModelInputMessage
 from nano_code.messages import (
+    AttachmentMessage,
     ContentBlock,
+    ContextContentBlock,
     SystemContextBlock,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
     TranscriptMessage,
+    UserContextMessage,
 )
 from nano_code.messages.xml import render_system_context
 
@@ -44,28 +43,19 @@ class ModelInputNormalizer:
         self._validate_tool_pairs(result)
         return result
 
-    def normalize_context(
-        self, messages: tuple[EphemeralContextMessage, ...]
+    def normalize_user_context(
+        self, messages: tuple[UserContextMessage, ...]
     ) -> tuple[ModelInputMessage, ...]:
-        """Normalize non-history context without adding it to the Transcript."""
+        """Project user context into model-visible user messages."""
 
-        normalized: list[ModelInputMessage] = []
-        for message in messages:
-            candidate = ModelInputMessage(
-                role=message.role,
-                content=tuple(
-                    _normalize_context_block(block) for block in message.content
-                ),
-            )
-            if normalized and normalized[-1].role == candidate.role:
-                previous = normalized[-1]
-                normalized[-1] = ModelInputMessage(
-                    role=previous.role,
-                    content=previous.content + candidate.content,
-                )
-            else:
-                normalized.append(candidate)
-        return tuple(normalized)
+        return _normalize_non_history(messages)
+
+    def normalize_attachments(
+        self, messages: tuple[AttachmentMessage, ...]
+    ) -> tuple[ModelInputMessage, ...]:
+        """Project request attachments into model-visible user messages."""
+
+        return _normalize_non_history(messages)
 
     @staticmethod
     def _validate_tool_pairs(messages: tuple[ModelInputMessage, ...]) -> None:
@@ -95,6 +85,29 @@ class ModelInputNormalizer:
             raise ValueError(f"Unresolved tool use in context: {unresolved}")
 
 
+def _normalize_non_history(
+    messages: tuple[UserContextMessage | AttachmentMessage, ...],
+) -> tuple[ModelInputMessage, ...]:
+    """Normalize one non-history message collection without cross-merging it."""
+
+    normalized: list[ModelInputMessage] = []
+    for message in messages:
+        candidate = ModelInputMessage(
+            role="user",
+            content=tuple(
+                _normalize_context_block(block) for block in message.content
+            ),
+        )
+        if normalized and normalized[-1].role == candidate.role:
+            previous = normalized[-1]
+            normalized[-1] = ModelInputMessage(
+                role=previous.role,
+                content=previous.content + candidate.content,
+            )
+        else:
+            normalized.append(candidate)
+    return tuple(normalized)
+
 def _normalize_transcript_block(block: ContentBlock) -> ModelInputContentBlock:
     """在唯一边界移除本地展示数据并渲染可信上下文。"""
 
@@ -105,7 +118,7 @@ def _normalize_transcript_block(block: ContentBlock) -> ModelInputContentBlock:
     return block
 
 
-def _normalize_context_block(block: EphemeralContextContentBlock) -> TextBlock:
+def _normalize_context_block(block: ContextContentBlock) -> TextBlock:
     if isinstance(block, SystemContextBlock):
         return TextBlock(render_system_context(block))
     return block
