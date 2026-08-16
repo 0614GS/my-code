@@ -5,27 +5,30 @@ import pytest
 from nano_code.agent import (
     ContextOverflow,
     ConversationSnapshot,
-    ModelMessage,
+    EphemeralContextMessage,
+    ModelInputMessage,
     ToolDefinition,
 )
 from nano_code.context import (
     ContextPlanner,
     ContextWindow,
     MicrocompactPolicy,
-    ModelMessageProjector,
+    ModelInputNormalizer,
 )
 from nano_code.messages import (
-    ChatMessage,
+    SystemContextBlock,
     TextBlock,
     TokenUsage,
     ToolResultBlock,
     ToolUseBlock,
+    TranscriptMessage,
 )
+from nano_code.messages.xml import render_system_context
 from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
 
 
-def user(text: str, parent: str | None = None) -> ChatMessage:
-    return ChatMessage(
+def user(text: str, parent: str | None = None) -> TranscriptMessage:
+    return TranscriptMessage(
         role="user",
         origin="human",
         content=(TextBlock(text),),
@@ -35,20 +38,20 @@ def user(text: str, parent: str | None = None) -> ChatMessage:
 
 def test_window_reports_overflow_instead_of_silently_dropping_history() -> None:
     first = user("old prompt")
-    first_answer = ChatMessage(
+    first_answer = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("old answer"),),
         parent_uuid=first.uuid,
     )
     current = user("new", first_answer.uuid)
-    tool_use = ChatMessage(
+    tool_use = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(ToolUseBlock("call", "Read", {"path": "x"}),),
         parent_uuid=current.uuid,
     )
-    tool_result = ChatMessage(
+    tool_result = TranscriptMessage(
         role="user",
         origin="tool",
         content=(ToolResultBlock("call", "value"),),
@@ -56,26 +59,26 @@ def test_window_reports_overflow_instead_of_silently_dropping_history() -> None:
     )
 
     with pytest.raises(ContextOverflow) as raised:
-        ContextWindow(max_chars=40).project(
+        ContextWindow(max_chars=40).ensure_fits(
             (first, first_answer, current, tool_use, tool_result)
         )
 
     assert raised.value.current_chars > raised.value.max_chars
 
 
-def test_projection_rejects_orphan_tool_result() -> None:
+def test_normalization_rejects_orphan_tool_result() -> None:
     prompt = user("new")
-    result = ChatMessage(
+    result = TranscriptMessage(
         role="user",
         origin="tool",
         content=(ToolResultBlock("missing", "value"),),
         parent_uuid=prompt.uuid,
     )
 
-    selected = ContextWindow().project((prompt, result))
+    selected = ContextWindow().ensure_fits((prompt, result))
 
     with pytest.raises(ValueError, match="Orphan tool result"):
-        ModelMessageProjector().project(selected)
+        ModelInputNormalizer().normalize_transcript(selected)
 
 
 def test_context_planner_builds_observable_request_without_mutating_snapshot() -> None:
@@ -93,7 +96,7 @@ def test_context_planner_builds_observable_request_without_mutating_snapshot() -
     plan = planner.plan(snapshot)
 
     assert plan.system_prompt.text == "system"
-    assert plan.messages == (ModelMessage("user", (TextBlock("hello"),)),)
+    assert plan.messages == (ModelInputMessage("user", (TextBlock("hello"),)),)
     assert plan.tools == (tool,)
     assert plan.system_prompt.sections[0].key == section.key
     assert plan.budget is not None
@@ -105,12 +108,21 @@ def test_context_planner_builds_observable_request_without_mutating_snapshot() -
 
 def test_workspace_context_is_cached_budgeted_and_excluded_from_compaction() -> None:
     message = user("hello")
-    workspace_message = ModelMessage("user", (TextBlock("workspace facts"),))
+    workspace_message = EphemeralContextMessage(
+        role="user",
+        content=(
+            SystemContextBlock(kind="system_reminder", content="workspace facts"),
+        ),
+    )
+    normalized_workspace = ModelInputMessage(
+        "user",
+        (TextBlock(render_system_context(workspace_message.content[0])),),
+    )
 
     class Resolver:
         calls = 0
 
-        def resolve(self) -> tuple[ModelMessage, ...]:
+        def resolve(self) -> tuple[EphemeralContextMessage, ...]:
             self.calls += 1
             return (workspace_message,)
 
@@ -132,12 +144,14 @@ def test_workspace_context_is_cached_budgeted_and_excluded_from_compaction() -> 
     )
 
     assert resolver.calls == 1
-    assert plan.workspace_context == (workspace_message,)
-    assert budget.workspace_context_chars == len("workspace facts")
-    assert budget.estimated_input_chars == (
-        len("hello") + len("system") + len("workspace facts")
+    assert plan.workspace_context == (normalized_workspace,)
+    assert budget.workspace_context_chars == len(
+        normalized_workspace.content[0].text
     )
-    assert compact_messages == (ModelMessage("user", (TextBlock("hello"),)),)
+    assert budget.estimated_input_chars == (
+        len("hello") + len("system") + len(normalized_workspace.content[0].text)
+    )
+    assert compact_messages == (ModelInputMessage("user", (TextBlock("hello"),)),)
     assert replacements == ()
 
 
@@ -169,20 +183,20 @@ def test_prompt_registry_rejects_duplicate_section_keys() -> None:
         PromptRegistry(sections)
 
 
-def test_model_projection_merges_adjacent_roles_without_local_metadata() -> None:
+def test_model_normalization_merges_adjacent_roles_without_local_metadata() -> None:
     first = user("first")
     second = user("second", first.uuid)
 
-    projected = ModelMessageProjector().project((first, second))
+    normalized = ModelInputNormalizer().normalize_transcript((first, second))
 
-    assert projected == (
-        ModelMessage("user", (TextBlock("first"), TextBlock("second"))),
+    assert normalized == (
+        ModelInputMessage("user", (TextBlock("first"), TextBlock("second"))),
     )
 
 
 def test_budget_uses_latest_real_usage_plus_only_new_messages() -> None:
     first = user("old prompt")
-    assistant = ChatMessage(
+    assistant = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("answer"),),
@@ -210,25 +224,25 @@ def test_budget_uses_latest_real_usage_plus_only_new_messages() -> None:
 
 def test_microcompact_replaces_old_result_without_mutating_transcript() -> None:
     prompt = user("inspect")
-    first_call = ChatMessage(
+    first_call = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(ToolUseBlock("old", "Read", {"path": "old.py"}),),
         parent_uuid=prompt.uuid,
     )
-    first_result = ChatMessage(
+    first_result = TranscriptMessage(
         role="user",
         origin="tool",
         content=(ToolResultBlock("old", "x" * 80),),
         parent_uuid=first_call.uuid,
     )
-    second_call = ChatMessage(
+    second_call = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(ToolUseBlock("new", "Read", {"path": "new.py"}),),
         parent_uuid=first_result.uuid,
     )
-    second_result = ChatMessage(
+    second_result = TranscriptMessage(
         role="user",
         origin="tool",
         content=(ToolResultBlock("new", "y" * 80),),
@@ -255,9 +269,9 @@ def test_microcompact_replaces_old_result_without_mutating_transcript() -> None:
     plan = planner.plan(snapshot)
 
     assert [item.tool_use_id for item in plan.new_content_replacements] == ["old"]
-    projected_old = plan.messages[2].content[0]
-    assert isinstance(projected_old, ToolResultBlock)
-    assert "compacted" in projected_old.content
+    normalized_old = plan.messages[2].content[0]
+    assert isinstance(normalized_old, ToolResultBlock)
+    assert "compacted" in normalized_old.content
     original_old = first_result.content[0]
     assert isinstance(original_old, ToolResultBlock)
     assert original_old.content == "x" * 80

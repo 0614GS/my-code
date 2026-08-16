@@ -1,12 +1,28 @@
 """上下文规划和预算诊断值对象。"""
 
 from dataclasses import dataclass, field
+from typing import Literal
 
+from nano_code.messages import SystemContextBlock, TextBlock
 from nano_code.prompts import SystemPrompt
 
-from .model import ModelMessage
+from .model import ModelInputMessage
 from .session import ContentReplacement
 from .tool import ToolDefinition
+
+type EphemeralContextContentBlock = TextBlock | SystemContextBlock
+
+
+@dataclass(frozen=True, slots=True)
+class EphemeralContextMessage:
+    """Non-history context before the model input normalization boundary."""
+
+    role: Literal["user"]
+    content: tuple[EphemeralContextContentBlock, ...]
+
+    def __post_init__(self) -> None:
+        if not self.content:
+            raise ValueError("A context message must contain at least one block")
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,14 +58,19 @@ class ContextPlan:
     """经过上下文策略处理、可交给任意模型 adapter 的请求计划。"""
 
     system_prompt: SystemPrompt
-    messages: tuple[ModelMessage, ...]
+    messages: tuple[ModelInputMessage, ...]
     tools: tuple[ToolDefinition, ...]
     max_output_tokens: int
     budget: ContextBudget | None = None
     new_content_replacements: tuple[ContentReplacement, ...] = field(
         default_factory=tuple
     )
-    workspace_context: tuple[ModelMessage, ...] = ()
+    workspace_context: tuple[ModelInputMessage, ...] = ()
 
 
-__all__ = ["ContextBudget", "ContextPlan"]
+__all__ = [
+    "ContextBudget",
+    "ContextPlan",
+    "EphemeralContextContentBlock",
+    "EphemeralContextMessage",
+]

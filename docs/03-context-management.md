@@ -1,6 +1,6 @@
 # 上下文管理
 
-## 1. 上下文是请求时投影
+## 1. 上下文是请求时规范化
 
 完整会话历史不会原样发送给模型。每次循环迭代都会从当前消息重新构造模型可见上下文：
 
@@ -14,7 +14,7 @@
   → normalizeMessagesForAPI
 ```
 
-主流程位于 `claude-code/src/query.ts:331` 附近。完整历史负责恢复和 UI；投影视图负责 token、协议合法性与 prompt cache。
+主流程位于 `claude-code/src/query.ts:331` 附近。完整历史负责恢复和 UI；规范化视图负责 token、协议合法性与 prompt cache。
 
 ## 2. 请求的组成
 
@@ -135,7 +135,7 @@ boundary
 
 1. 裁剪单位必须保持完整 API round 和 tool-use/tool-result 配对。
 2. token 阈值包含 prompt、工具 schema 与输出预留，不只统计聊天文本。
-3. compact 必须产生显式 boundary，才能正确投影、持久化和恢复。
+3. compact 必须产生显式 boundary，才能正确规范化、持久化和恢复。
 4. 摘要后要重建工作集，不能假设摘要等价于原始操作上下文。
 5. 同一历史前缀的替换决策必须可重放且字节稳定。
 
@@ -149,10 +149,10 @@ SessionStore / JSONL（完整事实）
   → ContextPlanner / ContextPlan（单次模型请求）
 ```
 
-`ChatMessage` 保存 UUID、父链、origin、时间戳和 assistant usage；
-`ModelMessage` 只保留 role 与模型可见 content。`ContextPlanner` 从不可变
+`TranscriptMessage` 保存 UUID、父链、origin、时间戳和 assistant usage；
+`ModelInputMessage` 只保留 role 与模型可见 content。`ContextPlanner` 从不可变
 `ConversationSnapshot` 生成 prompt sections、稳定工具顺序、规范化消息和
-`ContextBudget`，Agent Loop 不再直接拼装请求。相邻同 role 消息在投影时合并，
+`ContextBudget`，Agent Loop 不再直接拼装请求。相邻同 role 消息在规范化时合并，
 重复、孤立或未闭合的工具调用在进入 Provider 前失败。
 
 预算优先以最近一次 assistant 的真实 input、cache creation/read 与 output usage
@@ -183,7 +183,7 @@ compact hooks。这些能力以后应接入现有 planner、boundary 和 replay 
 
 AgentEngine 只依赖 `ContextPort` 的四个能力：`plan`、`inspect`、
 `compaction_view` 和 `measure`。默认实现仍是 `ContextPlanner`；窗口、提示词、工具
-schema、microcompact 和 API 投影都留在 context 包内，Engine 不读取其 `window` 等
+schema、microcompact 和 API 规范化都留在 context 包内，Engine 不读取其 `window` 等
 内部对象。
 
 完整 compact 由 `CompactionCoordinator` 实现 `Compactor`：它请求

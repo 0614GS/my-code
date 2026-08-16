@@ -15,7 +15,7 @@ from anthropic.types import (
 
 from nano_code.agent.contracts.context import ContextPlan
 from nano_code.agent.contracts.model import (
-    ModelMessage,
+    ModelInputMessage,
     ModelResponseCompleted,
     ModelStreamEvent,
     ModelTextDelta,
@@ -110,9 +110,9 @@ class AnthropicProvider(ModelCompletionPort):
         yield ModelResponseCompleted(response=self._response(final_message))
 
     @staticmethod
-    def _messages(messages: Iterable[ModelMessage]) -> list[MessageParam]:
+    def _messages(messages: Iterable[ModelInputMessage]) -> list[MessageParam]:
         # 上下文层已经移除了 Transcript 元数据并校验协议；适配器只转换 SDK 类型。
-        projected: list[MessageParam] = []
+        normalized: list[MessageParam] = []
         for message in messages:
             content: list[
                 TextBlockParam | ToolUseBlockParam | ToolResultBlockParam
@@ -140,8 +140,8 @@ class AnthropicProvider(ModelCompletionPort):
                             "is_error": block.is_error,
                         }
                     )
-            projected.append({"role": message.role, "content": content})
-        return projected
+            normalized.append({"role": message.role, "content": content})
+        return normalized
 
     @staticmethod
     def _request_messages(request: ContextPlan) -> list[MessageParam]:

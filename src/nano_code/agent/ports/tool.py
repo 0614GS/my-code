@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
 from nano_code.agent.contracts.tool import ToolRoundEvent
-from nano_code.messages import ChatMessage, ToolResultBlock, ToolUseBlock
+from nano_code.messages import ToolResultBlock, ToolUseBlock, TranscriptMessage
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 
 
@@ -15,7 +15,7 @@ class ToolRoundPort(Protocol):
     def run_round(
         self,
         calls: tuple[ToolUseBlock, ...],
-        assistant_message: ChatMessage,
+        assistant_message: TranscriptMessage,
     ) -> AsyncIterator[ToolRoundEvent]: ...
 
     def present_use(self, call: ToolUseBlock) -> ToolUsePresentation: ...

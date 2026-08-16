@@ -24,12 +24,12 @@ from nano_code.agent.ports.tool import ToolRoundPort
 from nano_code.context import CompactionCoordinator, ContextPlanner, ContextWindow
 from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
-    ChatMessage,
     ModelResponse,
     SystemContextBlock,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
+    TranscriptMessage,
 )
 from nano_code.permissions import PermissionMode, PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
@@ -137,7 +137,7 @@ class CancellingInteraction:
     async def run_round(
         self,
         calls: tuple[ToolUseBlock, ...],
-        assistant_message: ChatMessage,
+        assistant_message: TranscriptMessage,
     ) -> AsyncIterator[ToolRoundEvent]:
         if False:
             yield ToolRoundCompleted(assistant_message, ())  # pragma: no cover
@@ -149,8 +149,10 @@ async def test_overflow_compacts_to_persisted_boundary_and_releases_working_set(
     tmp_path: Path,
 ) -> None:
     store = SessionStore(tmp_path / "state", _SESSION_ID)
-    old_user = ChatMessage(role="user", origin="human", content=(TextBlock("x" * 200),))
-    old_answer = ChatMessage(
+    old_user = TranscriptMessage(
+        role="user", origin="human", content=(TextBlock("x" * 200),)
+    )
+    old_answer = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("old answer"),),
@@ -231,7 +233,9 @@ async def test_failed_compaction_does_not_write_boundary_or_release_messages(
     tmp_path: Path,
 ) -> None:
     store = SessionStore(tmp_path / "state", _SESSION_ID)
-    original = ChatMessage(role="user", origin="human", content=(TextBlock("keep me"),))
+    original = TranscriptMessage(
+        role="user", origin="human", content=(TextBlock("keep me"),)
+    )
     store.append(original)
     provider = FakeProvider(
         [ModelResponse(content=(TextBlock("   "),), stop_reason="end_turn")]
@@ -379,10 +383,10 @@ async def test_cancellation_persists_results_for_every_tool_use(tmp_path: Path) 
 
 def test_resume_repairs_trailing_unresolved_tool_uses(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "state", _SESSION_ID)
-    user_message = ChatMessage(
+    user_message = TranscriptMessage(
         role="user", origin="human", content=(TextBlock("read"),)
     )
-    assistant_message = ChatMessage(
+    assistant_message = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(ToolUseBlock("interrupted", "Read", {"path": "a.txt"}),),
@@ -405,11 +409,15 @@ def test_resume_switches_store_and_messages_after_validating_target(
     tmp_path: Path,
 ) -> None:
     current_store = SessionStore(tmp_path / "state", _SESSION_ID)
-    current = ChatMessage(role="user", origin="human", content=(TextBlock("current"),))
+    current = TranscriptMessage(
+        role="user", origin="human", content=(TextBlock("current"),)
+    )
     current_store.append(current)
     engine = build_engine(tmp_path, FakeProvider([]))
     target_store = SessionStore(tmp_path / "state", _OTHER_SESSION_ID)
-    target = ChatMessage(role="user", origin="human", content=(TextBlock("target"),))
+    target = TranscriptMessage(
+        role="user", origin="human", content=(TextBlock("target"),)
+    )
     target_store.append(target)
 
     loaded = engine.resume(target_store)

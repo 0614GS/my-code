@@ -5,7 +5,7 @@ from typing import Protocol
 
 from nano_code.agent.contracts.compaction import CompactionOutcome
 from nano_code.agent.contracts.context import ContextPlan
-from nano_code.agent.contracts.model import ModelMessage
+from nano_code.agent.contracts.model import ModelInputMessage
 from nano_code.agent.contracts.session import (
     CompactBoundary,
     CompactTrigger,
@@ -14,7 +14,12 @@ from nano_code.agent.contracts.session import (
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
 from nano_code.agent.ports.model import ModelCompletionPort
-from nano_code.messages import ChatMessage, SystemContextBlock, TextBlock, TokenUsage
+from nano_code.messages import (
+    SystemContextBlock,
+    TextBlock,
+    TokenUsage,
+    TranscriptMessage,
+)
 from nano_code.prompts import SystemPrompt
 
 _COMPACTION_SYSTEM_PROMPT = """You compact coding-agent conversations.
@@ -34,7 +39,7 @@ class _CompactionSummarizer(Protocol):
     """CompactionCoordinator 的 adapter 内部依赖。"""
 
     async def summarize(
-        self, messages: tuple[ModelMessage, ...]
+        self, messages: tuple[ModelInputMessage, ...]
     ) -> CompactionResult: ...
 
 
@@ -49,7 +54,9 @@ class CompactionService:
         self.provider = provider
         self.max_output_tokens = max_output_tokens
 
-    async def summarize(self, messages: tuple[ModelMessage, ...]) -> CompactionResult:
+    async def summarize(
+        self, messages: tuple[ModelInputMessage, ...]
+    ) -> CompactionResult:
         response = await self.provider.complete(
             ContextPlan(
                 system_prompt=SystemPrompt.from_text(
@@ -91,7 +98,7 @@ class CompactionCoordinator(CompactorPort):
         model_messages, replacements = self.context.compaction_view(snapshot)
         result = await self.service.summarize(model_messages)
         parent_uuid = snapshot.messages[-1].uuid
-        summary = ChatMessage(
+        summary = TranscriptMessage(
             role="user",
             origin="system",
             content=(
@@ -117,12 +124,12 @@ class CompactionCoordinator(CompactorPort):
 
 
 def _append_summary_request(
-    messages: tuple[ModelMessage, ...],
-) -> tuple[ModelMessage, ...]:
+    messages: tuple[ModelInputMessage, ...],
+) -> tuple[ModelInputMessage, ...]:
     instruction = TextBlock(_COMPACTION_REQUEST)
     if messages and messages[-1].role == "user":
         last = messages[-1]
         return messages[:-1] + (
-            ModelMessage(role="user", content=last.content + (instruction,)),
+            ModelInputMessage(role="user", content=last.content + (instruction,)),
         )
-    return messages + (ModelMessage(role="user", content=(instruction,)),)
+    return messages + (ModelInputMessage(role="user", content=(instruction,)),)

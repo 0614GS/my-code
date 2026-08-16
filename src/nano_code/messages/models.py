@@ -96,7 +96,7 @@ class TextBlock:
 
 @dataclass(frozen=True, slots=True)
 class SystemContextBlock:
-    """由核心创建、在请求投影时才渲染为 XML 的上下文说明。"""
+    """由核心创建、在模型输入规范化时才渲染为 XML 的上下文说明。"""
 
     kind: SystemContextKind
     content: str
@@ -135,7 +135,7 @@ type AssistantBlock = TextBlock | ToolUseBlock
 
 
 @dataclass(frozen=True, slots=True)
-class ChatMessage:
+class TranscriptMessage:
     """内部会话记录中的一条持久化消息。"""
 
     # role 是 provider 协议角色。origin 记录消息的实际创建方，因为工具结果也以

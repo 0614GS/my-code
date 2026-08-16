@@ -9,7 +9,12 @@ from nano_code.cli.runtime import (
     build_runtime,
 )
 from nano_code.config import NanoCodePaths, Settings
-from nano_code.messages import ChatMessage, TextBlock, ToolResultBlock, ToolUseBlock
+from nano_code.messages import (
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    TranscriptMessage,
+)
 from nano_code.permissions import PermissionMode
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.sessions import SessionStore
@@ -59,12 +64,12 @@ async def test_runtime_lists_and_atomically_switches_project_session(
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
     )
-    user = ChatMessage(
+    user = TranscriptMessage(
         role="user",
         origin="human",
         content=(TextBlock("historical question"),),
     )
-    assistant = ChatMessage(
+    assistant = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("historical answer"),),
@@ -93,12 +98,12 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
     )
-    user = ChatMessage(
+    user = TranscriptMessage(
         role="user",
         origin="human",
         content=(TextBlock("read it"),),
     )
-    assistant = ChatMessage(
+    assistant = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(ToolUseBlock("read-1", "Read", {"path": "old.py"}),),
@@ -108,7 +113,7 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
         summary="Historical read summary",
         detail="Stored at execution time",
     )
-    result = ChatMessage(
+    result = TranscriptMessage(
         role="user",
         origin="tool",
         content=(

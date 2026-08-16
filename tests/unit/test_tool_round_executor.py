@@ -8,7 +8,12 @@ from nano_code.agent import (
     ToolRoundCompleted,
     ToolRoundEvent,
 )
-from nano_code.messages import ChatMessage, TextBlock, ToolResultBlock, ToolUseBlock
+from nano_code.messages import (
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    TranscriptMessage,
+)
 from nano_code.permissions import PermissionMode, PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
 from nano_code.tools import ToolContext, ToolRegistry
@@ -36,7 +41,7 @@ async def test_round_executor_is_serial_and_returns_one_completed_message(
     (tmp_path / "a.txt").write_text("a", encoding="utf-8")
     (tmp_path / "b.txt").write_text("b", encoding="utf-8")
     runner = build_round_executor(tmp_path)
-    assistant = ChatMessage(
+    assistant = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(
@@ -73,7 +78,7 @@ async def test_round_executor_cancellation_closes_every_call(tmp_path: Path) -> 
         ToolUseBlock("first", "Read", {"path": "a.txt"}),
         ToolUseBlock("second", "Read", {"path": "b.txt"}),
     )
-    assistant = ChatMessage(
+    assistant = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("working"), *calls),

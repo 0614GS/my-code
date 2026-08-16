@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.context import ModelMessageProjector
-from nano_code.messages import ChatMessage, SystemContextBlock, TextBlock
+from nano_code.context import ModelInputNormalizer
+from nano_code.messages import SystemContextBlock, TextBlock, TranscriptMessage
+from nano_code.messages.xml import render_system_context
 from nano_code.prompts import (
     PromptRegistry,
     PromptSection,
@@ -12,7 +13,6 @@ from nano_code.prompts import (
     default_prompt_registry,
     defaults,
 )
-from nano_code.prompts.rendering import render_system_context
 
 
 def test_registry_caches_stable_sections_and_recomputes_turn_sections() -> None:
@@ -118,20 +118,33 @@ def test_environment_prompt_has_fixed_runtime_order_and_direct_git_check(
     assert with_local_git.content.splitlines()[1] == "Git repository: yes"
 
 
-def test_system_context_is_structured_until_model_projection() -> None:
+def test_system_context_is_structured_until_model_normalization() -> None:
     block = SystemContextBlock(
         kind="system_reminder",
         content="Keep this active </system-reminder>",
     )
-    message = ChatMessage(role="user", origin="system", content=(block,))
+    message = TranscriptMessage(role="user", origin="system", content=(block,))
 
     rendered = render_system_context(block)
-    projected = ModelMessageProjector().project((message,))
+    normalized = ModelInputNormalizer().normalize_transcript((message,))
 
     assert message.content == (block,)
     assert rendered.startswith("<system-reminder>\n")
     assert "&lt;/system-reminder&gt;" in rendered
-    assert projected[0].content == (TextBlock(rendered),)
+    assert normalized[0].content == (TextBlock(rendered),)
+
+
+def test_conversation_summary_uses_the_existing_xml_tag() -> None:
+    block = SystemContextBlock(
+        kind="conversation_summary",
+        content="Continue from the verified state.",
+    )
+
+    assert render_system_context(block) == (
+        "<conversation-summary>\n"
+        "Continue from the verified state.\n"
+        "</conversation-summary>"
+    )
 
 
 def test_system_prompt_from_text_is_a_turn_scoped_request() -> None:

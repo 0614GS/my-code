@@ -1,7 +1,12 @@
 """智能体核心、边界契约与查询编排。"""
 
 from nano_code.agent.contracts.compaction import CompactionOutcome
-from nano_code.agent.contracts.context import ContextBudget, ContextPlan
+from nano_code.agent.contracts.context import (
+    ContextBudget,
+    ContextPlan,
+    EphemeralContextContentBlock,
+    EphemeralContextMessage,
+)
 from nano_code.agent.contracts.inbound import (
     AgentContextState,
     AgentHistoryAssistantMessage,
@@ -14,8 +19,8 @@ from nano_code.agent.contracts.inbound import (
     AgentTurnResult,
 )
 from nano_code.agent.contracts.model import (
-    ModelContentBlock,
-    ModelMessage,
+    ModelInputContentBlock,
+    ModelInputMessage,
     ModelResponseCompleted,
     ModelStreamEvent,
     ModelTextDelta,
@@ -81,8 +86,10 @@ __all__ = [
     "ContextOverflow",
     "ModelCompletionPort",
     "ModelContextOverflow",
-    "ModelContentBlock",
-    "ModelMessage",
+    "EphemeralContextContentBlock",
+    "EphemeralContextMessage",
+    "ModelInputContentBlock",
+    "ModelInputMessage",
     "ModelResponseCompleted",
     "ModelStreamEvent",
     "ModelTextDelta",

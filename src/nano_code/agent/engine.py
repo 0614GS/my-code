@@ -40,12 +40,12 @@ from nano_code.agent.ports.model import ModelTurnPort
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.agent.ports.tool import ToolRoundPort
 from nano_code.messages import (
-    ChatMessage,
     ModelResponse,
     TextBlock,
     TokenUsage,
     ToolResultBlock,
     ToolUseBlock,
+    TranscriptMessage,
 )
 
 
@@ -79,7 +79,7 @@ class AgentEngine(AgentInboundPort):
         return self._conversation.session_id
 
     @property
-    def working_messages(self) -> tuple[ChatMessage, ...]:
+    def working_messages(self) -> tuple[TranscriptMessage, ...]:
         """当前模型工作集的只读快照。"""
 
         return self._conversation.working_messages
@@ -121,7 +121,7 @@ class AgentEngine(AgentInboundPort):
         if not prompt.strip():
             raise ValueError("Prompt must not be empty")
 
-        user_message = ChatMessage(
+        user_message = TranscriptMessage(
             role="user",
             origin="human",
             content=(TextBlock(prompt),),
@@ -167,7 +167,7 @@ class AgentEngine(AgentInboundPort):
 
             input_tokens += response.usage.total_input_tokens
             output_tokens += response.usage.output_tokens
-            assistant_message = ChatMessage(
+            assistant_message = TranscriptMessage(
                 role="assistant",
                 origin="model",
                 content=response.content,
@@ -193,7 +193,7 @@ class AgentEngine(AgentInboundPort):
                 )
                 return
 
-            result_message: ChatMessage | None = None
+            result_message: TranscriptMessage | None = None
             results: list[ToolResultBlock] = []
             round_cancelled = False
             try:
@@ -286,7 +286,7 @@ class AgentEngine(AgentInboundPort):
         )
 
     def _project_history(
-        self, messages: tuple[ChatMessage, ...]
+        self, messages: tuple[TranscriptMessage, ...]
     ) -> tuple[
         AgentHistoryUserMessage
         | AgentHistoryAssistantMessage

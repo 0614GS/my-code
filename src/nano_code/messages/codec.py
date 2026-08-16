@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 
 from nano_code.messages.models import (
-    ChatMessage,
     ContentBlock,
     JsonObject,
     JsonValue,
@@ -15,6 +14,7 @@ from nano_code.messages.models import (
     TokenUsage,
     ToolResultBlock,
     ToolUseBlock,
+    TranscriptMessage,
     to_json_object,
 )
 from nano_code.presentation import ToolResultPresentation
@@ -57,7 +57,7 @@ def block_to_json(block: ContentBlock) -> JsonObject:
     return result
 
 
-def message_to_json(message: ChatMessage) -> JsonObject:
+def message_to_json(message: TranscriptMessage) -> JsonObject:
     """编码一条内部消息用于 JSONL 持久化。"""
 
     # 磁盘记录版本独立于 provider SDK 类型，使会话迁移无需修改智能体内部数据类。
@@ -192,7 +192,7 @@ def _usage_from_json(value: object) -> TokenUsage | None:
         raise MessageDecodeError(str(error)) from error
 
 
-def message_from_json(value: object) -> ChatMessage:
+def message_from_json(value: object) -> TranscriptMessage:
     """解码并校验一条带版本的会话记录。"""
 
     # 恢复时会话记录属于不可信输入：它可能过时、不完整或被编辑过。
@@ -231,7 +231,7 @@ def message_from_json(value: object) -> ChatMessage:
     else:
         raise MessageDecodeError(f"Unsupported origin: {raw_origin}")
 
-    return ChatMessage(
+    return TranscriptMessage(
         uuid=_required_string(data, "uuid"),
         parent_uuid=_optional_string(data, "parent_uuid"),
         timestamp=_required_string(data, "timestamp"),

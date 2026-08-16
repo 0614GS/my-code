@@ -4,10 +4,10 @@ from dataclasses import replace
 
 from nano_code.agent.contracts.session import ContentReplacement
 from nano_code.messages import (
-    ChatMessage,
     SystemContextBlock,
     ToolResultBlock,
     ToolUseBlock,
+    TranscriptMessage,
 )
 
 _ELIGIBLE_TOOLS = frozenset({"Bash", "Glob", "Grep", "Read"})
@@ -42,7 +42,7 @@ class MicrocompactPolicy:
 
     def propose(
         self,
-        messages: tuple[ChatMessage, ...],
+        messages: tuple[TranscriptMessage, ...],
         existing: tuple[ContentReplacement, ...],
     ) -> tuple[ContentReplacement, ...]:
         """按消息顺序返回达到目标预算所需的新决策。"""
@@ -86,13 +86,13 @@ class MicrocompactPolicy:
 
 
 def apply_content_replacements(
-    messages: tuple[ChatMessage, ...],
+    messages: tuple[TranscriptMessage, ...],
     replacements: tuple[ContentReplacement, ...],
-) -> tuple[ChatMessage, ...]:
+) -> tuple[TranscriptMessage, ...]:
     """创建模型工作视图，不修改 Transcript 中的原始消息。"""
 
     by_id = {item.tool_use_id: item for item in replacements}
-    projected: list[ChatMessage] = []
+    updated: list[TranscriptMessage] = []
     for message in messages:
         content = tuple(
             replace(block, content=by_id[block.tool_use_id].content)
@@ -100,12 +100,12 @@ def apply_content_replacements(
             else block
             for block in message.content
         )
-        projected.append(replace(message, content=content))
-    return tuple(projected)
+        updated.append(replace(message, content=content))
+    return tuple(updated)
 
 
 def _effective_message_chars(
-    messages: tuple[ChatMessage, ...],
+    messages: tuple[TranscriptMessage, ...],
     replacements: dict[str, ContentReplacement],
 ) -> int:
     size = 0

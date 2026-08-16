@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.messages import ChatMessage, SystemContextBlock, TokenUsage
+from nano_code.messages import SystemContextBlock, TokenUsage, TranscriptMessage
 
 from .session import CompactBoundary, ContentReplacement
 
@@ -12,12 +12,12 @@ class CompactionOutcome:
     """摘要模型成功后、尚未写入 Transcript 的提交计划。"""
 
     replacements: tuple[ContentReplacement, ...]
-    summary: ChatMessage
+    summary: TranscriptMessage
     boundary: CompactBoundary
     usage: TokenUsage
 
     @property
-    def summary_message(self) -> ChatMessage:
+    def summary_message(self) -> TranscriptMessage:
         return self.summary
 
     @property

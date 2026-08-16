@@ -48,9 +48,10 @@ provider 决定是否把稳定边界转换为协议缓存点。官方 Anthropic 
 
 ## 4. Workspace context
 
-`WorkspaceContextResolver` 是独立于 provider 的上下文来源接口，返回一组
-`ModelMessage`。`ContextPlanner` 在自己的生命周期内缓存 resolver 结果，并将它放入
-`ContextPlan.workspace_context`；预算统计包含这些消息的字符量。
+`WorkspaceContextResolver` 是独立于 provider 的上下文来源接口，返回一组未渲染的
+`EphemeralContextMessage`。`ContextPlanner` 在自己的生命周期内缓存 resolver 结果，并通过
+`ModelInputNormalizer` 将其规范化到 `ContextPlan.workspace_context`；预算统计使用规范化后
+的模型可见文本，因此包含 XML wrapper 的字符量。
 
 Anthropic 请求把 workspace context 放在普通会话消息之前。它不是 Transcript 事实，
 不会写入 JSONL，也不会进入 `compaction_view()` 或 compact summary。当前组合根显式
@@ -63,12 +64,13 @@ resolver 不遍历父目录，不读取 `CLAUDE.md`、`.claude/` 或规则目录
 
 ## 5. XML 上下文块
 
-compact summary 和类似 reminder 的内部说明使用 `SystemContextBlock` 保存。Transcript
-记录结构化 kind 与 content；`ModelMessageProjector` 到请求边界才渲染
-`<conversation-summary>` 或 `<system-reminder>`。
+compact summary 和类似 reminder 的内部说明使用 `SystemContextBlock` 保存。XML 标签和
+wrapper 集中位于 `messages/xml.py`；Transcript 记录结构化 kind 与 content，
+`ModelInputNormalizer` 到请求边界才渲染 `<conversation-summary>` 或
+`<system-reminder>`。所有可信 workspace context 也经过同一规范化路径。
 
 XML 只是帮助模型识别语义的文本协议，不是可信执行通道。普通用户和工具输出中的同名
-标签不会升级成内部上下文块；可信性来自消息 origin、强类型构造和统一投影路径。
+标签不会升级成内部上下文块；可信性来自消息 origin、强类型构造和统一规范化路径。
 
 ## 6. 后续扩展
 

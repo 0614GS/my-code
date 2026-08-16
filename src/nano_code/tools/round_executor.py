@@ -16,7 +16,7 @@ from nano_code.agent.contracts.tool import (
     ToolRoundEvent as _ToolRoundEvent,
 )
 from nano_code.agent.ports.tool import ToolRoundPort
-from nano_code.messages import ChatMessage, ToolResultBlock, ToolUseBlock
+from nano_code.messages import ToolResultBlock, ToolUseBlock, TranscriptMessage
 from nano_code.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
@@ -71,7 +71,7 @@ class ToolRoundExecutor(ToolRoundPort):
     async def run_round(
         self,
         calls: tuple[ToolUseBlock, ...],
-        assistant_message: ChatMessage,
+        assistant_message: TranscriptMessage,
     ) -> AsyncIterator[_ToolRoundEvent]:
         results: list[ToolResultBlock] = []
         try:
@@ -140,12 +140,12 @@ class ToolRoundExecutor(ToolRoundPort):
 
 
 def _tool_result_message(
-    assistant_message: ChatMessage,
+    assistant_message: TranscriptMessage,
     results: tuple[ToolResultBlock, ...],
-) -> ChatMessage:
+) -> TranscriptMessage:
     if not results:
         raise ValueError("A tool round must contain at least one result")
-    return ChatMessage(
+    return TranscriptMessage(
         role="user",
         origin="tool",
         content=results,

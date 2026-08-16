@@ -10,12 +10,12 @@ from nano_code.agent import (
     ConversationState,
 )
 from nano_code.messages import (
-    ChatMessage,
     SystemContextBlock,
     TextBlock,
     TokenUsage,
     ToolResultBlock,
     ToolUseBlock,
+    TranscriptMessage,
 )
 from nano_code.sessions import SessionStore
 
@@ -25,14 +25,16 @@ _OTHER_SESSION_ID = "87654321-4321-4321-4321-cba987654321"
 
 def test_snapshot_and_compaction_commit_keep_persistence_order(tmp_path: Path) -> None:
     store = SessionStore(tmp_path, _SESSION_ID)
-    user = ChatMessage(role="user", origin="human", content=(TextBlock("inspect"),))
-    assistant = ChatMessage(
+    user = TranscriptMessage(
+        role="user", origin="human", content=(TextBlock("inspect"),)
+    )
+    assistant = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(ToolUseBlock("read-1", "Read", {"path": "a.txt"}),),
         parent_uuid=user.uuid,
     )
-    result = ChatMessage(
+    result = TranscriptMessage(
         role="user",
         origin="tool",
         content=(ToolResultBlock("read-1", "content"),),
@@ -48,7 +50,7 @@ def test_snapshot_and_compaction_commit_keep_persistence_order(tmp_path: Path) -
         tool_name="Read",
         original_chars=100,
     )
-    summary = ChatMessage(
+    summary = TranscriptMessage(
         role="user",
         origin="system",
         content=(
@@ -95,10 +97,10 @@ def test_compaction_write_failure_does_not_change_working_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = SessionStore(tmp_path, _SESSION_ID)
-    user = ChatMessage(role="user", origin="human", content=(TextBlock("keep"),))
+    user = TranscriptMessage(role="user", origin="human", content=(TextBlock("keep"),))
     store.append(user)
     state = ConversationState(store)
-    summary = ChatMessage(
+    summary = TranscriptMessage(
         role="user",
         origin="system",
         content=(
@@ -117,7 +119,7 @@ def test_compaction_write_failure_does_not_change_working_state(
     )
     original_append = store.append
 
-    def fail_summary(message: ChatMessage) -> None:
+    def fail_summary(message: TranscriptMessage) -> None:
         if message.uuid == summary.uuid:
             raise OSError("disk full")
         original_append(message)
@@ -134,15 +136,17 @@ def test_compaction_write_failure_does_not_change_working_state(
 
 def test_resume_repairs_before_switching_repository(tmp_path: Path) -> None:
     current_store = SessionStore(tmp_path, _SESSION_ID)
-    current = ChatMessage(role="user", origin="human", content=(TextBlock("current"),))
+    current = TranscriptMessage(
+        role="user", origin="human", content=(TextBlock("current"),)
+    )
     current_store.append(current)
     state = ConversationState(current_store)
 
     target_store = SessionStore(tmp_path, _OTHER_SESSION_ID)
-    target_user = ChatMessage(
+    target_user = TranscriptMessage(
         role="user", origin="human", content=(TextBlock("target"),)
     )
-    target_assistant = ChatMessage(
+    target_assistant = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(ToolUseBlock("unfinished", "Read", {"path": "x"}),),

@@ -2,11 +2,11 @@
 
 from nano_code.agent.errors import ContextOverflow as _ContextOverflow
 from nano_code.messages import (
-    ChatMessage,
     SystemContextBlock,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
+    TranscriptMessage,
 )
 
 
@@ -18,7 +18,9 @@ class ContextWindow:
             raise ValueError("max_chars must be positive")
         self.max_chars = max_chars
 
-    def project(self, messages: tuple[ChatMessage, ...]) -> tuple[ChatMessage, ...]:
+    def ensure_fits(
+        self, messages: tuple[TranscriptMessage, ...]
+    ) -> tuple[TranscriptMessage, ...]:
         if not messages:
             return ()
 
@@ -30,7 +32,7 @@ class ContextWindow:
         return messages
 
     @staticmethod
-    def size(messages: tuple[ChatMessage, ...]) -> int:
+    def size(messages: tuple[TranscriptMessage, ...]) -> int:
         """返回工作集的保守字符估算。"""
 
         size = 0

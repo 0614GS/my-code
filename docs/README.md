@@ -10,7 +10,7 @@
 QueryEngine（跨用户输入保存会话状态）
     │
     └── query（一次 agentic turn 的状态机）
-          ├── 上下文投影 / token 预算 / compact
+          ├── 上下文规范化 / token 预算 / compact
           ├── 模型流式调用
           ├── Tool Registry + Tool Executor
           │       └── Hooks → Permission → Tool.call → Result
@@ -34,7 +34,7 @@ ToolSearch ──> 按需暴露 deferred tool schema
 | [08-mvp-scope.md](08-mvp-scope.md) | Python MVP 当前实现什么，哪些能力留到后续？ |
 | [09-storage-and-settings.md](09-storage-and-settings.md) | 会话、工具结果和分层配置分别存在哪里？ |
 | [10-terminal-ui.md](10-terminal-ui.md) | TUI、slash 命令和核心 runtime 如何解耦？ |
-| [11-prompt-management.md](11-prompt-management.md) | 提示词如何分段、缓存并投影可信上下文块？ |
+| [11-prompt-management.md](11-prompt-management.md) | 提示词如何分段、缓存并规范化可信上下文块？ |
 
 ## 统一术语
 
@@ -42,7 +42,7 @@ ToolSearch ──> 按需暴露 deferred tool schema
 - **循环迭代（iteration）**：`query()` 中的一次“准备上下文 → 调模型 → 处理结果”。一次用户回合可能包含多次迭代。
 - **工具轮（tool round）**：模型返回 `tool_use`，运行工具并把 `tool_result` 放入下一次迭代。
 - **内部消息**：运行时的 `Message` 联合类型，包含 UI 和控制事件。
-- **API 消息**：`normalizeMessagesForAPI()` 投影出的 user/assistant 消息。
+- **API 消息**：`normalizeMessagesForAPI()` 规范化出的 user/assistant 消息。
 - **Transcript**：写入 JSONL 的可恢复会话记录。
 - **microcompact**：主要清理旧工具结果，不生成整段对话摘要。
 - **compact**：生成对话摘要并建立新的上下文边界。

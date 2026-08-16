@@ -7,11 +7,11 @@ import pytest
 
 from nano_code.agent import CompactBoundary, ContentReplacement
 from nano_code.messages import (
-    ChatMessage,
     SystemContextBlock,
     TextBlock,
     TokenUsage,
     ToolResultBlock,
+    TranscriptMessage,
 )
 from nano_code.presentation import ToolResultPresentation
 from nano_code.sessions import SessionCatalog, SessionStore
@@ -22,8 +22,8 @@ _SESSION_ID = "12345678-1234-1234-1234-123456789abc"
 def test_append_is_idempotent_and_round_trips(tmp_path: Path) -> None:
     project_state_dir = tmp_path / "projects" / "-workspace"
     store = SessionStore(project_state_dir, _SESSION_ID)
-    first = ChatMessage(role="user", origin="human", content=(TextBlock("hi"),))
-    second = ChatMessage(
+    first = TranscriptMessage(role="user", origin="human", content=(TextBlock("hi"),))
+    second = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("hello"),),
@@ -48,7 +48,7 @@ def test_tool_result_presentation_round_trips_with_transcript(tmp_path: Path) ->
         detail="first line preview",
         truncated=True,
     )
-    message = ChatMessage(
+    message = TranscriptMessage(
         role="user",
         origin="tool",
         content=(
@@ -70,7 +70,7 @@ def test_tool_result_presentation_round_trips_with_transcript(tmp_path: Path) ->
 
 def test_assistant_usage_round_trips_with_transcript(tmp_path: Path) -> None:
     store = SessionStore(tmp_path, _SESSION_ID)
-    message = ChatMessage(
+    message = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("answer"),),
@@ -91,7 +91,7 @@ def test_system_context_round_trips_without_persisting_rendered_xml(
     tmp_path: Path,
 ) -> None:
     store = SessionStore(tmp_path, _SESSION_ID)
-    message = ChatMessage(
+    message = TranscriptMessage(
         role="user",
         origin="system",
         content=(
@@ -112,7 +112,7 @@ def test_system_context_round_trips_without_persisting_rendered_xml(
 
 def test_content_replacement_is_append_only_and_round_trips(tmp_path: Path) -> None:
     store = SessionStore(tmp_path, _SESSION_ID)
-    message = ChatMessage(role="user", origin="human", content=(TextBlock("hi"),))
+    message = TranscriptMessage(role="user", origin="human", content=(TextBlock("hi"),))
     replacement = ContentReplacement.for_tool_result(
         tool_use_id="tool-1",
         tool_name="Read",
@@ -130,7 +130,7 @@ def test_content_replacement_is_append_only_and_round_trips(tmp_path: Path) -> N
 
 def test_incomplete_compact_boundary_is_ignored_on_recovery(tmp_path: Path) -> None:
     store = SessionStore(tmp_path, _SESSION_ID)
-    message = ChatMessage(role="user", origin="human", content=(TextBlock("hi"),))
+    message = TranscriptMessage(role="user", origin="human", content=(TextBlock("hi"),))
     store.append(message)
     store.append_compact_boundary(
         CompactBoundary(
@@ -179,7 +179,7 @@ def test_old_tool_result_without_presentation_remains_loadable(tmp_path: Path) -
 
 def test_rejects_missing_parent_on_append(tmp_path: Path) -> None:
     store = SessionStore(tmp_path, _SESSION_ID)
-    orphan = ChatMessage(
+    orphan = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("hello"),),
@@ -206,14 +206,14 @@ def test_rejects_non_uuid_session_id(tmp_path: Path) -> None:
 
 def test_load_returns_only_active_parent_chain(tmp_path: Path) -> None:
     store = SessionStore(tmp_path, _SESSION_ID)
-    root = ChatMessage(role="user", origin="human", content=(TextBlock("root"),))
-    abandoned = ChatMessage(
+    root = TranscriptMessage(role="user", origin="human", content=(TextBlock("root"),))
+    abandoned = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("abandoned"),),
         parent_uuid=root.uuid,
     )
-    active = ChatMessage(
+    active = TranscriptMessage(
         role="assistant",
         origin="model",
         content=(TextBlock("active"),),
@@ -239,7 +239,7 @@ def test_catalog_lists_valid_sessions_by_modified_time_and_first_prompt(
         (excluded_id, "current prompt"),
     ):
         SessionStore(tmp_path, session_id).append(
-            ChatMessage(
+            TranscriptMessage(
                 role="user",
                 origin="human",
                 content=(TextBlock(prompt),),

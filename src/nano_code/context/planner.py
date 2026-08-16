@@ -6,7 +6,7 @@ from nano_code.agent.contracts.context import (
     ContextBudget,
     ContextPlan,
 )
-from nano_code.agent.contracts.model import ModelMessage
+from nano_code.agent.contracts.model import ModelInputMessage
 from nano_code.agent.contracts.session import ContentReplacement, ConversationSnapshot
 from nano_code.agent.contracts.tool import ToolDefinition
 from nano_code.agent.ports.context import ContextPort
@@ -14,24 +14,24 @@ from nano_code.context.microcompact import (
     MicrocompactPolicy,
     apply_content_replacements,
 )
-from nano_code.context.projection import ModelMessageProjector
+from nano_code.context.normalization import ModelInputNormalizer
 from nano_code.context.window import ContextWindow
 from nano_code.context.workspace import (
     EmptyWorkspaceContextResolver,
     WorkspaceContextResolver,
 )
 from nano_code.messages import (
-    ChatMessage,
     SystemContextBlock,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
+    TranscriptMessage,
 )
 from nano_code.prompts import PromptRegistry, SystemPrompt
 
 
 class ContextPlanner(ContextPort):
-    """集中编排 prompt、工具和消息投影，不修改会话事实。"""
+    """集中编排 prompt、工具和消息规范化，不修改会话事实。"""
 
     def __init__(
         self,
@@ -40,7 +40,7 @@ class ContextPlanner(ContextPort):
         prompt: PromptRegistry,
         tools: tuple[ToolDefinition, ...],
         max_output_tokens: int,
-        projector: ModelMessageProjector | None = None,
+        normalizer: ModelInputNormalizer | None = None,
         microcompact: MicrocompactPolicy | None = None,
         workspace_context_resolver: WorkspaceContextResolver | None = None,
     ) -> None:
@@ -50,23 +50,23 @@ class ContextPlanner(ContextPort):
         self.prompt = prompt
         self.tools = tools
         self.max_output_tokens = max_output_tokens
-        self.projector = projector or ModelMessageProjector()
+        self.normalizer = normalizer or ModelInputNormalizer()
         self.microcompact = microcompact or MicrocompactPolicy.for_window(
             window.max_chars
         )
         self.workspace_context_resolver = (
             workspace_context_resolver or EmptyWorkspaceContextResolver()
         )
-        self._workspace_context_cache: tuple[ModelMessage, ...] | None = None
+        self._workspace_context_cache: tuple[ModelInputMessage, ...] | None = None
 
     def plan(self, snapshot: ConversationSnapshot) -> ContextPlan:
         """生成不可变请求计划；当前阶段保持既有窗口选择行为。"""
 
         effective_messages, proposed = self._effective_messages(snapshot)
-        selected = self.window.project(effective_messages)
-        messages = self.projector.project(selected)
+        selected = self.window.ensure_fits(effective_messages)
+        messages = self.normalizer.normalize_transcript(selected)
         system_prompt = self.prompt.resolve()
-        workspace_context = self._workspace_context()
+        workspace_context = self._get_workspace_context()
         budget = self._budget(
             selected,
             messages,
@@ -87,40 +87,41 @@ class ContextPlanner(ContextPort):
         """在不触发窗口错误或持久化决策的情况下返回预算快照。"""
 
         effective_messages, _ = self._effective_messages(snapshot, propose=False)
-        model_messages = self.projector.project(effective_messages)
+        model_messages = self.normalizer.normalize_transcript(effective_messages)
         system_prompt = self.prompt.resolve()
         return self._budget(
             effective_messages,
             model_messages,
-            self._workspace_context(),
+            self._get_workspace_context(),
             system_prompt,
         )
 
     def compaction_view(
         self, snapshot: ConversationSnapshot
-    ) -> tuple[tuple[ModelMessage, ...], tuple[ContentReplacement, ...]]:
+    ) -> tuple[tuple[ModelInputMessage, ...], tuple[ContentReplacement, ...]]:
         """生成不经过窗口限制的摘要输入和待提交替换决策。"""
 
         effective_messages, proposed = self._effective_messages(snapshot)
-        return self.projector.project(effective_messages), proposed
+        return self.normalizer.normalize_transcript(effective_messages), proposed
 
-    def measure(self, messages: tuple[ChatMessage, ...]) -> int:
+    def measure(self, messages: tuple[TranscriptMessage, ...]) -> int:
         """返回上下文窗口使用的保守字符测量。"""
 
         return self.window.size(messages)
 
-    def _workspace_context(self) -> tuple[ModelMessage, ...]:
+    def _get_workspace_context(self) -> tuple[ModelInputMessage, ...]:
         """Resolve workspace context once for this planner/session lifetime."""
 
         if self._workspace_context_cache is None:
-            self._workspace_context_cache = tuple(
-                self.workspace_context_resolver.resolve()
+            resolved = tuple(self.workspace_context_resolver.resolve())
+            self._workspace_context_cache = self.normalizer.normalize_context(
+                resolved
             )
         return self._workspace_context_cache
 
     def _effective_messages(
         self, snapshot: ConversationSnapshot, *, propose: bool = True
-    ) -> tuple[tuple[ChatMessage, ...], tuple[ContentReplacement, ...]]:
+    ) -> tuple[tuple[TranscriptMessage, ...], tuple[ContentReplacement, ...]]:
         proposed = (
             self.microcompact.propose(snapshot.messages, snapshot.content_replacements)
             if propose
@@ -134,13 +135,14 @@ class ContextPlanner(ContextPort):
 
     def _budget(
         self,
-        messages: tuple[ChatMessage, ...],
-        model_messages: tuple[ModelMessage, ...],
-        workspace_context: tuple[ModelMessage, ...],
+        messages: tuple[TranscriptMessage, ...],
+        model_messages: tuple[ModelInputMessage, ...],
+        workspace_context: tuple[ModelInputMessage, ...],
         system_prompt: SystemPrompt,
     ) -> ContextBudget:
         actual_input, incremental_tokens, estimated_input = _estimate_input_tokens(
             messages,
+            model_messages,
             system_prompt.text,
             self.tools,
             workspace_context,
@@ -158,8 +160,8 @@ class ContextPlanner(ContextPort):
         )
 
 
-def _message_chars(messages: tuple[ModelMessage, ...]) -> int:
-    """估算投影消息字符量；后续阶段会替换为 usage 驱动的 token 预算。"""
+def _message_chars(messages: tuple[ModelInputMessage, ...]) -> int:
+    """估算模型输入消息字符量；后续阶段会替换为 usage 驱动的 token 预算。"""
 
     size = 0
     for message in messages:
@@ -192,10 +194,11 @@ def _tool_schema_chars(tools: tuple[ToolDefinition, ...]) -> int:
 
 
 def _estimate_input_tokens(
-    messages: tuple[ChatMessage, ...],
+    messages: tuple[TranscriptMessage, ...],
+    model_messages: tuple[ModelInputMessage, ...],
     system_prompt: str,
     tools: tuple[ToolDefinition, ...],
-    workspace_context: tuple[ModelMessage, ...],
+    workspace_context: tuple[ModelInputMessage, ...],
 ) -> tuple[int | None, int, int]:
     """使用最近真实 usage，并只估算该响应之后新增的上下文。"""
 
@@ -203,7 +206,7 @@ def _estimate_input_tokens(
         usage = messages[index].usage
         if usage is None:
             continue
-        incremental_chars = _chat_message_chars(messages[index + 1 :])
+        incremental_chars = _transcript_message_chars(messages[index + 1 :])
         incremental_tokens = _chars_to_tokens(incremental_chars)
         actual_input = usage.total_input_tokens
         estimated = actual_input + usage.output_tokens + incremental_tokens
@@ -213,13 +216,13 @@ def _estimate_input_tokens(
         len(system_prompt)
         + _message_chars(workspace_context)
         + _tool_schema_chars(tools)
-        + _chat_message_chars(messages)
+        + _message_chars(model_messages)
     )
     estimated = _chars_to_tokens(total_chars)
     return None, estimated, estimated
 
 
-def _chat_message_chars(messages: tuple[ChatMessage, ...]) -> int:
+def _transcript_message_chars(messages: tuple[TranscriptMessage, ...]) -> int:
     return sum(_block_chars(block) for message in messages for block in message.content)
 
 

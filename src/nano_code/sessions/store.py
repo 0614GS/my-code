@@ -13,7 +13,7 @@ from nano_code.agent.contracts.session import (
     SessionSnapshot,
 )
 from nano_code.agent.ports.session import SessionRepository
-from nano_code.messages import ChatMessage
+from nano_code.messages import TranscriptMessage
 from nano_code.messages.codec import message_from_json, message_to_json
 
 _UUID_PATTERN = re.compile(
@@ -54,7 +54,7 @@ class SessionStore(SessionRepository):
     def session_id(self) -> str:
         return self._session_id
 
-    def load(self) -> tuple[ChatMessage, ...]:
+    def load(self) -> tuple[TranscriptMessage, ...]:
         if not self.path.exists():
             self._known_ids = set()
             self._content_replacements = {}
@@ -62,8 +62,8 @@ class SessionStore(SessionRepository):
             self._pending_compact_boundaries = {}
             return ()
 
-        messages: list[ChatMessage] = []
-        by_id: dict[str, ChatMessage] = {}
+        messages: list[TranscriptMessage] = []
+        by_id: dict[str, TranscriptMessage] = {}
         seen: set[str] = set()
         replacements: dict[str, ContentReplacement] = {}
         boundaries: dict[str, CompactBoundary] = {}
@@ -141,7 +141,7 @@ class SessionStore(SessionRepository):
         )
 
     def load_content_replacements(self) -> tuple[ContentReplacement, ...]:
-        """返回按首次写入顺序排列的稳定模型投影决策。"""
+        """返回按首次写入顺序排列的稳定模型输入规范化决策。"""
 
         if self._content_replacements is None:
             self.load()
@@ -155,8 +155,8 @@ class SessionStore(SessionRepository):
         return tuple(self._compact_boundaries.values())
 
     def load_working_set(
-        self, messages: tuple[ChatMessage, ...] | None = None
-    ) -> tuple[ChatMessage, ...]:
+        self, messages: tuple[TranscriptMessage, ...] | None = None
+    ) -> tuple[TranscriptMessage, ...]:
         """返回最后一个有效 compact summary 开始的活动工作集。"""
 
         active = self.load() if messages is None else messages
@@ -169,7 +169,7 @@ class SessionStore(SessionRepository):
                 return active[index:]
         return active
 
-    def append(self, message: ChatMessage) -> None:
+    def append(self, message: TranscriptMessage) -> None:
         """校验幂等性和父节点顺序后追加一条消息。"""
 
         if self._known_ids is None:
@@ -344,14 +344,14 @@ def _boundary_from_json(value: Mapping[str, object]) -> CompactBoundary:
 
 
 def _active_parent_chain(
-    messages: list[ChatMessage], by_id: dict[str, ChatMessage]
-) -> tuple[ChatMessage, ...]:
+    messages: list[TranscriptMessage], by_id: dict[str, TranscriptMessage]
+) -> tuple[TranscriptMessage, ...]:
     """从最后一条记录沿父指针恢复当前活动分支。"""
 
     if not messages:
         return ()
-    chain: list[ChatMessage] = []
-    current: ChatMessage | None = messages[-1]
+    chain: list[TranscriptMessage] = []
+    current: TranscriptMessage | None = messages[-1]
     while current is not None:
         chain.append(current)
         current = (

@@ -2,7 +2,12 @@
 
 from dataclasses import dataclass
 
-from nano_code.messages import ChatMessage, JsonObject, ToolResultBlock, ToolUseBlock
+from nano_code.messages import (
+    JsonObject,
+    ToolResultBlock,
+    ToolUseBlock,
+    TranscriptMessage,
+)
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 
 
@@ -64,12 +69,12 @@ class ToolCallFinished:
 class ToolRoundCompleted:
     """工具结果消息已经组装，供 Agent 追加到会话。"""
 
-    message: ChatMessage
+    message: TranscriptMessage
     results: tuple[ToolResultBlock, ...]
     cancelled: bool = False
 
     @property
-    def result_message(self) -> ChatMessage:
+    def result_message(self) -> TranscriptMessage:
         return self.message
 
     @property

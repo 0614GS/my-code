@@ -10,15 +10,15 @@ from nano_code.messages import (
     ToolUseBlock,
 )
 
-type ModelContentBlock = TextBlock | ToolUseBlock | ToolResultBlock
+type ModelInputContentBlock = TextBlock | ToolUseBlock | ToolResultBlock
 
 
 @dataclass(frozen=True, slots=True)
-class ModelMessage:
+class ModelInputMessage:
     """仅包含模型协议所需字段，不携带 Transcript 本地元数据。"""
 
     role: MessageRole
-    content: tuple[ModelContentBlock, ...]
+    content: tuple[ModelInputContentBlock, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,8 +39,8 @@ type ModelStreamEvent = ModelTextDelta | ModelResponseCompleted
 
 
 __all__ = [
-    "ModelContentBlock",
-    "ModelMessage",
+    "ModelInputContentBlock",
+    "ModelInputMessage",
     "ModelResponseCompleted",
     "ModelStreamEvent",
     "ModelTextDelta",

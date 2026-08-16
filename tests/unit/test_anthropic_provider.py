@@ -2,7 +2,7 @@ from typing import cast
 
 from anthropic.types import TextBlockParam
 
-from nano_code.agent import ContextPlan, ModelMessage
+from nano_code.agent import ContextPlan, ModelInputMessage
 from nano_code.messages import TextBlock
 from nano_code.prompts import (
     PromptStability,
@@ -58,8 +58,8 @@ def test_anthropic_cache_breakpoints_end_static_and_session_prefixes() -> None:
 
 
 def test_workspace_context_is_serialized_before_conversation_messages() -> None:
-    workspace = ModelMessage("user", (TextBlock("workspace facts"),))
-    history = ModelMessage("assistant", (TextBlock("history"),))
+    workspace = ModelInputMessage("user", (TextBlock("workspace facts"),))
+    history = ModelInputMessage("assistant", (TextBlock("history"),))
     request = ContextPlan(
         system_prompt=SystemPrompt.from_text("system"),
         messages=(history,),
@@ -68,7 +68,7 @@ def test_workspace_context_is_serialized_before_conversation_messages() -> None:
         workspace_context=(workspace,),
     )
 
-    projected = AnthropicProvider._request_messages(request)
+    normalized = AnthropicProvider._request_messages(request)
 
-    assert projected[0]["content"][0]["text"] == "workspace facts"
-    assert projected[1]["content"][0]["text"] == "history"
+    assert normalized[0]["content"][0]["text"] == "workspace facts"
+    assert normalized[1]["content"][0]["text"] == "history"

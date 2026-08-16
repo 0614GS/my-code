@@ -10,7 +10,7 @@ from nano_code.agent.contracts.session import (
     SessionSnapshot,
 )
 from nano_code.agent.ports.session import SessionRepository
-from nano_code.messages import ChatMessage, ToolResultBlock, ToolUseBlock
+from nano_code.messages import ToolResultBlock, ToolUseBlock, TranscriptMessage
 
 
 class ConversationState:
@@ -40,15 +40,15 @@ class ConversationState:
         return self._snapshot
 
     @property
-    def history(self) -> tuple[ChatMessage, ...]:
+    def history(self) -> tuple[TranscriptMessage, ...]:
         return self._snapshot.history
 
     @property
-    def working_messages(self) -> tuple[ChatMessage, ...]:
+    def working_messages(self) -> tuple[TranscriptMessage, ...]:
         return tuple(self._working_messages)
 
     @property
-    def messages(self) -> list[ChatMessage]:
+    def messages(self) -> list[TranscriptMessage]:
         """旧测试辅助 API；新的调用方应使用只读 ``working_messages``。"""
 
         return self._working_messages
@@ -85,7 +85,7 @@ class ConversationState:
             content_replacements=self.content_replacements,
         )
 
-    def append(self, message: ChatMessage) -> None:
+    def append(self, message: TranscriptMessage) -> None:
         """持久化优先追加消息，并在成功后刷新工作集。"""
 
         self._repository.append(message)
@@ -100,14 +100,14 @@ class ConversationState:
     def append_tool_results(
         self,
         results: Iterable[ToolResultBlock],
-        assistant_message: ChatMessage,
-    ) -> ChatMessage:
+        assistant_message: TranscriptMessage,
+    ) -> TranscriptMessage:
         """把同一模型响应的工具结果作为一条协议 user 消息追加。"""
 
         result_blocks = tuple(results)
         if not result_blocks:
             raise ValueError("A tool result message must contain at least one result")
-        message = ChatMessage(
+        message = TranscriptMessage(
             role="user",
             origin="tool",
             content=result_blocks,
@@ -127,7 +127,7 @@ class ConversationState:
         self._refresh()
         return outcome.boundary
 
-    def resume(self, repository: SessionRepository) -> tuple[ChatMessage, ...]:
+    def resume(self, repository: SessionRepository) -> tuple[TranscriptMessage, ...]:
         """先完整校验并修复目标会话，成功后原子替换当前状态。"""
 
         target_snapshot = repository.snapshot()
@@ -136,7 +136,7 @@ class ConversationState:
 
         repairs = _trailing_tool_repairs(target_snapshot.history)
         if repairs is not None:
-            repair = ChatMessage(
+            repair = TranscriptMessage(
                 role="user",
                 origin="tool",
                 content=repairs,
@@ -168,7 +168,7 @@ class ConversationState:
             return
         last = self._snapshot.history[-1]
         self.append(
-            ChatMessage(
+            TranscriptMessage(
                 role="user",
                 origin="tool",
                 content=repairs,
@@ -179,7 +179,7 @@ class ConversationState:
 
 
 def _trailing_tool_repairs(
-    messages: tuple[ChatMessage, ...],
+    messages: tuple[TranscriptMessage, ...],
 ) -> tuple[ToolResultBlock, ...] | None:
     """为末尾未闭合的 assistant tool-use 构造协议错误结果。"""
 
@@ -205,7 +205,7 @@ def _trailing_tool_repairs(
 
 def _active_replacements(
     replacements: tuple[ContentReplacement, ...],
-    messages: tuple[ChatMessage, ...],
+    messages: tuple[TranscriptMessage, ...],
 ) -> dict[str, ContentReplacement]:
     tool_ids = {
         block.tool_use_id
