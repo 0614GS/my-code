@@ -46,24 +46,29 @@ class SessionStore(SessionRepository):
         self.path = project_state_dir / f"{session_id}.jsonl"
         self.session_dir = project_state_dir / session_id
 
-        # 该集合既是幂等保护，也是低成本的父节点存在性索引。
-        # 它从磁盘初始化，使恢复的存储与新建存储行为一致。
+        # 这些索引只在显式 load 时从磁盘 hydration，之后随追加增量维护。
+        # ConversationState 不会在每次写入后重新读取它们。
         self._known_ids: set[str] | None = None
+        self._messages_by_id: dict[str, ConversationMessage] | None = None
         self._content_replacements: dict[str, ContentReplacement] | None = None
-        self._compact_boundaries: dict[str, CompactBoundary] | None = None
-        self._pending_compact_boundaries: dict[str, CompactBoundary] | None = None
+        self._boundaries: dict[str, CompactBoundary] | None = None
 
     @property
     def session_id(self) -> str:
         return self._session_id
 
-    def load(self) -> tuple[ConversationMessage, ...]:
+    def load(self) -> SessionSnapshot:
+        """从 Transcript 完整恢复一次会话。
+
+        这是初始化和显式 resume 边界，不是运行期 refresh API。
+        """
+
         if not self.path.exists():
             self._known_ids = set()
+            self._messages_by_id = {}
             self._content_replacements = {}
-            self._compact_boundaries = {}
-            self._pending_compact_boundaries = {}
-            return ()
+            self._boundaries = {}
+            return SessionSnapshot(history=(), working_set=())
 
         messages: list[ConversationMessage] = []
         by_id: dict[str, ConversationMessage] = {}
@@ -116,70 +121,28 @@ class SessionStore(SessionRepository):
                 messages.append(message)
                 by_id[message.uuid] = message
         self._known_ids = seen
+        self._messages_by_id = by_id
         self._content_replacements = replacements
+        self._boundaries = boundaries
         active = _active_parent_chain(messages, by_id)
-        active_ids = {message.uuid for message in active}
-        # 进程可能在 boundary 与 summary 两次追加之间退出；缺少 summary 的
-        # 边界不生效，原始消息链仍可安全恢复。
-        self._compact_boundaries = {
-            boundary_id: boundary
-            for boundary_id, boundary in boundaries.items()
-            if boundary.parent_uuid in active_ids
-            and boundary.summary_uuid in active_ids
-        }
-        self._pending_compact_boundaries = {}
-        return active
-
-    def snapshot(self) -> SessionSnapshot:
-        """一次读取会话历史、工作集和结构化上下文记录。"""
-
-        history = self.load()
+        active_boundaries = _active_boundaries(boundaries, active)
         return SessionSnapshot(
-            history=history,
-            working_set=self.load_working_set(history),
-            content_replacements=self.load_content_replacements(),
-            compact_boundaries=self.load_compact_boundaries(),
+            history=active,
+            working_set=_working_set(active, active_boundaries),
+            content_replacements=tuple(replacements.values()),
+            compact_boundaries=active_boundaries,
         )
 
-    def load_content_replacements(self) -> tuple[ContentReplacement, ...]:
-        """返回按首次写入顺序排列的稳定模型输入规范化决策。"""
-
-        if self._content_replacements is None:
-            self.load()
-        assert self._content_replacements is not None
-        return tuple(self._content_replacements.values())
-
-    def load_compact_boundaries(self) -> tuple[CompactBoundary, ...]:
-        if self._compact_boundaries is None:
-            self.load()
-        assert self._compact_boundaries is not None
-        return tuple(self._compact_boundaries.values())
-
-    def load_working_set(
-        self, messages: tuple[ConversationMessage, ...] | None = None
-    ) -> tuple[ConversationMessage, ...]:
-        """返回最后一个有效 compact summary 开始的活动工作集。"""
-
-        active = self.load() if messages is None else messages
-        boundaries = self.load_compact_boundaries()
-        if not boundaries:
-            return active
-        summary_uuid = boundaries[-1].summary_uuid
-        for index, message in enumerate(active):
-            if message.uuid == summary_uuid:
-                return active[index:]
-        return active
-
-    def append(self, message: ConversationMessage) -> None:
+    def append(self, message: ConversationMessage) -> bool:
         """校验幂等性和父节点顺序后追加一条消息。"""
 
-        if self._known_ids is None:
-            self.load()
+        self._ensure_loaded()
         assert self._known_ids is not None
+        assert self._messages_by_id is not None
         if message.uuid in self._known_ids:
-            # 智能体迭代可能重复访问同一内存前缀。基于 UUID 的幂等性
-            # 可防止每次迭代重复追加。
-            return
+            if self._messages_by_id[message.uuid] != message:
+                raise ValueError(f"Conflicting message UUID: {message.uuid}")
+            return False
         if (
             message.parent_uuid is not None
             and message.parent_uuid not in self._known_ids
@@ -190,13 +153,13 @@ class SessionStore(SessionRepository):
 
         # 仅在持久化写入成功后更新内存索引。
         self._known_ids.add(message.uuid)
-        self._activate_pending_boundaries()
+        self._messages_by_id[message.uuid] = message
+        return True
 
-    def append_content_replacement(self, replacement: ContentReplacement) -> None:
+    def append_content_replacement(self, replacement: ContentReplacement) -> bool:
         """幂等追加一次工具结果替换，不改写原始消息。"""
 
-        if self._content_replacements is None:
-            self.load()
+        self._ensure_loaded()
         assert self._content_replacements is not None
         previous = self._content_replacements.get(replacement.tool_use_id)
         if previous is not None:
@@ -204,46 +167,31 @@ class SessionStore(SessionRepository):
                 raise ValueError(
                     f"Conflicting content replacement: {replacement.tool_use_id}"
                 )
-            return
+            return False
         self._append_record(encode_replacement(replacement))
         self._content_replacements[replacement.tool_use_id] = replacement
+        return True
 
-    def append_compact_boundary(self, boundary: CompactBoundary) -> None:
+    def append_compact_boundary(self, boundary: CompactBoundary) -> bool:
         """在 summary 前追加 compact 边界；不完整边界在恢复时自动忽略。"""
 
-        if self._known_ids is None or self._compact_boundaries is None:
-            self.load()
+        self._ensure_loaded()
         assert self._known_ids is not None
-        assert self._compact_boundaries is not None
-        if self._pending_compact_boundaries is None:
-            self._pending_compact_boundaries = {}
+        assert self._boundaries is not None
         if boundary.parent_uuid not in self._known_ids:
             raise ValueError(f"Unknown compact parent UUID: {boundary.parent_uuid}")
-        previous = self._compact_boundaries.get(boundary.id)
-        if previous is None:
-            previous = self._pending_compact_boundaries.get(boundary.id)
+        previous = self._boundaries.get(boundary.id)
         if previous is not None:
             if previous != boundary:
                 raise ValueError(f"Conflicting compact boundary: {boundary.id}")
-            return
+            return False
         self._append_record(encode_boundary(boundary))
-        self._pending_compact_boundaries[boundary.id] = boundary
-        self._activate_pending_boundaries()
+        self._boundaries[boundary.id] = boundary
+        return True
 
-    def _activate_pending_boundaries(self) -> None:
-        """仅在 boundary 指向的 summary 已成功写入后使其生效。"""
-
-        if self._known_ids is None or self._compact_boundaries is None:
-            return
-        if self._pending_compact_boundaries is None:
-            return
-        for boundary_id, boundary in tuple(self._pending_compact_boundaries.items()):
-            if (
-                boundary.parent_uuid in self._known_ids
-                and boundary.summary_uuid in self._known_ids
-            ):
-                self._compact_boundaries[boundary_id] = boundary
-                del self._pending_compact_boundaries[boundary_id]
+    def _ensure_loaded(self) -> None:
+        if self._known_ids is None:
+            self.load()
 
     def _append_record(self, record: object) -> None:
         """以仅属主可访问权限追加一个自包含 JSONL 记录。"""
@@ -280,3 +228,32 @@ def _active_parent_chain(
         )
     chain.reverse()
     return tuple(chain)
+
+
+def _active_boundaries(
+    boundaries: dict[str, CompactBoundary],
+    history: tuple[ConversationMessage, ...],
+) -> tuple[CompactBoundary, ...]:
+    """返回父节点和 summary 都位于活动链上的完整边界。"""
+
+    active_ids = {message.uuid for message in history}
+    return tuple(
+        boundary
+        for boundary in boundaries.values()
+        if boundary.parent_uuid in active_ids and boundary.summary_uuid in active_ids
+    )
+
+
+def _working_set(
+    history: tuple[ConversationMessage, ...],
+    boundaries: tuple[CompactBoundary, ...],
+) -> tuple[ConversationMessage, ...]:
+    """从最后一个有效 compact summary 开始构造模型工作集。"""
+
+    if not boundaries:
+        return history
+    summary_uuid = boundaries[-1].summary_uuid
+    for index, message in enumerate(history):
+        if message.uuid == summary_uuid:
+            return history[index:]
+    return history

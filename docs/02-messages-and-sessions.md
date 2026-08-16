@@ -5,10 +5,13 @@
 nano-code 不在运行时消息上保存 API role。消息沿着单向边界逐层收窄：
 
 ```text
-TranscriptEntry（JSONL record）
-  ↔ ConversationMessage（运行时会话事实）
+TranscriptEntry（JSONL recovery record）
+  → ConversationMessage（启动/resume hydration）
+  → ConversationState（live session 事实）
   → ModelMessage / ModelRequest（模型协议）
   → provider wire type
+
+ConversationState ──追加持久化──→ TranscriptEntry
 ```
 
 `ConversationMessage` 是按语义判别的联合：`HumanMessage`、`AssistantMessage`、
@@ -125,12 +128,13 @@ Agent 工作集则从最后一个有效 summary 开始。
 
 ## 11. 会话状态边界
 
-`SessionRepository` 是 JSONL 实现向 Agent 暴露的最小接口：一次
-`snapshot()` 返回活动历史、compact 后工作集、内容替换和有效 boundary；追加消息、
+`SessionRepository` 是 JSONL 实现向 Agent 暴露的最小接口：构造或 resume 时一次
+`load()` 返回活动历史、compact 后工作集、内容替换和有效 boundary；追加消息、
 替换和 boundary 仍是三个显式操作。`SessionStore` 负责解析和校验记录，
 `ConversationState` 负责工作集、持久化优先追加、未闭合 tool-use 修复和会话切换。
 
-`ConversationState` 的所有状态变更都遵循“先写 repository，再刷新内存”。恢复目标
+`ConversationState` 是运行期会话事实来源。所有状态变更都遵循“先写 repository，
+再将同一领域事实增量应用到内存”，不在写后重新解析 JSONL。恢复目标
 会话时，目标日志的完整解析和修复完成前不会替换当前 repository；compact 提交则固定
 按以下顺序执行：
 
@@ -139,5 +143,5 @@ content replacements → compact boundary → summary message → working set re
 ```
 
 因此摘要模型失败不会写入 boundary，后续 JSONL 写入失败也不会让当前进程先使用一份
-未持久化的工作集。`SessionSnapshot` 是这个边界的唯一读取入口，AgentEngine 不再
-组合多个 JSONL 读取步骤。
+未持久化的工作集。`SessionSnapshot` 只是 hydration DTO；AgentEngine 不读取
+SessionStore，后续 API 投影只依赖 `ConversationState.context_snapshot()`。

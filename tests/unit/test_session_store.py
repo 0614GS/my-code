@@ -44,7 +44,7 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
     for message in messages:
         store.append(message)
 
-    assert store.load() == messages
+    assert store.load().history == messages
     entries = [json.loads(line) for line in store.path.read_text().splitlines()]
     assert [entry["type"] for entry in entries] == [
         "human_message",
@@ -92,9 +92,11 @@ def test_parent_chain_idempotency_and_active_branch(tmp_path: Path) -> None:
     branch = AssistantMessage(
         (TextContent("branch"),), TokenUsage(), parent_uuid=root.uuid
     )
-    for message in (root, first, branch, branch):
-        store.append(message)
-    assert store.load() == (root, branch)
+    assert store.append(root) is True
+    assert store.append(first) is True
+    assert store.append(branch) is True
+    assert store.append(branch) is False
+    assert store.load().history == (root, branch)
     with pytest.raises(ValueError, match="Unknown parent"):
         store.append(HumanMessage("bad", parent_uuid="missing"))
 
@@ -108,11 +110,13 @@ def test_structured_records_and_compact_boundary_are_atomic(tmp_path: Path) -> N
     store.append(human)
     store.append_content_replacement(replacement)
     store.append_compact_boundary(boundary)
-    assert store.load_compact_boundaries() == ()
+    before_summary = store.load()
+    assert before_summary.compact_boundaries == ()
     store.append(summary)
-    assert store.load_content_replacements() == (replacement,)
-    assert store.load_compact_boundaries() == (boundary,)
-    assert store.load_working_set() == (summary,)
+    after_summary = store.load()
+    assert after_summary.content_replacements == (replacement,)
+    assert after_summary.compact_boundaries == (boundary,)
+    assert after_summary.working_set == (summary,)
 
 
 def test_catalog_skips_legacy_transcript(tmp_path: Path) -> None:
@@ -136,3 +140,17 @@ def test_failed_append_does_not_update_idempotency_index(
     with pytest.raises(OSError, match="disk full"):
         store.append(message)
     assert message.uuid not in (store._known_ids or set())
+
+
+def test_same_uuid_with_different_content_is_rejected(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    message = HumanMessage("first")
+    store.append(message)
+
+    conflicting = HumanMessage(
+        "different",
+        uuid=message.uuid,
+        timestamp=message.timestamp,
+    )
+    with pytest.raises(ValueError, match="Conflicting message UUID"):
+        store.append(conflicting)

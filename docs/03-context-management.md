@@ -148,8 +148,9 @@ boundary
 nano-code 现在显式区分三种数据形态：
 
 ```text
-TranscriptEntry / JSONL（磁盘事实）
-  ↔ ConversationMessage（运行时工作集）
+TranscriptEntry / JSONL（持久化与恢复事实）
+  → ConversationState（仅启动/resume 时 hydration）
+  → ConversationMessage（运行时工作集）
   → ContextPlanner → ModelRequest（单次模型请求）
   → Provider wire type
 ```

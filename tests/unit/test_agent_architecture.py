@@ -121,3 +121,5 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert "results" not in ToolRoundCompleted.__dataclass_fields__
     assert not hasattr(AgentEngine, "submit_stream")
     assert not hasattr(ConversationState, "messages")
+    assert hasattr(SessionRepository, "load")
+    assert not hasattr(SessionRepository, "snapshot")

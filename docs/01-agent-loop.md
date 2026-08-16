@@ -112,10 +112,14 @@ overflow/取消/max-turns，并发出 `AgentEvent`。会话事实由 `Conversati
 | `ContextPort` | outbound | 从 `ConversationSnapshot` 生成请求、预算和 compact 视图 |
 | `ModelTurnPort` / `ModelCompletionPort` | outbound | 流式用户回合与完整摘要模型请求 |
 | `ToolRoundPort` | outbound | 串行工具轮、取消闭合和展示 DTO |
-| `SessionRepository` | outbound | 提供快照及追加式 Transcript 写入 |
+| `SessionRepository` | outbound | 初始化/resume 时加载 Transcript，运行期只追加写入 |
 | `Compactor` | outbound | 返回尚未持久化的摘要提交计划 |
 
 `ProviderRouter` 在 provider 边界把完整响应 fallback 适配为最终事件，所以 Engine
 不再判断某个具体 provider 是否支持流式。`ModelCompletionPort.complete()` 仍保留给
 `CompactionService` 这种独立摘要请求使用。CLI/TUI 只消费 runtime DTO 和 Engine 的
 只读状态访问器，不读取 SessionStore、ToolExecutor 或 ContextPlanner 的内部字段。
+
+`ConversationState` 在构造或显式 resume 时从 `SessionRepository.load()` hydration
+一次。此后每次模型请求都从内存会话状态投影；Transcript 是崩溃恢复日志，
+不是运行期的同步读模型。写入仍是同步且持久化优先，成功后状态才前进。
