@@ -1,47 +1,29 @@
 # 消息与会话
 
-## 1. 内部消息不是 API 消息
+## 1. 三层消息边界
 
-运行时使用以 `type` 为判别字段的 `Message` 联合类型，定义在 `claude-code/src/types/message.ts`。主要成员如下：
-
-| 类型 | 用途 |
-| --- | --- |
-| `assistant` | 模型返回的 text、thinking、tool_use 等内容块 |
-| `user` | 人类输入、工具结果、合成提醒、compact summary |
-| `system` | API 错误、compact boundary、耗时等控制或展示信息 |
-| `attachment` | 文件变化、记忆、计划、hook 上下文等延迟注入内容 |
-| `progress` | 工具和 hook 的瞬时进度 |
-| `tombstone` | 删除失败流式尝试产生的孤立消息 |
-
-这里的 `user` 表示 Anthropic 对话协议中的 user role，并不等于“人类亲手输入”。`tool_result`、系统生成的提醒和 compact summary 也通过 user role 进入模型上下文。
-
-## 2. 三种消息视图
-
-同一会话存在三个用途不同的视图：
+nano-code 不在运行时消息上保存 API role。消息沿着单向边界逐层收窄：
 
 ```text
-内部 Message[]
-  ├─ UI / SDK：保留 progress、system、attachment 等事件
-  ├─ API 投影：只留下合法的 user / assistant 序列
-  └─ Transcript：只保存恢复会话需要的数据与元数据
+TranscriptEntry（JSONL record）
+  ↔ ConversationMessage（运行时会话事实）
+  → ModelMessage / ModelRequest（模型协议）
+  → provider wire type
 ```
 
-`normalizeMessagesForAPI()` 负责 API 投影，入口为 `claude-code/src/utils/messages.ts:1989`。它会：
+`ConversationMessage` 是按语义判别的联合：`HumanMessage`、`AssistantMessage`、
+`ToolResultsMessage` 和 `ConversationSummaryMessage`。只有 assistant 能包含
+`TextContent | ToolCall` 并且必须携带 `TokenUsage`；只有 tool-results 能包含带本地
+`presentation` 的 `ToolResult`。因此非法的 role/origin/content 组合无法构造。
 
-- 调整 attachment 的位置，避免破坏工具调用顺序。
-- 移除 display-only 的 virtual 消息、progress 和大多数 system 消息。
-- 把需要模型看到的本地命令或 attachment 转成 user 内容。
-- 过滤无效或已经不可用的 `tool_reference`。
-- 合并连续 user 消息，兼容不接受相邻同 role 消息的 provider。
-- 合并同一次模型响应拆出的 assistant block。
-- 保持 `tool_use` 与对应 `tool_result` 的协议顺序。
+`ContextPlanner` 是唯一的 conversation → model 投影边界。它把四种会话消息转换为
+`ModelUserMessage | ModelAssistantMessage`，移除 UUID、父链、时间戳和 presentation，
+合并相邻同 role 消息并校验 tool-use/result 配对。Provider 只接收完成的
+`ModelRequest`，不理解 Transcript 或请求上下文来源。
 
-因此，UI 需要什么、磁盘保存什么、模型看到什么，不能由同一个 `list` 的简单切片决定。
-
-nano-code 将非 Transcript 的模型输入进一步分成两条管线：`UserContextMessage` 在会话
-生命周期内缓存并作为历史之前的 user message，`AttachmentMessage` 按请求解析并追加在
-历史之后。二者只在 `ModelInputNormalizer` 中投影为 `ModelInputMessage`，不进入 JSONL、
-父链或 compact view。
+nano-code 将非 Transcript 输入分成 `UserContextDocument` 和 `ContextAttachment`：前者
+在会话生命周期内缓存并放在历史之前，后者按请求解析并放在历史之后。两者可包含
+`TextContent | ContextInstruction`，但不进入 JSONL、父链或 compact view。
 
 ## 3. 四类 ID
 
@@ -54,22 +36,19 @@ nano-code 将非 Transcript 的模型输入进一步分成两条管线：`UserCo
 
 不能用 `message.id` 替代 `uuid`：并行工具调用时，一个 API 响应可能被拆成多个本地消息。也不能用 assistant UUID 替代 tool ID：一个 assistant block 可以包含多个工具调用。
 
-## 4. JSONL Transcript
+## 4. JSONL Transcript schema
 
 主会话按项目目录和 session ID 写入 JSONL；子 Agent 写入独立 sidechain 文件。核心实现位于 `claude-code/src/utils/sessionStorage.ts`。nano-code 的对应磁盘布局见 [09-storage-and-settings.md](09-storage-and-settings.md)。
 
-Transcript 的正常写入路径是追加式记录，除消息外还可包含：
+当前 schema 是 breaking version 1，每行都有 `schema_version: 1`。联合 discriminator 为：
 
-- title、tag、mode、worktree 等会话元数据；
-- file history 和 attribution snapshot；
-- tool result content-replacement 决策；
-- queue operation 和 compact/collapse 元数据。
+- `human_message`、`assistant_message`、`tool_results_message`、`conversation_summary_message`；
+- `content_replacement`、`compact_boundary`。
 
-首次 user/assistant 消息出现前，写入可以暂存；一旦用户输入被接收，`QueryEngine` 会在模型响应前持久化它。
-
-流式 fallback 产生 tombstone 时存在一个有意的例外：存储层会定点移除失败尝试留下的孤立消息；目标通常位于文件尾部，超出尾部窗口时才退化为受大小限制的重写。
-
-高频 `progress` 是瞬时 UI 状态，不写入新 Transcript，也不参与父链。加载旧版本日志时，读取器会跨过历史上误写入链中的 progress 节点。
+records 定义在 sessions adapter 内，严格 codec 是唯一同时依赖 `TranscriptEntry` 和
+`ConversationMessage` 的模块。旧 `type: "message"`、未知 schema version、未知字段及非法
+内容组合全部拒绝；不提供迁移或 fallback parser。SessionCatalog 会跳过这类旧候选，显式
+resume 则报告 invalid transcript。
 
 ## 5. 父链、分支与恢复
 
@@ -130,14 +109,13 @@ nano-code 将“列出会话”和“恢复会话”分开处理：
 2. 候选按文件修改时间倒序排列，当前活动会话、空文件、异常首记录、非 UUID 文件和符号链接都会被过滤。
 3. 用户选择后，`SessionStore` 才严格解析完整记录，校验 UUID 唯一性和父节点顺序，并从最后一条记录沿父指针恢复活动分支。
 4. `AgentEngine.resume()` 先完成目标会话校验及未闭合工具轮修复，再替换内存状态；失败时保留原会话。
-5. runtime 在同一临界区切换 transcript、消息历史和工具结果目录，TUI 只接收展示 DTO，不接触 `TranscriptMessage` 或 JSONL。
+5. runtime 在同一临界区切换 transcript、消息历史和工具结果目录，TUI 只接收展示 DTO，不接触 `ConversationMessage` 或 JSONL。
 
 这对应 Claude Code 的轻量日志列表、选中后完整加载、集中恢复 session-scoped 状态三层设计。nano-code 当前仍没有 fork 和并行工具兄弟分支，因此活动链算法保持更小的范围。
 
 工具结果额外保存可选的 `presentation` 快照。它不是发送给 Anthropic Messages API
 的内容，而是 Tool 在执行当时生成的前端无关摘要；恢复 UI 时优先复用它，从而避免
-升级展示逻辑后历史会话突然改变。该字段在 version 1 中保持可选，旧 JSONL 缺少它
-仍可严格加载，并由对应 Tool 从旧 `content` 生成兼容展示。
+升级展示逻辑后历史会话突然改变。该字段在 schema version 1 中是可选字段。
 
 JSONL 还可追加两类上下文记录。`content_replacement` 按 tool ID 冻结模型可见的
 microcompact 占位文本，原始工具结果保持不变；`compact_boundary` 记录压缩前父节点、

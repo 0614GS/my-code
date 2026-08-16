@@ -8,7 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nano_code.agent.contracts.tool import ToolDefinition as _ToolDefinition
+from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.presentation import (
     ToolResultPresentation,
@@ -62,7 +62,7 @@ class Tool(ABC):
 
     @property
     @abstractmethod
-    def definition(self) -> _ToolDefinition:
+    def definition(self) -> ModelToolDefinition:
         """返回模型可见的定义。"""
 
     @property

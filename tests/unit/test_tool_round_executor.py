@@ -9,10 +9,11 @@ from nano_code.agent import (
     ToolRoundEvent,
 )
 from nano_code.messages import (
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
-    TranscriptMessage,
+    AssistantMessage,
+    TextContent,
+    TokenUsage,
+    ToolCall,
+    ToolResult,
 )
 from nano_code.permissions import PermissionMode, PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
@@ -41,18 +42,14 @@ async def test_round_executor_is_serial_and_returns_one_completed_message(
     (tmp_path / "a.txt").write_text("a", encoding="utf-8")
     (tmp_path / "b.txt").write_text("b", encoding="utf-8")
     runner = build_round_executor(tmp_path)
-    assistant = TranscriptMessage(
-        role="assistant",
-        origin="model",
+    assistant = AssistantMessage(
         content=(
-            ToolUseBlock("first", "Read", {"path": "a.txt"}),
-            ToolUseBlock("second", "Read", {"path": "b.txt"}),
+            ToolCall("first", "Read", {"path": "a.txt"}),
+            ToolCall("second", "Read", {"path": "b.txt"}),
         ),
-        usage=None,
+        usage=TokenUsage(),
     )
-    calls = tuple(
-        block for block in assistant.content if isinstance(block, ToolUseBlock)
-    )
+    calls = tuple(block for block in assistant.content if isinstance(block, ToolCall))
 
     events = [event async for event in runner.run_round(calls, assistant)]
 
@@ -61,9 +58,7 @@ async def test_round_executor_is_serial_and_returns_one_completed_message(
     assert [event.result.tool_use_id for event in finished] == ["first", "second"]
     assert len(completed) == 1
     result_blocks = [
-        block
-        for block in completed[0].message.content
-        if isinstance(block, ToolResultBlock)
+        block for block in completed[0].message.content if isinstance(block, ToolResult)
     ]
     assert [block.tool_use_id for block in result_blocks] == [
         "first",
@@ -75,16 +70,15 @@ async def test_round_executor_is_serial_and_returns_one_completed_message(
 async def test_round_executor_cancellation_closes_every_call(tmp_path: Path) -> None:
     runner = build_round_executor(tmp_path)
     calls = (
-        ToolUseBlock("first", "Read", {"path": "a.txt"}),
-        ToolUseBlock("second", "Read", {"path": "b.txt"}),
+        ToolCall("first", "Read", {"path": "a.txt"}),
+        ToolCall("second", "Read", {"path": "b.txt"}),
     )
-    assistant = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(TextBlock("working"), *calls),
+    assistant = AssistantMessage(
+        content=(TextContent("working"), *calls),
+        usage=TokenUsage(),
     )
 
-    async def cancel(_call: ToolUseBlock) -> ToolExecutionOutcome:
+    async def cancel(_call: ToolCall) -> ToolExecutionOutcome:
         raise asyncio.CancelledError
 
     runner.executor.execute = cancel  # type: ignore[assignment]

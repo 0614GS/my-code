@@ -3,9 +3,9 @@
 from typing import Protocol, runtime_checkable
 
 from nano_code.agent.contracts.context import ContextBudget, ContextPlan
-from nano_code.agent.contracts.model import ModelInputMessage
+from nano_code.agent.contracts.model import ModelMessage
 from nano_code.agent.contracts.session import ContentReplacement, ConversationSnapshot
-from nano_code.messages import TranscriptMessage
+from nano_code.messages import ConversationMessage
 
 
 @runtime_checkable
@@ -18,9 +18,9 @@ class ContextPort(Protocol):
 
     def compaction_view(
         self, snapshot: ConversationSnapshot
-    ) -> tuple[tuple[ModelInputMessage, ...], tuple[ContentReplacement, ...]]: ...
+    ) -> tuple[tuple[ModelMessage, ...], tuple[ContentReplacement, ...]]: ...
 
-    def measure(self, messages: tuple[TranscriptMessage, ...]) -> int: ...
+    def measure(self, messages: tuple[ConversationMessage, ...]) -> int: ...
 
 
 __all__ = ["ContextPort"]

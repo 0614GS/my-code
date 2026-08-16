@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from nano_code.agent.contracts.tool import ToolDefinition
+from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.tools.base import Tool
 
 
@@ -29,7 +29,7 @@ class ToolRegistry:
         return self._tools
 
     @property
-    def definitions(self) -> tuple[ToolDefinition, ...]:
+    def definitions(self) -> tuple[ModelToolDefinition, ...]:
         return tuple(tool.definition for tool in self._tools)
 
     def get(self, name: str) -> Tool | None:

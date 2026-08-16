@@ -1,38 +1,47 @@
-"""内部消息及 provider 消息转换。"""
+"""Conversation、请求上下文与共享 primitive 的公开入口。"""
 
-from nano_code.messages.attachments import AttachmentMessage
-from nano_code.messages.models import (
-    ContentBlock,
+from nano_code.messages.context import (
+    ContextAttachment,
+    ContextContent,
+    ContextInstruction,
+    ContextInstructionKind,
+    UserContextDocument,
+)
+from nano_code.messages.conversation import (
+    AssistantContent,
+    AssistantMessage,
+    ConversationMessage,
+    ConversationSummaryMessage,
+    HumanMessage,
+    TextContent,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
+)
+from nano_code.messages.primitives import (
     JsonObject,
     JsonValue,
-    MessageRole,
-    ModelResponse,
-    SystemContextBlock,
-    SystemContextKind,
-    TextBlock,
     TokenUsage,
-    ToolResultBlock,
-    ToolUseBlock,
-    TranscriptMessage,
     to_json_object,
 )
-from nano_code.messages.user_context import ContextContentBlock, UserContextMessage
 
 __all__ = [
-    "TranscriptMessage",
-    "AttachmentMessage",
-    "ContextContentBlock",
-    "UserContextMessage",
-    "ContentBlock",
+    "AssistantContent",
+    "AssistantMessage",
+    "ContextAttachment",
+    "ContextContent",
+    "ContextInstruction",
+    "ContextInstructionKind",
+    "ConversationMessage",
+    "ConversationSummaryMessage",
+    "HumanMessage",
     "JsonObject",
     "JsonValue",
-    "ModelResponse",
-    "MessageRole",
-    "TextBlock",
-    "SystemContextBlock",
-    "SystemContextKind",
+    "TextContent",
     "TokenUsage",
-    "ToolResultBlock",
-    "ToolUseBlock",
+    "ToolCall",
+    "ToolResult",
+    "ToolResultsMessage",
+    "UserContextDocument",
     "to_json_object",
 ]

@@ -2,8 +2,12 @@ from typing import cast
 
 from anthropic.types import TextBlockParam
 
-from nano_code.agent import ContextPlan, ModelInputMessage
-from nano_code.messages import TextBlock
+from nano_code.agent import (
+    ModelAssistantMessage,
+    ModelRequest,
+    ModelTextBlock,
+    ModelUserMessage,
+)
 from nano_code.prompts import (
     PromptStability,
     ResolvedPromptSection,
@@ -58,19 +62,17 @@ def test_anthropic_cache_breakpoints_end_static_and_session_prefixes() -> None:
 
 
 def test_user_context_and_attachments_surround_conversation_messages() -> None:
-    user_context = ModelInputMessage("user", (TextBlock("user context"),))
-    history = ModelInputMessage("assistant", (TextBlock("history"),))
-    attachment = ModelInputMessage("user", (TextBlock("attachment"),))
-    request = ContextPlan(
+    user_context = ModelUserMessage((ModelTextBlock("user context"),))
+    history = ModelAssistantMessage((ModelTextBlock("history"),))
+    attachment = ModelUserMessage((ModelTextBlock("attachment"),))
+    request = ModelRequest(
         system_prompt=SystemPrompt.from_text("system"),
-        messages=(history,),
+        messages=(user_context, history, attachment),
         tools=(),
         max_output_tokens=10,
-        user_context=(user_context,),
-        attachments=(attachment,),
     )
 
-    normalized = AnthropicProvider._request_messages(request)
+    normalized = AnthropicProvider._messages(request.messages)
 
     assert normalized[0]["content"][0]["text"] == "user context"
     assert normalized[1]["content"][0]["text"] == "history"

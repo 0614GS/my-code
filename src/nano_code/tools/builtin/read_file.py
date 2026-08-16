@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from nano_code.agent.contracts.tool import ToolDefinition
+from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.presentation import ToolResultPresentation
 from nano_code.tools.base import (
@@ -20,8 +20,8 @@ _MAX_READ_BYTES = 8 * 1024 * 1024
 
 class ReadFileTool(Tool):
     @property
-    def definition(self) -> ToolDefinition:
-        return ToolDefinition(
+    def definition(self) -> ModelToolDefinition:
+        return ModelToolDefinition(
             name="Read",
             description="Read a UTF-8 text file from the current workspace.",
             input_schema={

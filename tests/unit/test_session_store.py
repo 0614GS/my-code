@@ -1,257 +1,138 @@
 import json
-import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from nano_code.agent import CompactBoundary, ContentReplacement
 from nano_code.messages import (
-    SystemContextBlock,
-    TextBlock,
+    AssistantMessage,
+    ConversationSummaryMessage,
+    HumanMessage,
+    TextContent,
     TokenUsage,
-    ToolResultBlock,
-    TranscriptMessage,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
 )
-from nano_code.presentation import ToolResultPresentation
 from nano_code.sessions import SessionCatalog, SessionStore
+from nano_code.sessions.codec import entry_from_json, entry_to_json, message_to_record
 
-_SESSION_ID = "12345678-1234-1234-1234-123456789abc"
+SESSION_ID = "11111111-1111-1111-1111-111111111111"
 
 
-def test_append_is_idempotent_and_round_trips(tmp_path: Path) -> None:
-    project_state_dir = tmp_path / "projects" / "-workspace"
-    store = SessionStore(project_state_dir, _SESSION_ID)
-    first = TranscriptMessage(role="user", origin="human", content=(TextBlock("hi"),))
-    second = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(TextBlock("hello"),),
-        parent_uuid=first.uuid,
+def _store(tmp_path: Path) -> SessionStore:
+    return SessionStore(tmp_path, SESSION_ID)
+
+
+def _chain():
+    human = HumanMessage("hello")
+    assistant = AssistantMessage(
+        (TextContent("answer"), ToolCall("call", "Read", {"path": "x"})),
+        TokenUsage(10, 2),
+        parent_uuid=human.uuid,
     )
-
-    store.append(first)
-    store.append(first)
-    store.append(second)
-
-    assert store.load() == (first, second)
-    assert len(store.path.read_text(encoding="utf-8").splitlines()) == 2
-    assert store.path == project_state_dir / f"{_SESSION_ID}.jsonl"
-    assert store.session_dir == project_state_dir / _SESSION_ID
-    assert not store.session_dir.exists()
-
-
-def test_tool_result_presentation_round_trips_with_transcript(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path, _SESSION_ID)
-    presentation = ToolResultPresentation(
-        summary="Read 12 lines from src/app.py",
-        detail="first line preview",
-        truncated=True,
+    results = ToolResultsMessage(
+        (ToolResult("call", "value"),), assistant.uuid, parent_uuid=assistant.uuid
     )
-    message = TranscriptMessage(
-        role="user",
-        origin="tool",
-        content=(
-            ToolResultBlock(
-                "tool-1",
-                "full model-visible result",
-                presentation=presentation,
-            ),
-        ),
+    summary = ConversationSummaryMessage("state", parent_uuid=results.uuid)
+    return human, assistant, results, summary
+
+
+def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    messages = _chain()
+    for message in messages:
+        store.append(message)
+
+    assert store.load() == messages
+    entries = [json.loads(line) for line in store.path.read_text().splitlines()]
+    assert [entry["type"] for entry in entries] == [
+        "human_message",
+        "assistant_message",
+        "tool_results_message",
+        "conversation_summary_message",
+    ]
+    assert all(entry["schema_version"] == 1 for entry in entries)
+    assert all("role" not in entry and "origin" not in entry for entry in entries)
+
+
+def test_codec_round_trip_each_message_variant() -> None:
+    for message in _chain():
+        record = message_to_record(message)
+        assert entry_from_json(entry_to_json(record)) == record
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"type": "message", "version": 1},
+        {"type": "human_message", "schema_version": 2},
+        {"type": "unknown", "schema_version": 1},
+    ],
+)
+def test_old_unknown_and_wrong_version_entries_are_rejected(entry: object) -> None:
+    with pytest.raises(ValueError):
+        entry_from_json(entry)
+
+
+def test_record_rejects_redundant_role_and_origin_fields() -> None:
+    record = entry_to_json(message_to_record(HumanMessage("hello")))
+    record["role"] = "user"
+    record["origin"] = "human"
+    with pytest.raises(ValueError, match="unexpected"):
+        entry_from_json(record)
+
+
+def test_parent_chain_idempotency_and_active_branch(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    root = HumanMessage("root")
+    first = AssistantMessage(
+        (TextContent("first"),), TokenUsage(), parent_uuid=root.uuid
     )
-
-    store.append(message)
-
-    assert store.load() == (message,)
-    loaded = store.load()[0].content[0]
-    assert isinstance(loaded, ToolResultBlock)
-    assert loaded.presentation == presentation
-
-
-def test_assistant_usage_round_trips_with_transcript(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path, _SESSION_ID)
-    message = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(TextBlock("answer"),),
-        usage=TokenUsage(
-            input_tokens=120,
-            output_tokens=8,
-            cache_creation_input_tokens=10,
-            cache_read_input_tokens=20,
-        ),
+    branch = AssistantMessage(
+        (TextContent("branch"),), TokenUsage(), parent_uuid=root.uuid
     )
-
-    store.append(message)
-
-    assert store.load() == (message,)
-
-
-def test_system_context_round_trips_without_persisting_rendered_xml(
-    tmp_path: Path,
-) -> None:
-    store = SessionStore(tmp_path, _SESSION_ID)
-    message = TranscriptMessage(
-        role="user",
-        origin="system",
-        content=(
-            SystemContextBlock(
-                kind="conversation_summary",
-                content="Continue from the verified state.",
-            ),
-        ),
-    )
-
-    store.append(message)
-
-    assert store.load() == (message,)
-    transcript = store.path.read_text(encoding="utf-8")
-    assert '"type": "system_context"' in transcript
-    assert "<conversation-summary>" not in transcript
+    for message in (root, first, branch, branch):
+        store.append(message)
+    assert store.load() == (root, branch)
+    with pytest.raises(ValueError, match="Unknown parent"):
+        store.append(HumanMessage("bad", parent_uuid="missing"))
 
 
-def test_content_replacement_is_append_only_and_round_trips(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path, _SESSION_ID)
-    message = TranscriptMessage(role="user", origin="human", content=(TextBlock("hi"),))
-    replacement = ContentReplacement.for_tool_result(
-        tool_use_id="tool-1",
-        tool_name="Read",
-        original_chars=5000,
-    )
-    store.append(message)
-
+def test_structured_records_and_compact_boundary_are_atomic(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    human = HumanMessage("hello")
+    summary = ConversationSummaryMessage("state", parent_uuid=human.uuid)
+    replacement = ContentReplacement("call", "Read", 100, "short")
+    boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 100)
+    store.append(human)
     store.append_content_replacement(replacement)
-    store.append_content_replacement(replacement)
-
-    assert store.load() == (message,)
+    store.append_compact_boundary(boundary)
+    assert store.load_compact_boundaries() == ()
+    store.append(summary)
     assert store.load_content_replacements() == (replacement,)
-    assert len(store.path.read_text(encoding="utf-8").splitlines()) == 2
+    assert store.load_compact_boundaries() == (boundary,)
+    assert store.load_working_set() == (summary,)
 
 
-def test_incomplete_compact_boundary_is_ignored_on_recovery(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path, _SESSION_ID)
-    message = TranscriptMessage(role="user", origin="human", content=(TextBlock("hi"),))
-    store.append(message)
-    store.append_compact_boundary(
-        CompactBoundary(
-            parent_uuid=message.uuid,
-            summary_uuid="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-            trigger="auto",
-            pre_compact_chars=2,
-        )
-    )
-
-    recovered = SessionStore(tmp_path, _SESSION_ID)
-
-    assert recovered.load() == (message,)
-    assert recovered.load_compact_boundaries() == ()
-    assert recovered.load_working_set() == (message,)
+def test_catalog_skips_legacy_transcript(tmp_path: Path) -> None:
+    legacy = tmp_path / f"{SESSION_ID}.jsonl"
+    legacy.write_text(json.dumps({"type": "message", "version": 1}) + "\n")
+    assert SessionCatalog(tmp_path).list() == ()
+    with pytest.raises(ValueError, match="Invalid transcript"):
+        _store(tmp_path).load()
 
 
-def test_old_tool_result_without_presentation_remains_loadable(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path, _SESSION_ID)
-    store.project_state_dir.mkdir(parents=True, exist_ok=True)
-    record = {
-        "type": "message",
-        "version": 1,
-        "uuid": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        "parent_uuid": None,
-        "timestamp": "2026-08-13T00:00:00+00:00",
-        "role": "user",
-        "origin": "tool",
-        "source_message_uuid": None,
-        "content": [
-            {
-                "type": "tool_result",
-                "tool_use_id": "legacy-call",
-                "content": "legacy result",
-                "is_error": False,
-            }
-        ],
-    }
-    store.path.write_text(json.dumps(record) + "\n", encoding="utf-8")
-
-    loaded = store.load()[0].content[0]
-
-    assert isinstance(loaded, ToolResultBlock)
-    assert loaded.presentation is None
-
-
-def test_rejects_missing_parent_on_append(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path, _SESSION_ID)
-    orphan = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(TextBlock("hello"),),
-        parent_uuid="missing",
-    )
-
-    with pytest.raises(ValueError, match="Unknown parent UUID"):
-        store.append(orphan)
-
-
-def test_rejects_corrupt_transcript(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path, _SESSION_ID)
-    store.project_state_dir.mkdir(parents=True, exist_ok=True)
-    store.path.write_text(json.dumps({"type": "unknown"}) + "\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="Invalid transcript line"):
-        store.load()
-
-
-def test_rejects_non_uuid_session_id(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="must be a UUID"):
-        SessionStore(tmp_path, "../session")
-
-
-def test_load_returns_only_active_parent_chain(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path, _SESSION_ID)
-    root = TranscriptMessage(role="user", origin="human", content=(TextBlock("root"),))
-    abandoned = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(TextBlock("abandoned"),),
-        parent_uuid=root.uuid,
-    )
-    active = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(TextBlock("active"),),
-        parent_uuid=root.uuid,
-    )
-
-    store.append(root)
-    store.append(abandoned)
-    store.append(active)
-
-    assert store.load() == (root, active)
-
-
-def test_catalog_lists_valid_sessions_by_modified_time_and_first_prompt(
-    tmp_path: Path,
+def test_failed_append_does_not_update_idempotency_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    older_id = "11111111-1111-1111-1111-111111111111"
-    newer_id = "22222222-2222-2222-2222-222222222222"
-    excluded_id = "33333333-3333-3333-3333-333333333333"
-    for session_id, prompt in (
-        (older_id, "older prompt\nwith spacing"),
-        (newer_id, "newer prompt"),
-        (excluded_id, "current prompt"),
-    ):
-        SessionStore(tmp_path, session_id).append(
-            TranscriptMessage(
-                role="user",
-                origin="human",
-                content=(TextBlock(prompt),),
-            )
-        )
-    os.utime(tmp_path / f"{older_id}.jsonl", (100, 100))
-    os.utime(tmp_path / f"{newer_id}.jsonl", (200, 200))
-    os.utime(tmp_path / f"{excluded_id}.jsonl", (300, 300))
-    (tmp_path / "not-a-session.jsonl").write_text("{}\n", encoding="utf-8")
+    store = _store(tmp_path)
+    message = HumanMessage("hello")
 
-    sessions = SessionCatalog(tmp_path).list(exclude_session_id=excluded_id)
+    def fail(_: object) -> None:
+        raise OSError("disk full")
 
-    assert [session.session_id for session in sessions] == [newer_id, older_id]
-    assert sessions[1].title == "older prompt with spacing"
-    assert sessions[0].updated_at == datetime.fromtimestamp(200, UTC)
+    monkeypatch.setattr(store, "_append_record", fail)
+    with pytest.raises(OSError, match="disk full"):
+        store.append(message)
+    assert message.uuid not in (store._known_ids or set())

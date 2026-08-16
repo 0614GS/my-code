@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nano_code.messages import TextBlock
-from nano_code.messages.codec import message_from_json
+from nano_code.messages import HumanMessage
+from nano_code.sessions.codec import decode_entry
 from nano_code.sessions.store import is_session_id
 
 _MAX_PREVIEW_BYTES = 128 * 1024
@@ -112,18 +112,15 @@ def _read_first_prompt(path: Path) -> str | None:
             if not line.strip():
                 continue
             try:
-                message = message_from_json(json.loads(line))
+                message = decode_entry(json.loads(line))
             except (json.JSONDecodeError, UnicodeError, ValueError, TypeError):
                 if is_first_record:
                     return None
                 continue
             is_first_record = False
-            if not message.starts_human_turn:
+            if not isinstance(message, HumanMessage):
                 continue
-            text = " ".join(
-                block.text for block in message.content if isinstance(block, TextBlock)
-            )
-            normalized = " ".join(text.split())
+            normalized = " ".join(message.content.split())
             if normalized:
                 return _truncate_title(normalized)
 

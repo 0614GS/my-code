@@ -2,11 +2,12 @@
 
 from nano_code.agent.errors import ContextOverflow as _ContextOverflow
 from nano_code.messages import (
-    SystemContextBlock,
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
-    TranscriptMessage,
+    ConversationMessage,
+    ConversationSummaryMessage,
+    HumanMessage,
+    TextContent,
+    ToolCall,
+    ToolResult,
 )
 
 
@@ -19,8 +20,8 @@ class ContextWindow:
         self.max_chars = max_chars
 
     def ensure_fits(
-        self, messages: tuple[TranscriptMessage, ...]
-    ) -> tuple[TranscriptMessage, ...]:
+        self, messages: tuple[ConversationMessage, ...]
+    ) -> tuple[ConversationMessage, ...]:
         if not messages:
             return ()
 
@@ -32,19 +33,20 @@ class ContextWindow:
         return messages
 
     @staticmethod
-    def size(messages: tuple[TranscriptMessage, ...]) -> int:
+    def size(messages: tuple[ConversationMessage, ...]) -> int:
         """返回工作集的保守字符估算。"""
 
         size = 0
         for message in messages:
+            if isinstance(message, (HumanMessage, ConversationSummaryMessage)):
+                size += len(message.content)
+                continue
             for block in message.content:
-                if isinstance(block, TextBlock):
+                if isinstance(block, TextContent):
                     size += len(block.text)
-                elif isinstance(block, SystemContextBlock):
-                    size += len(block.content)
-                elif isinstance(block, ToolUseBlock):
+                elif isinstance(block, ToolCall):
                     size += len(block.name) + len(str(block.input))
-                elif isinstance(block, ToolResultBlock):
+                elif isinstance(block, ToolResult):
                     size += len(block.content)
         return size
 

@@ -3,13 +3,13 @@
 from pathlib import Path
 from typing import Protocol
 
-from nano_code.messages import SystemContextBlock, UserContextMessage
+from nano_code.messages import ContextInstruction, UserContextDocument
 
 
 class UserContextResolver(Protocol):
     """Resolve non-history context for model requests."""
 
-    def resolve(self) -> tuple[UserContextMessage, ...]: ...
+    def resolve(self) -> tuple[UserContextDocument, ...]: ...
 
 
 class AgentsUserContextResolver:
@@ -25,7 +25,7 @@ class AgentsUserContextResolver:
     def __init__(self, cwd: Path) -> None:
         self.cwd = cwd.resolve()
 
-    def resolve(self) -> tuple[UserContextMessage, ...]:
+    def resolve(self) -> tuple[UserContextDocument, ...]:
         """Return the workspace instructions, or no context when absent."""
 
         path = self.cwd / "AGENTS.md"
@@ -38,11 +38,10 @@ class AgentsUserContextResolver:
             return ()
 
         return (
-            UserContextMessage(
+            UserContextDocument(
                 source="AGENTS.md",
                 content=(
-                    SystemContextBlock(
-                        kind="system_reminder",
+                    ContextInstruction(
                         content=_format_agents_context(content),
                     ),
                 ),
@@ -53,7 +52,7 @@ class AgentsUserContextResolver:
 class EmptyUserContextResolver:
     """Resolver for callers that explicitly do not provide user context."""
 
-    def resolve(self) -> tuple[UserContextMessage, ...]:
+    def resolve(self) -> tuple[UserContextDocument, ...]:
         return ()
 
 

@@ -2,14 +2,9 @@
 
 from typing import Literal
 
-from nano_code.messages.models import SystemContextBlock, SystemContextKind
+from nano_code.messages.context import ContextInstruction
 
 type XmlTag = Literal["system-reminder", "conversation-summary"]
-
-_TAGS: dict[SystemContextKind, XmlTag] = {
-    "system_reminder": "system-reminder",
-    "conversation_summary": "conversation-summary",
-}
 
 
 def wrap_xml(tag: XmlTag, content: str) -> str:
@@ -24,10 +19,8 @@ def wrap_xml(tag: XmlTag, content: str) -> str:
     return f"<{tag}>\n{escaped}\n</{tag}>"
 
 
-def render_system_context(block: SystemContextBlock) -> str:
-    """Render a structured system context block for a model request."""
-
-    return wrap_xml(_TAGS[block.kind], block.content)
+def render_context_instruction(block: ContextInstruction) -> str:
+    return wrap_xml("system-reminder", block.content)
 
 
-__all__ = ["render_system_context", "wrap_xml"]
+__all__ = ["render_context_instruction", "wrap_xml"]

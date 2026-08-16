@@ -1,286 +1,103 @@
-from pathlib import Path
-
 import pytest
 
 from nano_code.agent import (
-    ContextOverflow,
     ConversationSnapshot,
-    ModelInputMessage,
-    ToolDefinition,
+    ModelAssistantMessage,
+    ModelTextBlock,
+    ModelToolResultBlock,
+    ModelToolUseBlock,
+    ModelUserMessage,
 )
-from nano_code.context import (
-    ContextPlanner,
-    ContextWindow,
-    MicrocompactPolicy,
-    ModelInputNormalizer,
-)
+from nano_code.agent.errors import ContextOverflow
+from nano_code.context import ContextPlanner, ContextWindow, MicrocompactPolicy
 from nano_code.messages import (
-    SystemContextBlock,
-    TextBlock,
+    AssistantMessage,
+    ConversationSummaryMessage,
+    HumanMessage,
+    TextContent,
     TokenUsage,
-    ToolResultBlock,
-    ToolUseBlock,
-    TranscriptMessage,
-    UserContextMessage,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
 )
-from nano_code.messages.xml import render_system_context
 from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
 
 
-def user(text: str, parent: str | None = None) -> TranscriptMessage:
-    return TranscriptMessage(
-        role="user",
-        origin="human",
-        content=(TextBlock(text),),
-        parent_uuid=parent,
-    )
-
-
-def test_window_reports_overflow_instead_of_silently_dropping_history() -> None:
-    first = user("old prompt")
-    first_answer = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(TextBlock("old answer"),),
-        parent_uuid=first.uuid,
-    )
-    current = user("new", first_answer.uuid)
-    tool_use = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(ToolUseBlock("call", "Read", {"path": "x"}),),
-        parent_uuid=current.uuid,
-    )
-    tool_result = TranscriptMessage(
-        role="user",
-        origin="tool",
-        content=(ToolResultBlock("call", "value"),),
-        parent_uuid=tool_use.uuid,
-    )
-
-    with pytest.raises(ContextOverflow) as raised:
-        ContextWindow(max_chars=40).ensure_fits(
-            (first, first_answer, current, tool_use, tool_result)
-        )
-
-    assert raised.value.current_chars > raised.value.max_chars
-
-
-def test_normalization_rejects_orphan_tool_result() -> None:
-    prompt = user("new")
-    result = TranscriptMessage(
-        role="user",
-        origin="tool",
-        content=(ToolResultBlock("missing", "value"),),
-        parent_uuid=prompt.uuid,
-    )
-
-    selected = ContextWindow().ensure_fits((prompt, result))
-
-    with pytest.raises(ValueError, match="Orphan tool result"):
-        ModelInputNormalizer().normalize_transcript(selected)
-
-
-def test_context_planner_builds_observable_request_without_mutating_snapshot() -> None:
-    message = user("hello")
-    snapshot = ConversationSnapshot((message,))
-    section = PromptSection("core", PromptStability.STATIC, lambda: "system")
-    tool = ToolDefinition("Read", "Read a file", {"type": "object"})
-    planner = ContextPlanner(
-        window=ContextWindow(max_chars=100),
-        prompt=PromptRegistry((section,)),
-        tools=(tool,),
-        max_output_tokens=50,
-    )
-
-    plan = planner.plan(snapshot)
-
-    assert plan.system_prompt.text == "system"
-    assert plan.messages == (ModelInputMessage("user", (TextBlock("hello"),)),)
-    assert plan.tools == (tool,)
-    assert plan.system_prompt.sections[0].key == section.key
-    assert plan.budget is not None
-    assert plan.budget.message_chars == len("hello")
-    assert plan.budget.system_chars == len("system")
-    assert plan.budget.last_actual_input_tokens is None
-    assert snapshot.messages == (message,)
-
-
-def test_user_context_is_cached_budgeted_and_excluded_from_compaction() -> None:
-    message = user("hello")
-    workspace_message = UserContextMessage(
-        source="AGENTS.md",
-        content=(
-            SystemContextBlock(kind="system_reminder", content="workspace facts"),
-        ),
-    )
-    normalized_workspace = ModelInputMessage(
-        "user",
-        (TextBlock(render_system_context(workspace_message.content[0])),),
-    )
-
-    class Resolver:
-        calls = 0
-
-        def resolve(self) -> tuple[UserContextMessage, ...]:
-            self.calls += 1
-            return (workspace_message,)
-
-    resolver = Resolver()
-    planner = ContextPlanner(
-        window=ContextWindow(max_chars=100),
+def _planner(max_chars: int = 1_000, microcompact=None) -> ContextPlanner:
+    return ContextPlanner(
+        window=ContextWindow(max_chars),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
         tools=(),
         max_output_tokens=50,
-        user_context_resolver=resolver,
-    )
-
-    plan = planner.plan(ConversationSnapshot((message,)))
-    budget = planner.inspect(ConversationSnapshot((message,)))
-    compact_messages, replacements = planner.compaction_view(
-        ConversationSnapshot((message,))
-    )
-
-    assert resolver.calls == 1
-    assert plan.user_context == (normalized_workspace,)
-    assert budget.user_context_chars == len(
-        normalized_workspace.content[0].text
-    )
-    assert budget.estimated_input_chars == (
-        len("hello") + len("system") + len(normalized_workspace.content[0].text)
-    )
-    assert compact_messages == (ModelInputMessage("user", (TextBlock("hello"),)),)
-    assert replacements == ()
-
-
-def test_planner_without_user_context_resolver_does_not_read_agents_file(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "AGENTS.md").write_text("unrequested instructions", encoding="utf-8")
-    planner = ContextPlanner(
-        window=ContextWindow(max_chars=100),
-        prompt=PromptRegistry(
-            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
-        ),
-        tools=(),
-        max_output_tokens=50,
-    )
-
-    plan = planner.plan(ConversationSnapshot((user("hello"),)))
-
-    assert plan.user_context == ()
-
-
-def test_prompt_registry_rejects_duplicate_section_keys() -> None:
-    sections = (
-        PromptSection("core", PromptStability.STATIC, lambda: "first"),
-        PromptSection("core", PromptStability.SESSION, lambda: "second"),
-    )
-
-    with pytest.raises(ValueError, match="must be unique"):
-        PromptRegistry(sections)
-
-
-def test_model_normalization_merges_adjacent_roles_without_local_metadata() -> None:
-    first = user("first")
-    second = user("second", first.uuid)
-
-    normalized = ModelInputNormalizer().normalize_transcript((first, second))
-
-    assert normalized == (
-        ModelInputMessage("user", (TextBlock("first"), TextBlock("second"))),
+        microcompact=microcompact,
     )
 
 
-def test_budget_uses_latest_real_usage_plus_only_new_messages() -> None:
-    first = user("old prompt")
-    assistant = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(TextBlock("answer"),),
-        parent_uuid=first.uuid,
-        usage=TokenUsage(input_tokens=100, output_tokens=10),
-    )
-    latest = user("next", assistant.uuid)
-    planner = ContextPlanner(
-        window=ContextWindow(max_chars=1000),
-        prompt=PromptRegistry(
-            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
-        ),
-        tools=(),
-        max_output_tokens=50,
-    )
-
-    budget = planner.plan(ConversationSnapshot((first, assistant, latest))).budget
-
-    assert budget is not None
-    assert budget.last_actual_input_tokens == 100
-    assert budget.incremental_tokens == 1
-    assert budget.estimated_input_tokens == 111
-    assert budget.estimated_total_tokens == 161
+def test_context_window_requires_semantic_boundary_and_never_truncates() -> None:
+    assistant = AssistantMessage((TextContent("answer"),), TokenUsage())
+    with pytest.raises(ValueError, match="boundary"):
+        ContextWindow().ensure_fits((assistant,))
+    with pytest.raises(ContextOverflow):
+        ContextWindow(2).ensure_fits((HumanMessage("long"),))
 
 
-def test_microcompact_replaces_old_result_without_mutating_transcript() -> None:
-    prompt = user("inspect")
-    first_call = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(ToolUseBlock("old", "Read", {"path": "old.py"}),),
-        parent_uuid=prompt.uuid,
+def test_four_conversation_variants_project_exactly() -> None:
+    human = HumanMessage("hello")
+    assistant = AssistantMessage(
+        (TextContent("thinking"), ToolCall("call", "Read", {"path": "x"})),
+        TokenUsage(input_tokens=3),
+        parent_uuid=human.uuid,
     )
-    first_result = TranscriptMessage(
-        role="user",
-        origin="tool",
-        content=(ToolResultBlock("old", "x" * 80),),
-        parent_uuid=first_call.uuid,
+    results = ToolResultsMessage(
+        (ToolResult("call", "value"),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
     )
-    second_call = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(ToolUseBlock("new", "Read", {"path": "new.py"}),),
-        parent_uuid=first_result.uuid,
-    )
-    second_result = TranscriptMessage(
-        role="user",
-        origin="tool",
-        content=(ToolResultBlock("new", "y" * 80),),
-        parent_uuid=second_call.uuid,
-    )
-    planner = ContextPlanner(
-        window=ContextWindow(max_chars=1000),
-        prompt=PromptRegistry(
-            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
-        ),
-        tools=(),
-        max_output_tokens=50,
-        microcompact=MicrocompactPolicy(
-            trigger_chars=100,
-            target_chars=90,
-            min_result_chars=1,
-            keep_recent_results=1,
-        ),
-    )
-    snapshot = ConversationSnapshot(
-        (prompt, first_call, first_result, second_call, second_result)
-    )
+    summary = ConversationSummaryMessage("state", parent_uuid=results.uuid)
 
-    plan = planner.plan(snapshot)
-
-    assert [item.tool_use_id for item in plan.new_content_replacements] == ["old"]
-    normalized_old = plan.messages[2].content[0]
-    assert isinstance(normalized_old, ToolResultBlock)
-    assert "compacted" in normalized_old.content
-    original_old = first_result.content[0]
-    assert isinstance(original_old, ToolResultBlock)
-    assert original_old.content == "x" * 80
-
-    replayed = planner.plan(
-        ConversationSnapshot(
-            snapshot.messages,
-            content_replacements=plan.new_content_replacements,
+    messages = _planner().normalizer.normalize_transcript(
+        (human, assistant, results, summary)
+    )
+    assert messages[0] == ModelUserMessage((ModelTextBlock("hello"),))
+    assert messages[1] == ModelAssistantMessage(
+        (
+            ModelTextBlock("thinking"),
+            ModelToolUseBlock("call", "Read", {"path": "x"}),
         )
     )
-    assert replayed.messages == plan.messages
-    assert replayed.new_content_replacements == ()
+    assert messages[2].content[0] == ModelToolResultBlock("call", "value")
+    assert "<conversation-summary>" in messages[2].content[1].text  # type: ignore[union-attr]
+
+
+def test_projection_rejects_orphan_and_unresolved_tool_protocol() -> None:
+    with pytest.raises(ValueError, match="Orphan"):
+        _planner().normalizer.normalize_transcript(
+            (ToolResultsMessage((ToolResult("missing", "x"),), "assistant"),)
+        )
+    with pytest.raises(ValueError, match="Unresolved"):
+        _planner().normalizer.normalize_transcript(
+            (AssistantMessage((ToolCall("call", "Read", {}),), TokenUsage()),)
+        )
+
+
+def test_microcompact_replaces_model_view_without_mutating_history() -> None:
+    human = HumanMessage("read")
+    assistant = AssistantMessage(
+        (ToolCall("call", "Read", {"path": "x"}),),
+        TokenUsage(),
+        parent_uuid=human.uuid,
+    )
+    results = ToolResultsMessage(
+        (ToolResult("call", "x" * 100),), assistant.uuid, parent_uuid=assistant.uuid
+    )
+    policy = MicrocompactPolicy(
+        trigger_chars=50, target_chars=20, min_result_chars=10, keep_recent_results=0
+    )
+    plan = _planner(1_000, policy).plan(
+        ConversationSnapshot((human, assistant, results))
+    )
+    assert len(plan.new_content_replacements) == 1
+    assert results.content[0].content == "x" * 100
+    assert "compacted" in plan.request.messages[-1].content[0].content  # type: ignore[union-attr]

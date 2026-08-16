@@ -4,13 +4,11 @@ import logging
 from collections.abc import Callable, Iterable
 
 from nano_code.agent.contracts.session import ConversationSnapshot
-from nano_code.messages import AttachmentMessage
+from nano_code.messages import ContextAttachment
 
 logger = logging.getLogger(__name__)
 
-type AttachmentSource = Callable[
-    [ConversationSnapshot], Iterable[AttachmentMessage]
-]
+type AttachmentSource = Callable[[ConversationSnapshot], Iterable[ContextAttachment]]
 
 
 class AttachmentResolver:
@@ -19,12 +17,10 @@ class AttachmentResolver:
     def __init__(self, sources: Iterable[AttachmentSource] = ()) -> None:
         self._sources = tuple(sources)
 
-    def resolve(
-        self, snapshot: ConversationSnapshot
-    ) -> tuple[AttachmentMessage, ...]:
+    def resolve(self, snapshot: ConversationSnapshot) -> tuple[ContextAttachment, ...]:
         """Resolve all sources for one snapshot without retaining request state."""
 
-        attachments: list[AttachmentMessage] = []
+        attachments: list[ContextAttachment] = []
         for source in self._sources:
             try:
                 source_attachments = tuple(source(snapshot))

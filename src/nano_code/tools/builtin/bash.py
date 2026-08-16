@@ -4,7 +4,7 @@ import asyncio
 import os
 import signal
 
-from nano_code.agent.contracts.tool import ToolDefinition
+from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.permissions import (
     PermissionBehavior,
@@ -30,8 +30,8 @@ from nano_code.tools.validation import optional_int, required_string
 
 class BashTool(Tool):
     @property
-    def definition(self) -> ToolDefinition:
-        return ToolDefinition(
+    def definition(self) -> ModelToolDefinition:
+        return ModelToolDefinition(
             name="Bash",
             description=(
                 "Run a shell command in the workspace. Commands are permission-gated "

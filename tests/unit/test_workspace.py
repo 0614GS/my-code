@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from nano_code.context import AgentsUserContextResolver
-from nano_code.messages import SystemContextBlock, UserContextMessage
+from nano_code.messages import ContextInstruction, UserContextDocument
 
 
 def test_agents_resolver_loads_and_wraps_workspace_instructions(
@@ -19,11 +19,10 @@ def test_agents_resolver_loads_and_wraps_workspace_instructions(
     resolved = AgentsUserContextResolver(workspace).resolve()
 
     assert resolved == (
-        UserContextMessage(
+        UserContextDocument(
             source="AGENTS.md",
             content=(
-                SystemContextBlock(
-                    kind="system_reminder",
+                ContextInstruction(
                     content=(
                         "As you answer the user's questions, you can use the "
                         "following context:\n"
@@ -55,7 +54,7 @@ def test_agents_resolver_only_reads_the_workspace_root_file(
 
     assert len(resolved) == 1
     block = resolved[0].content[0]
-    assert isinstance(block, SystemContextBlock)
+    assert isinstance(block, ContextInstruction)
     assert "Use this file.\n@include.md" in block.content
     assert "<system-reminder>" not in block.content
     assert "parent instructions" not in block.content

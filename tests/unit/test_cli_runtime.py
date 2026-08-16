@@ -10,10 +10,13 @@ from nano_code.cli.runtime import (
 )
 from nano_code.config import NanoCodePaths, Settings
 from nano_code.messages import (
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
-    TranscriptMessage,
+    AssistantMessage,
+    HumanMessage,
+    TextContent,
+    TokenUsage,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
 )
 from nano_code.permissions import PermissionMode
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
@@ -64,15 +67,10 @@ async def test_runtime_lists_and_atomically_switches_project_session(
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
     )
-    user = TranscriptMessage(
-        role="user",
-        origin="human",
-        content=(TextBlock("historical question"),),
-    )
-    assistant = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(TextBlock("historical answer"),),
+    user = HumanMessage(content="historical question")
+    assistant = AssistantMessage(
+        content=(TextContent("historical answer"),),
+        usage=TokenUsage(),
         parent_uuid=user.uuid,
     )
     store.append(user)
@@ -98,33 +96,26 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
     )
-    user = TranscriptMessage(
-        role="user",
-        origin="human",
-        content=(TextBlock("read it"),),
-    )
-    assistant = TranscriptMessage(
-        role="assistant",
-        origin="model",
-        content=(ToolUseBlock("read-1", "Read", {"path": "old.py"}),),
+    user = HumanMessage(content="read it")
+    assistant = AssistantMessage(
+        content=(ToolCall("read-1", "Read", {"path": "old.py"}),),
+        usage=TokenUsage(),
         parent_uuid=user.uuid,
     )
     snapshot = ToolResultPresentation(
         summary="Historical read summary",
         detail="Stored at execution time",
     )
-    result = TranscriptMessage(
-        role="user",
-        origin="tool",
+    result = ToolResultsMessage(
         content=(
-            ToolResultBlock(
+            ToolResult(
                 "read-1",
                 "model-visible historical content",
                 presentation=snapshot,
             ),
         ),
         parent_uuid=assistant.uuid,
-        source_message_uuid=assistant.uuid,
+        source_assistant_uuid=assistant.uuid,
     )
     for message in (user, assistant, result):
         store.append(message)

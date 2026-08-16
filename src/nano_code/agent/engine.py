@@ -15,8 +15,11 @@ from nano_code.agent.contracts.inbound import (
     AgentTurnResult,
 )
 from nano_code.agent.contracts.model import (
-    ModelResponseCompleted,
+    ModelOutput,
+    ModelOutputCompleted,
+    ModelTextBlock,
     ModelTextDelta,
+    ModelToolUseBlock,
 )
 from nano_code.agent.contracts.session import CompactBoundary, CompactTrigger
 from nano_code.agent.contracts.tool import (
@@ -40,12 +43,15 @@ from nano_code.agent.ports.model import ModelTurnPort
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.agent.ports.tool import ToolRoundPort
 from nano_code.messages import (
-    ModelResponse,
-    TextBlock,
+    AssistantMessage,
+    ConversationMessage,
+    ConversationSummaryMessage,
+    HumanMessage,
+    TextContent,
     TokenUsage,
-    ToolResultBlock,
-    ToolUseBlock,
-    TranscriptMessage,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
 )
 
 
@@ -79,7 +85,7 @@ class AgentEngine(AgentInboundPort):
         return self._conversation.session_id
 
     @property
-    def working_messages(self) -> tuple[TranscriptMessage, ...]:
+    def working_messages(self) -> tuple[ConversationMessage, ...]:
         """当前模型工作集的只读快照。"""
 
         return self._conversation.working_messages
@@ -112,19 +118,12 @@ class AgentEngine(AgentInboundPort):
 
         return self._stream(prompt)
 
-    def submit_stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
-        """兼容旧调用名；新的 inbound port 使用 ``stream``。"""
-
-        return self.stream(prompt)
-
     async def _stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
         if not prompt.strip():
             raise ValueError("Prompt must not be empty")
 
-        user_message = TranscriptMessage(
-            role="user",
-            origin="human",
-            content=(TextBlock(prompt),),
+        user_message = HumanMessage(
+            content=prompt,
             parent_uuid=self._last_uuid,
         )
         # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
@@ -136,19 +135,19 @@ class AgentEngine(AgentInboundPort):
             request = await self._plan_with_proactive_compact()
             reactive_attempted = False
             while True:
-                response: ModelResponse | None = None
+                response: ModelOutput | None = None
                 streamed_text = False
                 try:
-                    async for model_event in self._model_turn.stream(request):
+                    async for model_event in self._model_turn.stream(request.request):
                         if isinstance(model_event, ModelTextDelta):
                             streamed_text = True
                             yield AgentTextDelta(model_event.text)
-                        elif isinstance(model_event, ModelResponseCompleted):
+                        elif isinstance(model_event, ModelOutputCompleted):
                             if response is not None:
                                 raise RuntimeError(
                                     "Provider stream returned multiple final responses"
                                 )
-                            response = model_event.response
+                            response = model_event.output
                 except ModelContextOverflow:
                     if reactive_attempted:
                         raise
@@ -162,15 +161,18 @@ class AgentEngine(AgentInboundPort):
                 raise RuntimeError("Provider stream ended without a final response")
             if not streamed_text:
                 for block in response.content:
-                    if isinstance(block, TextBlock):
+                    if isinstance(block, ModelTextBlock):
                         yield AgentTextDelta(block.text)
 
             input_tokens += response.usage.total_input_tokens
             output_tokens += response.usage.output_tokens
-            assistant_message = TranscriptMessage(
-                role="assistant",
-                origin="model",
-                content=response.content,
+            assistant_message = AssistantMessage(
+                content=tuple(
+                    TextContent(block.text)
+                    if isinstance(block, ModelTextBlock)
+                    else ToolCall(block.id, block.name, block.input)
+                    for block in response.content
+                ),
                 parent_uuid=self._last_uuid,
                 usage=response.usage,
             )
@@ -178,10 +180,14 @@ class AgentEngine(AgentInboundPort):
             self._conversation.append(assistant_message)
 
             final_text = "\n".join(
-                block.text for block in response.content if isinstance(block, TextBlock)
+                block.text
+                for block in response.content
+                if isinstance(block, ModelTextBlock)
             ).strip()
             tool_calls = tuple(
-                block for block in response.content if isinstance(block, ToolUseBlock)
+                ToolCall(block.id, block.name, block.input)
+                for block in response.content
+                if isinstance(block, ModelToolUseBlock)
             )
             if not tool_calls:
                 yield AgentTurnCompleted(
@@ -193,8 +199,8 @@ class AgentEngine(AgentInboundPort):
                 )
                 return
 
-            result_message: TranscriptMessage | None = None
-            results: list[ToolResultBlock] = []
+            result_message: ToolResultsMessage | None = None
+            results: list[ToolResult] = []
             round_cancelled = False
             try:
                 async for tool_event in self._tool_round.run_round(
@@ -217,7 +223,7 @@ class AgentEngine(AgentInboundPort):
                         )
                     elif isinstance(tool_event, ToolRoundCompleted):
                         result_message = tool_event.message
-                        results = list(tool_event.results)
+                        results = list(tool_event.message.content)
                         round_cancelled = tool_event.cancelled
 
                 if result_message is None:
@@ -286,7 +292,7 @@ class AgentEngine(AgentInboundPort):
         )
 
     def _project_history(
-        self, messages: tuple[TranscriptMessage, ...]
+        self, messages: tuple[ConversationMessage, ...]
     ) -> tuple[
         AgentHistoryUserMessage
         | AgentHistoryAssistantMessage
@@ -297,8 +303,9 @@ class AgentEngine(AgentInboundPort):
         results = {
             block.tool_use_id: block
             for message in messages
+            if isinstance(message, ToolResultsMessage)
             for block in message.content
-            if isinstance(block, ToolResultBlock)
+            if isinstance(block, ToolResult)
         }
         history: list[
             AgentHistoryUserMessage
@@ -307,25 +314,19 @@ class AgentEngine(AgentInboundPort):
             | AgentHistoryToolCall
         ] = []
         for message in messages:
-            if message.origin == "human":
-                text = "\n".join(
-                    block.text
-                    for block in message.content
-                    if isinstance(block, TextBlock)
-                )
-                if text:
-                    history.append(AgentHistoryUserMessage(text))
+            if isinstance(message, HumanMessage):
+                history.append(AgentHistoryUserMessage(message.content))
                 continue
-            if message.origin == "system":
+            if isinstance(message, ConversationSummaryMessage):
                 history.append(AgentHistorySystemMessage("Conversation compacted"))
                 continue
-            if message.origin != "model":
+            if not isinstance(message, AssistantMessage):
                 continue
             for block in message.content:
-                if isinstance(block, TextBlock):
+                if isinstance(block, TextContent):
                     if block.text:
                         history.append(AgentHistoryAssistantMessage(block.text))
-                elif isinstance(block, ToolUseBlock):
+                elif isinstance(block, ToolCall):
                     result = results.get(block.id)
                     history.append(
                         AgentHistoryToolCall(
@@ -362,25 +363,25 @@ class AgentEngine(AgentInboundPort):
 
 
 def _cancelled_results(
-    calls: tuple[ToolUseBlock, ...],
+    calls: tuple[ToolCall, ...],
     tool_round: ToolRoundPort,
-    existing: list[ToolResultBlock],
-) -> list[ToolResultBlock]:
+    existing: list[ToolResult],
+) -> list[ToolResult]:
     message = "Tool execution was cancelled."
     by_id = {result.tool_use_id: result for result in existing}
-    results: list[ToolResultBlock] = []
+    results: list[ToolResult] = []
     for call in calls:
         if call.id in by_id:
             results.append(by_id[call.id])
             continue
-        result = ToolResultBlock(
+        result = ToolResult(
             tool_use_id=call.id,
             content=message,
             is_error=True,
         )
         presentation = tool_round.present_stored_result(call, result)
         results.append(
-            ToolResultBlock(
+            ToolResult(
                 tool_use_id=result.tool_use_id,
                 content=result.content,
                 is_error=True,

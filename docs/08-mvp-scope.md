@@ -14,7 +14,7 @@
 - 无交互环境 fail closed，工作区文件路径防逃逸；
 - 追加式 JSONL Transcript、轻量会话发现、活动父链恢复和运行时原子切换；
 - 与 Claude Code 同形的全局/项目存储布局和三级配置覆盖；
-- Transcript、内存工作集和 `ContextPlan` 三层上下文边界；
+- `TranscriptEntry`、`ConversationMessage`、`ModelRequest` 和 provider wire type 分层边界；
 - 分段提示词、static/session/turn 生命周期和 provider 自声明缓存能力；
 - assistant usage 持久化、可观察预算、稳定 microcompact 和完整/响应式 compact；
 - 超大工具结果落盘并给模型返回稳定预览。

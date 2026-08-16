@@ -1,75 +1,67 @@
-"""将 Transcript 和注入上下文规范化为模型输入消息。"""
+"""ConversationMessage 到 ModelMessage 的纯投影与协议校验。"""
 
-from dataclasses import replace
-
-from nano_code.agent.contracts.model import ModelInputContentBlock, ModelInputMessage
-from nano_code.messages import (
-    AttachmentMessage,
-    ContentBlock,
-    ContextContentBlock,
-    SystemContextBlock,
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
-    TranscriptMessage,
-    UserContextMessage,
+from nano_code.agent.contracts.model import (
+    ModelAssistantMessage,
+    ModelMessage,
+    ModelTextBlock,
+    ModelToolResultBlock,
+    ModelToolUseBlock,
+    ModelUserMessage,
 )
-from nano_code.messages.xml import render_system_context
+from nano_code.messages import (
+    AssistantMessage,
+    ContextAttachment,
+    ConversationMessage,
+    HumanMessage,
+    TextContent,
+    ToolResultsMessage,
+    UserContextDocument,
+)
+from nano_code.messages.xml import render_context_instruction, wrap_xml
 
 
 class ModelInputNormalizer:
-    """生成模型输入、移除本地信息、合并消息并验证工具协议。"""
+    """唯一了解 conversation 与 model 两层消息的映射器。"""
 
-    def normalize_transcript(
-        self, messages: tuple[TranscriptMessage, ...]
-    ) -> tuple[ModelInputMessage, ...]:
-        normalized: list[ModelInputMessage] = []
-        for message in messages:
-            # 展示快照属于 Transcript/UI，不进入模型可见的输入。
-            content = tuple(
-                _normalize_transcript_block(block) for block in message.content
-            )
-            candidate = ModelInputMessage(role=message.role, content=content)
-            if normalized and normalized[-1].role == candidate.role:
-                previous = normalized[-1]
-                normalized[-1] = ModelInputMessage(
-                    role=previous.role,
-                    content=previous.content + candidate.content,
-                )
-            else:
-                normalized.append(candidate)
-
-        result = tuple(normalized)
+    def normalize(
+        self,
+        user_context: tuple[UserContextDocument, ...],
+        history: tuple[ConversationMessage, ...],
+        attachments: tuple[ContextAttachment, ...],
+    ) -> tuple[ModelMessage, ...]:
+        candidates = [
+            *(_context_message(item) for item in user_context),
+            *(_conversation_message(item) for item in history),
+            *(_context_message(item) for item in attachments),
+        ]
+        result = _merge_adjacent(tuple(candidates))
         self._validate_tool_pairs(result)
         return result
 
-    def normalize_user_context(
-        self, messages: tuple[UserContextMessage, ...]
-    ) -> tuple[ModelInputMessage, ...]:
-        """Project user context into model-visible user messages."""
+    def normalize_transcript(
+        self, messages: tuple[ConversationMessage, ...]
+    ) -> tuple[ModelMessage, ...]:
+        """Compact 使用的 history-only 视图。"""
 
-        return _normalize_non_history(messages)
-
-    def normalize_attachments(
-        self, messages: tuple[AttachmentMessage, ...]
-    ) -> tuple[ModelInputMessage, ...]:
-        """Project request attachments into model-visible user messages."""
-
-        return _normalize_non_history(messages)
+        result = _merge_adjacent(
+            tuple(_conversation_message(item) for item in messages)
+        )
+        self._validate_tool_pairs(result)
+        return result
 
     @staticmethod
-    def _validate_tool_pairs(messages: tuple[ModelInputMessage, ...]) -> None:
+    def _validate_tool_pairs(messages: tuple[ModelMessage, ...]) -> None:
         pending: set[str] = set()
         seen_calls: set[str] = set()
         seen_results: set[str] = set()
         for message in messages:
             for block in message.content:
-                if isinstance(block, ToolUseBlock):
+                if isinstance(block, ModelToolUseBlock):
                     if block.id in seen_calls:
                         raise ValueError(f"Duplicate tool use in context: {block.id}")
                     seen_calls.add(block.id)
                     pending.add(block.id)
-                elif isinstance(block, ToolResultBlock):
+                elif isinstance(block, ModelToolResultBlock):
                     if block.tool_use_id in seen_results:
                         raise ValueError(
                             f"Duplicate tool result in context: {block.tool_use_id}"
@@ -81,44 +73,67 @@ class ModelInputNormalizer:
                     seen_results.add(block.tool_use_id)
                     pending.remove(block.tool_use_id)
         if pending:
-            unresolved = ", ".join(sorted(pending))
-            raise ValueError(f"Unresolved tool use in context: {unresolved}")
-
-
-def _normalize_non_history(
-    messages: tuple[UserContextMessage | AttachmentMessage, ...],
-) -> tuple[ModelInputMessage, ...]:
-    """Normalize one non-history message collection without cross-merging it."""
-
-    normalized: list[ModelInputMessage] = []
-    for message in messages:
-        candidate = ModelInputMessage(
-            role="user",
-            content=tuple(
-                _normalize_context_block(block) for block in message.content
-            ),
-        )
-        if normalized and normalized[-1].role == candidate.role:
-            previous = normalized[-1]
-            normalized[-1] = ModelInputMessage(
-                role=previous.role,
-                content=previous.content + candidate.content,
+            raise ValueError(
+                f"Unresolved tool use in context: {', '.join(sorted(pending))}"
             )
+
+
+def _conversation_message(message: ConversationMessage) -> ModelMessage:
+    if isinstance(message, HumanMessage):
+        return ModelUserMessage((ModelTextBlock(message.content),))
+    if isinstance(message, AssistantMessage):
+        return ModelAssistantMessage(
+            tuple(
+                ModelTextBlock(block.text)
+                if isinstance(block, TextContent)
+                else ModelToolUseBlock(block.id, block.name, block.input)
+                for block in message.content
+            )
+        )
+    if isinstance(message, ToolResultsMessage):
+        return ModelUserMessage(
+            tuple(
+                ModelToolResultBlock(
+                    result.tool_use_id, result.content, result.is_error
+                )
+                for result in message.content
+            )
+        )
+    return ModelUserMessage(
+        (ModelTextBlock(wrap_xml("conversation-summary", message.content)),)
+    )
+
+
+def _context_message(
+    message: UserContextDocument | ContextAttachment,
+) -> ModelUserMessage:
+    return ModelUserMessage(
+        tuple(
+            ModelTextBlock(
+                block.text
+                if isinstance(block, TextContent)
+                else render_context_instruction(block)
+            )
+            for block in message.content
+        )
+    )
+
+
+def _merge_adjacent(messages: tuple[ModelMessage, ...]) -> tuple[ModelMessage, ...]:
+    merged: list[ModelMessage] = []
+    for message in messages:
+        if (
+            merged
+            and isinstance(merged[-1], ModelUserMessage)
+            and isinstance(message, ModelUserMessage)
+        ):
+            merged[-1] = ModelUserMessage(merged[-1].content + message.content)
+        elif (
+            merged
+            and isinstance(merged[-1], ModelAssistantMessage)
+            and isinstance(message, ModelAssistantMessage)
+        ):
+            merged[-1] = ModelAssistantMessage(merged[-1].content + message.content)
         else:
-            normalized.append(candidate)
-    return tuple(normalized)
-
-def _normalize_transcript_block(block: ContentBlock) -> ModelInputContentBlock:
-    """在唯一边界移除本地展示数据并渲染可信上下文。"""
-
-    if isinstance(block, SystemContextBlock):
-        return TextBlock(render_system_context(block))
-    if isinstance(block, ToolResultBlock):
-        return replace(block, presentation=None)
-    return block
-
-
-def _normalize_context_block(block: ContextContentBlock) -> TextBlock:
-    if isinstance(block, SystemContextBlock):
-        return TextBlock(render_system_context(block))
-    return block
+            merged.append(message)
+    return tuple(merged)

@@ -148,15 +148,16 @@ boundary
 nano-code 现在显式区分三种数据形态：
 
 ```text
-SessionStore / JSONL（完整事实）
-  → AgentEngine working set（最后一个 compact summary 之后）
-  → ContextPlanner / ContextPlan（单次模型请求）
+TranscriptEntry / JSONL（磁盘事实）
+  ↔ ConversationMessage（运行时工作集）
+  → ContextPlanner → ModelRequest（单次模型请求）
+  → Provider wire type
 ```
 
-`TranscriptMessage` 保存 UUID、父链、origin、时间戳和 assistant usage；
-`ModelInputMessage` 只保留 role 与模型可见 content。`ContextPlanner` 从不可变
+四种 `ConversationMessage` 保存各自合法的内容、UUID、父链和时间戳；
+`ModelMessage` 只保留 role 与模型可见 content。`ContextPlanner` 从不可变
 `ConversationSnapshot` 生成 prompt sections、稳定工具顺序、规范化消息和
-`ContextBudget`，Agent Loop 不再直接拼装请求。相邻同 role 消息在规范化时合并，
+`ContextBudget` 和完整 `ModelRequest`，Agent Loop 不再直接拼装请求。相邻同 role 消息在规范化时合并，
 重复、孤立或未闭合的工具调用在进入 Provider 前失败。
 
 预算优先以最近一次 assistant 的真实 input、cache creation/read 与 output usage

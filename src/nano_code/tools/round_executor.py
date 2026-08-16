@@ -16,7 +16,12 @@ from nano_code.agent.contracts.tool import (
     ToolRoundEvent as _ToolRoundEvent,
 )
 from nano_code.agent.ports.tool import ToolRoundPort
-from nano_code.messages import ToolResultBlock, ToolUseBlock, TranscriptMessage
+from nano_code.messages import (
+    AssistantMessage,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
+)
 from nano_code.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
@@ -58,22 +63,22 @@ class ToolRoundExecutor(ToolRoundPort):
         if self._result_store_factory is not None:
             self.executor.result_store = self._result_store_factory(session_id)
 
-    def present_use(self, call: ToolUseBlock) -> ToolUsePresentation:
+    def present_use(self, call: ToolCall) -> ToolUsePresentation:
         return self.executor.present_use(call)
 
     def present_stored_result(
         self,
-        call: ToolUseBlock,
-        result: ToolResultBlock | None,
+        call: ToolCall,
+        result: ToolResult | None,
     ) -> ToolResultPresentation:
         return self.executor.present_stored_result(call, result)
 
     async def run_round(
         self,
-        calls: tuple[ToolUseBlock, ...],
-        assistant_message: TranscriptMessage,
+        calls: tuple[ToolCall, ...],
+        assistant_message: AssistantMessage,
     ) -> AsyncIterator[_ToolRoundEvent]:
-        results: list[ToolResultBlock] = []
+        results: list[ToolResult] = []
         try:
             # MVP 明确串行执行。每次调用完成后才开始下一个调用。
             for call in calls:
@@ -88,7 +93,7 @@ class ToolRoundExecutor(ToolRoundPort):
                     message = (
                         f"Unexpected {type(error).__name__} while executing {call.name}"
                     )
-                    result = ToolResultBlock(
+                    result = ToolResult(
                         tool_use_id=call.id,
                         content=message,
                         is_error=True,
@@ -113,7 +118,7 @@ class ToolRoundExecutor(ToolRoundPort):
             for call in calls:
                 if call.id in completed_ids:
                     continue
-                result = ToolResultBlock(
+                result = ToolResult(
                     tool_use_id=call.id,
                     content=message,
                     is_error=True,
@@ -128,29 +133,25 @@ class ToolRoundExecutor(ToolRoundPort):
                 )
             yield _ToolRoundCompleted(
                 message=_tool_result_message(assistant_message, tuple(results)),
-                results=tuple(results),
                 cancelled=True,
             )
             raise
 
         yield _ToolRoundCompleted(
             message=_tool_result_message(assistant_message, tuple(results)),
-            results=tuple(results),
         )
 
 
 def _tool_result_message(
-    assistant_message: TranscriptMessage,
-    results: tuple[ToolResultBlock, ...],
-) -> TranscriptMessage:
+    assistant_message: AssistantMessage,
+    results: tuple[ToolResult, ...],
+) -> ToolResultsMessage:
     if not results:
         raise ValueError("A tool round must contain at least one result")
-    return TranscriptMessage(
-        role="user",
-        origin="tool",
+    return ToolResultsMessage(
         content=results,
         parent_uuid=assistant_message.uuid,
-        source_message_uuid=assistant_message.uuid,
+        source_assistant_uuid=assistant_message.uuid,
     )
 
 

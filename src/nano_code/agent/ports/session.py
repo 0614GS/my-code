@@ -7,7 +7,7 @@ from nano_code.agent.contracts.session import (
     ContentReplacement,
     SessionSnapshot,
 )
-from nano_code.messages import TranscriptMessage
+from nano_code.messages import ConversationMessage
 
 
 @runtime_checkable
@@ -19,7 +19,7 @@ class SessionRepository(Protocol):
 
     def snapshot(self) -> SessionSnapshot: ...
 
-    def append(self, message: TranscriptMessage) -> None: ...
+    def append(self, message: ConversationMessage) -> None: ...
 
     def append_content_replacement(self, replacement: ContentReplacement) -> None: ...
 

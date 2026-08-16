@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 from uuid import uuid4
 
-from nano_code.messages import TranscriptMessage
+from nano_code.messages import ConversationMessage
 
 CompactTrigger = Literal["auto", "manual", "reactive"]
 
@@ -45,7 +45,7 @@ class ContentReplacement:
 class ConversationSnapshot:
     """ContextPort 某一时刻读取的会话工作集快照。"""
 
-    messages: tuple[TranscriptMessage, ...]
+    messages: tuple[ConversationMessage, ...]
     content_replacements: tuple[ContentReplacement, ...] = field(default_factory=tuple)
 
 
@@ -68,35 +68,7 @@ class CompactBoundary:
 class SessionSnapshot:
     """一次读取会话事实及其当前工作集所需的完整快照。"""
 
-    history: tuple[TranscriptMessage, ...]
-    working_set: tuple[TranscriptMessage, ...]
+    history: tuple[ConversationMessage, ...]
+    working_set: tuple[ConversationMessage, ...]
     content_replacements: tuple[ContentReplacement, ...] = field(default_factory=tuple)
     compact_boundaries: tuple[CompactBoundary, ...] = field(default_factory=tuple)
-
-    @property
-    def full_history(self) -> tuple[TranscriptMessage, ...]:
-        return self.history
-
-    @property
-    def all_messages(self) -> tuple[TranscriptMessage, ...]:
-        return self.history
-
-    @property
-    def messages(self) -> tuple[TranscriptMessage, ...]:
-        return self.history
-
-    @property
-    def working_messages(self) -> tuple[TranscriptMessage, ...]:
-        return self.working_set
-
-    @property
-    def replacements(self) -> tuple[ContentReplacement, ...]:
-        return self.content_replacements
-
-    @property
-    def boundaries(self) -> tuple[CompactBoundary, ...]:
-        return self.compact_boundaries
-
-    @property
-    def compact_boundary(self) -> CompactBoundary | None:
-        return self.compact_boundaries[-1] if self.compact_boundaries else None

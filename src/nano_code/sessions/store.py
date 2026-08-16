@@ -3,18 +3,21 @@
 import json
 import os
 import re
-from collections.abc import Mapping
 from pathlib import Path
 
 from nano_code.agent.contracts.session import (
     CompactBoundary,
-    CompactTrigger,
     ContentReplacement,
     SessionSnapshot,
 )
 from nano_code.agent.ports.session import SessionRepository
-from nano_code.messages import TranscriptMessage
-from nano_code.messages.codec import message_from_json, message_to_json
+from nano_code.messages import ConversationMessage
+from nano_code.sessions.codec import (
+    decode_entry,
+    encode_boundary,
+    encode_message,
+    encode_replacement,
+)
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -54,7 +57,7 @@ class SessionStore(SessionRepository):
     def session_id(self) -> str:
         return self._session_id
 
-    def load(self) -> tuple[TranscriptMessage, ...]:
+    def load(self) -> tuple[ConversationMessage, ...]:
         if not self.path.exists():
             self._known_ids = set()
             self._content_replacements = {}
@@ -62,8 +65,8 @@ class SessionStore(SessionRepository):
             self._pending_compact_boundaries = {}
             return ()
 
-        messages: list[TranscriptMessage] = []
-        by_id: dict[str, TranscriptMessage] = {}
+        messages: list[ConversationMessage] = []
+        by_id: dict[str, ConversationMessage] = {}
         seen: set[str] = set()
         replacements: dict[str, ContentReplacement] = {}
         boundaries: dict[str, CompactBoundary] = {}
@@ -73,11 +76,9 @@ class SessionStore(SessionRepository):
                     continue
                 try:
                     raw = json.loads(line)
-                    if (
-                        isinstance(raw, dict)
-                        and raw.get("type") == "content_replacement"
-                    ):
-                        replacement = _replacement_from_json(raw)
+                    entry = decode_entry(raw)
+                    if isinstance(entry, ContentReplacement):
+                        replacement = entry
                         previous = replacements.get(replacement.tool_use_id)
                         if previous is not None and previous != replacement:
                             raise ValueError(
@@ -86,8 +87,8 @@ class SessionStore(SessionRepository):
                             )
                         replacements[replacement.tool_use_id] = replacement
                         continue
-                    if isinstance(raw, dict) and raw.get("type") == "compact_boundary":
-                        boundary = _boundary_from_json(raw)
+                    if isinstance(entry, CompactBoundary):
+                        boundary = entry
                         previous_boundary = boundaries.get(boundary.id)
                         if (
                             previous_boundary is not None
@@ -98,7 +99,7 @@ class SessionStore(SessionRepository):
                             )
                         boundaries[boundary.id] = boundary
                         continue
-                    message = message_from_json(raw)
+                    message = entry
                 except (json.JSONDecodeError, ValueError, TypeError) as error:
                     raise ValueError(
                         f"Invalid transcript line {line_number}: {error}"
@@ -155,8 +156,8 @@ class SessionStore(SessionRepository):
         return tuple(self._compact_boundaries.values())
 
     def load_working_set(
-        self, messages: tuple[TranscriptMessage, ...] | None = None
-    ) -> tuple[TranscriptMessage, ...]:
+        self, messages: tuple[ConversationMessage, ...] | None = None
+    ) -> tuple[ConversationMessage, ...]:
         """返回最后一个有效 compact summary 开始的活动工作集。"""
 
         active = self.load() if messages is None else messages
@@ -169,7 +170,7 @@ class SessionStore(SessionRepository):
                 return active[index:]
         return active
 
-    def append(self, message: TranscriptMessage) -> None:
+    def append(self, message: ConversationMessage) -> None:
         """校验幂等性和父节点顺序后追加一条消息。"""
 
         if self._known_ids is None:
@@ -185,7 +186,7 @@ class SessionStore(SessionRepository):
         ):
             raise ValueError(f"Unknown parent UUID: {message.parent_uuid}")
 
-        self._append_record(message_to_json(message))
+        self._append_record(encode_message(message))
 
         # 仅在持久化写入成功后更新内存索引。
         self._known_ids.add(message.uuid)
@@ -204,16 +205,7 @@ class SessionStore(SessionRepository):
                     f"Conflicting content replacement: {replacement.tool_use_id}"
                 )
             return
-        self._append_record(
-            {
-                "type": "content_replacement",
-                "version": 1,
-                "tool_use_id": replacement.tool_use_id,
-                "tool_name": replacement.tool_name,
-                "original_chars": replacement.original_chars,
-                "content": replacement.content,
-            }
-        )
+        self._append_record(encode_replacement(replacement))
         self._content_replacements[replacement.tool_use_id] = replacement
 
     def append_compact_boundary(self, boundary: CompactBoundary) -> None:
@@ -234,17 +226,7 @@ class SessionStore(SessionRepository):
             if previous != boundary:
                 raise ValueError(f"Conflicting compact boundary: {boundary.id}")
             return
-        self._append_record(
-            {
-                "type": "compact_boundary",
-                "version": 1,
-                "id": boundary.id,
-                "parent_uuid": boundary.parent_uuid,
-                "summary_uuid": boundary.summary_uuid,
-                "trigger": boundary.trigger,
-                "pre_compact_chars": boundary.pre_compact_chars,
-            }
-        )
+        self._append_record(encode_boundary(boundary))
         self._pending_compact_boundaries[boundary.id] = boundary
         self._activate_pending_boundaries()
 
@@ -282,76 +264,15 @@ class SessionStore(SessionRepository):
             os.fsync(handle.fileno())
 
 
-def _replacement_from_json(value: Mapping[str, object]) -> ContentReplacement:
-    """严格解析内容替换记录。"""
-
-    if value.get("version") != 1:
-        raise ValueError("Unsupported content replacement record")
-    tool_use_id = value.get("tool_use_id")
-    tool_name = value.get("tool_name")
-    original_chars = value.get("original_chars")
-    content = value.get("content")
-    if not isinstance(tool_use_id, str) or not tool_use_id:
-        raise ValueError("Content replacement tool_use_id must be a string")
-    if not isinstance(tool_name, str) or not tool_name:
-        raise ValueError("Content replacement tool_name must be a string")
-    if (
-        not isinstance(original_chars, int)
-        or isinstance(original_chars, bool)
-        or original_chars < 1
-    ):
-        raise ValueError("Content replacement original_chars must be positive")
-    if not isinstance(content, str) or not content:
-        raise ValueError("Content replacement content must be a string")
-    return ContentReplacement(tool_use_id, tool_name, original_chars, content)
-
-
-def _boundary_from_json(value: Mapping[str, object]) -> CompactBoundary:
-    if value.get("version") != 1:
-        raise ValueError("Unsupported compact boundary record")
-    boundary_id = value.get("id")
-    parent_uuid = value.get("parent_uuid")
-    summary_uuid = value.get("summary_uuid")
-    trigger = value.get("trigger")
-    pre_compact_chars = value.get("pre_compact_chars")
-    if not isinstance(boundary_id, str) or not boundary_id:
-        raise ValueError("Compact boundary id must be a string")
-    if not isinstance(parent_uuid, str) or not parent_uuid:
-        raise ValueError("Compact boundary parent_uuid must be a string")
-    if not isinstance(summary_uuid, str) or not summary_uuid:
-        raise ValueError("Compact boundary summary_uuid must be a string")
-    if trigger == "auto":
-        actual_trigger: CompactTrigger = "auto"
-    elif trigger == "manual":
-        actual_trigger = "manual"
-    elif trigger == "reactive":
-        actual_trigger = "reactive"
-    else:
-        raise ValueError("Unsupported compact trigger")
-    if (
-        not isinstance(pre_compact_chars, int)
-        or isinstance(pre_compact_chars, bool)
-        or pre_compact_chars < 1
-    ):
-        raise ValueError("Compact boundary pre_compact_chars must be positive")
-    return CompactBoundary(
-        id=boundary_id,
-        parent_uuid=parent_uuid,
-        summary_uuid=summary_uuid,
-        trigger=actual_trigger,
-        pre_compact_chars=pre_compact_chars,
-    )
-
-
 def _active_parent_chain(
-    messages: list[TranscriptMessage], by_id: dict[str, TranscriptMessage]
-) -> tuple[TranscriptMessage, ...]:
+    messages: list[ConversationMessage], by_id: dict[str, ConversationMessage]
+) -> tuple[ConversationMessage, ...]:
     """从最后一条记录沿父指针恢复当前活动分支。"""
 
     if not messages:
         return ()
-    chain: list[TranscriptMessage] = []
-    current: TranscriptMessage | None = messages[-1]
+    chain: list[ConversationMessage] = []
+    current: ConversationMessage | None = messages[-1]
     while current is not None:
         chain.append(current)
         current = (

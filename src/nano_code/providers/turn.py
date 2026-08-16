@@ -2,9 +2,9 @@
 
 from collections.abc import AsyncIterator
 
-from nano_code.agent.contracts.context import ContextPlan
 from nano_code.agent.contracts.model import (
-    ModelResponseCompleted,
+    ModelOutputCompleted,
+    ModelRequest,
     ModelStreamEvent,
 )
 from nano_code.agent.ports.model import ModelCompletionPort, ModelTurnPort
@@ -16,12 +16,12 @@ class CompleteModelTurnAdapter(ModelTurnPort):
     def __init__(self, provider: ModelCompletionPort) -> None:
         self.provider = provider
 
-    def stream(self, request: ContextPlan) -> AsyncIterator[ModelStreamEvent]:
+    def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         return self._stream(request)
 
-    async def _stream(self, request: ContextPlan) -> AsyncIterator[ModelStreamEvent]:
+    async def _stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         response = await self.provider.complete(request)
-        yield ModelResponseCompleted(response)
+        yield ModelOutputCompleted(response)
 
 
 ModelTurnAdapter = CompleteModelTurnAdapter

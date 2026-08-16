@@ -4,7 +4,7 @@ import fnmatch
 import re
 from pathlib import Path
 
-from nano_code.agent.contracts.tool import ToolDefinition
+from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.presentation import ToolResultPresentation, compact_text
 from nano_code.tools.base import (
@@ -28,8 +28,8 @@ _SKIPPED_ROOTS = frozenset({".git", ".nano-code", ".venv", "__pycache__"})
 
 class GrepTool(Tool):
     @property
-    def definition(self) -> ToolDefinition:
-        return ToolDefinition(
+    def definition(self) -> ModelToolDefinition:
+        return ModelToolDefinition(
             name="Grep",
             description=(
                 "Search UTF-8 workspace files with a Python regular expression."

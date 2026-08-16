@@ -49,9 +49,9 @@ provider 决定是否把稳定边界转换为协议缓存点。官方 Anthropic 
 ## 4. User context 与 attachments
 
 `UserContextResolver` 是独立于 provider 的上下文来源接口，返回一组未渲染的
-`UserContextMessage`。消息带有来源名和 `TextBlock | SystemContextBlock` 内容，但没有
-Transcript UUID、父链或时间戳。`ContextPlanner` 在自己的生命周期内缓存 user context，
-并通过 `ModelInputNormalizer` 将其规范化到 `ContextPlan.user_context`；预算统计使用规范化后
+`UserContextDocument`。文档带有来源名和 `TextContent | ContextInstruction` 内容，但没有
+conversation UUID、父链或时间戳。`ContextPlanner` 在自己的生命周期内缓存 user context，
+并通过 `ModelInputNormalizer` 将其直接放入最终 `ModelRequest.messages`；预算统计使用规范化后
 的模型可见文本，因此包含 XML wrapper 的字符量。
 
 Anthropic 请求的顺序是 `user_context → conversation messages → attachments`。AGENTS context
@@ -65,21 +65,21 @@ resolver 不遍历父目录，不读取 `CLAUDE.md`、`.claude/` 或规则目录
 
 `AttachmentResolver` 是一个同步、无状态的 concrete 聚合器，接收按声明顺序排列的
 `AttachmentSource`。每个 source 都收到当前 `ConversationSnapshot`，返回一组
-`AttachmentMessage`；每次请求都会重新执行 source，不做 session 缓存。source 的结果会先
+`ContextAttachment`；每次请求都会重新执行 source，不做 session 缓存。source 的结果会先
 整体收集，source 失败时记录异常并跳过该 source，其他 source 仍然生效。无 source 的
 `AttachmentResolver()` 返回空 tuple。attachment 同样只在模型请求边界投影为 user message，
 不进入 Transcript 或 compact summary；未来的动态 reminder 可以复用现有
-`SystemContextBlock(kind="system_reminder")`。
+`ContextInstruction`。
 
 ## 5. XML 上下文块
 
-compact summary 和类似 reminder 的内部说明使用 `SystemContextBlock` 保存。XML 标签和
-wrapper 集中位于 `messages/xml.py`；Transcript 记录结构化 kind 与 content，
+compact summary 使用独立 `ConversationSummaryMessage`；请求级 reminder 使用
+`ContextInstruction`。XML wrapper 集中位于 `messages/xml.py`，并由
 `ModelInputNormalizer` 到请求边界才渲染 `<conversation-summary>` 或
-`<system-reminder>`。所有可信 user context 和 attachment 也经过同一规范化路径。
+`<system-reminder>`。
 
 XML 只是帮助模型识别语义的文本协议，不是可信执行通道。普通用户和工具输出中的同名
-标签不会升级成内部上下文块；可信性来自消息 origin、强类型构造和统一规范化路径。
+标签不会升级成内部上下文块；可信性来自判别联合和统一规范化路径。
 
 ## 6. 后续扩展
 

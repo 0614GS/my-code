@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import ToolDefinition
-from nano_code.messages import JsonObject, ToolUseBlock
+from nano_code.agent import ModelToolDefinition
+from nano_code.messages import JsonObject, ToolCall
 from nano_code.permissions import (
     PermissionConfirmation,
     PermissionMode,
@@ -55,8 +55,8 @@ class FailingPrompter:
 
 class NormalizingTool(Tool):
     @property
-    def definition(self) -> ToolDefinition:
-        return ToolDefinition(
+    def definition(self) -> ModelToolDefinition:
+        return ModelToolDefinition(
             name="Normalize",
             description="Test approved-input propagation.",
             input_schema={"type": "object"},
@@ -114,7 +114,7 @@ def test_workspace_path_rejects_traversal_and_protected_writes(tmp_path: Path) -
 async def test_bypass_still_cannot_write_protected_path(tmp_path: Path) -> None:
     executor = build_executor(tmp_path, PermissionMode.BYPASS)
     outcome = await executor.execute(
-        ToolUseBlock(
+        ToolCall(
             id="write-protected",
             name="Write",
             input={"path": ".git/config", "content": "bad"},
@@ -129,9 +129,7 @@ async def test_bypass_still_cannot_write_protected_path(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_unknown_tool_produces_matching_error_result(tmp_path: Path) -> None:
     executor = build_executor(tmp_path, PermissionMode.DEFAULT)
-    outcome = await executor.execute(
-        ToolUseBlock(id="unknown-1", name="Missing", input={})
-    )
+    outcome = await executor.execute(ToolCall(id="unknown-1", name="Missing", input={}))
 
     assert outcome.result.tool_use_id == "unknown-1"
     assert outcome.result.is_error is True
@@ -151,7 +149,7 @@ async def test_permission_denial_feedback_is_returned_to_model(tmp_path: Path) -
     )
 
     outcome = await executor.execute(
-        ToolUseBlock(
+        ToolCall(
             id="write-feedback",
             name="Write",
             input={"path": "a.txt", "content": "no"},
@@ -172,7 +170,7 @@ async def test_bash_subprocess_cannot_inherit_provider_api_key(
     executor = build_executor(tmp_path, PermissionMode.BYPASS)
 
     outcome = await executor.execute(
-        ToolUseBlock(
+        ToolCall(
             id="bash-secret-boundary",
             name="Bash",
             input={
@@ -203,7 +201,7 @@ async def test_read_only_bash_executes_without_permission_prompt(
     )
 
     outcome = await executor.execute(
-        ToolUseBlock(id="bash-read-only", name="Bash", input={"command": "pwd"})
+        ToolCall(id="bash-read-only", name="Bash", input={"command": "pwd"})
     )
 
     assert outcome.result.is_error is False
@@ -215,7 +213,7 @@ async def test_mutating_bash_still_requires_permission(tmp_path: Path) -> None:
     executor = build_executor(tmp_path, PermissionMode.DEFAULT)
 
     outcome = await executor.execute(
-        ToolUseBlock(
+        ToolCall(
             id="bash-write-denied",
             name="Bash",
             input={"command": "printf changed > created.txt"},
@@ -240,7 +238,7 @@ async def test_executor_runs_the_exact_input_approved_by_tool_policy(
     )
 
     outcome = await executor.execute(
-        ToolUseBlock(
+        ToolCall(
             id="normalized-input",
             name="Normalize",
             input={"value": "model-provided"},
@@ -268,7 +266,7 @@ async def test_presentation_failure_does_not_change_successful_tool_result(
     )
 
     outcome = await executor.execute(
-        ToolUseBlock(id="broken-presentation", name="Normalize", input={})
+        ToolCall(id="broken-presentation", name="Normalize", input={})
     )
 
     assert outcome.result.is_error is False

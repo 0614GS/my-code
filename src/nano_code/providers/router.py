@@ -5,11 +5,9 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from nano_code.agent.contracts.context import ContextPlan
-from nano_code.agent.contracts.model import ModelStreamEvent
+from nano_code.agent.contracts.model import ModelOutput, ModelRequest, ModelStreamEvent
 from nano_code.agent.ports.model import ModelCompletionPort, ModelTurnPort
 from nano_code.auth import CredentialSource
-from nano_code.messages import ModelResponse
 from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.base import ProviderCapabilities
 from nano_code.providers.profiles import ProviderProtocol
@@ -39,7 +37,7 @@ class _ClosableProvider(Protocol):
 
 @runtime_checkable
 class _StreamingProvider(Protocol):
-    def stream(self, request: ContextPlan) -> AsyncIterator[ModelStreamEvent]:
+    def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """可选的原生 streaming adapter 能力。"""
         ...
 
@@ -70,7 +68,7 @@ class ProviderRouter(ModelTurnPort, ModelCompletionPort):
             case ProviderProtocol.ANTHROPIC_MESSAGES:
                 return AnthropicProvider.capabilities_for(self._connection.base_url)
 
-    async def complete(self, request: ContextPlan) -> ModelResponse:
+    async def complete(self, request: ModelRequest) -> ModelOutput:
         # 在一次完整请求期间持有锁，使 profile 切换成为明确的轮次间操作，
         # 而不是请求途中的状态变更。
         async with self._lock:
@@ -78,7 +76,7 @@ class ProviderRouter(ModelTurnPort, ModelCompletionPort):
                 self._provider = self._factory(self._connection)
             return await self._provider.complete(request)
 
-    async def stream(self, request: ContextPlan) -> AsyncIterator[ModelStreamEvent]:
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """在完整 SSE 响应期间保持同一个适配器和连接。"""
 
         async with self._lock:

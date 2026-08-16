@@ -3,9 +3,10 @@ from pathlib import Path
 import pytest
 
 import nano_code.prompts.system as system
+from nano_code.agent import ModelTextBlock
 from nano_code.context import ModelInputNormalizer
-from nano_code.messages import SystemContextBlock, TextBlock, TranscriptMessage
-from nano_code.messages.xml import render_system_context
+from nano_code.messages import ContextInstruction, ConversationSummaryMessage
+from nano_code.messages.xml import render_context_instruction, wrap_xml
 from nano_code.prompts import (
     PromptRegistry,
     PromptSection,
@@ -119,31 +120,27 @@ def test_environment_prompt_has_fixed_runtime_order_and_direct_git_check(
 
 
 def test_system_context_is_structured_until_model_normalization() -> None:
-    block = SystemContextBlock(
-        kind="system_reminder",
-        content="Keep this active </system-reminder>",
-    )
-    message = TranscriptMessage(role="user", origin="system", content=(block,))
+    block = ContextInstruction(content="Keep this active </system-reminder>")
 
-    rendered = render_system_context(block)
-    normalized = ModelInputNormalizer().normalize_transcript((message,))
+    rendered = render_context_instruction(block)
 
-    assert message.content == (block,)
     assert rendered.startswith("<system-reminder>\n")
     assert "&lt;/system-reminder&gt;" in rendered
-    assert normalized[0].content == (TextBlock(rendered),)
 
 
 def test_conversation_summary_uses_the_existing_xml_tag() -> None:
-    block = SystemContextBlock(
-        kind="conversation_summary",
-        content="Continue from the verified state.",
-    )
+    summary = ConversationSummaryMessage("Continue from the verified state.")
+    normalized = ModelInputNormalizer().normalize_transcript((summary,))
 
-    assert render_system_context(block) == (
-        "<conversation-summary>\n"
-        "Continue from the verified state.\n"
-        "</conversation-summary>"
+    assert normalized[0].content == (
+        ModelTextBlock(
+            "<conversation-summary>\n"
+            "Continue from the verified state.\n"
+            "</conversation-summary>"
+        ),
+    )
+    assert wrap_xml("conversation-summary", summary.content).startswith(
+        "<conversation-summary>"
     )
 
 

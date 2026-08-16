@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.messages import JsonObject, ToolResultBlock, ToolUseBlock
+from nano_code.messages import JsonObject, ToolCall, ToolResult
 from nano_code.permissions import PermissionBehavior, PermissionPolicy
 from nano_code.permissions.prompt import PermissionPrompter
 from nano_code.presentation import (
@@ -26,7 +26,7 @@ from nano_code.tools.result_store import ToolResultStore
 class ToolExecutionOutcome:
     """一次执行产生的模型结果和用户展示结果。"""
 
-    result: ToolResultBlock
+    result: ToolResult
     presentation: ToolResultPresentation
 
 
@@ -47,7 +47,7 @@ class ToolExecutor:
         self.context = context
         self.result_store = result_store
 
-    def present_use(self, call: ToolUseBlock) -> ToolUsePresentation:
+    def present_use(self, call: ToolCall) -> ToolUsePresentation:
         """请求 Tool 解释调用语义；未知或异常工具使用安全回退。"""
 
         tool = self.registry.get(call.name)
@@ -59,7 +59,7 @@ class ToolExecutor:
                 pass
         return generic_tool_use_presentation(call.name, call.input)
 
-    def present_error(self, call: ToolUseBlock, message: str) -> ToolResultPresentation:
+    def present_error(self, call: ToolCall, message: str) -> ToolResultPresentation:
         """请求 Tool 展示错误；未知或异常工具使用安全回退。"""
 
         tool = self.registry.get(call.name)
@@ -72,8 +72,8 @@ class ToolExecutor:
 
     def present_stored_result(
         self,
-        call: ToolUseBlock,
-        result: ToolResultBlock | None,
+        call: ToolCall,
+        result: ToolResult | None,
     ) -> ToolResultPresentation:
         """投影历史结果，并兼容尚未保存展示快照的旧 Transcript。"""
 
@@ -92,7 +92,7 @@ class ToolExecutor:
             ToolOutput(content=result.content, is_error=False),
         )
 
-    async def execute(self, call: ToolUseBlock) -> ToolExecutionOutcome:
+    async def execute(self, call: ToolCall) -> ToolExecutionOutcome:
         tool = self.registry.get(call.name)
         if tool is None:
             # 未知工具名以协议结果形式报告给模型，而不是中断整个智能体循环。
@@ -143,7 +143,7 @@ class ToolExecutor:
 
             # 构造 API 块前先外置结果，使后续每一层看到相同、有界且可重放的内容。
             content = self.result_store.externalize(call.id, model_content)
-            result = ToolResultBlock(
+            result = ToolResult(
                 tool_use_id=call.id,
                 content=content,
                 is_error=output.is_error,
@@ -174,7 +174,7 @@ class ToolExecutor:
 
     @staticmethod
     def _error(
-        call: ToolUseBlock,
+        call: ToolCall,
         message: str,
         *,
         tool: Tool | None = None,
@@ -190,7 +190,7 @@ class ToolExecutor:
             )
         except Exception:
             presentation = ToolResultPresentation(summary=compact_text(message))
-        result = ToolResultBlock(
+        result = ToolResult(
             tool_use_id=call.id,
             content=message,
             is_error=True,

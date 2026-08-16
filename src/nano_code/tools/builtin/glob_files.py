@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from nano_code.agent.contracts.tool import ToolDefinition
+from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.presentation import ToolResultPresentation, compact_text
 from nano_code.tools.base import (
@@ -18,8 +18,8 @@ from nano_code.tools.validation import optional_int, optional_string, required_s
 
 class GlobTool(Tool):
     @property
-    def definition(self) -> ToolDefinition:
-        return ToolDefinition(
+    def definition(self) -> ModelToolDefinition:
+        return ModelToolDefinition(
             name="Glob",
             description="Find files and directories using a workspace-relative glob.",
             input_schema={

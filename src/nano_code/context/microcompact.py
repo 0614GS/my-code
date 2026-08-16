@@ -4,10 +4,14 @@ from dataclasses import replace
 
 from nano_code.agent.contracts.session import ContentReplacement
 from nano_code.messages import (
-    SystemContextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
-    TranscriptMessage,
+    AssistantMessage,
+    ConversationMessage,
+    ConversationSummaryMessage,
+    HumanMessage,
+    TextContent,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
 )
 
 _ELIGIBLE_TOOLS = frozenset({"Bash", "Glob", "Grep", "Read"})
@@ -42,7 +46,7 @@ class MicrocompactPolicy:
 
     def propose(
         self,
-        messages: tuple[TranscriptMessage, ...],
+        messages: tuple[ConversationMessage, ...],
         existing: tuple[ContentReplacement, ...],
     ) -> tuple[ContentReplacement, ...]:
         """按消息顺序返回达到目标预算所需的新决策。"""
@@ -55,14 +59,16 @@ class MicrocompactPolicy:
         tool_names = {
             block.id: block.name
             for message in messages
+            if isinstance(message, AssistantMessage)
             for block in message.content
-            if isinstance(block, ToolUseBlock)
+            if isinstance(block, ToolCall)
         }
         candidates = [
             block
             for message in messages
+            if isinstance(message, ToolResultsMessage)
             for block in message.content
-            if isinstance(block, ToolResultBlock)
+            if isinstance(block, ToolResult)
             and block.tool_use_id not in replacements
             and tool_names.get(block.tool_use_id) in _ELIGIBLE_TOOLS
             and len(block.content) >= self.min_result_chars
@@ -86,17 +92,20 @@ class MicrocompactPolicy:
 
 
 def apply_content_replacements(
-    messages: tuple[TranscriptMessage, ...],
+    messages: tuple[ConversationMessage, ...],
     replacements: tuple[ContentReplacement, ...],
-) -> tuple[TranscriptMessage, ...]:
+) -> tuple[ConversationMessage, ...]:
     """创建模型工作视图，不修改 Transcript 中的原始消息。"""
 
     by_id = {item.tool_use_id: item for item in replacements}
-    updated: list[TranscriptMessage] = []
+    updated: list[ConversationMessage] = []
     for message in messages:
+        if not isinstance(message, ToolResultsMessage):
+            updated.append(message)
+            continue
         content = tuple(
             replace(block, content=by_id[block.tool_use_id].content)
-            if isinstance(block, ToolResultBlock) and block.tool_use_id in by_id
+            if isinstance(block, ToolResult) and block.tool_use_id in by_id
             else block
             for block in message.content
         )
@@ -105,22 +114,24 @@ def apply_content_replacements(
 
 
 def _effective_message_chars(
-    messages: tuple[TranscriptMessage, ...],
+    messages: tuple[ConversationMessage, ...],
     replacements: dict[str, ContentReplacement],
 ) -> int:
     size = 0
     for message in messages:
+        if isinstance(message, (HumanMessage, ConversationSummaryMessage)):
+            size += len(message.content)
+            continue
         for block in message.content:
-            if isinstance(block, ToolResultBlock):
+            if isinstance(block, ToolResult):
                 size += (
                     len(replacements[block.tool_use_id].content)
                     if block.tool_use_id in replacements
                     else len(block.content)
                 )
-            elif isinstance(block, ToolUseBlock):
+            elif isinstance(block, ToolCall):
                 size += len(block.name) + len(str(block.input))
-            elif isinstance(block, SystemContextBlock):
-                size += len(block.content)
             else:
+                assert isinstance(block, TextContent)
                 size += len(block.text)
     return size

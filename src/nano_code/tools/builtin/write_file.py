@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from nano_code.agent.contracts.tool import ToolDefinition
+from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.presentation import ToolResultPresentation
 from nano_code.tools.base import Tool, ToolContext, ToolOutput, ToolRisk
@@ -12,8 +12,8 @@ from nano_code.tools.validation import required_string
 
 class WriteFileTool(Tool):
     @property
-    def definition(self) -> ToolDefinition:
-        return ToolDefinition(
+    def definition(self) -> ModelToolDefinition:
+        return ModelToolDefinition(
             name="Write",
             description="Create or replace a UTF-8 text file in the workspace.",
             input_schema={

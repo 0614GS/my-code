@@ -13,23 +13,20 @@ from anthropic.types import (
     ToolUseBlockParam,
 )
 
-from nano_code.agent.contracts.context import ContextPlan
 from nano_code.agent.contracts.model import (
-    ModelInputMessage,
-    ModelResponseCompleted,
+    ModelMessage,
+    ModelOutput,
+    ModelOutputCompleted,
+    ModelRequest,
     ModelStreamEvent,
+    ModelTextBlock,
     ModelTextDelta,
+    ModelToolResultBlock,
+    ModelToolUseBlock,
 )
 from nano_code.agent.errors import ModelContextOverflow
 from nano_code.agent.ports.model import ModelCompletionPort
-from nano_code.messages import (
-    ModelResponse,
-    TextBlock,
-    TokenUsage,
-    ToolResultBlock,
-    ToolUseBlock,
-)
-from nano_code.messages.models import to_json_object
+from nano_code.messages import TokenUsage, to_json_object
 from nano_code.prompts import PromptStability, SystemPrompt
 from nano_code.providers.base import ProviderCapabilities
 
@@ -70,13 +67,13 @@ class AnthropicProvider(ModelCompletionPort):
 
         await self.client.close()
 
-    async def complete(self, request: ContextPlan) -> ModelResponse:
+    async def complete(self, request: ModelRequest) -> ModelOutput:
         try:
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=self._system(request.system_prompt),
-                messages=self._request_messages(request),
+                messages=self._messages(request.messages),
                 tools=self._tools(request),
             )
         except BadRequestError as error:
@@ -86,7 +83,7 @@ class AnthropicProvider(ModelCompletionPort):
             raise TypeError("Expected a non-streaming Anthropic Message")
         return self._response(response)
 
-    async def stream(self, request: ContextPlan) -> AsyncIterator[ModelStreamEvent]:
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """流式输出展示文本，随后发出经 SDK 校验的最终快照。"""
 
         try:
@@ -94,7 +91,7 @@ class AnthropicProvider(ModelCompletionPort):
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=self._system(request.system_prompt),
-                messages=self._request_messages(request),
+                messages=self._messages(request.messages),
                 tools=self._tools(request),
             ) as stream:
                 async for event in stream:
@@ -107,10 +104,10 @@ class AnthropicProvider(ModelCompletionPort):
         except BadRequestError as error:
             _raise_context_overflow(error)
             raise
-        yield ModelResponseCompleted(response=self._response(final_message))
+        yield ModelOutputCompleted(output=self._response(final_message))
 
     @staticmethod
-    def _messages(messages: Iterable[ModelInputMessage]) -> list[MessageParam]:
+    def _messages(messages: Iterable[ModelMessage]) -> list[MessageParam]:
         # 上下文层已经移除了 Transcript 元数据并校验协议；适配器只转换 SDK 类型。
         normalized: list[MessageParam] = []
         for message in messages:
@@ -118,9 +115,9 @@ class AnthropicProvider(ModelCompletionPort):
                 TextBlockParam | ToolUseBlockParam | ToolResultBlockParam
             ] = []
             for block in message.content:
-                if isinstance(block, TextBlock):
+                if isinstance(block, ModelTextBlock):
                     content.append({"type": "text", "text": block.text})
-                elif isinstance(block, ToolUseBlock):
+                elif isinstance(block, ModelToolUseBlock):
                     # JsonObject 递归地比 SDK object 类型更窄；此 cast 只改变
                     # 静态类型变体，不改变运行时数据。
                     content.append(
@@ -131,7 +128,7 @@ class AnthropicProvider(ModelCompletionPort):
                             "input": cast(dict[str, object], block.input),
                         }
                     )
-                elif isinstance(block, ToolResultBlock):
+                elif isinstance(block, ModelToolResultBlock):
                     content.append(
                         {
                             "type": "tool_result",
@@ -143,21 +140,13 @@ class AnthropicProvider(ModelCompletionPort):
             normalized.append({"role": message.role, "content": content})
         return normalized
 
-    @staticmethod
-    def _request_messages(request: ContextPlan) -> list[MessageParam]:
-        """Place user context, history, and request attachments in order."""
-
-        return AnthropicProvider._messages(
-            (*request.user_context, *request.messages, *request.attachments)
-        )
-
     def _system(self, prompt: SystemPrompt) -> str | list[TextBlockParam]:
         """按 provider 自身能力消费核心提供的稳定性信息。"""
 
         return _system_prompt_param(prompt, self.capabilities)
 
     @staticmethod
-    def _tools(request: ContextPlan) -> list[ToolParam]:
+    def _tools(request: ModelRequest) -> list[ToolParam]:
         # 定义按注册表顺序到达。此处不要重新排序，因为工具 schema 顺序会影响
         # provider 可缓存的提示前缀。
         tools: list[ToolParam] = []
@@ -172,22 +161,22 @@ class AnthropicProvider(ModelCompletionPort):
         return tools
 
     @staticmethod
-    def _response(response: Message) -> ModelResponse:
+    def _response(response: Message) -> ModelOutput:
         # thinking 和服务端工具块不在首个 MVP 范围内。如果响应不含受支持的
         # text/tool_use 块，ModelResponse 会显式失败，而不是持久化丢失信息的空消息。
-        content: list[TextBlock | ToolUseBlock] = []
+        content: list[ModelTextBlock | ModelToolUseBlock] = []
         for block in response.content:
             if block.type == "text":
-                content.append(TextBlock(text=block.text))
+                content.append(ModelTextBlock(text=block.text))
             elif block.type == "tool_use":
                 content.append(
-                    ToolUseBlock(
+                    ModelToolUseBlock(
                         id=block.id,
                         name=block.name,
                         input=to_json_object(block.input),
                     )
                 )
-        return ModelResponse(
+        return ModelOutput(
             content=tuple(content),
             stop_reason=response.stop_reason or "unknown",
             usage=TokenUsage(

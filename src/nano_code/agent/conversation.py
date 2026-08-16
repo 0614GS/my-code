@@ -10,7 +10,13 @@ from nano_code.agent.contracts.session import (
     SessionSnapshot,
 )
 from nano_code.agent.ports.session import SessionRepository
-from nano_code.messages import ToolResultBlock, ToolUseBlock, TranscriptMessage
+from nano_code.messages import (
+    AssistantMessage,
+    ConversationMessage,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
+)
 
 
 class ConversationState:
@@ -40,18 +46,12 @@ class ConversationState:
         return self._snapshot
 
     @property
-    def history(self) -> tuple[TranscriptMessage, ...]:
+    def history(self) -> tuple[ConversationMessage, ...]:
         return self._snapshot.history
 
     @property
-    def working_messages(self) -> tuple[TranscriptMessage, ...]:
+    def working_messages(self) -> tuple[ConversationMessage, ...]:
         return tuple(self._working_messages)
-
-    @property
-    def messages(self) -> list[TranscriptMessage]:
-        """旧测试辅助 API；新的调用方应使用只读 ``working_messages``。"""
-
-        return self._working_messages
 
     @property
     def content_replacements(self) -> tuple[ContentReplacement, ...]:
@@ -85,7 +85,7 @@ class ConversationState:
             content_replacements=self.content_replacements,
         )
 
-    def append(self, message: TranscriptMessage) -> None:
+    def append(self, message: ConversationMessage) -> None:
         """持久化优先追加消息，并在成功后刷新工作集。"""
 
         self._repository.append(message)
@@ -99,20 +99,18 @@ class ConversationState:
 
     def append_tool_results(
         self,
-        results: Iterable[ToolResultBlock],
-        assistant_message: TranscriptMessage,
-    ) -> TranscriptMessage:
+        results: Iterable[ToolResult],
+        assistant_message: AssistantMessage,
+    ) -> ToolResultsMessage:
         """把同一模型响应的工具结果作为一条协议 user 消息追加。"""
 
         result_blocks = tuple(results)
         if not result_blocks:
             raise ValueError("A tool result message must contain at least one result")
-        message = TranscriptMessage(
-            role="user",
-            origin="tool",
+        message = ToolResultsMessage(
             content=result_blocks,
             parent_uuid=assistant_message.uuid,
-            source_message_uuid=assistant_message.uuid,
+            source_assistant_uuid=assistant_message.uuid,
         )
         self.append(message)
         return message
@@ -127,7 +125,7 @@ class ConversationState:
         self._refresh()
         return outcome.boundary
 
-    def resume(self, repository: SessionRepository) -> tuple[TranscriptMessage, ...]:
+    def resume(self, repository: SessionRepository) -> tuple[ConversationMessage, ...]:
         """先完整校验并修复目标会话，成功后原子替换当前状态。"""
 
         target_snapshot = repository.snapshot()
@@ -136,12 +134,10 @@ class ConversationState:
 
         repairs = _trailing_tool_repairs(target_snapshot.history)
         if repairs is not None:
-            repair = TranscriptMessage(
-                role="user",
-                origin="tool",
+            repair = ToolResultsMessage(
                 content=repairs,
                 parent_uuid=target_snapshot.history[-1].uuid,
-                source_message_uuid=target_snapshot.history[-1].uuid,
+                source_assistant_uuid=target_snapshot.history[-1].uuid,
             )
             repository.append(repair)
             target_snapshot = repository.snapshot()
@@ -168,33 +164,29 @@ class ConversationState:
             return
         last = self._snapshot.history[-1]
         self.append(
-            TranscriptMessage(
-                role="user",
-                origin="tool",
+            ToolResultsMessage(
                 content=repairs,
                 parent_uuid=last.uuid,
-                source_message_uuid=last.uuid,
+                source_assistant_uuid=last.uuid,
             )
         )
 
 
 def _trailing_tool_repairs(
-    messages: tuple[TranscriptMessage, ...],
-) -> tuple[ToolResultBlock, ...] | None:
+    messages: tuple[ConversationMessage, ...],
+) -> tuple[ToolResult, ...] | None:
     """为末尾未闭合的 assistant tool-use 构造协议错误结果。"""
 
     if not messages:
         return None
     trailing = messages[-1]
-    if trailing.role != "assistant":
+    if not isinstance(trailing, AssistantMessage):
         return None
-    calls = tuple(
-        block for block in trailing.content if isinstance(block, ToolUseBlock)
-    )
+    calls = tuple(block for block in trailing.content if isinstance(block, ToolCall))
     if not calls:
         return None
     return tuple(
-        ToolResultBlock(
+        ToolResult(
             tool_use_id=call.id,
             content="Tool execution was interrupted before the session resumed.",
             is_error=True,
@@ -205,13 +197,14 @@ def _trailing_tool_repairs(
 
 def _active_replacements(
     replacements: tuple[ContentReplacement, ...],
-    messages: tuple[TranscriptMessage, ...],
+    messages: tuple[ConversationMessage, ...],
 ) -> dict[str, ContentReplacement]:
     tool_ids = {
         block.tool_use_id
         for message in messages
+        if isinstance(message, ToolResultsMessage)
         for block in message.content
-        if isinstance(block, ToolResultBlock)
+        if isinstance(block, ToolResult)
     }
     return {
         replacement.tool_use_id: replacement

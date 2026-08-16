@@ -11,7 +11,7 @@ from nano_code.agent.contracts.inbound import (
 )
 from nano_code.agent.contracts.session import CompactBoundary, CompactTrigger
 from nano_code.agent.events import AgentEvent
-from nano_code.messages import TranscriptMessage
+from nano_code.messages import ConversationMessage
 
 from .session import SessionRepository
 
@@ -26,7 +26,7 @@ class AgentInboundPort(Protocol):
         ...
 
     @property
-    def working_messages(self) -> tuple[TranscriptMessage, ...]:
+    def working_messages(self) -> tuple[ConversationMessage, ...]:
         """当前 compact 工作集的只读快照。"""
         ...
 

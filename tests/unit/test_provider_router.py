@@ -1,8 +1,13 @@
 import pytest
 
-from nano_code.agent import ContextPlan, ModelResponseCompleted
+from nano_code.agent import (
+    ModelOutput,
+    ModelOutputCompleted,
+    ModelRequest,
+    ModelTextBlock,
+)
 from nano_code.auth import CredentialSource
-from nano_code.messages import ModelResponse, TextBlock, TokenUsage
+from nano_code.messages import TokenUsage
 from nano_code.prompts import SystemPrompt
 from nano_code.providers import ProviderCapabilities
 from nano_code.providers.profiles import ProviderProtocol
@@ -16,9 +21,9 @@ class FakeProvider:
         self.provider_id = provider_id
         self.closed = False
 
-    async def complete(self, request: ContextPlan) -> ModelResponse:
-        return ModelResponse(
-            content=(TextBlock(self.provider_id),),
+    async def complete(self, request: ModelRequest) -> ModelOutput:
+        return ModelOutput(
+            content=(ModelTextBlock(self.provider_id),),
             stop_reason="end_turn",
             usage=TokenUsage(input_tokens=1, output_tokens=1),
         )
@@ -38,8 +43,8 @@ def connection(provider_id: str) -> ProviderConnection:
     )
 
 
-def empty_request() -> ContextPlan:
-    return ContextPlan(
+def empty_request() -> ModelRequest:
+    return ModelRequest(
         system_prompt=SystemPrompt.from_text("system"),
         messages=(),
         tools=(),
@@ -62,8 +67,8 @@ async def test_router_switches_adapter_and_closes_previous() -> None:
     await router.switch(connection("second"))
     second = await router.complete(empty_request())
 
-    assert first.content == (TextBlock("first"),)
-    assert second.content == (TextBlock("second"),)
+    assert first.content == (ModelTextBlock("first"),)
+    assert second.content == (ModelTextBlock("second"),)
     assert built[0].closed is True
     assert router.connection.id == "second"
 
@@ -77,4 +82,4 @@ async def test_router_adapts_complete_only_provider_to_final_stream_event() -> N
     events = [event async for event in router.stream(empty_request())]
 
     assert len(events) == 1
-    assert isinstance(events[0], ModelResponseCompleted)
+    assert isinstance(events[0], ModelOutputCompleted)

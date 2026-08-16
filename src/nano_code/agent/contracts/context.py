@@ -2,11 +2,8 @@
 
 from dataclasses import dataclass, field
 
-from nano_code.prompts import SystemPrompt
-
-from .model import ModelInputMessage
+from .model import ModelRequest
 from .session import ContentReplacement
-from .tool import ToolDefinition
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,18 +38,13 @@ class ContextBudget:
 
 @dataclass(frozen=True, slots=True)
 class ContextPlan:
-    """经过上下文策略处理、可交给任意模型 adapter 的请求计划。"""
+    """上下文策略结果：完整模型请求、预算诊断和待持久化决策。"""
 
-    system_prompt: SystemPrompt
-    messages: tuple[ModelInputMessage, ...]
-    tools: tuple[ToolDefinition, ...]
-    max_output_tokens: int
+    request: ModelRequest
     budget: ContextBudget | None = None
     new_content_replacements: tuple[ContentReplacement, ...] = field(
         default_factory=tuple
     )
-    user_context: tuple[ModelInputMessage, ...] = ()
-    attachments: tuple[ModelInputMessage, ...] = ()
 
 
 __all__ = [
