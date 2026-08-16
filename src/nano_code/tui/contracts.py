@@ -13,11 +13,22 @@ from nano_code.todos.models import TodoItem
 
 
 @dataclass(frozen=True, slots=True)
-class TurnResult:
+class TurnSucceeded:
     text: str
     turns: int
     input_tokens: int
     output_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class MaxTurnsReached:
+    max_turns: int
+    completed_turns: int
+    input_tokens: int
+    output_tokens: int
+
+
+type TurnOutcome = TurnSucceeded | MaxTurnsReached
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,11 +93,21 @@ class TodoListUpdated:
 
 @dataclass(frozen=True, slots=True)
 class TurnCompleted:
-    result: TurnResult
+    result: TurnSucceeded
+
+
+@dataclass(frozen=True, slots=True)
+class TurnLimitReached:
+    result: MaxTurnsReached
 
 
 type TurnEvent = (
-    TextDelta | ToolStarted | ToolFinished | TodoListUpdated | TurnCompleted
+    TextDelta
+    | ToolStarted
+    | ToolFinished
+    | TodoListUpdated
+    | TurnCompleted
+    | TurnLimitReached
 )
 
 
@@ -135,7 +156,7 @@ type PermissionHandler = Callable[
 class ChatRuntime(Protocol):
     """TUI 所需能力；核心实现类型不会泄漏到此处。"""
 
-    async def submit(self, prompt: str) -> TurnResult:
+    async def submit(self, prompt: str) -> TurnOutcome:
         """运行一个用户轮次。"""
         ...
 

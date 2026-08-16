@@ -23,6 +23,7 @@ from nano_code.tui.contracts import (
     ToolFinished,
     ToolStarted,
     TurnCompleted,
+    TurnLimitReached,
 )
 from nano_code.tui.provider_screen import ProviderScreen
 from nano_code.tui.resume_screen import ResumeScreen
@@ -479,6 +480,14 @@ class NanoCodeApp(App[None]):
                     activity.set_todos(event.todos)
                 elif isinstance(event, TurnCompleted):
                     completed = True
+                elif isinstance(event, TurnLimitReached):
+                    completed = True
+                    await self._mount_message(
+                        SystemMessage(
+                            f"Error: Reached max turns ({event.result.max_turns})",
+                            error=True,
+                        )
+                    )
         except Exception as error:
             await self._mount_message(SystemMessage(f"Error: {error}", error=True))
         finally:

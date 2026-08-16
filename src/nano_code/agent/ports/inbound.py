@@ -7,7 +7,7 @@ from nano_code.agent.contracts.inbound import (
     AgentContextStatus,
     AgentSessionView,
     AgentStatus,
-    AgentTurnResult,
+    AgentTurnOutcome,
 )
 from nano_code.agent.contracts.session import CompactBoundary, CompactTrigger
 from nano_code.agent.events import AgentEvent
@@ -19,7 +19,7 @@ from .session import SessionRepository
 class AgentInboundPort(Protocol):
     """CLI、TUI 或其它 driving adapter 可使用的 Agent 能力。"""
 
-    async def submit(self, prompt: str) -> AgentTurnResult:
+    async def submit(self, prompt: str) -> AgentTurnOutcome:
         """运行一个用户回合并等待终态。"""
         ...
 

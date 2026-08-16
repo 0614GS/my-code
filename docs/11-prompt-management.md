@@ -56,7 +56,7 @@ conversation UUID、父链或时间戳。`ContextPlanner` 在自己的生命周�
 
 Anthropic 请求的顺序是 `user_context → conversation messages → attachments`。AGENTS context
 不是 Transcript 事实，不会写入 JSONL，也不会进入 `compaction_view()` 或 compact summary。当前组合根显式
-装配 `AgentsUserContextResolver`，只读取 `Settings.cwd / AGENTS.md`。非空文件会
+装配 `AgentsUserContextResolver`，只读取 `AgentSettings.cwd / AGENTS.md`。非空文件会
 作为一条前置 user 消息注入，并使用 CC 风格的 `<system-reminder>` 包裹，包含
 `# AGENTS.md` 来源标识和“仅在相关时使用”的提醒。
 

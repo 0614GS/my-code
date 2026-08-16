@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.config import (
+from nano_code.core import (
     NanoCodePaths,
     SettingsFileError,
+    SettingsLayer,
     SettingsScope,
     SettingsStore,
-    StoredSettings,
 )
 from nano_code.permissions import PermissionMode
 
@@ -25,7 +25,7 @@ def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
     store = SettingsStore(paths)
     store.write(
         SettingsScope.USER,
-        StoredSettings(
+        SettingsLayer(
             model="user-model",
             base_url="https://user.example/api",
             permission_mode=PermissionMode.PLAN,
@@ -34,17 +34,17 @@ def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
     )
     store.write(
         SettingsScope.PROJECT,
-        StoredSettings(model="project-model", max_output_tokens=4000),
+        SettingsLayer(model="project-model", max_output_tokens=4000),
     )
     store.write(
         SettingsScope.LOCAL,
-        StoredSettings(
+        SettingsLayer(
             permission_mode=PermissionMode.ACCEPT_EDITS,
             max_turns=20,
         ),
     )
 
-    assert store.load() == StoredSettings(
+    assert store.load() == SettingsLayer(
         model="project-model",
         base_url="https://user.example/api",
         permission_mode=PermissionMode.ACCEPT_EDITS,
@@ -58,7 +58,7 @@ def test_empty_and_missing_files_are_empty_layers(tmp_path: Path) -> None:
     paths.project_settings_path.parent.mkdir()
     paths.project_settings_path.write_text("\n", encoding="utf-8")
 
-    assert SettingsStore(paths).load() == StoredSettings()
+    assert SettingsStore(paths).load() == SettingsLayer()
 
 
 def test_project_layers_are_skipped_when_started_from_user_home(
@@ -70,15 +70,15 @@ def test_project_layers_are_skipped_when_started_from_user_home(
     store = SettingsStore(paths)
     store.write(
         SettingsScope.USER,
-        StoredSettings(active_provider="gateway", model="user-model"),
+        SettingsLayer(active_provider="gateway", model="user-model"),
     )
     paths.local_settings_path.write_text(
         json.dumps({"model": "misclassified-local-model"}), encoding="utf-8"
     )
 
-    assert store.load_scope(SettingsScope.PROJECT) == StoredSettings()
-    assert store.load_scope(SettingsScope.LOCAL) == StoredSettings()
-    assert store.load() == StoredSettings(active_provider="gateway", model="user-model")
+    assert store.load_scope(SettingsScope.PROJECT) == SettingsLayer()
+    assert store.load_scope(SettingsScope.LOCAL) == SettingsLayer()
+    assert store.load() == SettingsLayer(active_provider="gateway", model="user-model")
 
 
 @pytest.mark.parametrize("scope", [SettingsScope.PROJECT, SettingsScope.LOCAL])
@@ -90,7 +90,7 @@ def test_project_writes_cannot_overwrite_colliding_user_storage(
     paths = NanoCodePaths(cwd=home, config_home=home / ".nano-code")
 
     with pytest.raises(SettingsFileError, match="project config directory"):
-        SettingsStore(paths).write(scope, StoredSettings(model="project-model"))
+        SettingsStore(paths).write(scope, SettingsLayer(model="project-model"))
 
 
 def test_unknown_keys_are_ignored_for_forward_compatibility(tmp_path: Path) -> None:
@@ -151,7 +151,7 @@ def test_project_scoped_settings_cannot_redirect_provider(
 
     with pytest.raises(SettingsFileError, match="only allowed in user settings"):
         SettingsStore(paths).write(
-            scope, StoredSettings(base_url="https://attacker.example")
+            scope, SettingsLayer(base_url="https://attacker.example")
         )
 
 
@@ -176,10 +176,10 @@ def test_write_is_atomic_and_private(tmp_path: Path) -> None:
 
     store.write(
         SettingsScope.USER,
-        StoredSettings(model="model", context_chars=1234),
+        SettingsLayer(model="model", context_chars=1234),
     )
 
-    assert store.load_scope(SettingsScope.USER) == StoredSettings(
+    assert store.load_scope(SettingsScope.USER) == SettingsLayer(
         model="model", context_chars=1234
     )
     assert stat.S_IMODE(paths.user_settings_path.stat().st_mode) == 0o600

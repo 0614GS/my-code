@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 
 from nano_code.auth import CredentialSource, CredentialStore
-from nano_code.config import NanoCodePaths, SettingsScope, SettingsStore
-from nano_code.config.bootstrap import bootstrap_user_storage
+from nano_code.core import NanoCodePaths, SettingsScope, SettingsStore
+from nano_code.core.bootstrap import initialize_user_storage
 from nano_code.providers.manager import ProviderManager, ProviderUpdate
 from nano_code.providers.profiles import ProviderProfileStore
 
@@ -12,7 +12,7 @@ def make_manager(tmp_path: Path) -> tuple[ProviderManager, NanoCodePaths]:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     paths = NanoCodePaths.discover(workspace, environ={}, home=tmp_path / "home")
-    bootstrap_user_storage(paths)
+    initialize_user_storage(paths)
     return ProviderManager(paths, environ={}), paths
 
 

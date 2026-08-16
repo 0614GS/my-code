@@ -7,10 +7,12 @@ from nano_code.auth import CredentialSource, CredentialStore
 from nano_code.cli.arguments import (
     AuthAction,
     AuthOptions,
+    CliOptions,
     build_parser,
     parse_args,
     parse_cli,
 )
+from nano_code.core import AgentSettings, SettingsResolver
 from nano_code.permissions import PermissionMode
 
 
@@ -23,6 +25,14 @@ def clear_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "NANO_CODE_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def resolve_options(options: CliOptions) -> AgentSettings:
+    resolver = SettingsResolver.for_workspace(options.cwd)
+    return resolver.resolve(
+        options.settings_overrides,
+        interactive=options.interactive,
+    )
 
 
 def test_parser_uses_installed_command_name() -> None:
@@ -67,11 +77,12 @@ def test_cli_resolves_file_environment_and_flag_precedence(
         ]
     )
 
-    assert options.settings.model == "cli-model"
-    assert options.settings.base_url == "https://cli.example/api"
-    assert options.settings.permission_mode is PermissionMode.PLAN
-    assert options.settings.max_turns == 7
-    assert options.settings.paths.config_home == config_home
+    settings = resolve_options(options)
+    assert settings.model == "cli-model"
+    assert settings.base_url == "https://cli.example/api"
+    assert settings.permission_mode is PermissionMode.PLAN
+    assert settings.max_turns == 7
+    assert settings.paths.config_home == config_home
 
 
 def test_environment_model_overrides_settings(
@@ -90,7 +101,7 @@ def test_environment_model_overrides_settings(
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 
-    assert options.settings.model == "env-model"
+    assert resolve_options(options).model == "env-model"
 
 
 def test_environment_base_url_overrides_user_settings(
@@ -109,7 +120,7 @@ def test_environment_base_url_overrides_user_settings(
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 
-    assert options.settings.base_url == "https://env.example/api"
+    assert resolve_options(options).base_url == "https://env.example/api"
 
 
 def test_named_provider_resolves_profile_and_scoped_credential(
@@ -145,10 +156,11 @@ def test_named_provider_resolves_profile_and_scoped_credential(
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 
-    assert options.settings.provider_id == "gateway"
-    assert options.settings.model == "gateway-model"
-    assert options.settings.base_url == "https://gateway.example/api"
-    assert options.settings.api_key == "gateway-key"
+    settings = resolve_options(options)
+    assert settings.provider_id == "gateway"
+    assert settings.model == "gateway-model"
+    assert settings.base_url == "https://gateway.example/api"
+    assert settings.api_key == "gateway-key"
 
 
 def test_cli_provider_override_selects_named_profile(
@@ -183,8 +195,9 @@ def test_cli_provider_override_selects_named_profile(
         ["--cwd", str(workspace), "--provider", "gateway", "-p", "hello"]
     )
 
-    assert options.settings.provider_id == "gateway"
-    assert options.settings.model == "gateway-model"
+    settings = resolve_options(options)
+    assert settings.provider_id == "gateway"
+    assert settings.model == "gateway-model"
 
 
 def test_environment_api_key_overrides_stored_credential(
@@ -200,8 +213,9 @@ def test_environment_api_key_overrides_stored_credential(
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 
-    assert options.settings.api_key == "environment-key"
-    assert options.settings.credential_source is CredentialSource.ENVIRONMENT
+    settings = resolve_options(options)
+    assert settings.api_key == "environment-key"
+    assert settings.credential_source is CredentialSource.ENVIRONMENT
 
 
 def test_cli_uses_stored_credential_without_environment_override(
@@ -216,8 +230,9 @@ def test_cli_uses_stored_credential_without_environment_override(
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 
-    assert options.settings.api_key == "stored-key"
-    assert options.settings.credential_source is CredentialSource.STORED
+    settings = resolve_options(options)
+    assert settings.api_key == "stored-key"
+    assert settings.credential_source is CredentialSource.STORED
 
 
 def test_parse_cli_returns_auth_management_command(
@@ -230,7 +245,8 @@ def test_parse_cli_returns_auth_management_command(
 
     assert isinstance(options, AuthOptions)
     assert options.action is AuthAction.LOGIN
-    assert options.paths.config_home == tmp_path / "config"
+    assert options.cwd == tmp_path
+    assert options.provider_override is None
 
 
 def test_parsing_does_not_materialize_storage(
@@ -244,7 +260,7 @@ def test_parsing_does_not_materialize_storage(
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 
-    assert options.settings.paths.config_home == config_home
+    assert options.cwd == workspace
     assert not config_home.exists()
     assert not (workspace / ".nano-code").exists()
 
@@ -257,5 +273,19 @@ def test_non_positive_cli_limit_is_rejected(
     workspace.mkdir()
     monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(tmp_path / "config"))
 
+    options = parse_args(["--cwd", str(workspace), "--max-turns", "0", "-p", "hello"])
     with pytest.raises(ValueError, match="max_turns must be a positive integer"):
-        parse_args(["--cwd", str(workspace), "--max-turns", "0", "-p", "hello"])
+        resolve_options(options)
+
+
+def test_max_turns_is_unlimited_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clear_provider_environment(monkeypatch)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(tmp_path / "config"))
+
+    options = parse_args(["--cwd", str(workspace), "-p", "hello"])
+
+    assert resolve_options(options).max_turns is None

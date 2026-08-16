@@ -6,7 +6,9 @@ import pytest
 
 from nano_code.agent import (
     AgentEngine,
+    AgentMaxTurnsReached,
     AgentTodoListUpdated,
+    AgentTurnSucceeded,
     ConversationState,
     ModelOutput,
     ModelOutputCompleted,
@@ -50,7 +52,10 @@ class FakeModel:
 
 
 def _engine(
-    tmp_path: Path, outputs: list[ModelOutput]
+    tmp_path: Path,
+    outputs: list[ModelOutput],
+    *,
+    max_turns: int | None = None,
 ) -> tuple[AgentEngine, FakeModel, ConversationState, ToolRoundExecutor]:
     store = SessionStore(tmp_path / "sessions", "11111111-1111-1111-1111-111111111111")
     registry = ToolRegistry(builtin_tools())
@@ -78,6 +83,7 @@ def _engine(
         conversation=conversation,
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(model)),
+        max_turns=max_turns,
     )
     return engine, model, conversation, tool_round
 
@@ -90,6 +96,7 @@ async def test_engine_persists_human_and_assistant_messages(tmp_path: Path) -> N
     )
     result = await engine.submit("hello")
 
+    assert isinstance(result, AgentTurnSucceeded)
     assert result.text == "done"
     assert isinstance(conversation.working_messages[0], HumanMessage)
     assert isinstance(conversation.working_messages[1], AssistantMessage)
@@ -113,6 +120,7 @@ async def test_engine_closes_tool_loop_and_preserves_results(tmp_path: Path) -> 
 
     result = await engine.submit("read")
 
+    assert isinstance(result, AgentTurnSucceeded)
     assert result.text == "finished"
     tool_messages = [
         message
@@ -122,6 +130,71 @@ async def test_engine_closes_tool_loop_and_preserves_results(tmp_path: Path) -> 
     assert len(tool_messages) == 1
     assert "hello" in tool_messages[0].content[0].content
     assert len(model.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_engine_has_no_default_model_turn_limit(tmp_path: Path) -> None:
+    outputs = [
+        ModelOutput(
+            (ModelToolUseBlock(f"read-{turn}", "Read", {"path": "missing.txt"}),),
+            "tool_use",
+            TokenUsage(1, 1),
+        )
+        for turn in range(13)
+    ]
+    outputs.append(
+        ModelOutput((ModelTextBlock("finished"),), "end_turn", TokenUsage(1, 1))
+    )
+    engine, model, _, _ = _engine(tmp_path, outputs)
+
+    result = await engine.submit("keep going")
+
+    assert isinstance(result, AgentTurnSucceeded)
+    assert result.turns == 14
+    assert len(model.requests) == 14
+
+
+@pytest.mark.asyncio
+async def test_explicit_max_turns_returns_structured_terminal_outcome(
+    tmp_path: Path,
+) -> None:
+    engine, model, conversation, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput(
+                (ModelToolUseBlock("read-1", "Read", {"path": "missing.txt"}),),
+                "tool_use",
+                TokenUsage(2, 1),
+            ),
+            ModelOutput(
+                (ModelToolUseBlock("read-2", "Read", {"path": "missing.txt"}),),
+                "tool_use",
+                TokenUsage(3, 1),
+            ),
+            ModelOutput(
+                (ModelTextBlock("continued"),),
+                "end_turn",
+                TokenUsage(4, 1),
+            ),
+        ],
+        max_turns=2,
+    )
+
+    result = await engine.submit("stop at the limit")
+
+    assert result == AgentMaxTurnsReached(
+        max_turns=2,
+        completed_turns=2,
+        usage=TokenUsage(5, 2),
+    )
+    assert len(model.requests) == 2
+    assert isinstance(conversation.history[-1], ToolResultsMessage)
+
+    continued = await engine.submit("continue")
+
+    assert isinstance(continued, AgentTurnSucceeded)
+    assert continued.text == "continued"
+    assert len(model.requests) == 3
 
 
 @pytest.mark.asyncio

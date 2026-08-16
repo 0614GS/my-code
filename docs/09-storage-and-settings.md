@@ -64,11 +64,24 @@ Provider Profile 是一个命名连接配置，而不是另一套 SDK。当前�
   "version": 1,
   "activeProvider": "anthropic",
   "permissions": { "defaultMode": "default" },
-  "maxTurns": 12,
   "maxOutputTokens": 8192,
   "contextChars": 160000
 }
 ```
+
+`maxTurns` 是可选的显式安全阀；省略时主 Agent 不设模型轮数上限。它统计的是一次
+用户输入内的模型 API 往返，而不是用户消息数量。
+
+## Core 与启动边界
+
+`nano_code.core` 是 settings 与应用启动的唯一归属。`SettingsLayer` 表示单个持久化
+来源，`SettingsResolver` 统一合并文件、环境、provider、凭据和入口 overrides，最终
+生成一次 Agent 生命周期使用的 `AgentSettings` 快照。`core.bootstrap` 是唯一完整
+composition root，负责创建 Agent、context、provider、session 和 tool 适配器。
+
+CLI 参数解析只产生 `SettingsOverrides`，不读取磁盘或凭据；`cli.runtime` 只把
+`AgentInboundPort` 的事件和状态投影为 TUI contract。这样未来增加非 CLI 入口时，
+不需要复制 settings 优先级或 Agent 依赖装配。
 
 Provider 的模型和 Base URL 归入 `providers.json`；项目配置仍可用 `model` 覆盖模型，但不能定义或选择 Provider。旧版用户设置中的顶层 `model`、`baseUrl` 只作为首次创建 Provider Catalog 时的迁移来源。
 

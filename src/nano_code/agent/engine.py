@@ -10,9 +10,11 @@ from nano_code.agent.contracts.inbound import (
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
+    AgentMaxTurnsReached,
     AgentSessionView,
     AgentStatus,
-    AgentTurnResult,
+    AgentTurnOutcome,
+    AgentTurnSucceeded,
 )
 from nano_code.agent.contracts.model import (
     ModelOutput,
@@ -36,6 +38,7 @@ from nano_code.agent.events import (
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
+    AgentTurnLimitReached,
 )
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
@@ -69,9 +72,9 @@ class AgentEngine(AgentInboundPort):
         conversation: ConversationState,
         context: ContextPort,
         compactor: CompactorPort,
-        max_turns: int = 12,
+        max_turns: int | None = None,
     ) -> None:
-        if max_turns < 1:
+        if max_turns is not None and max_turns < 1:
             raise ValueError("max_turns must be positive")
         self._model_turn = model_turn
         self._tool_round = tool_round
@@ -81,12 +84,14 @@ class AgentEngine(AgentInboundPort):
         self.max_turns = max_turns
         self._tool_round.bind_session(self._conversation.session_id)
 
-    async def submit(self, prompt: str) -> AgentTurnResult:
+    async def submit(self, prompt: str) -> AgentTurnOutcome:
         """消费可观察循环并返回终态值。"""
 
-        completed: AgentTurnResult | None = None
+        completed: AgentTurnOutcome | None = None
         async for event in self.stream(prompt):
             if isinstance(event, AgentTurnCompleted):
+                completed = event.result
+            elif isinstance(event, AgentTurnLimitReached):
                 completed = event.result
         if completed is None:
             raise RuntimeError("Agent stream ended without a completed turn")
@@ -110,7 +115,9 @@ class AgentEngine(AgentInboundPort):
 
         input_tokens = 0
         output_tokens = 0
-        for turn in range(1, self.max_turns + 1):
+        turn = 0
+        while True:
+            turn += 1
             request = await self._plan_with_proactive_compact()
             reactive_attempted = False
             while True:
@@ -170,7 +177,7 @@ class AgentEngine(AgentInboundPort):
             )
             if not tool_calls:
                 yield AgentTurnCompleted(
-                    AgentTurnResult(
+                    AgentTurnSucceeded(
                         text=final_text,
                         turns=turn,
                         usage=TokenUsage(input_tokens, output_tokens),
@@ -233,10 +240,15 @@ class AgentEngine(AgentInboundPort):
                 raise
             if round_cancelled:
                 raise asyncio.CancelledError
-
-        raise RuntimeError(
-            f"Agent reached max_turns={self.max_turns} after the last tool result"
-        )
+            if self.max_turns is not None and turn >= self.max_turns:
+                yield AgentTurnLimitReached(
+                    AgentMaxTurnsReached(
+                        max_turns=self.max_turns,
+                        completed_turns=turn,
+                        usage=TokenUsage(input_tokens, output_tokens),
+                    )
+                )
+                return
 
     def status(self) -> AgentStatus:
         """返回当前 session 的只读状态。"""

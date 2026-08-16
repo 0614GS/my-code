@@ -98,7 +98,9 @@
 
 当前 Python 实现把 `AgentEngine` 收敛为用户回合状态机：写入用户消息、请求
 `ContextPort`、通过 `ModelTurnPort` 消费统一模型事件、判断工具轮是否继续、处理
-overflow/取消/max-turns，并发出 `AgentEvent`。会话事实由 `ConversationState` 管理，
+overflow/取消/max-turns，并发出 `AgentEvent`。主 Agent 默认不限制模型轮数；只有
+settings 或入口显式提供 `max_turns` 时才在完整提交最后一轮工具结果后停止，并返回
+独立的 `AgentMaxTurnsReached` 终态，而不是抛出通用异常。会话事实由 `ConversationState` 管理，
 工具轮由 `ToolRoundPort` 管理，摘要由 `Compactor` 管理。
 
 六边形边界由 `nano_code.agent` 统一声明：CLI/TUI 通过 `AgentInboundPort` 调用

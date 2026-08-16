@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.agent.contracts.inbound import AgentTurnResult
+from nano_code.agent.contracts.inbound import AgentMaxTurnsReached, AgentTurnSucceeded
 from nano_code.messages import JsonObject
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.todos.models import TodoItem
@@ -38,7 +38,12 @@ class AgentTodoListUpdated:
 
 @dataclass(frozen=True, slots=True)
 class AgentTurnCompleted:
-    result: AgentTurnResult
+    result: AgentTurnSucceeded
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTurnLimitReached:
+    result: AgentMaxTurnsReached
 
 
 type AgentEvent = (
@@ -47,4 +52,5 @@ type AgentEvent = (
     | AgentToolFinished
     | AgentTodoListUpdated
     | AgentTurnCompleted
+    | AgentTurnLimitReached
 )

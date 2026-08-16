@@ -133,3 +133,36 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert hasattr(SessionRepository, "load")
     assert not hasattr(SessionRepository, "snapshot")
     assert TodoWriteTool().definition.name == "TodoWrite"
+
+
+def test_core_bootstrap_is_the_only_full_application_composition_root() -> None:
+    assert not tuple((_PACKAGE_ROOT / "config").glob("*.py"))
+
+    bootstrap = (_PACKAGE_ROOT / "core" / "bootstrap.py").read_text(encoding="utf-8")
+    for dependency in (
+        "ContextPlanner",
+        "ProviderRouter",
+        "SessionStore",
+        "ToolExecutor",
+        "AgentEngine",
+    ):
+        assert dependency in bootstrap
+
+    cli_runtime = (_PACKAGE_ROOT / "cli" / "runtime.py").read_text(encoding="utf-8")
+    for concrete in (
+        "ContextPlanner",
+        "ToolExecutor",
+        "SessionStore",
+        "ProviderRouter",
+        "AgentEngine",
+    ):
+        assert concrete not in cli_runtime
+
+    cli_arguments = (_PACKAGE_ROOT / "cli" / "arguments.py").read_text(encoding="utf-8")
+    for settings_dependency in (
+        "SettingsStore",
+        "CredentialStore",
+        "ProviderProfileStore",
+        "resolve_api_key",
+    ):
+        assert settings_dependency not in cli_arguments

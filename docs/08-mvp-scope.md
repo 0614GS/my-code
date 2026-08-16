@@ -28,7 +28,7 @@
 
 | 机制 | MVP 保留点 | 参考入口 |
 | --- | --- | --- |
-| Query Loop | 明确的模型→工具→模型循环及 `max_turns` | `src/query.ts` |
+| Query Loop | 明确的模型→工具→模型循环；主循环默认无限，显式 `max_turns` 返回结构化终态 | `src/query.ts` |
 | Message | API 投影与 Transcript 分离 | `src/types/message.ts`、`utils/messages.ts` |
 | Tool | schema、风险属性、执行和结果映射分层 | `src/Tool.ts`、`services/tools/toolExecution.ts` |
 | Permission | 工具特定判断与全局裁决分层，deny/ask 优先，headless ask 自动拒绝 | `types/permissions.ts`、`utils/permissions/permissions.ts` |

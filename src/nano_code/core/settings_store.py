@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from nano_code.config.paths import NanoCodePaths, SettingsScope
+from nano_code.core.paths import NanoCodePaths, SettingsScope
 from nano_code.permissions import PermissionMode
 from nano_code.providers.validation import validate_base_url
 
@@ -16,7 +16,7 @@ class SettingsFileError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class StoredSettings:
+class SettingsLayer:
     """MVP 支持的设置；``None`` 表示本层未提供该值。"""
 
     model: str | None = None
@@ -27,7 +27,7 @@ class StoredSettings:
     max_output_tokens: int | None = None
     context_chars: int | None = None
 
-    def overlay(self, higher: "StoredSettings") -> "StoredSettings":
+    def overlay(self, higher: "SettingsLayer") -> "SettingsLayer":
         """返回应用了所有显式高优先级值后的当前层。"""
 
         return replace(
@@ -68,10 +68,10 @@ class SettingsStore:
     def __init__(self, paths: NanoCodePaths) -> None:
         self.paths = paths
 
-    def load(self) -> StoredSettings:
+    def load(self) -> SettingsLayer:
         """按照用户 < 项目 < 本地的顺序合并设置，与 Claude Code 保持一致。"""
 
-        merged = StoredSettings()
+        merged = SettingsLayer()
         for scope in (
             SettingsScope.USER,
             SettingsScope.PROJECT,
@@ -80,14 +80,14 @@ class SettingsStore:
             merged = merged.overlay(self.load_scope(scope))
         return merged
 
-    def load_scope(self, scope: SettingsScope) -> StoredSettings:
+    def load_scope(self, scope: SettingsScope) -> SettingsLayer:
         if self._project_scope_is_unavailable(scope):
             # 从 $HOME 启动时，~/.nano-code 既像全局存储又像项目目录。
             # 用户数据绝不能按可信度更低的项目校验规则重新解释。
-            return StoredSettings()
+            return SettingsLayer()
         path = self.paths.settings_path(scope)
         if not path.exists():
-            return StoredSettings()
+            return SettingsLayer()
         try:
             contents = path.read_text(encoding="utf-8")
             raw: object = {} if not contents.strip() else json.loads(contents)
@@ -97,7 +97,7 @@ class SettingsStore:
             ) from error
         return _parse_settings(raw, path=path, scope=scope)
 
-    def write(self, scope: SettingsScope, settings: StoredSettings) -> None:
+    def write(self, scope: SettingsScope, settings: SettingsLayer) -> None:
         """以仅属主可访问的权限原子替换一个设置文件。"""
 
         if self._project_scope_is_unavailable(scope):
@@ -187,7 +187,7 @@ def _parse_settings(
     *,
     path: Path,
     scope: SettingsScope,
-) -> StoredSettings:
+) -> SettingsLayer:
     if not isinstance(raw, dict):
         raise SettingsFileError(f"Settings root must be an object: {path}")
 
@@ -208,7 +208,7 @@ def _parse_settings(
         raise SettingsFileError(
             f"Shared project settings cannot enable bypassPermissions: {path}"
         )
-    return StoredSettings(
+    return SettingsLayer(
         model=model,
         base_url=base_url,
         active_provider=active_provider,
@@ -273,7 +273,7 @@ def _parse_permission_mode(
         ) from error
 
 
-def _settings_document(settings: StoredSettings) -> dict[str, object]:
+def _settings_document(settings: SettingsLayer) -> dict[str, object]:
     document: dict[str, object] = {"version": 1}
     if settings.model is not None:
         if not settings.model.strip():

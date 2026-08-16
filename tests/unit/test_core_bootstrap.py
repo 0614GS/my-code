@@ -6,7 +6,8 @@ import pytest
 
 from nano_code.auth import CredentialStore
 from nano_code.cli.main import main
-from nano_code.config import NanoCodePaths, bootstrap_user_storage
+from nano_code.core import NanoCodePaths
+from nano_code.core.bootstrap import initialize_user_storage
 from nano_code.providers.profiles import ProviderProfileStore
 
 
@@ -19,7 +20,7 @@ def make_paths(tmp_path: Path) -> NanoCodePaths:
 def test_bootstrap_creates_required_user_layout_only(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
 
-    result = bootstrap_user_storage(paths)
+    result = initialize_user_storage(paths)
 
     assert result.created_settings is True
     assert result.created_providers is True
@@ -40,10 +41,10 @@ def test_bootstrap_is_idempotent_and_preserves_existing_profiles(
     tmp_path: Path,
 ) -> None:
     paths = make_paths(tmp_path)
-    bootstrap_user_storage(paths)
+    initialize_user_storage(paths)
     original = paths.providers_path.read_text(encoding="utf-8")
 
-    result = bootstrap_user_storage(paths)
+    result = initialize_user_storage(paths)
 
     assert result.created_settings is False
     assert result.created_providers is False
@@ -69,7 +70,7 @@ def test_bootstrap_migrates_legacy_credential_and_provider_fields(
         json.dumps({"anthropicApiKey": "legacy-key"}), encoding="utf-8"
     )
 
-    bootstrap_user_storage(paths)
+    initialize_user_storage(paths)
 
     profile = ProviderProfileStore(paths.providers_path).load()["anthropic"]
     assert profile.model == "legacy-model"

@@ -12,9 +12,11 @@ from nano_code.agent.contracts.inbound import (
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
+    AgentMaxTurnsReached,
     AgentSessionView,
     AgentStatus,
-    AgentTurnResult,
+    AgentTurnOutcome,
+    AgentTurnSucceeded,
 )
 from nano_code.agent.contracts.model import (
     ModelAssistantMessage,
@@ -53,6 +55,7 @@ from nano_code.agent.events import (
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
+    AgentTurnLimitReached,
 )
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
@@ -71,6 +74,7 @@ __all__ = [
     "AgentHistoryToolCall",
     "AgentHistoryUserMessage",
     "AgentInboundPort",
+    "AgentMaxTurnsReached",
     "AgentSessionView",
     "AgentStatus",
     "AgentTextDelta",
@@ -78,7 +82,9 @@ __all__ = [
     "AgentToolFinished",
     "AgentToolStarted",
     "AgentTurnCompleted",
-    "AgentTurnResult",
+    "AgentTurnLimitReached",
+    "AgentTurnOutcome",
+    "AgentTurnSucceeded",
     "CompactBoundary",
     "CompactTrigger",
     "CompactionOutcome",

@@ -10,12 +10,24 @@ from .context import ContextBudget
 
 
 @dataclass(frozen=True, slots=True)
-class AgentTurnResult:
-    """一次用户提示的终态数据。"""
+class AgentTurnSucceeded:
+    """一次用户提示正常完成后的终态数据。"""
 
     text: str
     turns: int
     usage: TokenUsage
+
+
+@dataclass(frozen=True, slots=True)
+class AgentMaxTurnsReached:
+    """显式模型轮次上限终止了当前用户回合。"""
+
+    max_turns: int
+    completed_turns: int
+    usage: TokenUsage
+
+
+type AgentTurnOutcome = AgentTurnSucceeded | AgentMaxTurnsReached
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,5 +100,7 @@ __all__ = [
     "AgentHistoryUserMessage",
     "AgentSessionView",
     "AgentStatus",
-    "AgentTurnResult",
+    "AgentMaxTurnsReached",
+    "AgentTurnOutcome",
+    "AgentTurnSucceeded",
 ]

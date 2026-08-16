@@ -10,6 +10,7 @@ from nano_code.tui.contracts import (
     HistorySystemMessage,
     HistoryToolCall,
     HistoryUserMessage,
+    MaxTurnsReached,
     PermissionHandler,
     PermissionRequest,
     ResumedSession,
@@ -20,7 +21,9 @@ from nano_code.tui.contracts import (
     ToolStarted,
     TurnCompleted,
     TurnEvent,
-    TurnResult,
+    TurnLimitReached,
+    TurnOutcome,
+    TurnSucceeded,
 )
 from nano_code.tui.provider_screen import ProviderScreen
 from nano_code.tui.resume_screen import ResumeScreen
@@ -33,6 +36,7 @@ __all__ = [
     "HistoryToolCall",
     "HistorySystemMessage",
     "HistoryUserMessage",
+    "MaxTurnsReached",
     "NanoCodeApp",
     "NanoCodeTui",
     "PermissionHandler",
@@ -48,5 +52,7 @@ __all__ = [
     "ToolStarted",
     "TurnCompleted",
     "TurnEvent",
-    "TurnResult",
+    "TurnLimitReached",
+    "TurnOutcome",
+    "TurnSucceeded",
 ]

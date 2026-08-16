@@ -3,12 +3,9 @@ from pathlib import Path
 import pytest
 
 from nano_code.auth import CredentialSource
-from nano_code.cli.runtime import (
-    CliChatRuntime,
-    DeferredPermissionPrompter,
-    build_runtime,
-)
-from nano_code.config import NanoCodePaths, Settings
+from nano_code.cli.runtime import CliChatRuntime
+from nano_code.core import AgentSettings, NanoCodePaths
+from nano_code.core.bootstrap import bootstrap_cli_runtime
 from nano_code.messages import (
     AssistantMessage,
     HumanMessage,
@@ -31,7 +28,7 @@ _CURRENT_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 _TARGET_SESSION_ID = "22222222-2222-2222-2222-222222222222"
 
 
-def _build_runtime(tmp_path: Path) -> CliChatRuntime:
+def _bootstrap_runtime(tmp_path: Path) -> CliChatRuntime:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     paths = NanoCodePaths.discover(
@@ -39,7 +36,7 @@ def _build_runtime(tmp_path: Path) -> CliChatRuntime:
         environ={},
         home=tmp_path / "home",
     )
-    settings = Settings(
+    settings = AgentSettings(
         paths=paths,
         provider_id="anthropic",
         model="test-model",
@@ -50,19 +47,14 @@ def _build_runtime(tmp_path: Path) -> CliChatRuntime:
         interactive=True,
         credential_source=CredentialSource.NONE,
     )
-    prompter = DeferredPermissionPrompter()
-    return build_runtime(
-        settings,
-        _CURRENT_SESSION_ID,
-        permission_prompter=prompter,
-    )
+    return bootstrap_cli_runtime(settings, _CURRENT_SESSION_ID)
 
 
 @pytest.mark.asyncio
 async def test_runtime_lists_and_atomically_switches_project_session(
     tmp_path: Path,
 ) -> None:
-    runtime = _build_runtime(tmp_path)
+    runtime = _bootstrap_runtime(tmp_path)
     store = SessionStore(
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
@@ -91,7 +83,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
 
 @pytest.mark.asyncio
 async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) -> None:
-    runtime = _build_runtime(tmp_path)
+    runtime = _bootstrap_runtime(tmp_path)
     store = SessionStore(
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
@@ -139,7 +131,7 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
 
 @pytest.mark.asyncio
 async def test_resume_projects_todos_into_runtime_status(tmp_path: Path) -> None:
-    runtime = _build_runtime(tmp_path)
+    runtime = _bootstrap_runtime(tmp_path)
     store = SessionStore(
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,

@@ -5,8 +5,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from nano_code.auth import CredentialStore, resolve_api_key
-from nano_code.config.files import SettingsStore
-from nano_code.config.paths import NanoCodePaths
+from nano_code.core.paths import NanoCodePaths
+from nano_code.core.settings_store import SettingsStore
 from nano_code.providers.profiles import (
     ProviderProfile,
     ProviderProfileStore,
