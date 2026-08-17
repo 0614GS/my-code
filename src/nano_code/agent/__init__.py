@@ -37,7 +37,9 @@ from nano_code.agent.contracts.session import (
     CompactTrigger,
     ContentReplacement,
     ConversationSnapshot,
+    SessionMetadata,
     SessionSnapshot,
+    SessionStart,
 )
 from nano_code.agent.contracts.tool import (
     ToolCallFinished,
@@ -112,7 +114,9 @@ __all__ = [
     "ModelTurnPort",
     "ModelUserMessage",
     "SessionRepository",
+    "SessionMetadata",
     "SessionSnapshot",
+    "SessionStart",
     "ToolCallFinished",
     "ToolCallStarted",
     "ToolRoundPort",

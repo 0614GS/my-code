@@ -7,6 +7,8 @@ from nano_code.core.settings import (
     SettingsResolver,
 )
 from nano_code.core.settings_store import (
+    AgentSettingsLayer,
+    PermissionSettingsLayer,
     SettingsFileError,
     SettingsLayer,
     SettingsStore,
@@ -14,7 +16,9 @@ from nano_code.core.settings_store import (
 
 __all__ = [
     "AgentSettings",
+    "AgentSettingsLayer",
     "NanoCodePaths",
+    "PermissionSettingsLayer",
     "SettingsFileError",
     "SettingsLayer",
     "SettingsOverrides",

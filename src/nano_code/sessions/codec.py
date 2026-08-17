@@ -1,9 +1,16 @@
 """TranscriptEntry 的严格 JSON codec 及领域消息映射。"""
 
 from collections.abc import Mapping
+from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
-from nano_code.agent.contracts.session import CompactBoundary, ContentReplacement
+from nano_code.agent.contracts.session import (
+    CompactBoundary,
+    ContentReplacement,
+    SessionMetadata,
+    SessionStart,
+)
 from nano_code.messages import (
     AssistantMessage,
     ConversationMessage,
@@ -17,7 +24,9 @@ from nano_code.messages import (
     to_json_object,
 )
 from nano_code.messages.primitives import JsonObject
+from nano_code.permissions import PermissionMode
 from nano_code.presentation import ToolResultPresentation
+from nano_code.providers.ids import validate_provider_id
 from nano_code.sessions.records import (
     AssistantMessageRecord,
     CompactBoundaryRecord,
@@ -25,6 +34,8 @@ from nano_code.sessions.records import (
     ConversationSummaryMessageRecord,
     HumanMessageRecord,
     MessageRecord,
+    SessionMetadataRecord,
+    SessionStartedRecord,
     TextContentRecord,
     ToolCallRecord,
     ToolResultRecord,
@@ -37,13 +48,35 @@ class TranscriptDecodeError(ValueError):
     pass
 
 
-type DecodedEntry = ConversationMessage | ContentReplacement | CompactBoundary
+type DecodedEntry = (
+    ConversationMessage
+    | ContentReplacement
+    | CompactBoundary
+    | SessionStart
+    | SessionMetadata
+)
 
 
 def decode_entry(value: object) -> DecodedEntry:
     """将不可信 JSON 一步映射为 sessions port 可见的领域值。"""
 
     entry = entry_from_json(value)
+    if isinstance(entry, SessionStartedRecord):
+        return SessionStart(
+            entry.session_id,
+            entry.created_at,
+            entry.cwd,
+            entry.provider_id,
+            entry.model,
+            entry.permission_mode,
+            entry.max_turns,
+            entry.max_output_tokens,
+            entry.context_chars,
+        )
+    if isinstance(entry, SessionMetadataRecord):
+        return SessionMetadata(
+            entry.created_at, entry.updated_at, entry.title, entry.last_prompt
+        )
     if isinstance(entry, ContentReplacementRecord):
         return ContentReplacement(
             entry.tool_use_id,
@@ -85,6 +118,33 @@ def encode_boundary(boundary: CompactBoundary) -> JsonObject:
             boundary.summary_uuid,
             boundary.trigger,
             boundary.pre_compact_chars,
+        )
+    )
+
+
+def encode_start(start: SessionStart) -> JsonObject:
+    return entry_to_json(
+        SessionStartedRecord(
+            start.session_id,
+            start.created_at,
+            start.cwd,
+            start.provider_id,
+            start.model,
+            start.permission_mode,
+            start.max_turns,
+            start.max_output_tokens,
+            start.context_chars,
+        )
+    )
+
+
+def encode_metadata(metadata: SessionMetadata) -> JsonObject:
+    return entry_to_json(
+        SessionMetadataRecord(
+            metadata.created_at,
+            metadata.updated_at,
+            metadata.title,
+            metadata.last_prompt,
         )
     )
 
@@ -163,6 +223,27 @@ def record_to_message(record: MessageRecord) -> ConversationMessage:
 
 def entry_to_json(entry: TranscriptEntry) -> JsonObject:
     base: JsonObject = {"type": entry.type, "schema_version": entry.schema_version}
+    if isinstance(entry, SessionStartedRecord):
+        base.update(
+            session_id=entry.session_id,
+            created_at=entry.created_at,
+            cwd=entry.cwd,
+            provider_id=entry.provider_id,
+            model=entry.model,
+            permission_mode=entry.permission_mode,
+            max_turns=entry.max_turns,
+            max_output_tokens=entry.max_output_tokens,
+            context_chars=entry.context_chars,
+        )
+        return base
+    if isinstance(entry, SessionMetadataRecord):
+        base.update(
+            created_at=entry.created_at,
+            updated_at=entry.updated_at,
+            title=entry.title,
+            last_prompt=entry.last_prompt,
+        )
+        return base
     if isinstance(
         entry,
         (
@@ -206,13 +287,45 @@ def entry_from_json(value: object) -> TranscriptEntry:
         data = to_json_object(value)
     except TypeError as error:
         raise TranscriptDecodeError("Transcript entry must be an object") from error
-    if data.get("schema_version") != 1:
+    if data.get("schema_version") != 2:
         raise TranscriptDecodeError("Unsupported transcript schema version")
     kind = _string(data, "type")
     expected_fields = _ENTRY_FIELDS.get(kind)
     if expected_fields is None:
         raise TranscriptDecodeError(f"Unsupported transcript entry type: {kind}")
     _require_exact_fields(data, expected_fields)
+    if kind == "session_started":
+        cwd = _string(data, "cwd")
+        if not Path(cwd).is_absolute():
+            raise TranscriptDecodeError("'cwd' must be an absolute path")
+        provider_id = _string(data, "provider_id")
+        try:
+            validate_provider_id(provider_id)
+        except ValueError as error:
+            raise TranscriptDecodeError(str(error)) from error
+        permission_mode = _string(data, "permission_mode")
+        try:
+            PermissionMode(permission_mode)
+        except ValueError as error:
+            raise TranscriptDecodeError("Unsupported permission_mode") from error
+        return SessionStartedRecord(
+            _string(data, "session_id"),
+            _timestamp_string(data, "created_at"),
+            cwd,
+            provider_id,
+            _string(data, "model"),
+            permission_mode,
+            _optional_positive_int(data, "max_turns"),
+            _positive_int(data, "max_output_tokens"),
+            _positive_int(data, "context_chars"),
+        )
+    if kind == "session_metadata":
+        return SessionMetadataRecord(
+            _timestamp_string(data, "created_at"),
+            _timestamp_string(data, "updated_at"),
+            _optional_non_empty_string(data, "title"),
+            _optional_non_empty_string(data, "last_prompt"),
+        )
     if kind in {
         "human_message",
         "assistant_message",
@@ -340,6 +453,24 @@ def _optional_string(data: Mapping[str, object], key: str) -> str | None:
     return value
 
 
+def _optional_non_empty_string(data: Mapping[str, object], key: str) -> str | None:
+    value = _optional_string(data, key)
+    if value is not None and not value.strip():
+        raise TranscriptDecodeError(f"{key!r} must be non-empty or null")
+    return value
+
+
+def _timestamp_string(data: Mapping[str, object], key: str) -> str:
+    value = _string(data, key)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise TranscriptDecodeError(f"{key!r} must be an ISO timestamp") from error
+    if parsed.tzinfo is None:
+        raise TranscriptDecodeError(f"{key!r} must include a timezone")
+    return value
+
+
 def _list(data: Mapping[str, object], key: str) -> list[object]:
     value = data.get(key)
     if not isinstance(value, list):
@@ -351,6 +482,15 @@ def _positive_int(data: Mapping[str, object], key: str) -> int:
     value = data.get(key)
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise TranscriptDecodeError(f"{key!r} must be positive")
+    return value
+
+
+def _optional_positive_int(data: Mapping[str, object], key: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise TranscriptDecodeError(f"{key!r} must be positive or null")
     return value
 
 
@@ -434,6 +574,31 @@ _MESSAGE_COMMON = frozenset(
     {"type", "schema_version", "uuid", "parent_uuid", "timestamp", "content"}
 )
 _ENTRY_FIELDS: dict[str, frozenset[str]] = {
+    "session_started": frozenset(
+        {
+            "type",
+            "schema_version",
+            "session_id",
+            "created_at",
+            "cwd",
+            "provider_id",
+            "model",
+            "permission_mode",
+            "max_turns",
+            "max_output_tokens",
+            "context_chars",
+        }
+    ),
+    "session_metadata": frozenset(
+        {
+            "type",
+            "schema_version",
+            "created_at",
+            "updated_at",
+            "title",
+            "last_prompt",
+        }
+    ),
     "human_message": _MESSAGE_COMMON,
     "assistant_message": _MESSAGE_COMMON | {"usage"},
     "tool_results_message": _MESSAGE_COMMON | {"source_assistant_uuid"},

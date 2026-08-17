@@ -43,15 +43,15 @@ nano-code 将非 Transcript 输入分成 `UserContextDocument` 和 `ContextAttac
 
 主会话按项目目录和 session ID 写入 JSONL；子 Agent 写入独立 sidechain 文件。核心实现位于 `claude-code/src/utils/sessionStorage.ts`。nano-code 的对应磁盘布局见 [09-storage-and-settings.md](09-storage-and-settings.md)。
 
-当前 schema 是 breaking version 1，每行都有 `schema_version: 1`。联合 discriminator 为：
+当前 schema 是 breaking version 2，每行都有 `schema_version: 2`。第一条必须是 `session_started`，记录 Session ID、canonical cwd、创建时间和初始 provider/model/permission/agent 限制快照。后续联合 discriminator 为：
 
 - `human_message`、`assistant_message`、`tool_results_message`、`conversation_summary_message`；
-- `content_replacement`、`compact_boundary`。
+- `session_metadata`、`content_replacement`、`compact_boundary`。
 
 records 定义在 sessions adapter 内，严格 codec 是唯一同时依赖 `TranscriptEntry` 和
 `ConversationMessage` 的模块。旧 `type: "message"`、未知 schema version、未知字段及非法
 内容组合全部拒绝；不提供迁移或 fallback parser。SessionCatalog 会跳过这类旧候选，显式
-resume 则报告 invalid transcript。
+resume 则报告带路径和重建提示的版本不兼容错误。只有 EOF 处没有换行且无法解析的中断尾记录可以忽略；完整坏行始终拒绝恢复。
 
 ## 5. 父链、分支与恢复
 
@@ -108,8 +108,8 @@ compact boundary 表示模型上下文从这里重新开始，但 Transcript 仍
 
 nano-code 将“列出会话”和“恢复会话”分开处理：
 
-1. `SessionCatalog` 只扫描当前项目对应的状态目录，通过 `stat` 和有界文件头提取首条用户提示，不为列表加载完整 JSONL。
-2. 候选按文件修改时间倒序排列，当前活动会话、空文件、异常首记录、非 UUID 文件和符号链接都会被过滤。
+1. `SessionCatalog` 只扫描当前项目对应的状态目录，通过固定大小的 head/tail 提取启动快照、首条用户提示和最后一条 metadata，不为列表加载完整 JSONL。
+2. 显式 title 优先于首条有效 prompt；候选按 metadata 更新时间倒序排列。当前活动会话、空文件、异常首记录、非 UUID 文件和符号链接都会被过滤。
 3. 用户选择后，`SessionStore` 才严格解析完整记录，校验 UUID 唯一性和父节点顺序，并从最后一条记录沿父指针恢复活动分支。
 4. `AgentEngine.resume()` 先完成目标会话校验及未闭合工具轮修复，再替换内存状态；失败时保留原会话。
 5. runtime 在同一临界区切换 transcript、消息历史和工具结果目录，TUI 只接收展示 DTO，不接触 `ConversationMessage` 或 JSONL。
@@ -118,7 +118,7 @@ nano-code 将“列出会话”和“恢复会话”分开处理：
 
 工具结果额外保存可选的 `presentation` 快照。它不是发送给 Anthropic Messages API
 的内容，而是 Tool 在执行当时生成的前端无关摘要；恢复 UI 时优先复用它，从而避免
-升级展示逻辑后历史会话突然改变。该字段在 schema version 1 中是可选字段。
+升级展示逻辑后历史会话突然改变。该字段在 schema version 2 中是可选字段。
 
 JSONL 还可追加两类上下文记录。`content_replacement` 按 tool ID 冻结模型可见的
 microcompact 占位文本，原始工具结果保持不变；`compact_boundary` 记录压缩前父节点、
@@ -129,7 +129,7 @@ Agent 工作集则从最后一个有效 summary 开始。
 ## 11. 会话状态边界
 
 `SessionRepository` 是 JSONL 实现向 Agent 暴露的最小接口：构造或 resume 时一次
-`load()` 返回活动历史、compact 后工作集、内容替换和有效 boundary；追加消息、
+`load()` 返回活动历史、compact 后工作集、metadata、内容替换和有效 boundary；追加消息、
 替换和 boundary 仍是三个显式操作。`SessionStore` 负责解析和校验记录，
 `ConversationState` 负责工作集、持久化优先追加、未闭合 tool-use 修复和会话切换。
 

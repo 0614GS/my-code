@@ -102,7 +102,7 @@ def test_failed_persistence_does_not_change_runtime_state(
     def fail(_: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(store, "_append_record", fail)
+    monkeypatch.setattr(store, "_append_records", fail)
     with pytest.raises(OSError, match="disk full"):
         state.append(HumanMessage("not durable"))
     assert state.history == ()
@@ -143,17 +143,19 @@ def test_partial_compaction_write_does_not_advance_runtime_state(
     summary = ConversationSummaryMessage("summary", parent_uuid=human.uuid)
     boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5)
     replacement = ContentReplacement("call", "Read", 10, "short")
-    original_append_record = store._append_record
+    original_append_records = store._append_records
 
-    def fail_summary(record: object) -> None:
-        if (
+    def fail_summary(records: object) -> None:
+        items = tuple(records)  # type: ignore[arg-type]
+        if any(
             isinstance(record, dict)
             and record.get("type") == "conversation_summary_message"
+            for record in items
         ):
             raise OSError("disk full")
-        original_append_record(record)
+        original_append_records(items)
 
-    monkeypatch.setattr(store, "_append_record", fail_summary)
+    monkeypatch.setattr(store, "_append_records", fail_summary)
     with pytest.raises(OSError, match="disk full"):
         state.commit_compaction(
             CompactionOutcome(

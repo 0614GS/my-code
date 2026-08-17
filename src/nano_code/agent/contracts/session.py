@@ -1,12 +1,71 @@
 """会话事实、工作集和 compact 持久化边界。"""
 
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from nano_code.messages import ContextAttachment, ConversationMessage
 
 CompactTrigger = Literal["auto", "manual", "reactive"]
+
+
+@dataclass(frozen=True, slots=True)
+class SessionStart:
+    session_id: str
+    created_at: str
+    cwd: str
+    provider_id: str
+    model: str
+    permission_mode: str
+    max_turns: int | None
+    max_output_tokens: int
+    context_chars: int
+
+    def __post_init__(self) -> None:
+        try:
+            parsed_id = UUID(self.session_id)
+        except ValueError as error:
+            raise ValueError("session_id must be a UUID") from error
+        if str(parsed_id) != self.session_id.lower():
+            raise ValueError("session_id must use canonical UUID syntax")
+        _validate_session_timestamp(self.created_at, "created_at")
+        if not Path(self.cwd).is_absolute():
+            raise ValueError("cwd must be an absolute path")
+        if not self.provider_id or not self.model or not self.permission_mode:
+            raise ValueError("Session start strings must not be empty")
+        if self.max_turns is not None and self.max_turns < 1:
+            raise ValueError("max_turns must be positive or null")
+        if self.max_output_tokens < 1 or self.context_chars < 1:
+            raise ValueError("Session limits must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class SessionMetadata:
+    created_at: str
+    updated_at: str
+    title: str | None = None
+    last_prompt: str | None = None
+
+    def __post_init__(self) -> None:
+        created = _validate_session_timestamp(self.created_at, "created_at")
+        updated = _validate_session_timestamp(self.updated_at, "updated_at")
+        if updated < created:
+            raise ValueError("updated_at cannot precede created_at")
+        for name, value in (("title", self.title), ("last_prompt", self.last_prompt)):
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must be non-empty or null")
+
+
+def _validate_session_timestamp(value: str, name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"{name} must be an ISO timestamp") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{name} must include a timezone")
+    return parsed
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,3 +154,4 @@ class SessionSnapshot:
     working_set: tuple[ConversationMessage, ...]
     content_replacements: tuple[ContentReplacement, ...] = field(default_factory=tuple)
     compact_boundaries: tuple[CompactBoundary, ...] = field(default_factory=tuple)
+    metadata: SessionMetadata | None = None

@@ -39,7 +39,8 @@ async def run(options: CliOptions, resolver: SettingsResolver) -> int:
         options.settings_overrides,
         interactive=options.interactive,
     )
-    await NanoCodeTui(bootstrap_cli_runtime(settings, options.session_id)).run()
+    runtime = bootstrap_cli_runtime(settings, options.session_id)
+    await NanoCodeTui(runtime).run()
     return 0
 
 

@@ -2,19 +2,18 @@
 
 import json
 import os
-import re
 import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from nano_code.providers.ids import validate_provider_id
 from nano_code.providers.validation import validate_base_url
 
 DEFAULT_PROVIDER_ID = "anthropic"
 DEFAULT_MODEL = "claude-sonnet-4-6"
-_SCHEMA_VERSION = 1
-_PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_SCHEMA_VERSION = 2
 
 
 class ProviderProfileError(ValueError):
@@ -37,10 +36,10 @@ class ProviderProfile:
     base_url: str | None = None
 
     def __post_init__(self) -> None:
-        if _PROVIDER_ID.fullmatch(self.id) is None:
-            raise ProviderProfileError(
-                "provider ID must match [a-z0-9][a-z0-9_-]{0,63}"
-            )
+        try:
+            validate_provider_id(self.id)
+        except ValueError as error:
+            raise ProviderProfileError(str(error)) from error
         if not self.model.strip():
             raise ProviderProfileError("provider model must be a non-empty string")
         if self.base_url is not None:
@@ -71,7 +70,7 @@ class ProviderProfileStore:
         if not isinstance(raw, dict) or raw.get("version") != _SCHEMA_VERSION:
             raise ProviderProfileError(
                 "Provider profiles must use schema version "
-                f"{_SCHEMA_VERSION}: {self.path}"
+                f"{_SCHEMA_VERSION}: {self.path}. Recreate the provider profile."
             )
         providers = raw.get("providers")
         if not isinstance(providers, dict):
@@ -97,20 +96,31 @@ class ProviderProfileStore:
 
     def write(self, profiles: Iterable[ProviderProfile]) -> None:
         indexed = {profile.id: profile for profile in profiles}
-        document = {
-            "version": _SCHEMA_VERSION,
-            "providers": {
-                provider_id: _profile_document(indexed[provider_id])
-                for provider_id in sorted(indexed)
-            },
-        }
+        existing: dict[str, object] = {}
+        existing_providers: dict[object, object] = {}
+        if self.path.exists():
+            self.load()
+            loaded = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = dict(loaded)
+                raw_providers = loaded.get("providers")
+                if isinstance(raw_providers, dict):
+                    existing_providers = raw_providers
+        providers: dict[str, object] = {}
+        for provider_id in sorted(indexed):
+            previous = existing_providers.get(provider_id)
+            entry = dict(previous) if isinstance(previous, dict) else {}
+            entry.update(_profile_document(indexed[provider_id]))
+            providers[provider_id] = entry
+        document = dict(existing)
+        document.update(version=_SCHEMA_VERSION, providers=providers)
         _atomic_private_json_write(self.path, document)
 
 
 def _parse_profile(
     provider_id: str, raw: dict[object, object], path: Path
 ) -> ProviderProfile:
-    model = raw.get("model")
+    model = raw.get("defaultModel")
     protocol = raw.get("protocol")
     base_url = raw.get("baseUrl")
     if not isinstance(model, str):
@@ -136,7 +146,7 @@ def _parse_profile(
 def _profile_document(profile: ProviderProfile) -> dict[str, object]:
     document: dict[str, object] = {
         "protocol": profile.protocol.value,
-        "model": profile.model,
+        "defaultModel": profile.model,
     }
     if profile.base_url is not None:
         document["baseUrl"] = profile.base_url

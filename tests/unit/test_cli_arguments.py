@@ -50,10 +50,9 @@ def test_cli_resolves_file_environment_and_flag_precedence(
     (config_home / "settings.json").write_text(
         json.dumps(
             {
-                "model": "file-model",
-                "baseUrl": "https://file.example/api",
+                "version": 2,
+                "agent": {"model": "file-model", "maxTurns": 3},
                 "permissions": {"defaultMode": "plan"},
-                "maxTurns": 3,
             }
         ),
         encoding="utf-8",
@@ -94,7 +93,8 @@ def test_environment_model_overrides_settings(
     config_home = tmp_path / "config"
     config_home.mkdir()
     (config_home / "settings.json").write_text(
-        json.dumps({"model": "file-model"}), encoding="utf-8"
+        json.dumps({"version": 2, "agent": {"model": "file-model"}}),
+        encoding="utf-8",
     )
     monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("ANTHROPIC_MODEL", "env-model")
@@ -113,7 +113,7 @@ def test_environment_base_url_overrides_user_settings(
     config_home = tmp_path / "config"
     config_home.mkdir()
     (config_home / "settings.json").write_text(
-        json.dumps({"baseUrl": "https://file.example/api"}), encoding="utf-8"
+        json.dumps({"version": 2}), encoding="utf-8"
     )
     monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://env.example/api")
@@ -132,16 +132,16 @@ def test_named_provider_resolves_profile_and_scoped_credential(
     config_home = tmp_path / "config"
     config_home.mkdir()
     (config_home / "settings.json").write_text(
-        json.dumps({"activeProvider": "gateway"}), encoding="utf-8"
+        json.dumps({"version": 2, "activeProvider": "gateway"}), encoding="utf-8"
     )
     (config_home / "providers.json").write_text(
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "providers": {
                     "gateway": {
                         "protocol": "anthropic-messages",
-                        "model": "gateway-model",
+                        "defaultModel": "gateway-model",
                         "baseUrl": "https://gateway.example/api",
                     }
                 },
@@ -174,15 +174,15 @@ def test_cli_provider_override_selects_named_profile(
     (config_home / "providers.json").write_text(
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "providers": {
                     "anthropic": {
                         "protocol": "anthropic-messages",
-                        "model": "default-model",
+                        "defaultModel": "default-model",
                     },
                     "gateway": {
                         "protocol": "anthropic-messages",
-                        "model": "gateway-model",
+                        "defaultModel": "gateway-model",
                     },
                 },
             }

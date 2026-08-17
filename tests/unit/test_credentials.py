@@ -22,8 +22,8 @@ def test_credential_store_round_trip_uses_owner_only_file(tmp_path: Path) -> Non
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
     assert json.loads(path.read_text(encoding="utf-8")) == {
-        "version": 1,
-        "providers": {"anthropic": {"apiKey": "sk-test-value"}},
+        "version": 2,
+        "providers": {"anthropic": {"kind": "apiKey", "apiKey": "sk-test-value"}},
     }
 
 
@@ -63,5 +63,5 @@ def test_malformed_credential_file_fails_without_exposing_contents(
     path = tmp_path / ".credentials.json"
     path.write_text('{"anthropicApiKey": 3}', encoding="utf-8")
 
-    with pytest.raises(CredentialStoreError, match="non-empty string"):
+    with pytest.raises(CredentialStoreError, match="schema version 2"):
         CredentialStore(path).load_api_key()

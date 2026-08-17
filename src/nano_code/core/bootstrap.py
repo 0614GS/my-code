@@ -1,9 +1,11 @@
 """应用存储初始化与 Agent 依赖图的唯一 composition root。"""
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from nano_code.agent import AgentEngine, ConversationState
+from nano_code.agent.contracts.session import SessionStart
 from nano_code.auth import CredentialStore
 from nano_code.cli.runtime import CliChatRuntime, DeferredPermissionPrompter
 from nano_code.cli.services import CliProviderController, ProjectSessionSource
@@ -68,8 +70,7 @@ def initialize_user_storage(paths: NanoCodePaths) -> StorageInitialization:
 
     default_profile = ProviderProfile(
         id=user_settings.active_provider or DEFAULT_PROVIDER_ID,
-        model=user_settings.model or DEFAULT_MODEL,
-        base_url=user_settings.base_url,
+        model=DEFAULT_MODEL,
     )
     created_providers = ProviderProfileStore(paths.providers_path).ensure_exists(
         default_profile
@@ -89,9 +90,22 @@ def _assemble_agent(
     permission_prompter: PermissionPrompter | None = None,
 ) -> tuple[AgentEngine, ProviderRouter]:
     actual_session_id = session_id or str(uuid4())
-    conversation = ConversationState(
-        SessionStore(settings.paths.project_state_dir, actual_session_id)
+    repository = SessionStore(
+        settings.paths.project_state_dir,
+        actual_session_id,
+        start=SessionStart(
+            session_id=actual_session_id,
+            created_at=datetime.now(UTC).isoformat(),
+            cwd=str(settings.cwd),
+            provider_id=settings.provider_id,
+            model=settings.model,
+            permission_mode=settings.permission_mode.value,
+            max_turns=settings.max_turns,
+            max_output_tokens=settings.max_output_tokens,
+            context_chars=settings.context_chars,
+        ),
     )
+    conversation = ConversationState(repository)
     registry = ToolRegistry(builtin_tools())
     prompter = permission_prompter or (
         TerminalPrompter() if settings.interactive else HeadlessPrompter()

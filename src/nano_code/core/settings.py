@@ -14,6 +14,7 @@ from nano_code.permissions import (
     PermissionRule,
     validate_permission_rule,
 )
+from nano_code.providers.ids import validate_provider_id
 from nano_code.providers.profiles import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_ID,
@@ -108,12 +109,14 @@ class SettingsResolver:
 
     def active_provider_id(self, override: str | None = None) -> str:
         user = self.store.load_scope(SettingsScope.USER)
-        return (
+        provider_id = (
             override
             or self.environ.get("NANO_CODE_PROVIDER")
             or user.active_provider
             or DEFAULT_PROVIDER_ID
         )
+        validate_provider_id(provider_id)
+        return provider_id
 
     def resolve(
         self,
@@ -132,8 +135,7 @@ class SettingsResolver:
             profiles = {
                 DEFAULT_PROVIDER_ID: ProviderProfile(
                     id=DEFAULT_PROVIDER_ID,
-                    model=user.model or DEFAULT_MODEL,
-                    base_url=user.base_url,
+                    model=DEFAULT_MODEL,
                 )
             }
         try:
@@ -152,7 +154,7 @@ class SettingsResolver:
         model = (
             actual_overrides.model
             or self.environ.get("ANTHROPIC_MODEL")
-            or project.model
+            or stored.model
             or profile.model
         )
         base_url = (

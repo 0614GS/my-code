@@ -35,8 +35,10 @@ def test_provider_catalog_requires_supported_protocol(tmp_path: Path) -> None:
     path.write_text(
         json.dumps(
             {
-                "version": 1,
-                "providers": {"custom": {"protocol": "openai", "model": "model"}},
+                "version": 2,
+                "providers": {
+                    "custom": {"protocol": "openai", "defaultModel": "model"}
+                },
             }
         ),
         encoding="utf-8",

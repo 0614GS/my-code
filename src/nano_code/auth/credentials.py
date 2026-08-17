@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from nano_code.providers.ids import validate_provider_id
+
 _DEFAULT_PROVIDER_ID = "anthropic"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 class CredentialStoreError(ValueError):
@@ -37,6 +39,7 @@ class CredentialStore:
         self.path = path
 
     def load_api_key(self, provider_id: str = _DEFAULT_PROVIDER_ID) -> str | None:
+        _validate_id(provider_id)
         if not self.path.exists():
             return None
         keys, _legacy = self._load_keys()
@@ -45,6 +48,7 @@ class CredentialStore:
     def save_api_key(
         self, api_key: str, provider_id: str = _DEFAULT_PROVIDER_ID
     ) -> None:
+        _validate_id(provider_id)
         value = api_key.strip()
         if not value:
             raise CredentialStoreError("API key must not be empty")
@@ -58,6 +62,7 @@ class CredentialStore:
     def delete(self, provider_id: str = _DEFAULT_PROVIDER_ID) -> bool:
         """删除一个 provider 的 key，同时保留凭据目录。"""
 
+        _validate_id(provider_id)
         if not self.path.exists():
             return False
         keys, legacy = self._load_keys()
@@ -91,16 +96,11 @@ class CredentialStore:
                 f"Credential file root must be an object: {self.path}"
             )
 
-        # 引入 provider 之前的 MVP 只存储一个顶层 key。暂时兼容该格式，
-        # 以便在启动或下次写入时完成无损迁移。
-        if "anthropicApiKey" in raw:
-            value = _parse_api_key(raw.get("anthropicApiKey"), self.path)
-            return ({_DEFAULT_PROVIDER_ID: value} if value is not None else {}), True
-
         if raw.get("version") != _SCHEMA_VERSION:
             raise CredentialStoreError(
                 "Credential file must use schema version "
-                f"{_SCHEMA_VERSION}: {self.path}"
+                f"{_SCHEMA_VERSION}: {self.path}. Recreate it with "
+                "`nanocode auth login`."
             )
         providers = raw.get("providers")
         if not isinstance(providers, dict):
@@ -113,19 +113,36 @@ class CredentialStore:
                 raise CredentialStoreError(
                     f"Each provider credential must be a named object: {self.path}"
                 )
+            _validate_id(provider_id)
+            if entry.get("kind") != "apiKey":
+                raise CredentialStoreError(
+                    f"Unsupported credential kind for {provider_id!r}: {self.path}"
+                )
             value = _parse_api_key(entry.get("apiKey"), self.path)
             if value is not None:
                 keys[provider_id] = value
         return keys, False
 
     def _write_keys(self, keys: Mapping[str, str]) -> None:
-        document = {
-            "version": _SCHEMA_VERSION,
-            "providers": {
-                provider_id: {"apiKey": keys[provider_id]}
-                for provider_id in sorted(keys)
-            },
-        }
+        existing: dict[str, object] = {}
+        existing_providers: dict[object, object] = {}
+        if self.path.exists():
+            self._load_keys()
+            loaded = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = dict(loaded)
+                raw_providers = loaded.get("providers")
+                if isinstance(raw_providers, dict):
+                    existing_providers = raw_providers
+        providers: dict[str, object] = {}
+        for provider_id in sorted(keys):
+            _validate_id(provider_id)
+            previous = existing_providers.get(provider_id)
+            entry = dict(previous) if isinstance(previous, dict) else {}
+            entry.update(kind="apiKey", apiKey=keys[provider_id])
+            providers[provider_id] = entry
+        document = dict(existing)
+        document.update(version=_SCHEMA_VERSION, providers=providers)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.path.parent, 0o700)
         temporary_path: Path | None = None
@@ -161,6 +178,13 @@ def _parse_api_key(value: object, path: Path) -> str | None:
     if not isinstance(value, str) or not value.strip():
         raise CredentialStoreError(f"apiKey must be a non-empty string: {path}")
     return value
+
+
+def _validate_id(provider_id: str) -> None:
+    try:
+        validate_provider_id(provider_id)
+    except ValueError as error:
+        raise CredentialStoreError(str(error)) from error
 
 
 def resolve_api_key(

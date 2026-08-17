@@ -26,7 +26,7 @@ def test_bootstrap_creates_required_user_layout_only(tmp_path: Path) -> None:
     assert result.created_providers is True
     assert result.created_credentials is True
     assert json.loads(paths.user_settings_path.read_text(encoding="utf-8")) == {
-        "version": 1,
+        "version": 2,
         "activeProvider": "anthropic",
     }
     assert set(ProviderProfileStore(paths.providers_path).load()) == {"anthropic"}
@@ -52,7 +52,7 @@ def test_bootstrap_is_idempotent_and_preserves_existing_profiles(
     assert paths.providers_path.read_text(encoding="utf-8") == original
 
 
-def test_bootstrap_migrates_legacy_credential_and_provider_fields(
+def test_bootstrap_rejects_legacy_storage_without_modifying_it(
     tmp_path: Path,
 ) -> None:
     paths = make_paths(tmp_path)
@@ -70,13 +70,11 @@ def test_bootstrap_migrates_legacy_credential_and_provider_fields(
         json.dumps({"anthropicApiKey": "legacy-key"}), encoding="utf-8"
     )
 
-    initialize_user_storage(paths)
+    with pytest.raises(ValueError, match="incompatible schema"):
+        initialize_user_storage(paths)
 
-    profile = ProviderProfileStore(paths.providers_path).load()["anthropic"]
-    assert profile.model == "legacy-model"
-    assert profile.base_url == "https://legacy.example/api"
-    assert CredentialStore(paths.credentials_path).load_api_key() == "legacy-key"
-    assert "anthropicApiKey" not in paths.credentials_path.read_text(encoding="utf-8")
+    assert "legacy-model" in paths.user_settings_path.read_text(encoding="utf-8")
+    assert "anthropicApiKey" in paths.credentials_path.read_text(encoding="utf-8")
 
 
 def test_cli_startup_bootstraps_before_auth_status(

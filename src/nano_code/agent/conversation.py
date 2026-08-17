@@ -239,6 +239,7 @@ class ConversationState:
                     working_set=history,
                     content_replacements=tuple(self._all_replacements.values()),
                     compact_boundaries=tuple(self._all_boundaries.values()),
+                    metadata=self._snapshot.metadata,
                 ),
                 history,
             )
@@ -342,4 +343,5 @@ def _snapshot_for_history(
         working_set=working_set,
         content_replacements=snapshot.content_replacements,
         compact_boundaries=boundaries,
+        metadata=snapshot.metadata,
     )

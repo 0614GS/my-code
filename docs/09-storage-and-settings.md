@@ -24,7 +24,7 @@ nano-code 采用 Claude Code 的分离方式：运行状态归入用户目录，
 
 路径解析和读取配置没有写副作用。Transcript 在第一条消息持久化时创建；`tool-results/` 仅在结果超过内联上限时创建。因此，仅运行 `nanocode --help` 或解析一次配置不会生成空目录。
 
-真正启动聊天或认证命令时会幂等初始化用户目录：创建缺失的 `settings.json`、`providers.json`、空 `.credentials.json` 和 `projects/`，但不会创建仓库内的 `.nano-code/`。已有文件只校验、不覆盖；损坏的 JSON 会导致启动失败。旧版顶层 `baseUrl` 和 `anthropicApiKey` 会复制或迁移到默认 `anthropic` Provider。
+真正启动聊天或认证命令时会幂等初始化用户目录：创建缺失的 `settings.json`、`providers.json`、空 `.credentials.json` 和 `projects/`，但不会创建仓库内的 `.nano-code/`。已有文件只校验、不覆盖；损坏的 JSON 会导致启动失败。v1 文件不会迁移、覆盖或删除，读取时会报告文件路径和重建提示。
 
 ## Provider Profiles
 
@@ -32,17 +32,17 @@ Provider Profile 是一个命名连接配置，而不是另一套 SDK。当前�
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "providers": {
     "anthropic": {
       "protocol": "anthropic-messages",
-      "model": "claude-sonnet-4-6"
+      "defaultModel": "claude-sonnet-4-6"
     }
   }
 }
 ```
 
-`settings.json` 的 `activeProvider` 指向当前 Profile；API Key 只存在 `.credentials.json`。项目级配置不能定义或选择 Provider，避免不可信仓库重定向认证请求。
+`settings.json` 的 `activeProvider` 指向当前 Profile；API Key 只存在 `.credentials.json`，并以 `{"kind":"apiKey","apiKey":"..."}` 的可扩展鉴别联合保存。项目级配置不能定义或选择 Provider，避免不可信仓库重定向认证请求。Provider ID 在三类文件中使用同一校验规则。
 
 ## 配置层与优先级
 
@@ -61,16 +61,18 @@ Provider Profile 是一个命名连接配置，而不是另一套 SDK。当前�
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "activeProvider": "anthropic",
+  "agent": {
+    "maxOutputTokens": 8192,
+    "contextChars": 160000
+  },
   "permissions": {
     "defaultMode": "default",
     "allow": ["Bash(git status)", "Read"],
     "deny": ["Bash(rm:*)"],
     "ask": ["Bash(git push)"]
-  },
-  "maxOutputTokens": 8192,
-  "contextChars": 160000
+  }
 }
 ```
 
@@ -98,13 +100,15 @@ CLI 参数解析只产生 `SettingsOverrides`，不读取磁盘或凭据；`cli.
 `AgentInboundPort` 的事件和状态投影为 TUI contract。这样未来增加非 CLI 入口时，
 不需要复制 settings 优先级或 Agent 依赖装配。
 
-Provider 的模型和 Base URL 归入 `providers.json`；项目配置仍可用 `model` 覆盖模型，但不能定义或选择 Provider。旧版用户设置中的顶层 `model`、`baseUrl` 只作为首次创建 Provider Catalog 时的迁移来源。
+Provider 的默认模型和 endpoint 归入 `providers.json`；项目配置仍可用 `agent.model` 覆盖模型，但不能定义或选择 Provider。settings 不再接受 `baseUrl` 作为连接配置入口。
 
 `contextChars` 是本地工作集触发 compact 的保守字符阈值，不代表 Provider 宣称的
 精确 token window。实际预算会优先使用最近一次模型响应的 usage，并为输出 token
 单独预留空间。
 
-未知字段会被忽略，已知字段类型错误则启动失败。`NANO_CODE_PROVIDER`/`--provider` 覆盖活动 Profile，`ANTHROPIC_BASE_URL`/`--base-url` 覆盖其 URL，`NANO_CODE_API_KEY` 或兼容的 `ANTHROPIC_API_KEY` 覆盖该 Profile 的持久化 Key。项目级和 local settings 均不能指定 Provider URL：MVP 尚无 workspace trust，仓库控制的地址可能接收用户的 API Key。共享项目配置同样禁止设置 `bypassPermissions`。
+未知字段读取时忽略、写回时保留，已知字段类型错误则启动失败。`NANO_CODE_PROVIDER`/`--provider` 覆盖活动 Profile，`ANTHROPIC_BASE_URL`/`--base-url` 覆盖其 URL，`NANO_CODE_API_KEY` 或兼容的 `ANTHROPIC_API_KEY` 覆盖该 Profile 的持久化 Key。项目级和 local settings 均不能指定 Provider URL 或活动 Provider；共享项目配置同样禁止设置 `bypassPermissions`。
+
+当前阶段不会自动清理 Session。Transcript 和工具结果会持续保留，直到未来明确引入手动管理能力。
 
 配置和凭据写入接口使用同目录临时文件加原子替换；凭据目录为 `0700`，文件为 `0600`。持久化 Key 只传给 Provider，Bash 子进程会剥离 API 认证变量。会话 ID 必须是标准 UUID，避免路径穿越并保持恢复接口稳定。
 
@@ -112,4 +116,4 @@ Provider 的模型和 Base URL 归入 `providers.json`；项目配置仍可用 `
 
 ## 与参考实现的差异
 
-长项目路径的哈希后缀使用 SHA-256，而参考快照在 Bun 环境使用 `Bun.hash`；二者目录形状相同，但极端长路径不会得到相同后缀。MVP 暂不实现 managed settings、CLI `--settings` 文件、会话索引和旧原型目录迁移。
+长项目路径的哈希后缀使用 SHA-256，而参考快照在 Bun 环境使用 `Bun.hash`；二者目录形状相同，但极端长路径不会得到相同后缀。MVP 暂不实现 managed settings、CLI `--settings` 文件、会话索引、`state.json`、OAuth、Keychain、并行工具、Session fork 和旧原型目录迁移。

@@ -47,12 +47,17 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
     assert store.load().history == messages
     entries = [json.loads(line) for line in store.path.read_text().splitlines()]
     assert [entry["type"] for entry in entries] == [
+        "session_started",
         "human_message",
+        "session_metadata",
         "assistant_message",
+        "session_metadata",
         "tool_results_message",
+        "session_metadata",
         "conversation_summary_message",
+        "session_metadata",
     ]
-    assert all(entry["schema_version"] == 1 for entry in entries)
+    assert all(entry["schema_version"] == 2 for entry in entries)
     assert all("role" not in entry and "origin" not in entry for entry in entries)
 
 
@@ -123,7 +128,7 @@ def test_catalog_skips_legacy_transcript(tmp_path: Path) -> None:
     legacy = tmp_path / f"{SESSION_ID}.jsonl"
     legacy.write_text(json.dumps({"type": "message", "version": 1}) + "\n")
     assert SessionCatalog(tmp_path).list() == ()
-    with pytest.raises(ValueError, match="Invalid transcript"):
+    with pytest.raises(ValueError, match="incompatible"):
         _store(tmp_path).load()
 
 
@@ -136,7 +141,7 @@ def test_failed_append_does_not_update_idempotency_index(
     def fail(_: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(store, "_append_record", fail)
+    monkeypatch.setattr(store, "_append_records", fail)
     with pytest.raises(OSError, match="disk full"):
         store.append(message)
     assert message.uuid not in (store._known_ids or set())
