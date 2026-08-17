@@ -74,7 +74,15 @@ resolver 返回空 tuple。
 `live_session`。后者会以 `AttachmentDelivery` 锚定到 working-set message，按原位置
 参与后续请求与 compact 输入，但不写 Transcript。`AgentTurnInput` 则是回合事件
 attachment 的入口；这条路径与基于快照的 derived source 分开，为后续 TUI `@`
-文件选择保留语义边界。
+文件选择提供语义边界。TUI 在创建 `AgentTurnInput` 前解析 `@path`、
+`@"path with spaces"` 和 `@file#L10-20`，并把成功读取的文件或目录转换为
+`live_session` 的合成 `Read`/`Glob` exchange。原始用户文本保持不变。
+
+显式 `@` mention 是本次读取的用户授权，因此普通 ask 不再弹窗；whole-tool/path
+deny、工作区逃逸和外部符号链接仍不可绕过。文件遵循 Read 的 UTF-8、8 MiB 和
+行数限制，目录只列直接子项且最多 500 项；截断会进入模型可见结果。不存在、非法、
+被拒绝、二进制、超限或读取失败的 mention 静默跳过，不影响同一提示中的其他有效项。
+这些正文和列表不写 Transcript，resume 或切换 session 后不会恢复。
 
 attachment content 支持 `TextContent`、`ContextInstruction` 和受信任的
 `AttachmentToolExchange`。前两者投影为 user text/reminder；后者投影为配对的

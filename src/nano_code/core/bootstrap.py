@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from nano_code.agent import AgentEngine, ConversationState
 from nano_code.agent.contracts.session import SessionStart
+from nano_code.attachments import AttachmentLoader, WorkspacePathSuggester
 from nano_code.auth import CredentialStore
 from nano_code.cli.runtime import CliChatRuntime, DeferredPermissionPrompter
 from nano_code.cli.services import CliProviderController, ProjectSessionSource
@@ -88,7 +89,13 @@ def _assemble_agent(
     session_id: str | None = None,
     *,
     permission_prompter: PermissionPrompter | None = None,
-) -> tuple[AgentEngine, ProviderRouter]:
+) -> tuple[
+    AgentEngine,
+    ProviderRouter,
+    ToolRegistry,
+    PermissionPolicy,
+    ToolContext,
+]:
     actual_session_id = session_id or str(uuid4())
     repository = SessionStore(
         settings.paths.project_state_dir,
@@ -114,11 +121,12 @@ def _assemble_agent(
         mode=settings.permission_mode,
         rules=settings.permission_rules,
     )
+    tool_context = ToolContext(cwd=settings.cwd)
     tool_executor = ToolExecutor(
         registry=registry,
         policy=permission_policy,
         prompter=prompter,
-        context=ToolContext(cwd=settings.cwd),
+        context=tool_context,
         result_store=ToolResultStore(
             settings.paths.tool_results_dir(actual_session_id)
         ),
@@ -160,7 +168,7 @@ def _assemble_agent(
         compactor=CompactionCoordinator(context, CompactionService(provider)),
         max_steps=settings.max_steps,
     )
-    return engine, provider
+    return engine, provider, registry, permission_policy, tool_context
 
 
 def bootstrap_agent(
@@ -171,7 +179,7 @@ def bootstrap_agent(
 ) -> AgentEngine:
     """组装一个可由任意 driving adapter 使用的 Agent。"""
 
-    engine, _ = _assemble_agent(
+    engine, _, _, _, _ = _assemble_agent(
         settings,
         session_id,
         permission_prompter=permission_prompter,
@@ -186,7 +194,7 @@ def bootstrap_cli_runtime(
     """组装 TUI 所需的 Agent 与 CLI application adapter。"""
 
     prompter = DeferredPermissionPrompter()
-    engine, provider = _assemble_agent(
+    engine, provider, registry, permission_policy, tool_context = _assemble_agent(
         settings,
         session_id,
         permission_prompter=prompter,
@@ -199,4 +207,6 @@ def bootstrap_cli_runtime(
             ProviderManager(settings.paths), provider
         ),
         session_source=ProjectSessionSource(settings.paths.project_state_dir),
+        attachment_loader=AttachmentLoader(registry, permission_policy, tool_context),
+        path_suggester=WorkspacePathSuggester(settings.cwd),
     )

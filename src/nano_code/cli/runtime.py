@@ -23,8 +23,9 @@ from nano_code.agent import (
 )
 from nano_code.agent.ports.inbound import AgentInboundPort
 from nano_code.agent.ports.session import SessionRepository
+from nano_code.attachments import AttachmentLoader, WorkspacePathSuggester
 from nano_code.core import AgentSettings
-from nano_code.messages import JsonObject
+from nano_code.messages import ContextAttachment, JsonObject
 from nano_code.permissions import PermissionConfirmation
 from nano_code.permissions.models import PermissionDecision
 from nano_code.presentation import generic_tool_use_presentation
@@ -33,6 +34,7 @@ from nano_code.providers.router import ProviderConnection
 from nano_code.sessions import SessionSummary
 from nano_code.tools import Tool
 from nano_code.tui import (
+    AttachmentLoaded,
     ContextStatus,
     HistoryAssistantMessage,
     HistoryEntry,
@@ -40,6 +42,7 @@ from nano_code.tui import (
     HistoryToolCall,
     HistoryUserMessage,
     MaxStepsReached,
+    PathSuggestion,
     PermissionHandler,
     PermissionRequest,
     ResumedSession,
@@ -113,23 +116,37 @@ class CliChatRuntime:
         permission_prompter: DeferredPermissionPrompter,
         provider_control: ProviderControlPort,
         session_source: SessionSourcePort,
+        attachment_loader: AttachmentLoader | None = None,
+        path_suggester: WorkspacePathSuggester | None = None,
     ) -> None:
         self.agent = agent
         self.settings = settings
         self.permission_prompter = permission_prompter
         self.provider_control = provider_control
         self.session_source = session_source
+        self.attachment_loader = attachment_loader
+        self.path_suggester = path_suggester or WorkspacePathSuggester(settings.cwd)
         # 会话切换与用户回合共享同一把锁，避免 JSONL 归属在流式响应途中改变。
         self._session_lock = asyncio.Lock()
 
     async def submit(self, prompt: str) -> TurnOutcome:
+        attachments = await self._load_attachments(prompt)
         async with self._session_lock:
-            result = await self.agent.submit(AgentTurnInput(prompt))
+            result = await self.agent.submit(AgentTurnInput(prompt, attachments))
         return _project_turn_outcome(result)
 
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
+        loaded = (
+            await self.attachment_loader.load(prompt)
+            if self.attachment_loader is not None
+            else ()
+        )
+        for item in loaded:
+            yield AttachmentLoaded(item.path, item.is_directory, item.display)
         async with self._session_lock:
-            async for event in self.agent.stream(AgentTurnInput(prompt)):
+            async for event in self.agent.stream(
+                AgentTurnInput(prompt, tuple(item.attachment for item in loaded))
+            ):
                 if isinstance(event, AgentTextDelta):
                     yield TextDelta(event.text)
                 elif isinstance(event, AgentToolStarted):
@@ -162,6 +179,19 @@ class CliChatRuntime:
                             output_tokens=limit.usage.output_tokens,
                         )
                     )
+
+    async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
+        suggestions = await self.path_suggester.suggest(query)
+        return tuple(
+            PathSuggestion(item.path, item.is_directory, item.display)
+            for item in suggestions
+        )
+
+    async def _load_attachments(self, prompt: str) -> tuple[ContextAttachment, ...]:
+        if self.attachment_loader is None:
+            return ()
+        loaded = await self.attachment_loader.load(prompt)
+        return tuple(item.attachment for item in loaded)
 
     def status(self) -> RuntimeStatus:
         agent_status = self.agent.status()

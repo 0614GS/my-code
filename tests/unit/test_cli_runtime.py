@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from nano_code.agent import AgentTurnInput, AgentTurnSucceeded
 from nano_code.auth import CredentialSource
 from nano_code.cli.runtime import CliChatRuntime
 from nano_code.core import AgentSettings, NanoCodePaths
@@ -28,6 +29,15 @@ _CURRENT_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 _TARGET_SESSION_ID = "22222222-2222-2222-2222-222222222222"
 
 
+class CapturingAgent:
+    def __init__(self) -> None:
+        self.turn_input: AgentTurnInput | None = None
+
+    async def submit(self, turn_input: AgentTurnInput) -> AgentTurnSucceeded:
+        self.turn_input = turn_input
+        return AgentTurnSucceeded("done", 1, TokenUsage())
+
+
 def _bootstrap_runtime(tmp_path: Path) -> CliChatRuntime:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -48,6 +58,23 @@ def _bootstrap_runtime(tmp_path: Path) -> CliChatRuntime:
         credential_source=CredentialSource.NONE,
     )
     return bootstrap_cli_runtime(settings, _CURRENT_SESSION_ID)
+
+
+@pytest.mark.asyncio
+async def test_runtime_loads_mentions_before_creating_turn_input(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    (runtime.settings.cwd / "context.txt").write_text("context", encoding="utf-8")
+    agent = CapturingAgent()
+    runtime.agent = agent  # type: ignore[assignment]
+
+    await runtime.submit("review @context.txt")
+
+    assert agent.turn_input is not None
+    assert agent.turn_input.prompt == "review @context.txt"
+    assert len(agent.turn_input.attachments) == 1
+    assert agent.turn_input.attachments[0].retention == "live_session"
 
 
 @pytest.mark.asyncio

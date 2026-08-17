@@ -8,15 +8,18 @@ from textual.events import Key
 from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
 
+from nano_code.attachments import format_path_mention, mention_at_cursor
 from nano_code.permissions import PermissionConfirmation
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.contracts import (
+    AttachmentLoaded,
     ChatRuntime,
     ContextStatus,
     HistoryAssistantMessage,
     HistorySystemMessage,
     HistoryToolCall,
     HistoryUserMessage,
+    PathSuggestion,
     PermissionRequest,
     StepLimitReached,
     TextDelta,
@@ -338,6 +341,10 @@ class NanoCodeApp(App[None]):
         self.runtime = runtime
         self.commands = commands or SlashCommandRegistry.default()
         self._busy = False
+        self._suggestion_mode: str | None = None
+        self._path_suggestions: tuple[PathSuggestion, ...] = ()
+        self._mention_span: tuple[int, int] | None = None
+        self._suggestion_request = 0
         self.runtime.set_permission_handler(self._ask_permission)
 
     def compose(self) -> ComposeResult:
@@ -365,15 +372,59 @@ class NanoCodeApp(App[None]):
     def update_slash_suggestions(self, event: Input.Changed) -> None:
         palette = self.query_one("#command-palette", OptionList)
         matches = self.commands.matching(event.value)
+        if matches:
+            self._suggestion_request += 1
+            self._suggestion_mode = "command"
+            self._path_suggestions = ()
+            self._mention_span = None
+            palette.set_options(
+                Option(
+                    f"[bold #ffb38a]/{command.name}[/]  [dim]{command.description}[/]",
+                    id=command.name,
+                )
+                for command in matches
+            )
+            palette.display = True
+            palette.highlighted = 0
+            return
+        mention = mention_at_cursor(event.value, event.input.cursor_position)
+        if mention is None or self._busy or event.input.disabled:
+            self._close_suggestions()
+            return
+        start, end, query = mention
+        self._suggestion_request += 1
+        request = self._suggestion_request
+        self._mention_span = (start, end)
+        self._suggestion_mode = "path"
+        palette.display = False
+        self._load_path_suggestions(request, query, start, end)
+
+    @work(group="path-suggestions")
+    async def _load_path_suggestions(
+        self, request: int, query: str, start: int, end: int
+    ) -> None:
+        suggestions = await self.runtime.suggest_paths(query)
+        if (
+            request != self._suggestion_request
+            or self._busy
+            or self._suggestion_mode != "path"
+            or self._mention_span != (start, end)
+        ):
+            return
+        palette = self.query_one("#command-palette", OptionList)
+        self._path_suggestions = suggestions
         palette.set_options(
             Option(
-                f"[bold #ffb38a]/{command.name}[/]  [dim]{command.description}[/]",
-                id=command.name,
+                (
+                    f"[bold #ffb38a]{suggestion.display}[/]  "
+                    f"[dim]{'directory' if suggestion.is_directory else 'file'}[/]"
+                ),
+                id=f"path:{index}",
             )
-            for command in matches
+            for index, suggestion in enumerate(suggestions)
         )
-        palette.display = bool(matches)
-        if matches:
+        palette.display = bool(suggestions)
+        if suggestions:
             palette.highlighted = 0
 
     async def on_key(self, event: Key) -> None:
@@ -386,16 +437,15 @@ class NanoCodeApp(App[None]):
         elif event.key == "up":
             palette.action_cursor_up()
         elif event.key == "tab":
-            command_name = _highlighted_command(palette)
-            if command_name is not None:
-                prompt.value = f"/{command_name} "
-                prompt.cursor_position = len(prompt.value)
+            self._select_highlighted_suggestion(prompt, palette)
             event.prevent_default()
             event.stop()
 
     @on(OptionList.OptionSelected, "#command-palette")
     async def select_slash_command(self, event: OptionList.OptionSelected) -> None:
-        if event.option_id is not None:
+        if self._suggestion_mode == "path":
+            self._select_path_option(event.option_id)
+        elif event.option_id is not None:
             await self._process_line(f"/{event.option_id}")
 
     @on(Input.Submitted, "#prompt")
@@ -405,16 +455,20 @@ class NanoCodeApp(App[None]):
         palette = self.query_one("#command-palette", OptionList)
         line = event.value
         if palette.display and palette.option_count:
-            command_name = _highlighted_command(palette)
+            if self._suggestion_mode == "path":
+                self._select_highlighted_suggestion(
+                    self.query_one("#prompt", Input), palette
+                )
+                return
+            command_name = _highlighted_option_id(palette)
             if command_name is not None:
                 line = f"/{command_name}"
         await self._process_line(line)
 
     async def _process_line(self, line: str) -> None:
         prompt = self.query_one("#prompt", Input)
-        palette = self.query_one("#command-palette", OptionList)
         prompt.value = ""
-        palette.display = False
+        self._close_suggestions()
         if not line.strip():
             return
 
@@ -442,6 +496,7 @@ class NanoCodeApp(App[None]):
     @work(exclusive=True, group="agent-turn")
     async def _run_agent_turn(self, prompt_text: str) -> None:
         self._busy = True
+        self._close_suggestions()
         prompt = self.query_one("#prompt", Input)
         activity = self.query_one(ActivityBar)
         prompt.disabled = True
@@ -452,7 +507,9 @@ class NanoCodeApp(App[None]):
         completed = False
         try:
             async for event in self.runtime.stream(prompt_text):
-                if isinstance(event, TextDelta):
+                if isinstance(event, AttachmentLoaded):
+                    await self._mount_message(SystemMessage(event.display))
+                elif isinstance(event, TextDelta):
                     if assistant is None:
                         assistant = AssistantMessage("")
                         await self._mount_message(assistant)
@@ -638,6 +695,7 @@ class NanoCodeApp(App[None]):
         prompt = self.query_one("#prompt", Input)
         activity = self.query_one(ActivityBar)
         panel = self.query_one(PermissionPanel)
+        self._close_suggestions()
         prompt.display = False
         activity.display = False
         try:
@@ -645,6 +703,44 @@ class NanoCodeApp(App[None]):
         finally:
             prompt.display = True
             activity.display = True
+
+    def _select_highlighted_suggestion(
+        self, prompt: Input, palette: OptionList
+    ) -> None:
+        option_id = _highlighted_option_id(palette)
+        if option_id is None:
+            return
+        if self._suggestion_mode == "path":
+            self._select_path_option(option_id)
+            return
+        prompt.value = f"/{option_id} "
+        prompt.cursor_position = len(prompt.value)
+
+    def _select_path_option(self, option_id: str | None) -> None:
+        if option_id is None or not option_id.startswith("path:"):
+            return
+        try:
+            suggestion = self._path_suggestions[int(option_id.partition(":")[2])]
+        except (ValueError, IndexError):
+            return
+        if self._mention_span is None:
+            return
+        prompt = self.query_one("#prompt", Input)
+        start, end = self._mention_span
+        replacement = format_path_mention(suggestion.path) + " "
+        prompt.value = prompt.value[:start] + replacement + prompt.value[end:]
+        prompt.cursor_position = start + len(replacement)
+        self._close_suggestions()
+
+    def _close_suggestions(self) -> None:
+        self._suggestion_request += 1
+        self._suggestion_mode = None
+        self._path_suggestions = ()
+        self._mention_span = None
+        try:
+            self.query_one("#command-palette", OptionList).display = False
+        except Exception:
+            pass
 
 
 class NanoCodeTui:
@@ -657,7 +753,7 @@ class NanoCodeTui:
         await self.app.run_async()
 
 
-def _highlighted_command(palette: OptionList) -> str | None:
+def _highlighted_option_id(palette: OptionList) -> str | None:
     highlighted = palette.highlighted
     if highlighted is None:
         return None

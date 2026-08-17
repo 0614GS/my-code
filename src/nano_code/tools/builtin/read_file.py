@@ -87,16 +87,24 @@ class ReadFileTool(Tool):
         )
         offset = optional_int(tool_input, "offset", 1, minimum=1, maximum=10_000_000)
         limit = optional_int(tool_input, "limit", 2000, minimum=1, maximum=5000)
-        content = self._read(path, offset, limit)
+        content, truncated = self._read_details(path, offset, limit)
         display_path = relative_display_path(context.cwd, path)
         line_count = sum(1 for line in content.splitlines() if "\t" in line)
         return ToolOutput(
             content=f"{display_path}\n{content}",
-            metadata={"path": display_path, "line_count": line_count},
+            metadata={
+                "path": display_path,
+                "line_count": line_count,
+                "truncated": truncated,
+            },
         )
 
     @staticmethod
     def _read(path: Path, offset: int, limit: int) -> str:
+        return ReadFileTool._read_details(path, offset, limit)[0]
+
+    @staticmethod
+    def _read_details(path: Path, offset: int, limit: int) -> tuple[str, bool]:
         if not path.is_file():
             raise ToolExecutionError(f"Not a file: {path}")
         if path.stat().st_size > _MAX_READ_BYTES:
@@ -106,11 +114,17 @@ class ReadFileTool(Tool):
         raw = path.read_bytes()
         if b"\x00" in raw:
             raise ToolExecutionError("Binary files are not supported by Read")
-        lines = raw.decode("utf-8", errors="replace").splitlines()
+        try:
+            lines = raw.decode("utf-8").splitlines()
+        except UnicodeDecodeError as error:
+            raise ToolExecutionError("File is not valid UTF-8 text") from error
         selected = lines[offset - 1 : offset - 1 + limit]
         if not selected:
-            return "<no lines in requested range>"
-        return "\n".join(
-            f"{line_number:>6}\t{line}"
-            for line_number, line in enumerate(selected, start=offset)
+            return "<no lines in requested range>", False
+        return (
+            "\n".join(
+                f"{line_number:>6}\t{line}"
+                for line_number, line in enumerate(selected, start=offset)
+            ),
+            offset - 1 + len(selected) < len(lines),
         )

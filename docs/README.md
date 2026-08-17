@@ -35,6 +35,7 @@ ToolSearch ──> 按需暴露 deferred tool schema
 | [09-storage-and-settings.md](09-storage-and-settings.md) | 会话、工具结果和分层配置分别存在哪里？ |
 | [10-terminal-ui.md](10-terminal-ui.md) | TUI、slash 命令和核心 runtime 如何解耦？ |
 | [11-prompt-management.md](11-prompt-management.md) | 提示词如何分段、缓存并规范化可信上下文块？ |
+| [12-package-boundaries.md](12-package-boundaries.md) | 下一阶段如何划分核心机制、产品能力、应用端口与适配器？ |
 
 ## 统一术语
 

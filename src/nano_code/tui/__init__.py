@@ -3,6 +3,7 @@
 from nano_code.tui.app import NanoCodeApp, NanoCodeTui
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.contracts import (
+    AttachmentLoaded,
     ChatRuntime,
     ContextStatus,
     HistoryAssistantMessage,
@@ -11,6 +12,7 @@ from nano_code.tui.contracts import (
     HistoryToolCall,
     HistoryUserMessage,
     MaxStepsReached,
+    PathSuggestion,
     PermissionHandler,
     PermissionRequest,
     ResumedSession,
@@ -30,6 +32,7 @@ from nano_code.tui.resume_screen import ResumeScreen
 
 __all__ = [
     "ChatRuntime",
+    "AttachmentLoaded",
     "ContextStatus",
     "HistoryAssistantMessage",
     "HistoryEntry",
@@ -41,6 +44,7 @@ __all__ = [
     "NanoCodeTui",
     "PermissionHandler",
     "PermissionRequest",
+    "PathSuggestion",
     "RuntimeStatus",
     "ResumedSession",
     "ResumeScreen",

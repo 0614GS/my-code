@@ -13,6 +13,13 @@ from nano_code.todos.models import TodoItem
 
 
 @dataclass(frozen=True, slots=True)
+class PathSuggestion:
+    path: str
+    is_directory: bool
+    display: str
+
+
+@dataclass(frozen=True, slots=True)
 class TurnSucceeded:
     text: str
     completed_steps: int
@@ -75,6 +82,13 @@ class TextDelta:
 
 
 @dataclass(frozen=True, slots=True)
+class AttachmentLoaded:
+    path: str
+    is_directory: bool
+    display: str
+
+
+@dataclass(frozen=True, slots=True)
 class ToolStarted:
     tool_use_id: str
     presentation: ToolUsePresentation
@@ -103,7 +117,8 @@ class StepLimitReached:
 
 
 type TurnEvent = (
-    TextDelta
+    AttachmentLoaded
+    | TextDelta
     | ToolStarted
     | ToolFinished
     | TodoListUpdated
@@ -163,6 +178,10 @@ class ChatRuntime(Protocol):
 
     def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
         """运行一个用户 Turn，并产出可安全展示的生命周期事件。"""
+        ...
+
+    async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
+        """Return bounded workspace path suggestions."""
         ...
 
     def status(self) -> RuntimeStatus:

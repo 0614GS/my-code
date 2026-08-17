@@ -87,12 +87,15 @@ class GlobTool(Tool):
             must_exist=True,
         )
         limit = optional_int(tool_input, "limit", 200, minimum=1, maximum=500)
-        matches = self._glob(context.cwd, base, pattern, limit)
+        bounded = self._glob(context.cwd, base, pattern, limit + 1)
+        truncated = len(bounded) > limit
+        matches = bounded[:limit]
         return ToolOutput(
             content="\n".join(matches) if matches else "<no matches>",
             metadata={
                 "match_count": len(matches),
                 "first_match": matches[0] if matches else None,
+                "truncated": truncated,
             },
         )
 

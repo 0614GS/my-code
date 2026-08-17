@@ -52,4 +52,4 @@ Bash 工具正式限定为提供 `/bin/bash` 的 POSIX 环境，并固定以 `/b
 
 ## 延后实现
 
-流式文本响应已经实现，但工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 不会执行或持久化。TUI `@` 文件/目录选择、真实文件或媒体 attachment source、并行 safe 工具、Session fork、`state.json`、OAuth/Keychain、管理 UI、cached microcompact、compact 后文件/plan/skill 工作集重建、Hooks、MCP/deferred tools 以及 OS 级 sandbox 仍不属于当前阶段。Bash 的只读判定只减少可证明安全命令的确认次数，不等价于进程隔离；在 sandbox 完成前不应把 `bypassPermissions` 作为默认模式。
+流式文本响应已经实现，但工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 不会执行或持久化。TUI 已支持工作区内 UTF-8 文本文件和目录的 `@` 补全与临时 attachment；媒体 attachment、并行 safe 工具、Session fork、`state.json`、OAuth/Keychain、管理 UI、cached microcompact、compact 后文件/plan/skill 工作集重建、Hooks、MCP/deferred tools 以及 OS 级 sandbox 仍不属于当前阶段。Bash 的只读判定只减少可证明安全命令的确认次数，不等价于进程隔离；在 sandbox 完成前不应把 `bypassPermissions` 作为默认模式。

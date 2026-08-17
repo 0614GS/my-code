@@ -195,6 +195,47 @@ class PermissionPolicy:
             suggestions=tool_result.suggestions,
         )
 
+    async def decide_explicit_user_read(
+        self, tool: Tool, tool_input: JsonObject, context: ToolContext
+    ) -> PermissionDecision:
+        """Authorize an explicit ``@path`` read without weakening any deny rule.
+
+        The mention itself is the user's approval for this one read.  Input-level
+        validation and safety checks still run, and both blanket and path-specific
+        deny decisions remain authoritative.
+        """
+
+        deny_rule = self._whole_tool_rule(tool, PermissionBehavior.DENY)
+        if deny_rule is not None:
+            return PermissionDecision(
+                PermissionBehavior.DENY,
+                f"{tool.definition.name} is denied by an explicit rule.",
+                _rule_reason(deny_rule),
+            )
+        tool_result = await tool.check_permissions(
+            tool_input,
+            ToolPermissionContext(
+                mode=self.mode,
+                rules=self.rules,
+                tool_context=context,
+            ),
+        )
+        if tool_result.behavior is ToolPermissionBehavior.DENY:
+            return PermissionDecision(
+                PermissionBehavior.DENY,
+                tool_result.message,
+                tool_result.decision_reason,
+                updated_input=tool_result.updated_input,
+            )
+        return PermissionDecision(
+            PermissionBehavior.ALLOW,
+            "Allowed by the user's explicit @path mention.",
+            PermissionDecisionReason(
+                PermissionDecisionKind.USER, "explicit-file-mention"
+            ),
+            updated_input=_updated_input(tool_result.updated_input, tool_input),
+        )
+
     def _whole_tool_rule(
         self, tool: Tool, behavior: PermissionBehavior
     ) -> PermissionRule | None:

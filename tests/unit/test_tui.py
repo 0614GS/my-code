@@ -33,6 +33,7 @@ from nano_code.tui import (
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.contracts import (
     MaxStepsReached,
+    PathSuggestion,
     PermissionRequest,
     StepLimitReached,
     TextDelta,
@@ -66,6 +67,7 @@ class FakeRuntime:
         self.compact_calls = 0
         self.todos: tuple[TodoItem, ...] = ()
         self.todo_update: tuple[TodoItem, ...] | None = None
+        self.path_suggestions: tuple[PathSuggestion, ...] = ()
 
     async def submit(self, prompt: str) -> TurnOutcome:
         self.prompts.append(prompt)
@@ -128,6 +130,9 @@ class FakeRuntime:
     async def compact(self) -> ContextStatus:
         self.compact_calls += 1
         return self.context_status()
+
+    async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
+        return tuple(item for item in self.path_suggestions if query in item.path)
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:
         self.permission_handler = handler
@@ -222,6 +227,32 @@ async def test_tui_dispatches_selected_slash_command_locally() -> None:
 
         assert runtime.prompts == []
         assert len(app.query(SystemMessage)) == 1
+
+
+@pytest.mark.asyncio
+async def test_tui_selects_path_suggestion_without_submitting() -> None:
+    runtime = FakeRuntime()
+    runtime.path_suggestions = (
+        PathSuggestion("docs/a file.md", False, "docs/a file.md"),
+    )
+    app = NanoCodeApp(runtime)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        prompt = app.query_one("#prompt", Input)
+        prompt.value = "review @docs/a"
+        prompt.cursor_position = len(prompt.value)
+        await pilot.pause()
+
+        palette = app.query_one("#command-palette", OptionList)
+        assert palette.display is True
+        assert palette.get_option_at_index(0).id == "path:0"
+
+        await pilot.press("tab")
+        await pilot.pause()
+
+        assert prompt.value == 'review @"docs/a file.md" '
+        assert palette.display is False
+        assert runtime.prompts == []
 
 
 @pytest.mark.asyncio
