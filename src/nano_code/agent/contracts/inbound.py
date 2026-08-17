@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.messages import TokenUsage
+from nano_code.messages import ContextAttachment, TokenUsage
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.todos.models import TodoItem
 
@@ -10,24 +10,40 @@ from .context import ContextBudget
 
 
 @dataclass(frozen=True, slots=True)
+class AgentTurnInput:
+    """一次用户回合及其在提交前已准备好的事件 attachment。"""
+
+    prompt: str
+    attachments: tuple[ContextAttachment, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.prompt.strip():
+            raise ValueError("Prompt must not be empty")
+        if any(
+            attachment.retention != "live_session" for attachment in self.attachments
+        ):
+            raise ValueError("Agent turn attachments must use live_session retention")
+
+
+@dataclass(frozen=True, slots=True)
 class AgentTurnSucceeded:
     """一次用户提示正常完成后的终态数据。"""
 
     text: str
-    turns: int
+    completed_steps: int
     usage: TokenUsage
 
 
 @dataclass(frozen=True, slots=True)
-class AgentMaxTurnsReached:
-    """显式模型轮次上限终止了当前用户回合。"""
+class AgentMaxStepsReached:
+    """显式 Step 上限终止了当前用户回合。"""
 
-    max_turns: int
-    completed_turns: int
+    max_steps: int
+    completed_steps: int
     usage: TokenUsage
 
 
-type AgentTurnOutcome = AgentTurnSucceeded | AgentMaxTurnsReached
+type AgentTurnOutcome = AgentTurnSucceeded | AgentMaxStepsReached
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +116,8 @@ __all__ = [
     "AgentHistoryUserMessage",
     "AgentSessionView",
     "AgentStatus",
-    "AgentMaxTurnsReached",
+    "AgentTurnInput",
+    "AgentMaxStepsReached",
     "AgentTurnOutcome",
     "AgentTurnSucceeded",
 ]

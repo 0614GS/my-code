@@ -10,9 +10,13 @@ from nano_code.agent.contracts.model import (
     ModelToolDefinition,
     ModelToolUseBlock,
 )
-from nano_code.agent.contracts.session import ContentReplacement, ConversationSnapshot
+from nano_code.agent.contracts.session import (
+    AttachmentDelivery,
+    ContentReplacement,
+    ConversationSnapshot,
+)
 from nano_code.agent.ports.context import ContextPort
-from nano_code.context.attachments import AttachmentResolver
+from nano_code.context.attachments import DerivedAttachmentResolver
 from nano_code.context.microcompact import (
     MicrocompactPolicy,
     apply_content_replacements,
@@ -46,7 +50,7 @@ class ContextPlanner(ContextPort):
         normalizer: ModelInputNormalizer | None = None,
         microcompact: MicrocompactPolicy | None = None,
         user_context_resolver: UserContextResolver | None = None,
-        attachment_resolver: AttachmentResolver | None = None,
+        attachment_resolver: DerivedAttachmentResolver | None = None,
     ) -> None:
         if max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
@@ -59,23 +63,33 @@ class ContextPlanner(ContextPort):
             window.max_chars
         )
         self.user_context_resolver = user_context_resolver or EmptyUserContextResolver()
-        self.attachment_resolver = attachment_resolver or AttachmentResolver()
+        self.attachment_resolver = attachment_resolver or DerivedAttachmentResolver()
+        self.attachment_projector = self.normalizer.attachment_projector
         self._user_context_cache: tuple[UserContextDocument, ...] | None = None
 
     def plan(self, snapshot: ConversationSnapshot) -> ContextPlan:
         effective, proposed = self._effective_messages(snapshot)
-        selected = self.window.ensure_fits(effective)
         user_context = self._get_user_context()
         attachments = self._get_attachments(snapshot)
+        delivered = tuple(
+            delivery.attachment for delivery in snapshot.attachment_deliveries
+        )
+        attachment_chars = self.attachment_projector.measure(delivered + attachments)
+        selected = self.window.ensure_fits(effective, additional_chars=attachment_chars)
         model_messages = self.normalizer.normalize(
             user_context,
             selected,
             attachments,
-            snapshot.runtime_attachments,
+            snapshot.attachment_deliveries,
         )
         system_prompt = self.prompt.resolve()
         budget = self._budget(
-            selected, model_messages, user_context, attachments, system_prompt
+            selected,
+            model_messages,
+            user_context,
+            attachments,
+            snapshot.attachment_deliveries,
+            system_prompt,
         )
         return ContextPlan(
             request=ModelRequest(
@@ -83,11 +97,7 @@ class ContextPlanner(ContextPort):
             ),
             budget=budget,
             new_content_replacements=proposed,
-            new_runtime_attachments=tuple(
-                attachment
-                for attachment in attachments
-                if attachment.lifecycle == "session_runtime"
-            ),
+            new_attachment_deliveries=self._new_deliveries(snapshot, attachments),
         )
 
     def inspect(self, snapshot: ConversationSnapshot) -> ContextBudget:
@@ -98,10 +108,15 @@ class ContextPlanner(ContextPort):
             user_context,
             effective,
             attachments,
-            snapshot.runtime_attachments,
+            snapshot.attachment_deliveries,
         )
         return self._budget(
-            effective, messages, user_context, attachments, self.prompt.resolve()
+            effective,
+            messages,
+            user_context,
+            attachments,
+            snapshot.attachment_deliveries,
+            self.prompt.resolve(),
         )
 
     def compaction_view(
@@ -110,7 +125,7 @@ class ContextPlanner(ContextPort):
         effective, proposed = self._effective_messages(snapshot)
         return (
             self.normalizer.normalize_transcript(
-                effective, snapshot.runtime_attachments
+                effective, snapshot.attachment_deliveries
             ),
             proposed,
         )
@@ -127,6 +142,23 @@ class ContextPlanner(ContextPort):
         self, snapshot: ConversationSnapshot
     ) -> tuple[ContextAttachment, ...]:
         return self.attachment_resolver.resolve(snapshot)
+
+    @staticmethod
+    def _new_deliveries(
+        snapshot: ConversationSnapshot,
+        attachments: tuple[ContextAttachment, ...],
+    ) -> tuple[AttachmentDelivery, ...]:
+        live = tuple(
+            attachment
+            for attachment in attachments
+            if attachment.retention == "live_session"
+        )
+        if not live:
+            return ()
+        if not snapshot.messages:
+            raise ValueError("Live-session attachments require a working-set anchor")
+        anchor_uuid = snapshot.messages[-1].uuid
+        return tuple(AttachmentDelivery(anchor_uuid, attachment) for attachment in live)
 
     def _effective_messages(
         self, snapshot: ConversationSnapshot, *, propose: bool = True
@@ -146,12 +178,21 @@ class ContextPlanner(ContextPort):
         messages: tuple[ModelMessage, ...],
         user_context: tuple[UserContextDocument, ...],
         attachments: tuple[ContextAttachment, ...],
+        deliveries: tuple[AttachmentDelivery, ...],
         prompt: SystemPrompt,
     ) -> ContextBudget:
         user_chars = _context_chars(user_context)
-        attachment_chars = _context_chars(attachments)
+        delivered = tuple(delivery.attachment for delivery in deliveries)
+        attachment_chars = self.attachment_projector.measure(delivered + attachments)
+        incremental_attachment_chars = self.attachment_projector.measure(
+            attachments + _deliveries_after_last_assistant(conversation, deliveries)
+        )
         actual, incremental, estimated = _estimate(
-            conversation, messages, prompt.text, self.tools, attachment_chars
+            conversation,
+            messages,
+            prompt.text,
+            self.tools,
+            incremental_attachment_chars,
         )
         return ContextBudget(
             message_limit_chars=self.window.max_chars,
@@ -180,9 +221,7 @@ def _message_chars(messages: tuple[ModelMessage, ...]) -> int:
     return size
 
 
-def _context_chars(
-    items: tuple[UserContextDocument, ...] | tuple[ContextAttachment, ...],
-) -> int:
+def _context_chars(items: tuple[UserContextDocument, ...]) -> int:
     return sum(
         len(
             block.text
@@ -191,6 +230,26 @@ def _context_chars(
         )
         for item in items
         for block in item.content
+    )
+
+
+def _deliveries_after_last_assistant(
+    conversation: tuple[ConversationMessage, ...],
+    deliveries: tuple[AttachmentDelivery, ...],
+) -> tuple[ContextAttachment, ...]:
+    last_assistant = next(
+        (
+            index
+            for index in range(len(conversation) - 1, -1, -1)
+            if isinstance(conversation[index], AssistantMessage)
+        ),
+        -1,
+    )
+    positions = {message.uuid: index for index, message in enumerate(conversation)}
+    return tuple(
+        delivery.attachment
+        for delivery in deliveries
+        if positions.get(delivery.anchor_uuid, -1) >= last_assistant
     )
 
 

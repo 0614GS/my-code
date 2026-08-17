@@ -1,4 +1,4 @@
-"""Bounded project-session discovery for v2 transcripts."""
+"""Bounded project-session discovery for v3 transcripts."""
 
 import json
 from dataclasses import dataclass

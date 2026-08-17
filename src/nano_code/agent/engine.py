@@ -1,4 +1,4 @@
-"""单个持久化用户轮次中的模型 → 工具 → 模型状态机。"""
+"""单个持久化用户 Turn 中的模型 → 工具 → 模型状态机。"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -10,9 +10,10 @@ from nano_code.agent.contracts.inbound import (
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
-    AgentMaxTurnsReached,
+    AgentMaxStepsReached,
     AgentSessionView,
     AgentStatus,
+    AgentTurnInput,
     AgentTurnOutcome,
     AgentTurnSucceeded,
 )
@@ -23,7 +24,11 @@ from nano_code.agent.contracts.model import (
     ModelTextDelta,
     ModelToolUseBlock,
 )
-from nano_code.agent.contracts.session import CompactBoundary, CompactTrigger
+from nano_code.agent.contracts.session import (
+    AttachmentDelivery,
+    CompactBoundary,
+    CompactTrigger,
+)
 from nano_code.agent.contracts.tool import (
     ToolCallFinished,
     ToolCallStarted,
@@ -33,17 +38,17 @@ from nano_code.agent.conversation import ConversationState
 from nano_code.agent.errors import ContextOverflow, ModelContextOverflow
 from nano_code.agent.events import (
     AgentEvent,
+    AgentStepLimitReached,
     AgentTextDelta,
     AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
-    AgentTurnLimitReached,
 )
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
 from nano_code.agent.ports.inbound import AgentInboundPort
-from nano_code.agent.ports.model import ModelTurnPort
+from nano_code.agent.ports.model import ModelCallPort
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.agent.ports.tool import ToolRoundPort
 from nano_code.messages import (
@@ -67,64 +72,67 @@ class AgentEngine(AgentInboundPort):
     def __init__(
         self,
         *,
-        model_turn: ModelTurnPort,
+        model_call: ModelCallPort,
         tool_round: ToolRoundPort,
         conversation: ConversationState,
         context: ContextPort,
         compactor: CompactorPort,
-        max_turns: int | None = None,
+        max_steps: int | None = None,
     ) -> None:
-        if max_turns is not None and max_turns < 1:
-            raise ValueError("max_turns must be positive")
-        self._model_turn = model_turn
+        if max_steps is not None and max_steps < 1:
+            raise ValueError("max_steps must be positive")
+        self._model_call = model_call
         self._tool_round = tool_round
         self._conversation = conversation
         self._context = context
         self._compactor = compactor
-        self.max_turns = max_turns
+        self.max_steps = max_steps
         self._tool_round.bind_session(self._conversation.session_id)
 
-    async def submit(self, prompt: str) -> AgentTurnOutcome:
+    async def submit(self, turn_input: AgentTurnInput) -> AgentTurnOutcome:
         """消费可观察循环并返回终态值。"""
 
         completed: AgentTurnOutcome | None = None
-        async for event in self.stream(prompt):
+        async for event in self.stream(turn_input):
             if isinstance(event, AgentTurnCompleted):
                 completed = event.result
-            elif isinstance(event, AgentTurnLimitReached):
+            elif isinstance(event, AgentStepLimitReached):
                 completed = event.result
         if completed is None:
             raise RuntimeError("Agent stream ended without a completed turn")
         return completed
 
-    def stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
+    def stream(self, turn_input: AgentTurnInput) -> AsyncIterator[AgentEvent]:
         """运行一个用户回合，同时暴露文本和工具生命周期事件。"""
 
-        return self._stream(prompt)
+        return self._stream(turn_input)
 
-    async def _stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
-        if not prompt.strip():
-            raise ValueError("Prompt must not be empty")
-
+    async def _stream(self, turn_input: AgentTurnInput) -> AsyncIterator[AgentEvent]:
         user_message = HumanMessage(
-            content=prompt,
+            content=turn_input.prompt,
             parent_uuid=self._last_uuid,
         )
         # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
         self._conversation.append(user_message)
+        self._conversation.add_attachment_deliveries(
+            tuple(
+                AttachmentDelivery(user_message.uuid, attachment)
+                for attachment in turn_input.attachments
+            )
+        )
 
         input_tokens = 0
         output_tokens = 0
-        turn = 0
+        step_count = 0
         while True:
-            turn += 1
+            step_count += 1
             request = await self._plan_with_proactive_compact()
             reactive_attempted = False
             while True:
                 response: ModelOutput | None = None
                 streamed_text = False
                 try:
-                    async for model_event in self._model_turn.stream(request.request):
+                    async for model_event in self._model_call.stream(request.request):
                         if isinstance(model_event, ModelTextDelta):
                             streamed_text = True
                             yield AgentTextDelta(model_event.text)
@@ -179,7 +187,7 @@ class AgentEngine(AgentInboundPort):
                 yield AgentTurnCompleted(
                     AgentTurnSucceeded(
                         text=final_text,
-                        turns=turn,
+                        completed_steps=step_count,
                         usage=TokenUsage(input_tokens, output_tokens),
                     )
                 )
@@ -240,11 +248,11 @@ class AgentEngine(AgentInboundPort):
                 raise
             if round_cancelled:
                 raise asyncio.CancelledError
-            if self.max_turns is not None and turn >= self.max_turns:
-                yield AgentTurnLimitReached(
-                    AgentMaxTurnsReached(
-                        max_turns=self.max_turns,
-                        completed_turns=turn,
+            if self.max_steps is not None and step_count >= self.max_steps:
+                yield AgentStepLimitReached(
+                    AgentMaxStepsReached(
+                        max_steps=self.max_steps,
+                        completed_steps=step_count,
                         usage=TokenUsage(input_tokens, output_tokens),
                     )
                 )
@@ -350,7 +358,7 @@ class AgentEngine(AgentInboundPort):
         request = self._context.plan(self._conversation.context_snapshot())
         for replacement in request.new_content_replacements:
             self._conversation.append_content_replacement(replacement)
-        self._conversation.append_runtime_attachments(request.new_runtime_attachments)
+        self._conversation.add_attachment_deliveries(request.new_attachment_deliveries)
         return request
 
     @property

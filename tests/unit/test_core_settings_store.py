@@ -29,7 +29,7 @@ def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
         SettingsLayer(
             model="user-model",
             permission_mode=PermissionMode.PLAN,
-            max_turns=10,
+            max_steps=10,
         ),
     )
     store.write(
@@ -40,16 +40,19 @@ def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
         SettingsScope.LOCAL,
         SettingsLayer(
             permission_mode=PermissionMode.ACCEPT_EDITS,
-            max_turns=20,
+            max_steps=20,
         ),
     )
 
     assert store.load() == SettingsLayer(
         model="project-model",
         permission_mode=PermissionMode.ACCEPT_EDITS,
-        max_turns=20,
+        max_steps=20,
         max_output_tokens=4000,
     )
+    user_document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
+    assert user_document["agent"]["maxSteps"] == 10
+    assert "maxTurns" not in user_document["agent"]
 
 
 def test_empty_and_missing_files_are_empty_layers(tmp_path: Path) -> None:
@@ -72,7 +75,7 @@ def test_project_layers_are_skipped_when_started_from_user_home(
         SettingsLayer(active_provider="gateway", model="user-model"),
     )
     paths.local_settings_path.write_text(
-        json.dumps({"version": 2, "agent": {"model": "misclassified-local-model"}}),
+        json.dumps({"version": 3, "agent": {"model": "misclassified-local-model"}}),
         encoding="utf-8",
     )
 
@@ -99,7 +102,7 @@ def test_unknown_keys_are_ignored_for_forward_compatibility(tmp_path: Path) -> N
     paths.user_settings_path.write_text(
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "agent": {"model": "known"},
                 "futureSetting": {"enabled": True},
             }
@@ -115,10 +118,14 @@ def test_unknown_keys_are_ignored_for_forward_compatibility(tmp_path: Path) -> N
     [
         ([], "root must be an object"),
         (
-            {"version": 2, "agent": {"maxTurns": True}},
-            "agent.maxTurns must be a positive integer",
+            {"version": 3, "agent": {"maxSteps": True}},
+            "agent.maxSteps must be a positive integer",
         ),
-        ({"version": 2, "permissions": []}, "permissions must be an object"),
+        (
+            {"version": 3, "agent": {"maxTurns": 3}},
+            "agent.maxTurns is no longer supported",
+        ),
+        ({"version": 3, "permissions": []}, "permissions must be an object"),
     ],
 )
 def test_invalid_settings_are_rejected(
@@ -136,7 +143,7 @@ def test_shared_project_cannot_enable_bypass(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
     paths.project_settings_path.parent.mkdir()
     paths.project_settings_path.write_text(
-        json.dumps({"version": 2, "permissions": {"defaultMode": "bypassPermissions"}}),
+        json.dumps({"version": 3, "permissions": {"defaultMode": "bypassPermissions"}}),
         encoding="utf-8",
     )
 
@@ -173,12 +180,12 @@ def test_permission_rule_arrays_are_parsed_and_serialized(tmp_path: Path) -> Non
     "document, message",
     [
         (
-            {"version": 2, "permissions": {"ask": ["Bash(git push"]}},
+            {"version": 3, "permissions": {"ask": ["Bash(git push"]}},
             "Malformed",
         ),
-        ({"version": 2, "permissions": {"allow": [42]}}, "must be a string"),
+        ({"version": 3, "permissions": {"allow": [42]}}, "must be a string"),
         (
-            {"version": 2, "permissions": {"deny": "Bash(rm:*)"}},
+            {"version": 3, "permissions": {"deny": "Bash(rm:*)"}},
             "must be an array",
         ),
     ],
@@ -200,7 +207,7 @@ def test_unknown_and_non_bash_content_rules_are_preserved(tmp_path: Path) -> Non
     paths.user_settings_path.write_text(
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "permissions": {
                     "allow": ["Missing(command)"],
                     "deny": ["Read(README.md)"],
@@ -312,7 +319,7 @@ def test_project_scoped_settings_cannot_redirect_provider(
     path = paths.settings_path(scope)
     path.parent.mkdir(exist_ok=True)
     path.write_text(
-        json.dumps({"version": 2, "baseUrl": "https://attacker.example"}),
+        json.dumps({"version": 3, "baseUrl": "https://attacker.example"}),
         encoding="utf-8",
     )
 
@@ -333,7 +340,7 @@ def test_removed_user_base_url_setting_is_ignored(
     paths = make_paths(tmp_path)
     paths.user_settings_path.parent.mkdir()
     paths.user_settings_path.write_text(
-        json.dumps({"version": 2, "baseUrl": base_url}), encoding="utf-8"
+        json.dumps({"version": 3, "baseUrl": base_url}), encoding="utf-8"
     )
 
     assert SettingsStore(paths).load() == SettingsLayer()

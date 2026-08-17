@@ -24,14 +24,23 @@
 - user context，例如 `AGENTS.md` 等 instruction/memory 内容；
 - system context；
 - 工具描述和 JSON Schema；
-- 对话消息、tool result 与 request-scoped attachment；
+- 对话消息、tool result 与 attachments；
 - 为 thinking 和本轮输出预留的 token。
 
 `fetchSystemPromptParts()` 并行构造稳定的 prompt 前缀，见 `claude-code/src/utils/queryContext.ts`。自定义 system prompt 是替换默认 prompt，append prompt 才是追加。
 
-当前 nano-code 的 request-scoped attachment 由同步的 `AttachmentResolver` 聚合：source
-按声明顺序接收当前 `ConversationSnapshot`，每次请求重新执行；单个 source 失败只记录异常并
-跳过该 source，不影响其他 source。
+当前 nano-code 显式区分两条 attachment 路径：
+
+- `DerivedAttachmentResolver` 每次请求按声明顺序执行
+  `DerivedAttachmentSource`，从 `ConversationSnapshot` 派生 reminder 等内容；单个
+  source 失败只记录异常并跳过。
+- `AgentTurnInput.attachments` 承载在提交用户回合前已准备好的事件型
+  attachment；Agent 在持久化 human message 后，将它们锚定到该消息。
+
+`request` retention 只参与当次请求；`live_session` retention 会生成带独立 ID
+和消息锚点的 `AttachmentDelivery`。delivery 仅保存于 `ConversationState`，
+不写 Transcript；它们在后续请求和 compact 输入中按锚点位置重放，锚点离开
+working set 时被裁剪，resume 或切换 session 时清空。
 
 ## 3. Token 计量
 
@@ -120,7 +129,7 @@ boundary
 上下文管理同时优化 token 和 cache 稳定性：
 
 - system prompt 与工具列表保持确定性顺序。
-- 已经发送过的工具结果不在后续轮次临时改变替换策略。
+- 已经发送过的工具结果不在后续模型请求中临时改变替换策略。
 - 提供给 hooks/UI 的派生 tool input 使用克隆，不修改重新发给 API 的原始输入。
 - compact boundary 记录已发现的 deferred tools，摘要后仍继续发送其 schema。
 - preserved tail 的旧 usage 在恢复时清零，避免用压缩前 token 数触发重压缩。
@@ -163,7 +172,7 @@ TranscriptEntry / JSONL（持久化与恢复事实）
 
 预算优先以最近一次 assistant 的真实 input、cache creation/read 与 output usage
 为锚点，只对
-其后新增消息和当前 request-scoped attachments 作字符估算；没有 usage 的旧会话才估算完整
+其后新增消息和尚未计入 usage 的 attachment 作字符估算；没有 usage 的旧会话才估算完整
 system、user context、tool schema、messages 和 attachments。`contextChars` 当前仍是触发 compact 的保守字符阈值，不冒充精确的模型
 token 上限，`/context` 会同时显示字符组成和 token 估算。
 
@@ -177,12 +186,14 @@ microcompact 只处理旧的 Read、Bash、Grep、Glob 结果。原文不改写�
 compact hooks。这些能力以后应接入现有 planner、boundary 和 replay 边界，而不是
 重新进入 Agent Loop 添加工具特定分支。
 
-Todo reminder 已作为 session-runtime attachment 接入。当前 TodoList 从
+Todo reminder 已作为 `live_session` attachment 接入。当前 TodoList 从
 `ConversationSnapshot.session_history` 中最后一次成功 `TodoWrite` 投影；提醒触发则读取
-当前模型 working set，并分别要求“距最近 TodoWrite 至少 10 个 assistant turns”和
-“距最近 runtime reminder 至少 10 个 assistant turns”。已发送 reminder 按原位置留在
-当前进程的模型历史中，参与后续请求和 compact，但不写 JSONL；resume 或切换 session
-后 delivery history 清空。这样保留 Claude Code 的 AppState/内存消息语义，而不把
+当前模型 working set，并分别要求“距最近 TodoWrite 至少 10 个 completed
+model calls”和“距最近 runtime reminder 至少 10 个 completed model calls”。
+这里统计已持久化的 `AssistantMessage`，失败的 API 尝试不计数。已发送 reminder 按原位置留在
+当前进程的模型历史中，参与后续请求和 compact，但不写 JSONL；锚点被
+compact 移出后交付被裁剪，resume 或切换 session 后 delivery history 清空。这样保留
+Claude Code 的 AppState/内存消息语义，而不把
 attachment 错当成持久化 ConversationMessage。
 
 ## 12. 主要源码入口

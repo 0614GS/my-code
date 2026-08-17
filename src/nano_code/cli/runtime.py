@@ -10,14 +10,15 @@ from nano_code.agent import (
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
-    AgentMaxTurnsReached,
+    AgentMaxStepsReached,
     AgentSessionView,
+    AgentStepLimitReached,
     AgentTextDelta,
     AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
-    AgentTurnLimitReached,
+    AgentTurnInput,
     AgentTurnSucceeded,
 )
 from nano_code.agent.ports.inbound import AgentInboundPort
@@ -38,18 +39,18 @@ from nano_code.tui import (
     HistorySystemMessage,
     HistoryToolCall,
     HistoryUserMessage,
-    MaxTurnsReached,
+    MaxStepsReached,
     PermissionHandler,
     PermissionRequest,
     ResumedSession,
     RuntimeStatus,
+    StepLimitReached,
     TextDelta,
     TodoListUpdated,
     ToolFinished,
     ToolStarted,
     TurnCompleted,
     TurnEvent,
-    TurnLimitReached,
     TurnOutcome,
     TurnSucceeded,
 )
@@ -118,17 +119,17 @@ class CliChatRuntime:
         self.permission_prompter = permission_prompter
         self.provider_control = provider_control
         self.session_source = session_source
-        # 会话切换与模型轮次共享同一把锁，避免 JSONL 归属在流式响应途中改变。
+        # 会话切换与用户回合共享同一把锁，避免 JSONL 归属在流式响应途中改变。
         self._session_lock = asyncio.Lock()
 
     async def submit(self, prompt: str) -> TurnOutcome:
         async with self._session_lock:
-            result = await self.agent.submit(prompt)
+            result = await self.agent.submit(AgentTurnInput(prompt))
         return _project_turn_outcome(result)
 
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
         async with self._session_lock:
-            async for event in self.agent.stream(prompt):
+            async for event in self.agent.stream(AgentTurnInput(prompt)):
                 if isinstance(event, AgentTextDelta):
                     yield TextDelta(event.text)
                 elif isinstance(event, AgentToolStarted):
@@ -146,17 +147,17 @@ class CliChatRuntime:
                     yield TurnCompleted(
                         TurnSucceeded(
                             text=result.text,
-                            turns=result.turns,
+                            completed_steps=result.completed_steps,
                             input_tokens=result.usage.input_tokens,
                             output_tokens=result.usage.output_tokens,
                         )
                     )
-                elif isinstance(event, AgentTurnLimitReached):
+                elif isinstance(event, AgentStepLimitReached):
                     limit = event.result
-                    yield TurnLimitReached(
-                        MaxTurnsReached(
-                            max_turns=limit.max_turns,
-                            completed_turns=limit.completed_turns,
+                    yield StepLimitReached(
+                        MaxStepsReached(
+                            max_steps=limit.max_steps,
+                            completed_steps=limit.completed_steps,
                             input_tokens=limit.usage.input_tokens,
                             output_tokens=limit.usage.output_tokens,
                         )
@@ -269,18 +270,18 @@ class CliChatRuntime:
 
 
 def _project_turn_outcome(
-    result: AgentTurnSucceeded | AgentMaxTurnsReached,
+    result: AgentTurnSucceeded | AgentMaxStepsReached,
 ) -> TurnOutcome:
     if isinstance(result, AgentTurnSucceeded):
         return TurnSucceeded(
             text=result.text,
-            turns=result.turns,
+            completed_steps=result.completed_steps,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
         )
-    return MaxTurnsReached(
-        max_turns=result.max_turns,
-        completed_turns=result.completed_turns,
+    return MaxStepsReached(
+        max_steps=result.max_steps,
+        completed_steps=result.completed_steps,
         input_tokens=result.usage.input_tokens,
         output_tokens=result.usage.output_tokens,
     )

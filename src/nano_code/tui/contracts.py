@@ -15,20 +15,20 @@ from nano_code.todos.models import TodoItem
 @dataclass(frozen=True, slots=True)
 class TurnSucceeded:
     text: str
-    turns: int
+    completed_steps: int
     input_tokens: int
     output_tokens: int
 
 
 @dataclass(frozen=True, slots=True)
-class MaxTurnsReached:
-    max_turns: int
-    completed_turns: int
+class MaxStepsReached:
+    max_steps: int
+    completed_steps: int
     input_tokens: int
     output_tokens: int
 
 
-type TurnOutcome = TurnSucceeded | MaxTurnsReached
+type TurnOutcome = TurnSucceeded | MaxStepsReached
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +98,8 @@ class TurnCompleted:
 
 
 @dataclass(frozen=True, slots=True)
-class TurnLimitReached:
-    result: MaxTurnsReached
+class StepLimitReached:
+    result: MaxStepsReached
 
 
 type TurnEvent = (
@@ -108,7 +108,7 @@ type TurnEvent = (
     | ToolFinished
     | TodoListUpdated
     | TurnCompleted
-    | TurnLimitReached
+    | StepLimitReached
 )
 
 
@@ -158,11 +158,11 @@ class ChatRuntime(Protocol):
     """TUI 所需能力；核心实现类型不会泄漏到此处。"""
 
     async def submit(self, prompt: str) -> TurnOutcome:
-        """运行一个用户轮次。"""
+        """运行一个用户 Turn。"""
         ...
 
     def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
-        """运行一个用户轮次，并产出可安全展示的生命周期事件。"""
+        """运行一个用户 Turn，并产出可安全展示的生命周期事件。"""
         ...
 
     def status(self) -> RuntimeStatus:

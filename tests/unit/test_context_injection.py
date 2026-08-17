@@ -4,17 +4,23 @@ from collections.abc import Iterable
 import pytest
 
 from nano_code.agent import (
+    AttachmentDelivery,
     ConversationSnapshot,
+    ModelAssistantMessage,
     ModelTextBlock,
+    ModelToolResultBlock,
+    ModelToolUseBlock,
     ModelUserMessage,
 )
+from nano_code.agent.errors import ContextOverflow
 from nano_code.context import (
-    AttachmentResolver,
     ContextPlanner,
     ContextWindow,
+    DerivedAttachmentResolver,
     ModelInputNormalizer,
 )
 from nano_code.messages import (
+    AttachmentToolExchange,
     ContextAttachment,
     ContextInstruction,
     HumanMessage,
@@ -45,6 +51,58 @@ def test_request_context_shapes_are_strict() -> None:
         ContextAttachment("hook", ())
     with pytest.raises(ValueError, match="empty"):
         ContextInstruction(" ")
+    with pytest.raises(ValueError, match="retention"):
+        ContextAttachment(
+            "invalid",
+            (TextContent("content"),),
+            retention="forever",  # type: ignore[arg-type]
+        )
+
+
+def test_attachment_tool_exchange_projects_as_closed_protocol_pair() -> None:
+    attachment = ContextAttachment(
+        "file",
+        (
+            AttachmentToolExchange(
+                "Read",
+                {"path": "notes.txt"},
+                "1→hello",
+                tool_use_id="attachment-read",
+            ),
+        ),
+    )
+
+    result = ModelInputNormalizer().normalize(
+        (), (HumanMessage("inspect"),), (attachment,)
+    )
+
+    assert result == (
+        ModelUserMessage((ModelTextBlock("inspect"),)),
+        ModelAssistantMessage(
+            (ModelToolUseBlock("attachment-read", "Read", {"path": "notes.txt"}),)
+        ),
+        ModelUserMessage((ModelToolResultBlock("attachment-read", "1→hello", False),)),
+    )
+
+
+def test_attachment_tool_ids_share_global_protocol_validation() -> None:
+    attachments = tuple(
+        ContextAttachment(
+            source,
+            (
+                AttachmentToolExchange(
+                    "Read",
+                    {"path": f"{source}.txt"},
+                    source,
+                    tool_use_id="duplicate",
+                ),
+            ),
+        )
+        for source in ("first", "second")
+    )
+
+    with pytest.raises(ValueError, match="Duplicate tool use"):
+        ModelInputNormalizer().normalize((), (HumanMessage("inspect"),), attachments)
 
 
 def test_normalizer_orders_context_history_and_attachments_then_merges() -> None:
@@ -77,7 +135,9 @@ def test_attachment_resolver_runs_sources_in_order() -> None:
     def second_source(_: ConversationSnapshot) -> Iterable[ContextAttachment]:
         return (second,)
 
-    assert AttachmentResolver((first_source, second_source)).resolve(snapshot) == (
+    assert DerivedAttachmentResolver((first_source, second_source)).resolve(
+        snapshot
+    ) == (
         first,
         second,
     )
@@ -97,7 +157,9 @@ def test_attachment_resolver_skips_failed_source_atomically(
         return (healthy,)
 
     with caplog.at_level(logging.ERROR, logger="nano_code.context.attachments"):
-        result = AttachmentResolver((broken, good)).resolve(ConversationSnapshot(()))
+        result = DerivedAttachmentResolver((broken, good)).resolve(
+            ConversationSnapshot(())
+        )
     assert result == (healthy,)
 
 
@@ -121,7 +183,7 @@ def test_planner_caches_user_context_and_excludes_attachments_from_compact() -> 
 
     planner = _planner(
         user_resolver=resolver,
-        attachment_resolver=AttachmentResolver((attachment,)),
+        attachment_resolver=DerivedAttachmentResolver((attachment,)),
     )
     snapshot = ConversationSnapshot((HumanMessage("prompt"),))
     first = planner.plan(snapshot)
@@ -132,3 +194,41 @@ def test_planner_caches_user_context_and_excludes_attachments_from_compact() -> 
     assert first.request.messages != second.request.messages
     assert compact == (ModelUserMessage((ModelTextBlock("prompt"),)),)
     assert replacements == ()
+
+
+def test_budget_separates_request_and_delivered_attachment_chars() -> None:
+    human = HumanMessage("prompt")
+    delivered = ContextAttachment(
+        "event", (TextContent("old"),), retention="live_session"
+    )
+    current = ContextAttachment("derived", (TextContent("new"),))
+    planner = _planner(
+        attachment_resolver=DerivedAttachmentResolver((lambda _: (current,),))
+    )
+
+    plan = planner.plan(
+        ConversationSnapshot(
+            (human,),
+            attachment_deliveries=(AttachmentDelivery(human.uuid, delivered),),
+        )
+    )
+
+    assert plan.budget is not None
+    assert plan.budget.message_chars == len("prompt")
+    assert plan.budget.attachment_chars == len("oldnew")
+
+
+def test_attachment_chars_participate_in_context_window() -> None:
+    attachment = ContextAttachment("large", (TextContent("x" * 20),))
+    planner = ContextPlanner(
+        window=ContextWindow(10),
+        prompt=PromptRegistry(
+            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
+        ),
+        tools=(),
+        max_output_tokens=10,
+        attachment_resolver=DerivedAttachmentResolver((lambda _: (attachment,),)),
+    )
+
+    with pytest.raises(ContextOverflow):
+        planner.plan(ConversationSnapshot((HumanMessage("p"),)))

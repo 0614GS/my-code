@@ -15,16 +15,16 @@ TODO_WRITE_TOOL_NAME = "TodoWrite"
 
 @dataclass(frozen=True, slots=True)
 class TodoProjection:
-    """最新 TodoWrite 状态及距其经过的 assistant turn 数。"""
+    """最新 TodoWrite 状态及距其经过的 completed model call 数。"""
 
     todos: tuple[TodoItem, ...]
-    assistant_turns_since_write: int
+    completed_model_calls_since_write: int
 
 
 def project_todos(messages: tuple[ConversationMessage, ...]) -> TodoProjection:
     """按活动 session 历史中的最后一次成功 TodoWrite 投影状态。"""
 
-    assistant_turns = _assistant_turns_since_write(messages)
+    completed_model_calls = _completed_model_calls_since_write(messages)
     successful_ids = {
         result.tool_use_id
         for message in messages
@@ -50,14 +50,14 @@ def project_todos(messages: tuple[ConversationMessage, ...]) -> TodoProjection:
             # Transcript 中仍保留原始 tool input 作为恢复事实。
             if todos and all(todo.status == "completed" for todo in todos):
                 todos = ()
-            return TodoProjection(todos, assistant_turns)
-    return TodoProjection((), assistant_turns)
+            return TodoProjection(todos, completed_model_calls)
+    return TodoProjection((), completed_model_calls)
 
 
-def _assistant_turns_since_write(
+def _completed_model_calls_since_write(
     messages: tuple[ConversationMessage, ...],
 ) -> int:
-    turns = 0
+    completed_calls = 0
     for message in reversed(messages):
         if not isinstance(message, AssistantMessage):
             continue
@@ -65,9 +65,9 @@ def _assistant_turns_since_write(
             isinstance(block, ToolCall) and block.name == TODO_WRITE_TOOL_NAME
             for block in message.content
         ):
-            return turns
-        turns += 1
-    return turns
+            return completed_calls
+        completed_calls += 1
+    return completed_calls
 
 
 __all__ = ["TODO_WRITE_TOOL_NAME", "TodoProjection", "project_todos"]

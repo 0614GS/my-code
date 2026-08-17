@@ -9,7 +9,7 @@
 ```text
 QueryEngine（跨用户输入保存会话状态）
     │
-    └── query（一次 agentic turn 的状态机）
+    └── query（一次 Turn 中 AgentRun 的状态机）
           ├── 上下文规范化 / token 预算 / compact
           ├── 模型流式调用
           ├── Tool Registry + Tool Executor
@@ -38,9 +38,22 @@ ToolSearch ──> 按需暴露 deferred tool schema
 
 ## 统一术语
 
-- **用户回合（user turn）**：用户提交一次输入，由 `QueryEngine.submitMessage()` 启动。
-- **循环迭代（iteration）**：`query()` 中的一次“准备上下文 → 调模型 → 处理结果”。一次用户回合可能包含多次迭代。
-- **工具轮（tool round）**：模型返回 `tool_use`，运行工具并把 `tool_result` 放入下一次迭代。
+```text
+Conversation
+└── Turn
+    ├── HumanMessage（UserMessage）
+    └── AgentRun
+        └── Step × N
+            ├── ModelCall → AssistantMessage
+            └── optional ToolRound → ToolCall × N → ToolResultsMessage
+```
+
+- **Turn**：从一条真实用户输入开始，到 Agent 最终回答、取消或达到 Step 上限。
+- **AgentRun**：Agent 为完成一个 Turn 执行的运行过程，不是持久化实体。
+- **Step**：一次有效模型决策及其可选 ToolRound；一个 Turn 可包含多个 Step。
+- **ModelCall**：一次模型请求/响应调用。overflow/fallback 恢复可在当前 Step 内重试 ModelCall，不增加 completed step 计数。
+- **ToolRound**：执行同一 AssistantMessage 中的全部 ToolCall，并汇总为一条 ToolResultsMessage。
+- **ToolCall**：一个具体工具调用；一个 ToolRound 可包含多个 ToolCall。
 - **内部消息**：运行时的 `Message` 联合类型，包含 UI 和控制事件。
 - **API 消息**：`normalizeMessagesForAPI()` 规范化出的 user/assistant 消息。
 - **Transcript**：写入 JSONL 的可恢复会话记录。

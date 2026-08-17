@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[mode.value for mode in PermissionMode],
         help="permission mode override",
     )
-    parser.add_argument("--max-turns", type=int)
+    parser.add_argument("--max-steps", type=int)
     parser.add_argument("--max-output-tokens", type=int)
     parser.add_argument("--context-chars", type=int)
     parser.add_argument("--session", dest="session_id", help="resume a session ID")
@@ -105,7 +105,7 @@ def _parse_chat_options(namespace: argparse.Namespace) -> CliOptions:
                 if namespace.permission_mode is not None
                 else None
             ),
-            max_turns=namespace.max_turns,
+            max_steps=namespace.max_steps,
             max_output_tokens=namespace.max_output_tokens,
             context_chars=namespace.context_chars,
         ),

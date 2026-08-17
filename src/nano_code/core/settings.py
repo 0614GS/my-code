@@ -35,7 +35,7 @@ class SettingsOverrides:
     model: str | None = None
     base_url: str | None = None
     permission_mode: PermissionMode | None = None
-    max_turns: int | None = None
+    max_steps: int | None = None
     max_output_tokens: int | None = None
     context_chars: int | None = None
 
@@ -48,7 +48,7 @@ class AgentSettings:
     provider_id: str
     model: str
     permission_mode: PermissionMode
-    max_turns: int | None
+    max_steps: int | None
     max_output_tokens: int
     context_chars: int
     interactive: bool
@@ -64,8 +64,8 @@ class AgentSettings:
             raise ValueError("model must be a non-empty string")
         if self.base_url is not None:
             object.__setattr__(self, "base_url", validate_base_url(self.base_url))
-        if self.max_turns is not None and self.max_turns <= 0:
-            raise ValueError("max_turns must be a positive integer")
+        if self.max_steps is not None and self.max_steps <= 0:
+            raise ValueError("max_steps must be a positive integer")
         for name, value in (
             ("max_output_tokens", self.max_output_tokens),
             ("context_chars", self.context_chars),
@@ -171,10 +171,10 @@ class SettingsResolver:
                 if actual_overrides.permission_mode is not None
                 else stored.permission_mode or PermissionMode.DEFAULT
             ),
-            max_turns=(
-                actual_overrides.max_turns
-                if actual_overrides.max_turns is not None
-                else stored.max_turns
+            max_steps=(
+                actual_overrides.max_steps
+                if actual_overrides.max_steps is not None
+                else stored.max_steps
             ),
             max_output_tokens=(
                 actual_overrides.max_output_tokens

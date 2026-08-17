@@ -128,26 +128,20 @@ class SessionStore(SessionRepository):
                 continue
             try:
                 raw = json.loads(line)
-                if (
-                    line_number == 1
-                    and isinstance(raw, dict)
-                    and (raw.get("schema_version") == 1 or raw.get("version") == 1)
-                ):
+                legacy_version = (
+                    raw.get("schema_version", raw.get("version"))
+                    if isinstance(raw, dict)
+                    else None
+                )
+                if line_number == 1 and legacy_version in {1, 2}:
                     raise ValueError(
-                        f"Transcript schema v1 is incompatible: {self.path}. "
+                        f"Transcript schema v{legacy_version} is incompatible: "
+                        f"{self.path}. "
                         "Start a new session to rebuild it."
                     )
                 entry = decode_entry(raw)
                 if line_number == 1:
                     if not isinstance(entry, SessionStart):
-                        version = (
-                            raw.get("schema_version") if isinstance(raw, dict) else None
-                        )
-                        if version == 1:
-                            raise ValueError(
-                                f"Transcript schema v1 is incompatible: {self.path}. "
-                                "Start a new session to rebuild it."
-                            )
                         raise ValueError(
                             "First transcript entry must be session_started"
                         )

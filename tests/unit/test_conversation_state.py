@@ -5,6 +5,7 @@ import pytest
 from nano_code.agent import ConversationState
 from nano_code.agent.contracts.compaction import CompactionOutcome
 from nano_code.agent.contracts.session import (
+    AttachmentDelivery,
     CompactBoundary,
     ContentReplacement,
     SessionSnapshot,
@@ -114,6 +115,18 @@ def test_compaction_updates_runtime_without_reload(tmp_path: Path) -> None:
     state = ConversationState(store)
     human = HumanMessage("hello")
     state.append(human)
+    state.add_attachment_deliveries(
+        (
+            AttachmentDelivery(
+                human.uuid,
+                ContextAttachment(
+                    "event",
+                    (TextContent("runtime"),),
+                    retention="live_session",
+                ),
+            ),
+        )
+    )
     summary = ConversationSummaryMessage("summary", parent_uuid=human.uuid)
     boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5)
     replacement = ContentReplacement("call", "Read", 10, "short")
@@ -130,6 +143,7 @@ def test_compaction_updates_runtime_without_reload(tmp_path: Path) -> None:
     assert state.history == (human, summary)
     assert state.working_messages == (summary,)
     assert state.compact_boundaries == (boundary,)
+    assert state.context_snapshot().attachment_deliveries == ()
     assert store.load_calls == 1
 
 
@@ -192,7 +206,7 @@ def test_external_transcript_append_is_visible_only_after_new_load(
     assert reloaded.history == (human, external)
 
 
-def test_runtime_attachment_enters_snapshot_without_persistence_and_clears_on_resume(
+def test_live_attachment_delivery_is_not_persisted_and_clears_on_resume(
     tmp_path: Path,
 ) -> None:
     current = _store(tmp_path, "11")
@@ -202,17 +216,61 @@ def test_runtime_attachment_enters_snapshot_without_persistence_and_clears_on_re
     reminder = ContextAttachment(
         "todo_reminder",
         (ContextInstruction("remember todos"),),
-        lifecycle="session_runtime",
+        retention="live_session",
     )
 
-    state.append_runtime_attachments((reminder,))
+    delivery = AttachmentDelivery(human.uuid, reminder)
+    state.add_attachment_deliveries((delivery,))
 
     snapshot = state.context_snapshot()
-    assert snapshot.runtime_attachments[0].after_message_uuid == human.uuid
-    assert snapshot.runtime_attachments[0].attachment == reminder
+    assert snapshot.attachment_deliveries[0].anchor_uuid == human.uuid
+    assert snapshot.attachment_deliveries[0].attachment == reminder
     assert current.load().history == (human,)
 
     target = _store(tmp_path, "12")
     target.append(HumanMessage("target"))
     state.resume(target)
-    assert state.context_snapshot().runtime_attachments == ()
+    assert state.context_snapshot().attachment_deliveries == ()
+
+
+def test_attachment_delivery_is_idempotent_and_conflicts_fail(tmp_path: Path) -> None:
+    state = ConversationState(_store(tmp_path, "13"))
+    human = HumanMessage("current")
+    state.append(human)
+    first = AttachmentDelivery(
+        human.uuid,
+        ContextAttachment("event", (TextContent("first"),), retention="live_session"),
+        delivery_id="fixed",
+    )
+
+    state.add_attachment_deliveries((first, first))
+    assert state.context_snapshot().attachment_deliveries == (first,)
+
+    conflict = AttachmentDelivery(
+        human.uuid,
+        ContextAttachment("event", (TextContent("second"),), retention="live_session"),
+        delivery_id="fixed",
+    )
+    with pytest.raises(ValueError, match="Conflicting attachment delivery"):
+        state.add_attachment_deliveries((conflict,))
+    assert state.context_snapshot().attachment_deliveries == (first,)
+
+
+def test_attachment_delivery_requires_a_working_set_anchor(tmp_path: Path) -> None:
+    state = ConversationState(_store(tmp_path, "14"))
+    state.append(HumanMessage("current"))
+    delivery = AttachmentDelivery(
+        "missing",
+        ContextAttachment("event", (TextContent("content"),), retention="live_session"),
+    )
+
+    with pytest.raises(ValueError, match="not in the working set"):
+        state.add_attachment_deliveries((delivery,))
+
+
+def test_attachment_delivery_rejects_request_retention() -> None:
+    with pytest.raises(ValueError, match="live_session"):
+        AttachmentDelivery(
+            "anchor",
+            ContextAttachment("temporary", (TextContent("content"),)),
+        )

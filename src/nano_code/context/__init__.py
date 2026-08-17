@@ -1,6 +1,10 @@
 """上下文规范化、token 统计与压缩。"""
 
-from nano_code.context.attachments import AttachmentResolver, AttachmentSource
+from nano_code.context.attachment_projection import AttachmentProjector
+from nano_code.context.attachments import (
+    DerivedAttachmentResolver,
+    DerivedAttachmentSource,
+)
 from nano_code.context.compaction import (
     CompactionCoordinator,
     CompactionResult,
@@ -19,8 +23,9 @@ from nano_code.context.window import ContextWindow
 __all__ = [
     "ContextPlanner",
     "ContextWindow",
-    "AttachmentResolver",
-    "AttachmentSource",
+    "DerivedAttachmentResolver",
+    "DerivedAttachmentSource",
+    "AttachmentProjector",
     "ModelInputNormalizer",
     "MicrocompactPolicy",
     "CompactionCoordinator",

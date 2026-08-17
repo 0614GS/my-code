@@ -23,7 +23,7 @@ def prompt() -> SystemPrompt:
             ResolvedPromptSection("core-a", "a", PromptStability.STATIC),
             ResolvedPromptSection("core-b", "b", PromptStability.STATIC),
             ResolvedPromptSection("environment", "cwd", PromptStability.SESSION),
-            ResolvedPromptSection("turn", "now", PromptStability.TURN),
+            ResolvedPromptSection("request", "now", PromptStability.REQUEST),
         )
     )
 

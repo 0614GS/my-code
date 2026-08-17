@@ -1,4 +1,4 @@
-"""用于在轮次间原子切换 provider 连接的运行时路由器。"""
+"""用于在 ModelCall 之间原子切换 provider 连接的运行时路由器。"""
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from nano_code.agent.contracts.model import ModelOutput, ModelRequest, ModelStreamEvent
-from nano_code.agent.ports.model import ModelCompletionPort, ModelTurnPort
+from nano_code.agent.ports.model import ModelCallPort, ModelCompletionPort
 from nano_code.auth import CredentialSource
 from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.base import ProviderCapabilities
+from nano_code.providers.call import CompleteModelCallAdapter
 from nano_code.providers.profiles import ProviderProtocol
-from nano_code.providers.turn import CompleteModelTurnAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +42,7 @@ class _StreamingProvider(Protocol):
         ...
 
 
-class ProviderRouter(ModelTurnPort, ModelCompletionPort):
+class ProviderRouter(ModelCallPort, ModelCompletionPort):
     """串行化请求与切换，同时保持智能体循环协议。"""
 
     def __init__(
@@ -69,7 +69,7 @@ class ProviderRouter(ModelTurnPort, ModelCompletionPort):
                 return AnthropicProvider.capabilities_for(self._connection.base_url)
 
     async def complete(self, request: ModelRequest) -> ModelOutput:
-        # 在一次完整请求期间持有锁，使 profile 切换成为明确的轮次间操作，
+        # 在一次完整请求期间持有锁，使 profile 切换成为明确的 ModelCall 间操作，
         # 而不是请求途中的状态变更。
         async with self._lock:
             if self._provider is None:
@@ -87,7 +87,7 @@ class ProviderRouter(ModelTurnPort, ModelCompletionPort):
                 async for event in provider.stream(request):
                     yield event
                 return
-            async for event in CompleteModelTurnAdapter(provider).stream(request):
+            async for event in CompleteModelCallAdapter(provider).stream(request):
                 yield event
 
     async def switch(self, connection: ProviderConnection) -> None:

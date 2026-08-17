@@ -32,14 +32,14 @@ from nano_code.tui import (
 )
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.contracts import (
-    MaxTurnsReached,
+    MaxStepsReached,
     PermissionRequest,
+    StepLimitReached,
     TextDelta,
     ToolFinished,
     ToolStarted,
     TurnCompleted,
     TurnEvent,
-    TurnLimitReached,
     TurnOutcome,
     TurnSucceeded,
 )
@@ -162,10 +162,10 @@ class FakeRuntime:
         )
 
 
-class MaxTurnsRuntime(FakeRuntime):
+class MaxStepsRuntime(FakeRuntime):
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
         self.prompts.append(prompt)
-        yield TurnLimitReached(MaxTurnsReached(3, 3, 30, 6))
+        yield StepLimitReached(MaxStepsReached(3, 3, 30, 6))
 
 
 def test_slash_registry_filters_candidates_by_prefix() -> None:
@@ -477,15 +477,15 @@ async def test_tui_streams_markdown_and_updates_tool_result_in_place() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tui_renders_structured_max_turns_terminal_outcome() -> None:
-    app = NanoCodeApp(MaxTurnsRuntime())
+async def test_tui_renders_structured_max_steps_terminal_outcome() -> None:
+    app = NanoCodeApp(MaxStepsRuntime())
 
     async with app.run_test(size=(100, 32)) as pilot:
         app.query_one("#prompt", Input).value = "keep working"
         await pilot.press("enter")
         await pilot.pause()
 
-        assert "Reached max turns (3)" in str(app.query(SystemMessage)[-1].render())
+        assert "Reached max steps (3)" in str(app.query(SystemMessage)[-1].render())
         assert app.query_one("#prompt", Input).disabled is False
 
 

@@ -57,7 +57,9 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
         "conversation_summary_message",
         "session_metadata",
     ]
-    assert all(entry["schema_version"] == 2 for entry in entries)
+    assert all(entry["schema_version"] == 3 for entry in entries)
+    assert entries[0]["max_steps"] is None
+    assert "max_turns" not in entries[0]
     assert all("role" not in entry and "origin" not in entry for entry in entries)
 
 
@@ -124,11 +126,20 @@ def test_structured_records_and_compact_boundary_are_atomic(tmp_path: Path) -> N
     assert after_summary.working_set == (summary,)
 
 
-def test_catalog_skips_legacy_transcript(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("document", "version"),
+    [
+        ({"type": "message", "version": 1}, 1),
+        ({"type": "session_started", "schema_version": 2}, 2),
+    ],
+)
+def test_catalog_skips_legacy_transcript(
+    tmp_path: Path, document: object, version: int
+) -> None:
     legacy = tmp_path / f"{SESSION_ID}.jsonl"
-    legacy.write_text(json.dumps({"type": "message", "version": 1}) + "\n")
+    legacy.write_text(json.dumps(document) + "\n")
     assert SessionCatalog(tmp_path).list() == ()
-    with pytest.raises(ValueError, match="incompatible"):
+    with pytest.raises(ValueError, match=f"schema v{version} is incompatible"):
         _store(tmp_path).load()
 
 

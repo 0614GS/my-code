@@ -26,7 +26,7 @@ def test_bootstrap_creates_required_user_layout_only(tmp_path: Path) -> None:
     assert result.created_providers is True
     assert result.created_credentials is True
     assert json.loads(paths.user_settings_path.read_text(encoding="utf-8")) == {
-        "version": 2,
+        "version": 3,
         "activeProvider": "anthropic",
     }
     assert set(ProviderProfileStore(paths.providers_path).load()) == {"anthropic"}

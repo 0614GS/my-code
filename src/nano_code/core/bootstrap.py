@@ -11,10 +11,10 @@ from nano_code.cli.runtime import CliChatRuntime, DeferredPermissionPrompter
 from nano_code.cli.services import CliProviderController, ProjectSessionSource
 from nano_code.context import (
     AgentsUserContextResolver,
-    AttachmentResolver,
     CompactionCoordinator,
     ContextPlanner,
     ContextWindow,
+    DerivedAttachmentResolver,
 )
 from nano_code.context.compaction import CompactionService
 from nano_code.core.paths import NanoCodePaths, SettingsScope
@@ -38,7 +38,7 @@ from nano_code.providers.profiles import (
 )
 from nano_code.providers.router import ProviderConnection, ProviderRouter
 from nano_code.sessions import SessionStore
-from nano_code.todos import TodoReminderSource
+from nano_code.todos import TodoReminderAttachmentSource
 from nano_code.tools import ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
@@ -100,7 +100,7 @@ def _assemble_agent(
             provider_id=settings.provider_id,
             model=settings.model,
             permission_mode=settings.permission_mode.value,
-            max_turns=settings.max_turns,
+            max_steps=settings.max_steps,
             max_output_tokens=settings.max_output_tokens,
             context_chars=settings.context_chars,
         ),
@@ -142,7 +142,9 @@ def _assemble_agent(
         tools=registry.definitions,
         max_output_tokens=settings.max_output_tokens,
         user_context_resolver=AgentsUserContextResolver(settings.cwd),
-        attachment_resolver=AttachmentResolver((TodoReminderSource(),)),
+        attachment_resolver=DerivedAttachmentResolver(
+            (TodoReminderAttachmentSource(),)
+        ),
     )
     tool_round = ToolRoundExecutor(
         tool_executor,
@@ -151,12 +153,12 @@ def _assemble_agent(
         ),
     )
     engine = AgentEngine(
-        model_turn=provider,
+        model_call=provider,
         tool_round=tool_round,
         conversation=conversation,
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(provider)),
-        max_turns=settings.max_turns,
+        max_steps=settings.max_steps,
     )
     return engine, provider
 

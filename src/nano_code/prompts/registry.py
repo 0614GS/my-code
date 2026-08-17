@@ -12,7 +12,7 @@ from nano_code.prompts.models import (
 _STABILITY_ORDER = {
     PromptStability.STATIC: 0,
     PromptStability.SESSION: 1,
-    PromptStability.TURN: 2,
+    PromptStability.REQUEST: 2,
 }
 
 
@@ -29,7 +29,7 @@ class PromptRegistry:
         order = [_STABILITY_ORDER[section.stability] for section in actual]
         if order != sorted(order):
             raise ValueError(
-                "Prompt sections must be ordered static, session, then turn"
+                "Prompt sections must be ordered static, session, then request"
             )
         self._sections = actual
         self._cache: dict[str, ResolvedPromptSection] = {}
@@ -39,14 +39,14 @@ class PromptRegistry:
         return self._sections
 
     def resolve(self) -> SystemPrompt:
-        """生成本轮 prompt；只有 turn 片段会在每次调用时重新计算。"""
+        """生成本次 prompt；只有 request 片段会在每次解析时重新计算。"""
 
         return SystemPrompt(
             tuple(self._resolve_section(item) for item in self._sections)
         )
 
     def _resolve_section(self, section: PromptSection) -> ResolvedPromptSection:
-        if section.stability is not PromptStability.TURN:
+        if section.stability is not PromptStability.REQUEST:
             cached = self._cache.get(section.key)
             if cached is not None:
                 return cached
@@ -55,6 +55,6 @@ class PromptRegistry:
             content=section.resolve(),
             stability=section.stability,
         )
-        if section.stability is not PromptStability.TURN:
+        if section.stability is not PromptStability.REQUEST:
             self._cache[section.key] = resolved
         return resolved

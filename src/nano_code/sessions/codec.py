@@ -69,7 +69,7 @@ def decode_entry(value: object) -> DecodedEntry:
             entry.provider_id,
             entry.model,
             entry.permission_mode,
-            entry.max_turns,
+            entry.max_steps,
             entry.max_output_tokens,
             entry.context_chars,
         )
@@ -131,7 +131,7 @@ def encode_start(start: SessionStart) -> JsonObject:
             start.provider_id,
             start.model,
             start.permission_mode,
-            start.max_turns,
+            start.max_steps,
             start.max_output_tokens,
             start.context_chars,
         )
@@ -231,7 +231,7 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             provider_id=entry.provider_id,
             model=entry.model,
             permission_mode=entry.permission_mode,
-            max_turns=entry.max_turns,
+            max_steps=entry.max_steps,
             max_output_tokens=entry.max_output_tokens,
             context_chars=entry.context_chars,
         )
@@ -287,7 +287,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
         data = to_json_object(value)
     except TypeError as error:
         raise TranscriptDecodeError("Transcript entry must be an object") from error
-    if data.get("schema_version") != 2:
+    if data.get("schema_version") != 3:
         raise TranscriptDecodeError("Unsupported transcript schema version")
     kind = _string(data, "type")
     expected_fields = _ENTRY_FIELDS.get(kind)
@@ -315,7 +315,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
             provider_id,
             _string(data, "model"),
             permission_mode,
-            _optional_positive_int(data, "max_turns"),
+            _optional_positive_int(data, "max_steps"),
             _positive_int(data, "max_output_tokens"),
             _positive_int(data, "context_chars"),
         )
@@ -584,7 +584,7 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
             "provider_id",
             "model",
             "permission_mode",
-            "max_turns",
+            "max_steps",
             "max_output_tokens",
             "context_chars",
         }

@@ -26,10 +26,10 @@ response style；它们只描述 nano-code 已实现的行为和工具。
 
 - `STATIC`：与会话无关的身份、工具原则和安全边界；
 - `SESSION`：当前工作区等会话内不变的信息；
-- `TURN`：需要随每次模型请求重新计算的信息。
+- `REQUEST`：需要随每次 `ModelRequest` 重新计算的信息。
 
-Registry 强制按 static、session、turn 排列，并拒绝重复 key。static/session 首次解析
-后在当前 Registry 中冻结，turn 每轮重新解析。这个规则既防止无意改变已发送前缀，
+Registry 强制按 static、session、request 排列，并拒绝重复 key。static/session 首次解析
+后在当前 Registry 中冻结，request 每次重新解析。这个规则既防止无意改变已发送前缀，
 也为 provider prompt cache 保留稳定断点。
 
 默认的 `nano-code.environment` session section 按固定顺序包含当前绝对工作区路径、
@@ -54,7 +54,8 @@ conversation UUID、父链或时间戳。`ContextPlanner` 在自己的生命周�
 并通过 `ModelInputNormalizer` 将其直接放入最终 `ModelRequest.messages`；预算统计使用规范化后
 的模型可见文本，因此包含 XML wrapper 的字符量。
 
-Anthropic 请求的顺序是 `user_context → conversation messages → attachments`。AGENTS context
+Anthropic 请求的顺序是 `user_context → conversation messages / anchored deliveries → current
+derived attachments`。AGENTS context
 不是 Transcript 事实，不会写入 JSONL，也不会进入 `compaction_view()` 或 compact summary。当前组合根显式
 装配 `AgentsUserContextResolver`，只读取 `AgentSettings.cwd / AGENTS.md`。非空文件会
 作为一条前置 user 消息注入，并使用 CC 风格的 `<system-reminder>` 包裹，包含
@@ -63,13 +64,23 @@ Anthropic 请求的顺序是 `user_context → conversation messages → attachm
 文件缺失或为空时不注入 context；文件存在但无法读取或不是有效 UTF-8 时显式失败。
 resolver 不遍历父目录，不读取 `CLAUDE.md`、`.claude/` 或规则目录，也不解析 include。
 
-`AttachmentResolver` 是一个同步、无状态的 concrete 聚合器，接收按声明顺序排列的
-`AttachmentSource`。每个 source 都收到当前 `ConversationSnapshot`，返回一组
+`DerivedAttachmentResolver` 是同步、无状态的聚合器，接收按声明顺序排列的
+`DerivedAttachmentSource`。每个 source 都收到当前 `ConversationSnapshot`，返回一组
 `ContextAttachment`；每次请求都会重新执行 source，不做 session 缓存。source 的结果会先
 整体收集，source 失败时记录异常并跳过该 source，其他 source 仍然生效。无 source 的
-`AttachmentResolver()` 返回空 tuple。attachment 同样只在模型请求边界投影为 user message，
-不进入 Transcript 或 compact summary；未来的动态 reminder 可以复用现有
-`ContextInstruction`。
+resolver 返回空 tuple。
+
+`ContextAttachment.retention` 区分仅当次可见的 `request` 和本进程会话可见的
+`live_session`。后者会以 `AttachmentDelivery` 锚定到 working-set message，按原位置
+参与后续请求与 compact 输入，但不写 Transcript。`AgentTurnInput` 则是回合事件
+attachment 的入口；这条路径与基于快照的 derived source 分开，为后续 TUI `@`
+文件选择保留语义边界。
+
+attachment content 支持 `TextContent`、`ContextInstruction` 和受信任的
+`AttachmentToolExchange`。前两者投影为 user text/reminder；后者投影为配对的
+assistant tool-use 与 user tool-result，并与真实会话一起经过全局 tool ID 配对校验。
+这些投影都由 `AttachmentProjector` 集中完成，不会伪装成
+`ConversationMessage`。
 
 ## 5. XML 上下文块
 
@@ -83,5 +94,6 @@ XML 只是帮助模型识别语义的文本协议，不是可信执行通道。�
 
 ## 6. 后续扩展
 
-项目记忆、hooks、skills 和动态工具说明应作为新的 prompt source 或系统上下文来源
-接入。它们不应直接修改 Agent Loop，也不应在 Provider 中拼装业务提示词。
+项目记忆、hooks、skills 和动态工具说明应按其生命周期作为新的 prompt source、
+derived attachment source 或事件 attachment 接入。它们不应直接修改 Agent
+Loop，也不应在 Provider 中拼装业务提示词。

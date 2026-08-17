@@ -1,4 +1,4 @@
-"""不持久化、按 request 或当前进程 session 生命周期注入的上下文。"""
+"""不持久化的用户上下文文档与可信指令块。"""
 
 from dataclasses import dataclass, field
 from typing import Literal
@@ -6,7 +6,6 @@ from typing import Literal
 from nano_code.messages.conversation import TextContent
 
 type ContextInstructionKind = Literal["system_reminder"]
-type ContextAttachmentLifecycle = Literal["request", "session_runtime"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,29 +21,13 @@ class ContextInstruction:
             raise ValueError("Context instruction must not be empty")
 
 
-type ContextContent = TextContent | ContextInstruction
-
-
-@dataclass(frozen=True, slots=True)
-class ContextAttachment:
-    source: str
-    content: tuple[ContextContent, ...]
-    lifecycle: ContextAttachmentLifecycle = "request"
-
-    def __post_init__(self) -> None:
-        if not self.source.strip() or not self.content:
-            raise ValueError("Context attachment source and content must not be empty")
-        if not all(
-            isinstance(block, (TextContent, ContextInstruction))
-            for block in self.content
-        ):
-            raise TypeError("Context attachments contain only text or instructions")
+type ContextDocumentContent = TextContent | ContextInstruction
 
 
 @dataclass(frozen=True, slots=True)
 class UserContextDocument:
     source: str
-    content: tuple[ContextContent, ...]
+    content: tuple[ContextDocumentContent, ...]
 
     def __post_init__(self) -> None:
         if not self.source.strip() or not self.content:
@@ -57,9 +40,7 @@ class UserContextDocument:
 
 
 __all__ = [
-    "ContextAttachment",
-    "ContextAttachmentLifecycle",
-    "ContextContent",
+    "ContextDocumentContent",
     "ContextInstruction",
     "ContextInstructionKind",
     "UserContextDocument",

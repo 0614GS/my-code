@@ -39,6 +39,11 @@ def test_parser_uses_installed_command_name() -> None:
     assert build_parser().prog == "nanocode"
 
 
+def test_parser_rejects_removed_max_turns_flag() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--max-turns", "3", "-p", "hello"])
+
+
 def test_cli_resolves_file_environment_and_flag_precedence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -50,8 +55,8 @@ def test_cli_resolves_file_environment_and_flag_precedence(
     (config_home / "settings.json").write_text(
         json.dumps(
             {
-                "version": 2,
-                "agent": {"model": "file-model", "maxTurns": 3},
+                "version": 3,
+                "agent": {"model": "file-model", "maxSteps": 3},
                 "permissions": {"defaultMode": "plan"},
             }
         ),
@@ -69,7 +74,7 @@ def test_cli_resolves_file_environment_and_flag_precedence(
             "cli-model",
             "--base-url",
             "https://cli.example/api",
-            "--max-turns",
+            "--max-steps",
             "7",
             "-p",
             "hello",
@@ -80,7 +85,7 @@ def test_cli_resolves_file_environment_and_flag_precedence(
     assert settings.model == "cli-model"
     assert settings.base_url == "https://cli.example/api"
     assert settings.permission_mode is PermissionMode.PLAN
-    assert settings.max_turns == 7
+    assert settings.max_steps == 7
     assert settings.paths.config_home == config_home
 
 
@@ -93,7 +98,7 @@ def test_environment_model_overrides_settings(
     config_home = tmp_path / "config"
     config_home.mkdir()
     (config_home / "settings.json").write_text(
-        json.dumps({"version": 2, "agent": {"model": "file-model"}}),
+        json.dumps({"version": 3, "agent": {"model": "file-model"}}),
         encoding="utf-8",
     )
     monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
@@ -113,7 +118,7 @@ def test_environment_base_url_overrides_user_settings(
     config_home = tmp_path / "config"
     config_home.mkdir()
     (config_home / "settings.json").write_text(
-        json.dumps({"version": 2}), encoding="utf-8"
+        json.dumps({"version": 3}), encoding="utf-8"
     )
     monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://env.example/api")
@@ -132,7 +137,7 @@ def test_named_provider_resolves_profile_and_scoped_credential(
     config_home = tmp_path / "config"
     config_home.mkdir()
     (config_home / "settings.json").write_text(
-        json.dumps({"version": 2, "activeProvider": "gateway"}), encoding="utf-8"
+        json.dumps({"version": 3, "activeProvider": "gateway"}), encoding="utf-8"
     )
     (config_home / "providers.json").write_text(
         json.dumps(
@@ -273,12 +278,12 @@ def test_non_positive_cli_limit_is_rejected(
     workspace.mkdir()
     monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(tmp_path / "config"))
 
-    options = parse_args(["--cwd", str(workspace), "--max-turns", "0", "-p", "hello"])
-    with pytest.raises(ValueError, match="max_turns must be a positive integer"):
+    options = parse_args(["--cwd", str(workspace), "--max-steps", "0", "-p", "hello"])
+    with pytest.raises(ValueError, match="max_steps must be a positive integer"):
         resolve_options(options)
 
 
-def test_max_turns_is_unlimited_by_default(
+def test_max_steps_is_unlimited_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clear_provider_environment(monkeypatch)
@@ -288,4 +293,4 @@ def test_max_turns_is_unlimited_by_default(
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 
-    assert resolve_options(options).max_turns is None
+    assert resolve_options(options).max_steps is None

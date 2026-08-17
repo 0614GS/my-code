@@ -12,9 +12,10 @@ from nano_code.agent.contracts.inbound import (
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
-    AgentMaxTurnsReached,
+    AgentMaxStepsReached,
     AgentSessionView,
     AgentStatus,
+    AgentTurnInput,
     AgentTurnOutcome,
     AgentTurnSucceeded,
 )
@@ -33,6 +34,7 @@ from nano_code.agent.contracts.model import (
     ModelUserMessage,
 )
 from nano_code.agent.contracts.session import (
+    AttachmentDelivery,
     CompactBoundary,
     CompactTrigger,
     ContentReplacement,
@@ -52,17 +54,17 @@ from nano_code.agent.engine import AgentEngine
 from nano_code.agent.errors import ContextOverflow, ModelContextOverflow
 from nano_code.agent.events import (
     AgentEvent,
+    AgentStepLimitReached,
     AgentTextDelta,
     AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
-    AgentTurnLimitReached,
 )
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
 from nano_code.agent.ports.inbound import AgentInboundPort
-from nano_code.agent.ports.model import ModelCompletionPort, ModelTurnPort
+from nano_code.agent.ports.model import ModelCallPort, ModelCompletionPort
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.agent.ports.tool import ToolRoundPort
 
@@ -76,7 +78,7 @@ __all__ = [
     "AgentHistoryToolCall",
     "AgentHistoryUserMessage",
     "AgentInboundPort",
-    "AgentMaxTurnsReached",
+    "AgentMaxStepsReached",
     "AgentSessionView",
     "AgentStatus",
     "AgentTextDelta",
@@ -84,10 +86,12 @@ __all__ = [
     "AgentToolFinished",
     "AgentToolStarted",
     "AgentTurnCompleted",
-    "AgentTurnLimitReached",
+    "AgentStepLimitReached",
     "AgentTurnOutcome",
+    "AgentTurnInput",
     "AgentTurnSucceeded",
     "CompactBoundary",
+    "AttachmentDelivery",
     "CompactTrigger",
     "CompactionOutcome",
     "CompactorPort",
@@ -98,6 +102,7 @@ __all__ = [
     "ConversationSnapshot",
     "ConversationState",
     "ContextOverflow",
+    "ModelCallPort",
     "ModelCompletionPort",
     "ModelContextOverflow",
     "ModelAssistantMessage",
@@ -111,7 +116,6 @@ __all__ = [
     "ModelToolDefinition",
     "ModelToolResultBlock",
     "ModelToolUseBlock",
-    "ModelTurnPort",
     "ModelUserMessage",
     "SessionRepository",
     "SessionMetadata",

@@ -105,3 +105,11 @@ Hook 执行接收与当前 query/tool 关联的 abort signal。进度作为 `Pro
 - `claude-code/src/query/stopHooks.ts`
 - `claude-code/src/services/compact/compact.ts`
 - `claude-code/src/types/hooks.ts`
+
+## 10. nano-code 的当前边界
+
+nano-code 尚未实现 Hook 调度器。已完成的 attachment 基础设施是后续 Hook
+输出与 Agent 上下文之间的承载边界：基于快照的状态提醒进入
+`DerivedAttachmentSource`，某个生命周期事件直接产生的 additional context 进入
+`AgentTurnInput` 或未来同类的事件交付口。Hook 仍不应直接写 Transcript 或绕过
+`AttachmentProjector` 拼装 provider 消息。

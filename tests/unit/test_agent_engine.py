@@ -6,10 +6,12 @@ import pytest
 
 from nano_code.agent import (
     AgentEngine,
-    AgentMaxTurnsReached,
+    AgentMaxStepsReached,
     AgentTodoListUpdated,
+    AgentTurnInput,
     AgentTurnSucceeded,
     ConversationState,
+    ModelContextOverflow,
     ModelOutput,
     ModelOutputCompleted,
     ModelRequest,
@@ -21,7 +23,10 @@ from nano_code.context import CompactionCoordinator, ContextPlanner, ContextWind
 from nano_code.context.compaction import CompactionService
 from nano_code.messages import (
     AssistantMessage,
+    AttachmentToolExchange,
+    ContextAttachment,
     HumanMessage,
+    TextContent,
     TokenUsage,
     ToolCall,
     ToolResultsMessage,
@@ -51,11 +56,26 @@ class FakeModel:
         yield ModelOutputCompleted(output)
 
 
+class OverflowOnceModel(FakeModel):
+    def __init__(self, outputs: list[ModelOutput]) -> None:
+        super().__init__(outputs)
+        self.overflowed = False
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        if not self.overflowed:
+            self.overflowed = True
+            self.requests.append(request)
+            raise ModelContextOverflow("too long")
+        async for event in super().stream(request):
+            yield event
+
+
 def _engine(
     tmp_path: Path,
     outputs: list[ModelOutput],
     *,
-    max_turns: int | None = None,
+    max_steps: int | None = None,
+    model_type: type[FakeModel] = FakeModel,
 ) -> tuple[AgentEngine, FakeModel, ConversationState, ToolRoundExecutor]:
     store = SessionStore(tmp_path / "sessions", "11111111-1111-1111-1111-111111111111")
     registry = ToolRegistry(builtin_tools())
@@ -66,7 +86,7 @@ def _engine(
         ToolContext(tmp_path),
         ToolResultStore(tmp_path / "results"),
     )
-    model = FakeModel(outputs)
+    model = model_type(outputs)
     context = ContextPlanner(
         window=ContextWindow(10_000),
         prompt=PromptRegistry(
@@ -78,12 +98,12 @@ def _engine(
     conversation = ConversationState(store)
     tool_round = ToolRoundExecutor(executor)
     engine = AgentEngine(
-        model_turn=model,
+        model_call=model,
         tool_round=tool_round,
         conversation=conversation,
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(model)),
-        max_turns=max_turns,
+        max_steps=max_steps,
     )
     return engine, model, conversation, tool_round
 
@@ -94,13 +114,59 @@ async def test_engine_persists_human_and_assistant_messages(tmp_path: Path) -> N
         tmp_path,
         [ModelOutput((ModelTextBlock("done"),), "end_turn", TokenUsage(3, 1))],
     )
-    result = await engine.submit("hello")
+    result = await engine.submit(AgentTurnInput("hello"))
 
     assert isinstance(result, AgentTurnSucceeded)
     assert result.text == "done"
     assert isinstance(conversation.working_messages[0], HumanMessage)
     assert isinstance(conversation.working_messages[1], AssistantMessage)
     assert model.requests[0].messages[0].content[0] == ModelTextBlock("hello")
+
+
+@pytest.mark.asyncio
+async def test_event_attachment_is_anchored_before_first_call_and_survives_turns(
+    tmp_path: Path,
+) -> None:
+    engine, model, conversation, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput((ModelTextBlock("first"),), "end_turn", TokenUsage(3, 1)),
+            ModelOutput((ModelTextBlock("second"),), "end_turn", TokenUsage(4, 1)),
+        ],
+    )
+    attachment = ContextAttachment(
+        "file",
+        (
+            AttachmentToolExchange(
+                "Read",
+                {"path": "notes.txt"},
+                "1→hello",
+                tool_use_id="attachment-read",
+            ),
+        ),
+        retention="live_session",
+    )
+
+    await engine.submit(AgentTurnInput("inspect", (attachment,)))
+    await engine.submit(AgentTurnInput("continue"))
+
+    for request in model.requests:
+        assert any(
+            isinstance(block, ModelToolUseBlock) and block.id == "attachment-read"
+            for message in request.messages
+            for block in message.content
+        )
+    delivery = conversation.context_snapshot().attachment_deliveries[0]
+    assert delivery.anchor_uuid == conversation.history[0].uuid
+    assert conversation.repository.load().history == conversation.history
+
+
+def test_agent_turn_input_rejects_request_only_attachments() -> None:
+    with pytest.raises(ValueError, match="live_session"):
+        AgentTurnInput(
+            "inspect",
+            (ContextAttachment("request", (TextContent("temporary"),)),),
+        )
 
 
 @pytest.mark.asyncio
@@ -118,7 +184,7 @@ async def test_engine_closes_tool_loop_and_preserves_results(tmp_path: Path) -> 
         ],
     )
 
-    result = await engine.submit("read")
+    result = await engine.submit(AgentTurnInput("read"))
 
     assert isinstance(result, AgentTurnSucceeded)
     assert result.text == "finished"
@@ -133,29 +199,29 @@ async def test_engine_closes_tool_loop_and_preserves_results(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_engine_has_no_default_model_turn_limit(tmp_path: Path) -> None:
+async def test_engine_has_no_default_step_limit(tmp_path: Path) -> None:
     outputs = [
         ModelOutput(
-            (ModelToolUseBlock(f"read-{turn}", "Read", {"path": "missing.txt"}),),
+            (ModelToolUseBlock(f"read-{step}", "Read", {"path": "missing.txt"}),),
             "tool_use",
             TokenUsage(1, 1),
         )
-        for turn in range(13)
+        for step in range(13)
     ]
     outputs.append(
         ModelOutput((ModelTextBlock("finished"),), "end_turn", TokenUsage(1, 1))
     )
     engine, model, _, _ = _engine(tmp_path, outputs)
 
-    result = await engine.submit("keep going")
+    result = await engine.submit(AgentTurnInput("keep going"))
 
     assert isinstance(result, AgentTurnSucceeded)
-    assert result.turns == 14
+    assert result.completed_steps == 14
     assert len(model.requests) == 14
 
 
 @pytest.mark.asyncio
-async def test_explicit_max_turns_returns_structured_terminal_outcome(
+async def test_explicit_max_steps_returns_structured_terminal_outcome(
     tmp_path: Path,
 ) -> None:
     engine, model, conversation, _ = _engine(
@@ -177,23 +243,43 @@ async def test_explicit_max_turns_returns_structured_terminal_outcome(
                 TokenUsage(4, 1),
             ),
         ],
-        max_turns=2,
+        max_steps=2,
     )
 
-    result = await engine.submit("stop at the limit")
+    result = await engine.submit(AgentTurnInput("stop at the limit"))
 
-    assert result == AgentMaxTurnsReached(
-        max_turns=2,
-        completed_turns=2,
+    assert result == AgentMaxStepsReached(
+        max_steps=2,
+        completed_steps=2,
         usage=TokenUsage(5, 2),
     )
     assert len(model.requests) == 2
     assert isinstance(conversation.history[-1], ToolResultsMessage)
 
-    continued = await engine.submit("continue")
+    continued = await engine.submit(AgentTurnInput("continue"))
 
     assert isinstance(continued, AgentTurnSucceeded)
     assert continued.text == "continued"
+    assert len(model.requests) == 3
+
+
+@pytest.mark.asyncio
+async def test_reactive_retry_does_not_increment_completed_steps(
+    tmp_path: Path,
+) -> None:
+    engine, model, _, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput((ModelTextBlock("summary"),), "end_turn", TokenUsage(2, 1)),
+            ModelOutput((ModelTextBlock("done"),), "end_turn", TokenUsage(3, 1)),
+        ],
+        model_type=OverflowOnceModel,
+    )
+
+    result = await engine.submit(AgentTurnInput("recover"))
+
+    assert isinstance(result, AgentTurnSucceeded)
+    assert result.completed_steps == 1
     assert len(model.requests) == 3
 
 
@@ -228,7 +314,7 @@ async def test_engine_emits_todos_only_after_tool_results_are_committed(
     )
 
     updates: list[AgentTodoListUpdated] = []
-    async for event in engine.stream("test it"):
+    async for event in engine.stream(AgentTurnInput("test it")):
         if isinstance(event, AgentTodoListUpdated):
             assert isinstance(conversation.history[-1], ToolResultsMessage)
             updates.append(event)
@@ -254,7 +340,7 @@ async def test_failed_todo_write_does_not_emit_todo_update(tmp_path: Path) -> No
 
     updates = [
         event
-        async for event in engine.stream("test it")
+        async for event in engine.stream(AgentTurnInput("test it"))
         if isinstance(event, AgentTodoListUpdated)
     ]
 
@@ -301,7 +387,7 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
     tool_round.executor.execute = cancel_second  # type: ignore[assignment]
     events = []
     with pytest.raises(asyncio.CancelledError):
-        async for event in engine.stream("test it"):
+        async for event in engine.stream(AgentTurnInput("test it")):
             events.append(event)
 
     updates = [event for event in events if isinstance(event, AgentTodoListUpdated)]

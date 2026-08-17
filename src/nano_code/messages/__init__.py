@@ -1,9 +1,13 @@
 """Conversation、请求上下文与共享 primitive 的公开入口。"""
 
-from nano_code.messages.context import (
+from nano_code.messages.attachments import (
+    AttachmentContent,
+    AttachmentRetention,
+    AttachmentToolExchange,
     ContextAttachment,
-    ContextAttachmentLifecycle,
-    ContextContent,
+)
+from nano_code.messages.context import (
+    ContextDocumentContent,
     ContextInstruction,
     ContextInstructionKind,
     UserContextDocument,
@@ -29,9 +33,11 @@ from nano_code.messages.primitives import (
 __all__ = [
     "AssistantContent",
     "AssistantMessage",
+    "AttachmentContent",
+    "AttachmentRetention",
+    "AttachmentToolExchange",
     "ContextAttachment",
-    "ContextAttachmentLifecycle",
-    "ContextContent",
+    "ContextDocumentContent",
     "ContextInstruction",
     "ContextInstructionKind",
     "ConversationMessage",

@@ -34,7 +34,7 @@ CliChatRuntime ── AgentInboundPort ← AgentEngine
 
 TUI 只通过 `ChatRuntime` 的事件流提交输入、读取安全状态、配置无凭据展示 DTO 并注册权限处理器，不接触 Provider SDK、ToolExecutor、SessionStore 或 AgentEngine。`core.bootstrap` 组装完整应用，CLI runtime 使用 `DeferredPermissionPrompter` 把核心权限询问转换成 UI DTO；无处理器时仍然 fail closed。DTO 携带前端无关的工具 presentation 和 TodoItem，因此以后可以增加普通终端、Web 或测试前端而不修改 Agent。
 
-正常回答和显式轮次上限是两种独立终态。TUI 收到 max-turns 终态后显示明确错误、
+正常回答和显式 Step 上限是两种独立终态。TUI 收到 max-steps 终态后显示明确错误、
 结束 busy 状态并重新启用输入框，用户可以基于已经提交的工具结果继续对话。
 
 ## 流式显示与持久化边界

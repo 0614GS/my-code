@@ -95,7 +95,7 @@ Schema 错误、语义错误、未知工具、权限拒绝和执行异常都会�
 
 ## 7.1 nano-code 的 ToolRoundPort
 
-nano-code 将一次 assistant 工具轮次收敛到 `ToolRoundPort`。它只暴露串行
+nano-code 将同一 AssistantMessage 中的工具批次收敛到 `ToolRoundPort`。它只暴露串行
 `run_round()`、调用展示和历史结果展示；`ToolRoundExecutor` 是现有 `ToolExecutor`
 的适配器，负责按顺序执行、生成开始/结束事件、绑定 session-scoped 结果目录，并在
 取消时为尚未完成的每个 `tool_use` 补上错误 `tool_result`。AgentEngine 只消费这些

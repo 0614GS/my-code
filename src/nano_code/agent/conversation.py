@@ -4,16 +4,15 @@ from collections.abc import Iterable
 
 from nano_code.agent.contracts.compaction import CompactionOutcome
 from nano_code.agent.contracts.session import (
+    AttachmentDelivery,
     CompactBoundary,
     ContentReplacement,
     ConversationSnapshot,
-    DeliveredContextAttachment,
     SessionSnapshot,
 )
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.messages import (
     AssistantMessage,
-    ContextAttachment,
     ConversationMessage,
     ToolCall,
     ToolResult,
@@ -35,7 +34,7 @@ class ConversationState:
         self._all_replacements: dict[str, ContentReplacement]
         self._all_boundaries: dict[str, CompactBoundary]
         self._active_replacements: dict[str, ContentReplacement]
-        self._runtime_attachments: tuple[DeliveredContextAttachment, ...] = ()
+        self._attachment_deliveries: tuple[AttachmentDelivery, ...] = ()
         self._replace_snapshot(repository.load())
         self._repair_trailing_tool_uses()
 
@@ -91,26 +90,41 @@ class ConversationState:
             messages=self._snapshot.working_set,
             content_replacements=self.content_replacements,
             session_history=self._snapshot.history,
-            runtime_attachments=tuple(
+            attachment_deliveries=tuple(
                 delivery
-                for delivery in self._runtime_attachments
-                if delivery.after_message_uuid in working_ids
+                for delivery in self._attachment_deliveries
+                if delivery.anchor_uuid in working_ids
             ),
         )
 
-    def append_runtime_attachments(
-        self, attachments: tuple[ContextAttachment, ...]
+    def add_attachment_deliveries(
+        self, deliveries: tuple[AttachmentDelivery, ...]
     ) -> None:
-        """把已发送 attachment 留在本次进程的会话历史中，不写 Transcript。"""
+        """幂等提交模型已收到的 live-session attachment，不写 Transcript。"""
 
-        if not attachments:
+        if not deliveries:
             return
-        if not self._snapshot.history:
-            raise ValueError("Runtime attachments require a conversation anchor")
-        anchor = self._snapshot.history[-1].uuid
-        self._runtime_attachments += tuple(
-            DeliveredContextAttachment(anchor, attachment) for attachment in attachments
-        )
+        working_ids = {message.uuid for message in self._snapshot.working_set}
+        existing = {
+            delivery.delivery_id: delivery for delivery in self._attachment_deliveries
+        }
+        pending: list[AttachmentDelivery] = []
+        for delivery in deliveries:
+            if delivery.anchor_uuid not in working_ids:
+                raise ValueError(
+                    "Attachment delivery anchor is not in the working set: "
+                    f"{delivery.anchor_uuid}"
+                )
+            previous = existing.get(delivery.delivery_id)
+            if previous is not None:
+                if previous != delivery:
+                    raise ValueError(
+                        f"Conflicting attachment delivery: {delivery.delivery_id}"
+                    )
+                continue
+            existing[delivery.delivery_id] = delivery
+            pending.append(delivery)
+        self._attachment_deliveries += tuple(pending)
 
     def append(self, message: ConversationMessage) -> None:
         """持久化优先追加消息，成功后增量更新运行时状态。"""
@@ -186,6 +200,12 @@ class ConversationState:
         self._all_replacements = replacements
         self._all_boundaries[outcome.boundary.id] = outcome.boundary
         self._rebuild_snapshot(history)
+        working_ids = {message.uuid for message in self._snapshot.working_set}
+        self._attachment_deliveries = tuple(
+            delivery
+            for delivery in self._attachment_deliveries
+            if delivery.anchor_uuid in working_ids
+        )
         return outcome.boundary
 
     def resume(self, repository: SessionRepository) -> tuple[ConversationMessage, ...]:
@@ -214,7 +234,7 @@ class ConversationState:
         self._repository = repository
         self._replace_snapshot(target_snapshot)
         # CC 的普通 attachment 不写 Transcript；切换或恢复 session 时不存在可重放事实。
-        self._runtime_attachments = ()
+        self._attachment_deliveries = ()
         return target_snapshot.history
 
     def _replace_snapshot(self, snapshot: SessionSnapshot) -> None:

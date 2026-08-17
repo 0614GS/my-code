@@ -28,7 +28,7 @@ def _paths(tmp_path: Path) -> NanoCodePaths:
     return NanoCodePaths(workspace.resolve(), tmp_path / "config")
 
 
-def test_settings_v2_preserves_unknown_nested_fields_and_rejects_v1(
+def test_settings_v3_preserves_unknown_nested_fields_and_rejects_v2(
     tmp_path: Path,
 ) -> None:
     paths = _paths(tmp_path)
@@ -36,7 +36,7 @@ def test_settings_v2_preserves_unknown_nested_fields_and_rejects_v1(
     paths.user_settings_path.write_text(
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "agent": {"model": "old", "futureAgent": True},
                 "futureRoot": {"enabled": True},
             }
@@ -54,7 +54,7 @@ def test_settings_v2_preserves_unknown_nested_fields_and_rejects_v1(
     assert document["futureRoot"] == {"enabled": True}
 
     paths.user_settings_path.write_text(
-        json.dumps({"version": 1, "model": "legacy"}), encoding="utf-8"
+        json.dumps({"version": 2, "agent": {"model": "legacy"}}), encoding="utf-8"
     )
     with pytest.raises(SettingsFileError, match=str(paths.user_settings_path)):
         SettingsStore(paths).load()

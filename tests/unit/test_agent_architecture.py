@@ -18,13 +18,13 @@ from nano_code.agent.contracts.session import SessionSnapshot
 from nano_code.agent.contracts.tool import ToolRoundCompleted
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
-from nano_code.agent.ports.model import ModelCompletionPort, ModelTurnPort
+from nano_code.agent.ports.model import ModelCallPort, ModelCompletionPort
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.agent.ports.tool import ToolRoundPort as DeclaredToolRoundPort
 from nano_code.context import CompactionCoordinator, ContextPlanner
 from nano_code.providers.anthropic import AnthropicProvider
+from nano_code.providers.call import CompleteModelCallAdapter
 from nano_code.providers.router import ProviderRouter
-from nano_code.providers.turn import CompleteModelTurnAdapter
 from nano_code.sessions import SessionStore
 from nano_code.tools.builtin.todo_write import TodoWriteTool
 from nano_code.tools.round_executor import ToolRoundExecutor
@@ -58,8 +58,8 @@ def test_concrete_adapters_explicitly_inherit_agent_ports() -> None:
     adapters = (
         (ContextPlanner, (ContextPort,)),
         (CompactionCoordinator, (CompactorPort,)),
-        (ProviderRouter, (ModelTurnPort, ModelCompletionPort)),
-        (CompleteModelTurnAdapter, (ModelTurnPort,)),
+        (ProviderRouter, (ModelCallPort, ModelCompletionPort)),
+        (CompleteModelCallAdapter, (ModelCallPort,)),
         (AnthropicProvider, (ModelCompletionPort,)),
         (SessionStore, (SessionRepository,)),
         (ToolRoundExecutor, (ToolRoundPort,)),

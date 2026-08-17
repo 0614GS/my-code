@@ -16,8 +16,8 @@ from nano_code.prompts import (
 )
 
 
-def test_registry_caches_stable_sections_and_recomputes_turn_sections() -> None:
-    calls = {"static": 0, "session": 0, "turn": 0}
+def test_registry_caches_stable_sections_and_recomputes_request_sections() -> None:
+    calls = {"static": 0, "session": 0, "request": 0}
 
     def resolve(key: str) -> str:
         calls[key] += 1
@@ -29,23 +29,25 @@ def test_registry_caches_stable_sections_and_recomputes_turn_sections() -> None:
             PromptSection(
                 "session", PromptStability.SESSION, lambda: resolve("session")
             ),
-            PromptSection("turn", PromptStability.TURN, lambda: resolve("turn")),
+            PromptSection(
+                "request", PromptStability.REQUEST, lambda: resolve("request")
+            ),
         )
     )
 
     first = registry.resolve()
     second = registry.resolve()
 
-    assert calls == {"static": 1, "session": 1, "turn": 2}
+    assert calls == {"static": 1, "session": 1, "request": 2}
     assert first.sections[:2] == second.sections[:2]
     assert first.sections[2] != second.sections[2]
 
 
 def test_registry_rejects_unstable_prefix_order() -> None:
-    with pytest.raises(ValueError, match="ordered static, session, then turn"):
+    with pytest.raises(ValueError, match="ordered static, session, then request"):
         PromptRegistry(
             (
-                PromptSection("turn", PromptStability.TURN, lambda: "turn"),
+                PromptSection("request", PromptStability.REQUEST, lambda: "request"),
                 PromptSection("static", PromptStability.STATIC, lambda: "static"),
             )
         )
@@ -148,4 +150,4 @@ def test_system_prompt_from_text_is_a_turn_scoped_request() -> None:
     prompt = SystemPrompt.from_text("compact this", key="compact")
 
     assert prompt.text == "compact this"
-    assert prompt.sections[0].stability is PromptStability.TURN
+    assert prompt.sections[0].stability is PromptStability.REQUEST

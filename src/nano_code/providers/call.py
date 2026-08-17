@@ -1,4 +1,4 @@
-"""将完整响应 provider 适配为统一模型回合流。"""
+"""将完整响应 provider 适配为统一模型调用流。"""
 
 from collections.abc import AsyncIterator
 
@@ -7,11 +7,11 @@ from nano_code.agent.contracts.model import (
     ModelRequest,
     ModelStreamEvent,
 )
-from nano_code.agent.ports.model import ModelCompletionPort, ModelTurnPort
+from nano_code.agent.ports.model import ModelCallPort, ModelCompletionPort
 
 
-class CompleteModelTurnAdapter(ModelTurnPort):
-    """为 legacy/简单 provider 提供单事件的流式兼容层。"""
+class CompleteModelCallAdapter(ModelCallPort):
+    """为非流式/简单 provider 提供单事件的流式适配层。"""
 
     def __init__(self, provider: ModelCompletionPort) -> None:
         self.provider = provider
@@ -22,6 +22,3 @@ class CompleteModelTurnAdapter(ModelTurnPort):
     async def _stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         response = await self.provider.complete(request)
         yield ModelOutputCompleted(response)
-
-
-ModelTurnAdapter = CompleteModelTurnAdapter

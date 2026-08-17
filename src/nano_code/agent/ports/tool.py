@@ -1,4 +1,4 @@
-"""工具轮次使用的 outbound port。"""
+"""ToolRound 使用的 outbound port。"""
 
 from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
@@ -10,7 +10,7 @@ from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 
 @runtime_checkable
 class ToolRoundPort(Protocol):
-    """Agent 使用的一次工具轮次及 session-scoped 展示能力。"""
+    """Agent 使用的一次 ToolRound 及 session-scoped 展示能力。"""
 
     def run_round(
         self,

@@ -1,4 +1,4 @@
-"""Layered v2 JSON settings with strict known-field validation."""
+"""Layered v3 JSON settings with strict known-field validation."""
 
 import json
 import os
@@ -14,7 +14,7 @@ from nano_code.permissions.rules import (
 )
 from nano_code.providers.ids import validate_provider_id
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 class SettingsFileError(ValueError):
@@ -24,7 +24,7 @@ class SettingsFileError(ValueError):
 @dataclass(frozen=True, slots=True)
 class AgentSettingsLayer:
     model: str | None = None
-    max_turns: int | None = None
+    max_steps: int | None = None
     max_output_tokens: int | None = None
     context_chars: int | None = None
 
@@ -57,13 +57,13 @@ class SettingsLayer:
         permission_allow_rules: tuple[str, ...] = (),
         permission_deny_rules: tuple[str, ...] = (),
         permission_ask_rules: tuple[str, ...] = (),
-        max_turns: int | None = None,
+        max_steps: int | None = None,
         max_output_tokens: int | None = None,
         context_chars: int | None = None,
     ) -> None:
         if agent is not None and any(
             value is not None
-            for value in (model, max_turns, max_output_tokens, context_chars)
+            for value in (model, max_steps, max_output_tokens, context_chars)
         ):
             raise TypeError("agent and flattened agent values cannot be combined")
         if permissions is not None and (
@@ -80,7 +80,7 @@ class SettingsLayer:
             self,
             "agent",
             agent
-            or AgentSettingsLayer(model, max_turns, max_output_tokens, context_chars),
+            or AgentSettingsLayer(model, max_steps, max_output_tokens, context_chars),
         )
         object.__setattr__(
             self,
@@ -99,8 +99,8 @@ class SettingsLayer:
         return self.agent.model
 
     @property
-    def max_turns(self) -> int | None:
-        return self.agent.max_turns
+    def max_steps(self) -> int | None:
+        return self.agent.max_steps
 
     @property
     def max_output_tokens(self) -> int | None:
@@ -131,7 +131,7 @@ class SettingsLayer:
             active_provider=higher.active_provider or self.active_provider,
             agent=AgentSettingsLayer(
                 higher.model if higher.model is not None else self.model,
-                higher.max_turns if higher.max_turns is not None else self.max_turns,
+                higher.max_steps if higher.max_steps is not None else self.max_steps,
                 higher.max_output_tokens
                 if higher.max_output_tokens is not None
                 else self.max_output_tokens,
@@ -257,7 +257,7 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
     if raw and raw.get("version") != _SCHEMA_VERSION:
         raise SettingsFileError(
             f"Settings file uses an incompatible schema: {path}. "
-            "Recreate it using the v2 nested settings format."
+            "Recreate it using the v3 nested settings format."
         )
     if scope is not SettingsScope.USER:
         forbidden = sorted(
@@ -276,12 +276,16 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
                 f"{', '.join(forbidden)} is only allowed in user storage: {path}"
             )
     agent = _nested_mapping(raw, "agent", path)
+    if "maxTurns" in agent:
+        raise SettingsFileError(
+            f"agent.maxTurns is no longer supported; use agent.maxSteps: {path}"
+        )
     permissions = _nested_mapping(raw, "permissions", path)
     layer = SettingsLayer(
         active_provider=_optional_string(raw, "activeProvider", path),
         agent=AgentSettingsLayer(
             _optional_string(agent, "model", path, "agent.model"),
-            _optional_positive_int(agent, "maxTurns", path, "agent.maxTurns"),
+            _optional_positive_int(agent, "maxSteps", path, "agent.maxSteps"),
             _optional_positive_int(
                 agent, "maxOutputTokens", path, "agent.maxOutputTokens"
             ),
@@ -328,7 +332,7 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
         key: value
         for key, value in (
             ("model", settings.model),
-            ("maxTurns", settings.max_turns),
+            ("maxSteps", settings.max_steps),
             ("maxOutputTokens", settings.max_output_tokens),
             ("contextChars", settings.context_chars),
         )

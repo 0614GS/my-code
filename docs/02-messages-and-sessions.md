@@ -25,8 +25,14 @@ ConversationState ──追加持久化──→ TranscriptEntry
 `ModelRequest`，不理解 Transcript 或请求上下文来源。
 
 nano-code 将非 Transcript 输入分成 `UserContextDocument` 和 `ContextAttachment`：前者
-在会话生命周期内缓存并放在历史之前，后者按请求解析并放在历史之后。两者可包含
-`TextContent | ContextInstruction`，但不进入 JSONL、父链或 compact view。
+在会话生命周期内缓存并放在历史之前；后者是带明确 retention 的模型可见附加上下文。
+`ContextAttachment` 可包含文本、结构化 reminder 或受信任的合成
+tool-use/tool-result 交换，但不进入 JSONL 或父链。
+
+`request` attachment 只对当前模型请求有效。`live_session` attachment 会以
+`AttachmentDelivery` 锚定到当前 working set 中的一条消息，在本进程的后续请求
+和 compact 输入中保持原位置；锚点被 compact 移出 working set 后交付随之裁剪。
+delivery 不持久化，因此 resume 或切换 session 后不会重放。
 
 ## 3. 四类 ID
 
@@ -43,7 +49,7 @@ nano-code 将非 Transcript 输入分成 `UserContextDocument` 和 `ContextAttac
 
 主会话按项目目录和 session ID 写入 JSONL；子 Agent 写入独立 sidechain 文件。核心实现位于 `claude-code/src/utils/sessionStorage.ts`。nano-code 的对应磁盘布局见 [09-storage-and-settings.md](09-storage-and-settings.md)。
 
-当前 schema 是 breaking version 2，每行都有 `schema_version: 2`。第一条必须是 `session_started`，记录 Session ID、canonical cwd、创建时间和初始 provider/model/permission/agent 限制快照。后续联合 discriminator 为：
+当前 schema 是 breaking version 3，每行都有 `schema_version: 3`。第一条必须是 `session_started`，记录 Session ID、canonical cwd、创建时间和初始 provider/model/permission/agent 限制快照，其中 Step 安全阀使用 `max_steps`。后续联合 discriminator 为：
 
 - `human_message`、`assistant_message`、`tool_results_message`、`conversation_summary_message`；
 - `session_metadata`、`content_replacement`、`compact_boundary`。
@@ -118,7 +124,7 @@ nano-code 将“列出会话”和“恢复会话”分开处理：
 
 工具结果额外保存可选的 `presentation` 快照。它不是发送给 Anthropic Messages API
 的内容，而是 Tool 在执行当时生成的前端无关摘要；恢复 UI 时优先复用它，从而避免
-升级展示逻辑后历史会话突然改变。该字段在 schema version 2 中是可选字段。
+升级展示逻辑后历史会话突然改变。该字段在 schema version 3 中是可选字段。
 
 JSONL 还可追加两类上下文记录。`content_replacement` 按 tool ID 冻结模型可见的
 microcompact 占位文本，原始工具结果保持不变；`compact_boundary` 记录压缩前父节点、

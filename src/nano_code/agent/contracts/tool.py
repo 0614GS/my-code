@@ -1,4 +1,4 @@
-"""一次工具轮次的事件值对象。"""
+"""一次 ToolRound 的事件值对象。"""
 
 from dataclasses import dataclass
 

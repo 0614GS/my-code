@@ -19,7 +19,7 @@ class SessionStart:
     provider_id: str
     model: str
     permission_mode: str
-    max_turns: int | None
+    max_steps: int | None
     max_output_tokens: int
     context_chars: int
 
@@ -35,8 +35,8 @@ class SessionStart:
             raise ValueError("cwd must be an absolute path")
         if not self.provider_id or not self.model or not self.permission_mode:
             raise ValueError("Session start strings must not be empty")
-        if self.max_turns is not None and self.max_turns < 1:
-            raise ValueError("max_turns must be positive or null")
+        if self.max_steps is not None and self.max_steps < 1:
+            raise ValueError("max_steps must be positive or null")
         if self.max_output_tokens < 1 or self.context_chars < 1:
             raise ValueError("Session limits must be positive")
 
@@ -105,30 +105,31 @@ class ConversationSnapshot:
     """ContextPort 某一时刻读取的会话事实与模型工作集快照。
 
     ``messages`` 是 compact 后的模型工作集；``session_history`` 仅供需要从
-    完整运行时事实派生状态的 attachment source 使用。``runtime_attachments``
+    完整运行时事实派生状态的 attachment source 使用。``attachment_deliveries``
     保留本进程已经交付、但不写 Transcript 的上下文。
     """
 
     messages: tuple[ConversationMessage, ...]
     content_replacements: tuple[ContentReplacement, ...] = field(default_factory=tuple)
     session_history: tuple[ConversationMessage, ...] = field(default_factory=tuple)
-    runtime_attachments: tuple["DeliveredContextAttachment", ...] = field(
+    attachment_deliveries: tuple["AttachmentDelivery", ...] = field(
         default_factory=tuple
     )
 
 
 @dataclass(frozen=True, slots=True)
-class DeliveredContextAttachment:
+class AttachmentDelivery:
     """已进入模型历史、但不写入 Transcript 的运行时 attachment。"""
 
-    after_message_uuid: str
+    anchor_uuid: str
     attachment: ContextAttachment
+    delivery_id: str = field(default_factory=lambda: str(uuid4()))
 
     def __post_init__(self) -> None:
-        if not self.after_message_uuid:
-            raise ValueError("Runtime attachment anchor must not be empty")
-        if self.attachment.lifecycle != "session_runtime":
-            raise ValueError("Delivered attachments must use session_runtime lifecycle")
+        if not self.anchor_uuid or not self.delivery_id:
+            raise ValueError("Attachment delivery ID and anchor must not be empty")
+        if self.attachment.retention != "live_session":
+            raise ValueError("Delivered attachments must use live_session retention")
 
 
 @dataclass(frozen=True, slots=True)

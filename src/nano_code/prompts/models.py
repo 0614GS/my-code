@@ -10,7 +10,7 @@ class PromptStability(StrEnum):
 
     STATIC = "static"
     SESSION = "session"
-    TURN = "turn"
+    REQUEST = "request"
 
 
 type PromptResolver = Callable[[], str]
@@ -66,7 +66,7 @@ class SystemPrompt:
         content: str,
         *,
         key: str = "request",
-        stability: PromptStability = PromptStability.TURN,
+        stability: PromptStability = PromptStability.REQUEST,
     ) -> "SystemPrompt":
         """为摘要等独立请求构造单片段提示词。"""
 

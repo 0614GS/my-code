@@ -24,7 +24,7 @@ nano-code 采用 Claude Code 的分离方式：运行状态归入用户目录，
 
 路径解析和读取配置没有写副作用。Transcript 在第一条消息持久化时创建；`tool-results/` 仅在结果超过内联上限时创建。因此，仅运行 `nanocode --help` 或解析一次配置不会生成空目录。
 
-真正启动聊天或认证命令时会幂等初始化用户目录：创建缺失的 `settings.json`、`providers.json`、空 `.credentials.json` 和 `projects/`，但不会创建仓库内的 `.nano-code/`。已有文件只校验、不覆盖；损坏的 JSON 会导致启动失败。v1 文件不会迁移、覆盖或删除，读取时会报告文件路径和重建提示。
+真正启动聊天或认证命令时会幂等初始化用户目录：创建缺失的 `settings.json`、`providers.json`、空 `.credentials.json` 和 `projects/`，但不会创建仓库内的 `.nano-code/`。已有文件只校验、不覆盖；损坏的 JSON 会导致启动失败。旧 settings 或 Transcript schema 不会迁移、覆盖或删除，读取时会报告文件路径和重建提示。
 
 ## Provider Profiles
 
@@ -61,9 +61,10 @@ Provider Profile 是一个命名连接配置，而不是另一套 SDK。当前�
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "activeProvider": "anthropic",
   "agent": {
+    "maxSteps": 100,
     "maxOutputTokens": 8192,
     "contextChars": 160000
   },
@@ -86,8 +87,10 @@ Provider Profile 是一个命名连接配置，而不是另一套 SDK。当前�
 先原子写入成功，再更新当前内存 context；持久化失败时工具不会执行，也不会留下
 只在内存生效的授权。
 
-`maxTurns` 是可选的显式安全阀；省略时主 Agent 不设模型轮数上限。它统计的是一次
-用户输入内的模型 API 往返，而不是用户消息数量。
+`maxSteps` 是可选的显式安全阀；省略时主 Agent 不设 Step 上限。它统计一次
+Turn 内成功产生 AssistantMessage 的 Step，overflow/fallback 恢复中失败的 ModelCall
+重试不额外计数。CLI 对应 `--max-steps`。settings version 3 不接受旧
+`maxTurns`。Provider profile 和 credential 是独立 schema，仍使用 version 2。
 
 ## Core 与启动边界
 

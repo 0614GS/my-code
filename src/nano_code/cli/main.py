@@ -5,7 +5,7 @@ import sys
 from collections.abc import Coroutine
 from typing import Any
 
-from nano_code.agent import AgentMaxTurnsReached, AgentTurnSucceeded
+from nano_code.agent import AgentMaxStepsReached, AgentTurnInput, AgentTurnSucceeded
 from nano_code.cli.arguments import AuthOptions, CliOptions, parse_cli
 from nano_code.cli.auth import run_auth_command
 from nano_code.core import SettingsResolver
@@ -23,12 +23,12 @@ async def _submit(options: CliOptions, resolver: SettingsResolver) -> int:
         interactive=options.interactive,
     )
     agent = bootstrap_agent(settings, options.session_id)
-    result = await agent.submit(options.prompt or "")
+    result = await agent.submit(AgentTurnInput(options.prompt or ""))
     if isinstance(result, AgentTurnSucceeded):
         print(result.text or "<no text response>")
         return 0
-    assert isinstance(result, AgentMaxTurnsReached)
-    print(f"Error: Reached max turns ({result.max_turns})", file=sys.stderr)
+    assert isinstance(result, AgentMaxStepsReached)
+    print(f"Error: Reached max steps ({result.max_steps})", file=sys.stderr)
     return 1
 
 

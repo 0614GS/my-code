@@ -8,7 +8,7 @@ from nano_code.agent.contracts.model import (
     ModelToolUseBlock,
     ModelUserMessage,
 )
-from nano_code.agent.contracts.session import DeliveredContextAttachment
+from nano_code.agent.contracts.session import AttachmentDelivery
 from nano_code.messages import (
     AssistantMessage,
     ContextAttachment,
@@ -20,21 +20,28 @@ from nano_code.messages import (
 )
 from nano_code.messages.xml import render_context_instruction, wrap_xml
 
+from .attachment_projection import AttachmentProjector
+
 
 class ModelInputNormalizer:
     """唯一了解 conversation 与 model 两层消息的映射器。"""
+
+    def __init__(self, attachment_projector: AttachmentProjector | None = None) -> None:
+        self.attachment_projector = attachment_projector or AttachmentProjector()
 
     def normalize(
         self,
         user_context: tuple[UserContextDocument, ...],
         history: tuple[ConversationMessage, ...],
         attachments: tuple[ContextAttachment, ...],
-        runtime_attachments: tuple[DeliveredContextAttachment, ...] = (),
+        attachment_deliveries: tuple[AttachmentDelivery, ...] = (),
     ) -> tuple[ModelMessage, ...]:
         candidates = [
             *(_context_message(item) for item in user_context),
-            *_conversation_history(history, runtime_attachments),
-            *(_context_message(item) for item in attachments),
+            *_conversation_history(
+                history, attachment_deliveries, self.attachment_projector
+            ),
+            *self.attachment_projector.project_many(attachments),
         ]
         result = _merge_adjacent(tuple(candidates))
         self._validate_tool_pairs(result)
@@ -43,12 +50,16 @@ class ModelInputNormalizer:
     def normalize_transcript(
         self,
         messages: tuple[ConversationMessage, ...],
-        runtime_attachments: tuple[DeliveredContextAttachment, ...] = (),
+        attachment_deliveries: tuple[AttachmentDelivery, ...] = (),
     ) -> tuple[ModelMessage, ...]:
         """Compact 使用的 history-only 视图。"""
 
         result = _merge_adjacent(
-            tuple(_conversation_history(messages, runtime_attachments))
+            tuple(
+                _conversation_history(
+                    messages, attachment_deliveries, self.attachment_projector
+                )
+            )
         )
         self._validate_tool_pairs(result)
         return result
@@ -108,9 +119,7 @@ def _conversation_message(message: ConversationMessage) -> ModelMessage:
     )
 
 
-def _context_message(
-    message: UserContextDocument | ContextAttachment,
-) -> ModelUserMessage:
+def _context_message(message: UserContextDocument) -> ModelUserMessage:
     return ModelUserMessage(
         tuple(
             ModelTextBlock(
@@ -125,19 +134,17 @@ def _context_message(
 
 def _conversation_history(
     messages: tuple[ConversationMessage, ...],
-    runtime_attachments: tuple[DeliveredContextAttachment, ...],
+    attachment_deliveries: tuple[AttachmentDelivery, ...],
+    attachment_projector: AttachmentProjector,
 ) -> list[ModelMessage]:
     by_anchor: dict[str, list[ContextAttachment]] = {}
-    for delivery in runtime_attachments:
-        by_anchor.setdefault(delivery.after_message_uuid, []).append(
-            delivery.attachment
-        )
+    for delivery in attachment_deliveries:
+        by_anchor.setdefault(delivery.anchor_uuid, []).append(delivery.attachment)
     projected: list[ModelMessage] = []
     for message in messages:
         projected.append(_conversation_message(message))
         projected.extend(
-            _context_message(attachment)
-            for attachment in by_anchor.get(message.uuid, ())
+            attachment_projector.project_many(tuple(by_anchor.get(message.uuid, ())))
         )
     return projected
 

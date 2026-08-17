@@ -1,4 +1,4 @@
-"""Request-scoped attachment resolution."""
+"""从当前会话快照派生 attachment。"""
 
 import logging
 from collections.abc import Callable, Iterable
@@ -8,17 +8,19 @@ from nano_code.messages import ContextAttachment
 
 logger = logging.getLogger(__name__)
 
-type AttachmentSource = Callable[[ConversationSnapshot], Iterable[ContextAttachment]]
+type DerivedAttachmentSource = Callable[
+    [ConversationSnapshot], Iterable[ContextAttachment]
+]
 
 
-class AttachmentResolver:
-    """Aggregate request-scoped attachments from ordered synchronous sources."""
+class DerivedAttachmentResolver:
+    """按声明顺序聚合同步的 snapshot-derived attachment source。"""
 
-    def __init__(self, sources: Iterable[AttachmentSource] = ()) -> None:
+    def __init__(self, sources: Iterable[DerivedAttachmentSource] = ()) -> None:
         self._sources = tuple(sources)
 
     def resolve(self, snapshot: ConversationSnapshot) -> tuple[ContextAttachment, ...]:
-        """Resolve all sources for one snapshot without retaining request state."""
+        """在不保留 resolver 内部状态的前提下解析一次快照。"""
 
         attachments: list[ContextAttachment] = []
         for source in self._sources:
@@ -31,4 +33,4 @@ class AttachmentResolver:
         return tuple(attachments)
 
 
-__all__ = ["AttachmentResolver", "AttachmentSource"]
+__all__ = ["DerivedAttachmentResolver", "DerivedAttachmentSource"]

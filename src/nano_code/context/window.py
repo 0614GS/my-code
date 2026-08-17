@@ -20,14 +20,21 @@ class ContextWindow:
         self.max_chars = max_chars
 
     def ensure_fits(
-        self, messages: tuple[ConversationMessage, ...]
+        self,
+        messages: tuple[ConversationMessage, ...],
+        *,
+        additional_chars: int = 0,
     ) -> tuple[ConversationMessage, ...]:
+        if additional_chars < 0:
+            raise ValueError("additional_chars must not be negative")
         if not messages:
+            if additional_chars > self.max_chars:
+                raise _ContextOverflow(additional_chars, self.max_chars)
             return ()
 
         if not any(message.starts_context_segment for message in messages):
             raise ValueError("Conversation has no context segment boundary")
-        current_chars = self.size(messages)
+        current_chars = self.size(messages) + additional_chars
         if current_chars > self.max_chars:
             raise _ContextOverflow(current_chars, self.max_chars)
         return messages

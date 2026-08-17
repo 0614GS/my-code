@@ -1,4 +1,4 @@
-"""一次 assistant 工具轮次的编排协议与现有执行器适配器。"""
+"""一次 ToolRound 的编排协议与现有执行器适配器。"""
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
@@ -32,7 +32,7 @@ from nano_code.tools.result_store import ToolResultStore
 
 
 class ToolRoundExecutor(ToolRoundPort):
-    """把现有 ToolExecutor 包装成 Agent-owned 工具轮次 port。
+    """把现有 ToolExecutor 包装成 Agent-owned ToolRound port。
 
     调度策略刻意保留当前 MVP 的串行语义。以后增加并行调度时，只需要替换
     这个适配器，不必把取消补齐和展示投影逻辑重新放回 AgentEngine。

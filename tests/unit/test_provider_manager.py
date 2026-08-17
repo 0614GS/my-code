@@ -19,7 +19,7 @@ def make_manager(tmp_path: Path) -> tuple[ProviderManager, NanoCodePaths]:
 def test_configure_persists_profile_key_and_active_selection(tmp_path: Path) -> None:
     manager, paths = make_manager(tmp_path)
     paths.user_settings_path.write_text(
-        json.dumps({"version": 2, "futureSetting": {"enabled": True}}),
+        json.dumps({"version": 3, "futureSetting": {"enabled": True}}),
         encoding="utf-8",
     )
 

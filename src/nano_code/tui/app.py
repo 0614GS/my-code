@@ -18,12 +18,12 @@ from nano_code.tui.contracts import (
     HistoryToolCall,
     HistoryUserMessage,
     PermissionRequest,
+    StepLimitReached,
     TextDelta,
     TodoListUpdated,
     ToolFinished,
     ToolStarted,
     TurnCompleted,
-    TurnLimitReached,
 )
 from nano_code.tui.provider_screen import ProviderScreen
 from nano_code.tui.resume_screen import ResumeScreen
@@ -480,11 +480,11 @@ class NanoCodeApp(App[None]):
                     activity.set_todos(event.todos)
                 elif isinstance(event, TurnCompleted):
                     completed = True
-                elif isinstance(event, TurnLimitReached):
+                elif isinstance(event, StepLimitReached):
                     completed = True
                     await self._mount_message(
                         SystemMessage(
-                            f"Error: Reached max turns ({event.result.max_turns})",
+                            f"Error: Reached max steps ({event.result.max_steps})",
                             error=True,
                         )
                     )

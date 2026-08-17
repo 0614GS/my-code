@@ -75,6 +75,9 @@
 - **API 错误**：不运行 Stop hooks，避免“错误 → hook 阻塞 → 重试同一错误”的循环。
 - **maxTurns / budget**：在进入下一工具轮前检查，达到限制后返回结构化结果。
 
+`turnCount` 和 `maxTurns` 是 Claude Code 参考源码的原始符号。在 nano-code
+术语中，这类单次用户输入内的循环单元称为 Step，避免与 Turn 混淆。
+
 可恢复错误在恢复结果确定前不会先暴露给 SDK 调用方，否则调用方可能看到中间错误后提前关闭连接。
 
 ## 6. 核心不变量
@@ -97,10 +100,11 @@
 ## 8. nano-code 的用户回合边界
 
 当前 Python 实现把 `AgentEngine` 收敛为用户回合状态机：写入用户消息、请求
-`ContextPort`、通过 `ModelTurnPort` 消费统一模型事件、判断工具轮是否继续、处理
-overflow/取消/max-turns，并发出 `AgentEvent`。主 Agent 默认不限制模型轮数；只有
-settings 或入口显式提供 `max_turns` 时才在完整提交最后一轮工具结果后停止，并返回
-独立的 `AgentMaxTurnsReached` 终态，而不是抛出通用异常。会话事实由 `ConversationState` 管理，
+`ContextPort`、通过 `ModelCallPort` 消费统一模型事件、判断工具轮是否继续、处理
+overflow/取消/max-steps，并发出 `AgentEvent`。主 Agent 默认不限制 Step 数；只有
+settings 或入口显式提供 `max_steps` 时才在完整提交当前 ToolRound 后停止，并返回
+独立的 `AgentMaxStepsReached` 终态，而不是抛出通用异常。失败或响应式压缩重试的
+ModelCall 不增加 completed step 计数。会话事实由 `ConversationState` 管理，
 工具轮由 `ToolRoundPort` 管理，摘要由 `Compactor` 管理。
 
 六边形边界由 `nano_code.agent` 统一声明：CLI/TUI 通过 `AgentInboundPort` 调用
@@ -112,7 +116,7 @@ settings 或入口显式提供 `max_turns` 时才在完整提交最后一轮工�
 | --- | --- | --- |
 | `AgentInboundPort` | inbound | 驱动用户回合、状态查询、compact 与 session resume |
 | `ContextPort` | outbound | 从 `ConversationSnapshot` 生成请求、预算和 compact 视图 |
-| `ModelTurnPort` / `ModelCompletionPort` | outbound | 流式用户回合与完整摘要模型请求 |
+| `ModelCallPort` / `ModelCompletionPort` | outbound | 流式主模型调用与完整摘要模型请求 |
 | `ToolRoundPort` | outbound | 串行工具轮、取消闭合和展示 DTO |
 | `SessionRepository` | outbound | 初始化/resume 时加载 Transcript，运行期只追加写入 |
 | `Compactor` | outbound | 返回尚未持久化的摘要提交计划 |

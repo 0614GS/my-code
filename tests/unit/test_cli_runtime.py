@@ -41,7 +41,7 @@ def _bootstrap_runtime(tmp_path: Path) -> CliChatRuntime:
         provider_id="anthropic",
         model="test-model",
         permission_mode=PermissionMode.DEFAULT,
-        max_turns=3,
+        max_steps=3,
         max_output_tokens=1024,
         context_chars=10_000,
         interactive=True,

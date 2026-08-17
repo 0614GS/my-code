@@ -1,4 +1,4 @@
-"""TodoWrite 的非持久化 session-runtime reminder attachment。"""
+"""TodoWrite 的非持久化 live-session reminder attachment。"""
 
 from nano_code.agent.contracts.session import ConversationSnapshot
 from nano_code.messages import (
@@ -9,7 +9,7 @@ from nano_code.messages import (
 )
 from nano_code.todos.projection import TODO_WRITE_TOOL_NAME, project_todos
 
-TODO_REMINDER_TURNS = 10
+TODO_REMINDER_MODEL_CALL_INTERVAL = 10
 
 _REMINDER = (
     "The TodoWrite tool hasn't been used recently. If you're working on tasks "
@@ -21,16 +21,16 @@ _REMINDER = (
 )
 
 
-class TodoReminderSource:
-    """每隔十个未使用 TodoWrite 的 assistant turns 注入一次提醒。"""
+class TodoReminderAttachmentSource:
+    """每隔十个未使用 TodoWrite 的 completed model calls 注入提醒。"""
 
     def __call__(self, snapshot: ConversationSnapshot) -> tuple[ContextAttachment, ...]:
         projection = project_todos(snapshot.session_history or snapshot.messages)
-        turns_since_write = _assistant_turns_since_todo_write(snapshot)
-        turns_since_reminder = _assistant_turns_since_reminder(snapshot)
+        calls_since_write = _completed_model_calls_since_todo_write(snapshot)
+        calls_since_reminder = _completed_model_calls_since_reminder(snapshot)
         if (
-            turns_since_write < TODO_REMINDER_TURNS
-            or turns_since_reminder < TODO_REMINDER_TURNS
+            calls_since_write < TODO_REMINDER_MODEL_CALL_INTERVAL
+            or calls_since_reminder < TODO_REMINDER_MODEL_CALL_INTERVAL
         ):
             return ()
 
@@ -47,13 +47,13 @@ class TodoReminderSource:
             ContextAttachment(
                 source="todo_reminder",
                 content=(ContextInstruction(content),),
-                lifecycle="session_runtime",
+                retention="live_session",
             ),
         )
 
 
-def _assistant_turns_since_todo_write(snapshot: ConversationSnapshot) -> int:
-    turns = 0
+def _completed_model_calls_since_todo_write(snapshot: ConversationSnapshot) -> int:
+    completed_calls = 0
     for message in reversed(snapshot.messages):
         if not isinstance(message, AssistantMessage):
             continue
@@ -61,24 +61,24 @@ def _assistant_turns_since_todo_write(snapshot: ConversationSnapshot) -> int:
             isinstance(block, ToolCall) and block.name == TODO_WRITE_TOOL_NAME
             for block in message.content
         ):
-            return turns
-        turns += 1
-    return turns
+            return completed_calls
+        completed_calls += 1
+    return completed_calls
 
 
-def _assistant_turns_since_reminder(snapshot: ConversationSnapshot) -> int:
+def _completed_model_calls_since_reminder(snapshot: ConversationSnapshot) -> int:
     anchors = {
-        delivery.after_message_uuid
-        for delivery in snapshot.runtime_attachments
+        delivery.anchor_uuid
+        for delivery in snapshot.attachment_deliveries
         if delivery.attachment.source == "todo_reminder"
     }
-    turns = 0
+    completed_calls = 0
     for message in reversed(snapshot.messages):
         if message.uuid in anchors:
-            return turns
+            return completed_calls
         if isinstance(message, AssistantMessage):
-            turns += 1
-    return turns
+            completed_calls += 1
+    return completed_calls
 
 
-__all__ = ["TODO_REMINDER_TURNS", "TodoReminderSource"]
+__all__ = ["TODO_REMINDER_MODEL_CALL_INTERVAL", "TodoReminderAttachmentSource"]
