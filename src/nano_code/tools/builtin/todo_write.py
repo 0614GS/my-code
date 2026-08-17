@@ -2,10 +2,16 @@
 
 from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
+from nano_code.permissions.models import (
+    PermissionDecisionKind,
+    PermissionDecisionReason,
+    ToolPermissionContext,
+    ToolPermissionResult,
+)
 from nano_code.presentation import ToolResultPresentation
 from nano_code.todos.models import parse_todo_input
 from nano_code.todos.projection import TODO_WRITE_TOOL_NAME
-from nano_code.tools.base import Tool, ToolContext, ToolOutput, ToolRisk
+from nano_code.tools.base import Tool, ToolContext, ToolOutput
 
 _DESCRIPTION = """Update the structured todo list for the current coding session.
 Use it for complex multi-step work, explicit user task lists, and newly discovered
@@ -60,11 +66,6 @@ class TodoWriteTool(Tool):
             },
         )
 
-    @property
-    def risk(self) -> ToolRisk:
-        # Todo 状态只由已持久化的 tool call 输入投影，不修改工作区或外部系统。
-        return ToolRisk.READ
-
     def user_facing_name(self, tool_input: JsonObject) -> str:
         del tool_input
         return "Update Todos"
@@ -75,6 +76,23 @@ class TodoWriteTool(Tool):
     def get_activity_description(self, tool_input: JsonObject) -> str:
         del tool_input
         return "Updating todos"
+
+    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+        # Todo 只投影已持久化的 tool call，不修改工作区或外部系统。
+        del tool_input, context
+        return True
+
+    async def check_permissions(
+        self, tool_input: JsonObject, context: ToolPermissionContext
+    ) -> ToolPermissionResult:
+        del context
+        return ToolPermissionResult.allow(
+            tool_input,
+            message="Session todo state is allowed.",
+            reason=PermissionDecisionReason(
+                PermissionDecisionKind.TOOL, "session-state"
+            ),
+        )
 
     def present_result(
         self, tool_input: JsonObject, output: ToolOutput

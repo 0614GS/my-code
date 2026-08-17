@@ -24,6 +24,7 @@ from nano_code.permissions.prompt import (
     PermissionPrompter,
     TerminalPrompter,
 )
+from nano_code.permissions.updates import PermissionUpdateApplier
 from nano_code.prompts import build_system_prompt_registry
 from nano_code.providers.manager import ProviderManager
 from nano_code.providers.profiles import (
@@ -95,13 +96,20 @@ def _assemble_agent(
     prompter = permission_prompter or (
         TerminalPrompter() if settings.interactive else HeadlessPrompter()
     )
+    permission_policy = PermissionPolicy(
+        mode=settings.permission_mode,
+        rules=settings.permission_rules,
+    )
     tool_executor = ToolExecutor(
         registry=registry,
-        policy=PermissionPolicy(mode=settings.permission_mode),
+        policy=permission_policy,
         prompter=prompter,
         context=ToolContext(cwd=settings.cwd),
         result_store=ToolResultStore(
             settings.paths.tool_results_dir(actual_session_id)
+        ),
+        update_applier=PermissionUpdateApplier(
+            permission_policy, SettingsStore(settings.paths)
         ),
     )
     provider = ProviderRouter(

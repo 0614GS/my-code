@@ -16,7 +16,14 @@ from textual.widgets import Input, Label, LoadingIndicator, OptionList, Static
 from textual.widgets.option_list import Option
 
 from nano_code import __version__
-from nano_code.permissions import PermissionConfirmation
+from nano_code.permissions import (
+    PermissionBehavior,
+    PermissionConfirmation,
+    PermissionUpdate,
+    PermissionUpdateDestination,
+)
+from nano_code.permissions.rules import validate_bash_rule_content
+from nano_code.permissions.updates import permission_rule_for_destination
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.todos.models import TodoItem
 from nano_code.tui.contracts import PermissionRequest, RuntimeStatus
@@ -250,6 +257,7 @@ class PermissionPanel(Vertical):
     def __init__(self) -> None:
         super().__init__()
         self._future: asyncio.Future[PermissionConfirmation] | None = None
+        self._request: PermissionRequest | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("Tool use", id="permission-title")
@@ -259,12 +267,18 @@ class PermissionPanel(Vertical):
             Option("1. Yes", id="yes"),
             Option("2. No", id="no"),
             Option("3. No, and tell nano-code why", id="feedback"),
+            Option("4. Yes, and don't ask again", id="remember"),
             id="permission-options",
             compact=True,
         )
         yield Input(
             placeholder="Tell nano-code what to do differently",
             id="permission-feedback",
+            max_length=1000,
+        )
+        yield Input(
+            placeholder="Command prefix to allow (e.g., git diff:*)",
+            id="permission-prefix",
             max_length=1000,
         )
         yield Label("↑↓ select · Enter confirm · Esc deny", id="permission-hint")
@@ -280,17 +294,30 @@ class PermissionPanel(Vertical):
         self.query_one("#permission-detail", Static).update(detail)
         options = self.query_one("#permission-options", OptionList)
         feedback = self.query_one("#permission-feedback", Input)
+        prefix = self.query_one("#permission-prefix", Input)
         feedback.value = ""
         feedback.display = False
+        prefix.value = ""
+        prefix.display = False
+        choices = [
+            Option("1. Yes", id="yes"),
+            Option("2. No", id="no"),
+            Option("3. No, and tell nano-code why", id="feedback"),
+        ]
+        if request.tool_name == "Bash" or request.suggestions:
+            choices.append(Option("4. Yes, and don't ask again", id="remember"))
+        options.set_options(choices)
         options.display = True
         options.highlighted = 0
         self.display = True
         options.focus()
+        self._request = request
         self._future = asyncio.get_running_loop().create_future()
         try:
             return await self._future
         finally:
             self._future = None
+            self._request = None
             self.display = False
 
     @on(OptionList.OptionSelected, "#permission-options")
@@ -301,6 +328,8 @@ class PermissionPanel(Vertical):
             self._resolve(PermissionConfirmation(False))
         elif event.option_id == "feedback":
             self.action_feedback()
+        elif event.option_id == "remember":
+            self.action_remember()
 
     def on_key(self, event: Key) -> None:
         """数字快捷键只作用于选择器，不影响反馈文本输入。"""
@@ -311,6 +340,7 @@ class PermissionPanel(Vertical):
             "1": self.action_allow,
             "2": self.action_deny,
             "3": self.action_feedback,
+            "4": self.action_remember,
         }
         action = actions.get(event.key)
         if action is not None:
@@ -328,6 +358,34 @@ class PermissionPanel(Vertical):
             return
         self._resolve(PermissionConfirmation(False, feedback))
 
+    @on(Input.Submitted, "#permission-prefix")
+    def submit_prefix(self, event: Input.Submitted) -> None:
+        raw = event.value.strip()
+        try:
+            content = validate_bash_rule_content(raw)
+        except ValueError as error:
+            event.input.placeholder = f"Invalid prefix: {error}"
+            event.input.value = ""
+            return
+        self._resolve(
+            PermissionConfirmation(
+                True,
+                updates=(
+                    PermissionUpdate.add_rules(
+                        (
+                            permission_rule_for_destination(
+                                "Bash",
+                                PermissionBehavior.ALLOW,
+                                PermissionUpdateDestination.LOCAL,
+                                content,
+                            ),
+                        ),
+                        destination=PermissionUpdateDestination.LOCAL,
+                    ),
+                ),
+            )
+        )
+
     def action_allow(self) -> None:
         self._resolve(PermissionConfirmation(True))
 
@@ -339,6 +397,19 @@ class PermissionPanel(Vertical):
         feedback = self.query_one("#permission-feedback", Input)
         feedback.display = True
         feedback.focus()
+
+    def action_remember(self) -> None:
+        request = self._request
+        if request is None:
+            return
+        if request.tool_name == "Bash":
+            self.query_one("#permission-options", OptionList).display = False
+            prefix = self.query_one("#permission-prefix", Input)
+            prefix.display = True
+            prefix.focus()
+            return
+        if request.suggestions:
+            self._resolve(PermissionConfirmation(True, updates=request.suggestions))
 
     def _resolve(self, response: PermissionConfirmation) -> None:
         if self._future is not None and not self._future.done():

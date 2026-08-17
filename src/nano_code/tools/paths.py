@@ -4,7 +4,7 @@ from pathlib import Path
 
 from nano_code.tools.base import ToolInputError
 
-_PROTECTED_WRITE_ROOTS = frozenset({".git", ".nano-code", "claude-code"})
+_SENSITIVE_WRITE_ROOTS = frozenset({".git", ".nano-code"})
 
 
 def resolve_workspace_path(
@@ -31,13 +31,15 @@ def resolve_workspace_path(
     if must_exist and not resolved.exists():
         raise ToolInputError(f"Path does not exist: {raw_path}")
 
-    if writable:
-        # 智能体状态、VCS 元数据和上游源码快照永远不能作为可写工具目标；
-        # 权限批准无法覆盖这条边界。
-        relative = resolved.relative_to(root)
-        if relative.parts and relative.parts[0] in _PROTECTED_WRITE_ROOTS:
-            raise ToolInputError(f"Path is protected from agent writes: {raw_path}")
+    del writable  # 写入敏感路径由权限层强制询问；执行层只维持 cwd 边界。
     return resolved
+
+
+def is_sensitive_write_path(cwd: Path, path: Path) -> bool:
+    """返回路径是否属于需要当次人工确认的产品敏感命名空间。"""
+
+    relative = path.resolve(strict=False).relative_to(cwd.resolve(strict=False))
+    return bool(relative.parts and relative.parts[0] in _SENSITIVE_WRITE_ROOTS)
 
 
 def relative_display_path(cwd: Path, path: Path) -> str:

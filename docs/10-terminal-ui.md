@@ -50,7 +50,7 @@ TodoPanel 的初始值来自 `RuntimeStatus.todos`，resume 使用目标 session
 
 ## 权限输入
 
-权限询问使用 composer 内的 `PermissionPanel` 临时替换普通输入框，而不是居中遮罩。选项为 `Yes`、`No`、`No, and tell nano-code why`。第三项打开单行反馈输入；反馈随拒绝的 tool result 返回模型，使下一轮能够调整做法。Esc 和无 UI 环境始终按普通拒绝处理。
+权限询问使用 composer 内的 `PermissionPanel` 临时替换普通输入框，而不是居中遮罩。基础选项为 `Yes`、`No` 和 `No, and tell nano-code why`。工具提供安全的长期授权建议时才增加 `Yes, and don't ask again`：Bash 要求输入命令前缀（如 `git diff:*`），Write/Edit 使用当前规范化路径的精确规则，均写入 local settings。safety ask 不提供长期允许。拒绝反馈返回模型但审计日志不记录原文；Esc 和无 UI 环境始终按普通拒绝处理。
 
 ## Slash 命令
 

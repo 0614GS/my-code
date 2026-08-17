@@ -7,7 +7,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from nano_code.core.paths import NanoCodePaths, SettingsScope
-from nano_code.permissions import PermissionMode
+from nano_code.permissions.models import PermissionMode
+from nano_code.permissions.rules import (
+    permission_rule_to_string,
+    validate_permission_rule,
+)
 from nano_code.providers.validation import validate_base_url
 
 
@@ -23,6 +27,9 @@ class SettingsLayer:
     base_url: str | None = None
     active_provider: str | None = None
     permission_mode: PermissionMode | None = None
+    permission_allow_rules: tuple[str, ...] = ()
+    permission_deny_rules: tuple[str, ...] = ()
+    permission_ask_rules: tuple[str, ...] = ()
     max_turns: int | None = None
     max_output_tokens: int | None = None
     context_chars: int | None = None
@@ -45,6 +52,15 @@ class SettingsLayer:
                 higher.permission_mode
                 if higher.permission_mode is not None
                 else self.permission_mode
+            ),
+            permission_allow_rules=_union_rules(
+                self.permission_allow_rules, higher.permission_allow_rules
+            ),
+            permission_deny_rules=_union_rules(
+                self.permission_deny_rules, higher.permission_deny_rules
+            ),
+            permission_ask_rules=_union_rules(
+                self.permission_ask_rules, higher.permission_ask_rules
             ),
             max_turns=(
                 higher.max_turns if higher.max_turns is not None else self.max_turns
@@ -118,7 +134,19 @@ class SettingsStore:
             )
 
         path = self.paths.settings_path(scope)
-        document = _settings_document(settings)
+        existing: object = {}
+        if path.exists():
+            try:
+                contents = path.read_text(encoding="utf-8")
+                existing = {} if not contents.strip() else json.loads(contents)
+            except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                raise SettingsFileError(
+                    f"Cannot read settings file {path}: {error}"
+                ) from error
+            _parse_settings(existing, path=path, scope=scope)
+        if not isinstance(existing, dict):
+            raise SettingsFileError(f"Settings root must be an object: {path}")
+        document = _merge_document(existing, settings)
         _atomic_json_write(path, document)
 
     def set_user_active_provider(self, provider_id: str) -> None:
@@ -143,6 +171,73 @@ class SettingsStore:
         document["version"] = 1
         document["activeProvider"] = provider_id
         _atomic_json_write(path, document)
+
+    def replace_permission_rules(
+        self,
+        scope: SettingsScope,
+        behavior: str,
+        rules: tuple[str, ...],
+    ) -> None:
+        """精确替换一个 scope 的某类权限规则，同时保留其他设置。"""
+
+        if behavior not in {"allow", "deny", "ask"}:
+            raise SettingsFileError(f"Unknown permission behavior: {behavior}")
+        path = self.paths.settings_path(scope)
+        raw = self._load_editable_document(path, scope)
+        normalized: list[str] = []
+        for rule_string in rules:
+            try:
+                tool_name, rule_content = validate_permission_rule(rule_string)
+            except ValueError as error:
+                raise SettingsFileError(
+                    f"Invalid permissions.{behavior} rule {rule_string!r}: {error}"
+                ) from error
+            normalized.append(permission_rule_to_string(tool_name, rule_content))
+        document = dict(raw)
+        current = document.get("permissions")
+        permissions = dict(current) if isinstance(current, dict) else {}
+        permissions[behavior] = list(dict.fromkeys(normalized))
+        document["permissions"] = permissions
+        document["version"] = 1
+        _atomic_json_write(path, document)
+
+    def set_permission_mode(self, scope: SettingsScope, mode: PermissionMode) -> None:
+        """精确设置某一 scope 的默认权限 mode。"""
+
+        if scope is SettingsScope.PROJECT and mode is PermissionMode.BYPASS:
+            raise SettingsFileError(
+                "Shared project settings cannot enable bypassPermissions"
+            )
+        path = self.paths.settings_path(scope)
+        raw = self._load_editable_document(path, scope)
+        document = dict(raw)
+        current = document.get("permissions")
+        permissions = dict(current) if isinstance(current, dict) else {}
+        permissions["defaultMode"] = mode.value
+        document["permissions"] = permissions
+        document["version"] = 1
+        _atomic_json_write(path, document)
+
+    def _load_editable_document(
+        self, path: Path, scope: SettingsScope
+    ) -> dict[str, object]:
+        if self._project_scope_is_unavailable(scope):
+            raise SettingsFileError(
+                "Project settings are unavailable in this workspace"
+            )
+        raw: object = {}
+        if path.exists():
+            try:
+                contents = path.read_text(encoding="utf-8")
+                raw = {} if not contents.strip() else json.loads(contents)
+            except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                raise SettingsFileError(
+                    f"Cannot read settings file {path}: {error}"
+                ) from error
+        _parse_settings(raw, path=path, scope=scope)
+        if not isinstance(raw, dict):
+            raise SettingsFileError(f"Settings root must be an object: {path}")
+        return raw
 
     def _project_scope_is_unavailable(self, scope: SettingsScope) -> bool:
         return (
@@ -213,6 +308,9 @@ def _parse_settings(
         base_url=base_url,
         active_provider=active_provider,
         permission_mode=permission_mode,
+        permission_allow_rules=_parse_permission_rules(raw, "allow", path),
+        permission_deny_rules=_parse_permission_rules(raw, "deny", path),
+        permission_ask_rules=_parse_permission_rules(raw, "ask", path),
         max_turns=_optional_positive_int(raw, "maxTurns", path),
         max_output_tokens=_optional_positive_int(raw, "maxOutputTokens", path),
         context_chars=_optional_positive_int(raw, "contextChars", path),
@@ -273,6 +371,39 @@ def _parse_permission_mode(
         ) from error
 
 
+def _parse_permission_rules(
+    raw: dict[object, object],
+    behavior: str,
+    path: Path,
+) -> tuple[str, ...]:
+    permissions = raw.get("permissions")
+    if permissions is None:
+        return ()
+    if not isinstance(permissions, dict):
+        raise SettingsFileError(f"permissions must be an object: {path}")
+    value = permissions.get(behavior)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise SettingsFileError(
+            f"permissions.{behavior} must be an array of strings: {path}"
+        )
+    normalized: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise SettingsFileError(
+                f"permissions.{behavior}[{index}] must be a string: {path}"
+            )
+        try:
+            tool_name, rule_content = validate_permission_rule(item)
+        except ValueError as error:
+            raise SettingsFileError(
+                f"Invalid permissions.{behavior}[{index}] in {path}: {error}"
+            ) from error
+        normalized.append(permission_rule_to_string(tool_name, rule_content))
+    return tuple(dict.fromkeys(normalized))
+
+
 def _settings_document(settings: SettingsLayer) -> dict[str, object]:
     document: dict[str, object] = {"version": 1}
     if settings.model is not None:
@@ -288,8 +419,27 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
         if not settings.active_provider.strip():
             raise SettingsFileError("activeProvider must be a non-empty string")
         document["activeProvider"] = settings.active_provider
+    permissions: dict[str, object] = {}
     if settings.permission_mode is not None:
-        document["permissions"] = {"defaultMode": settings.permission_mode.value}
+        permissions["defaultMode"] = settings.permission_mode.value
+    for key, rules in (
+        ("allow", settings.permission_allow_rules),
+        ("deny", settings.permission_deny_rules),
+        ("ask", settings.permission_ask_rules),
+    ):
+        if rules:
+            normalized: list[str] = []
+            for rule_string in rules:
+                try:
+                    tool_name, rule_content = validate_permission_rule(rule_string)
+                except ValueError as error:
+                    raise SettingsFileError(
+                        f"Invalid permissions.{key} rule {rule_string!r}: {error}"
+                    ) from error
+                normalized.append(permission_rule_to_string(tool_name, rule_content))
+            permissions[key] = list(dict.fromkeys(normalized))
+    if permissions:
+        document["permissions"] = permissions
     for key, value in (
         ("maxTurns", settings.max_turns),
         ("maxOutputTokens", settings.max_output_tokens),
@@ -300,3 +450,32 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
                 raise SettingsFileError(f"{key} must be a positive integer")
             document[key] = value
     return document
+
+
+def _merge_document(
+    existing: dict[str, object], settings: SettingsLayer
+) -> dict[str, object]:
+    """把已知设置字段合并进现有文档，同时保留未知顶层字段。"""
+
+    document = dict(existing)
+    incoming = _settings_document(settings)
+    for key, value in incoming.items():
+        if key == "permissions" and isinstance(value, dict):
+            current = document.get("permissions")
+            permissions = dict(current) if isinstance(current, dict) else {}
+            permissions.update(value)
+            document["permissions"] = permissions
+        else:
+            document[key] = value
+    document["version"] = 1
+    return document
+
+
+def _union_rules(lower: tuple[str, ...], higher: tuple[str, ...]) -> tuple[str, ...]:
+    merged: list[str] = []
+    for rule_string in (*lower, *higher):
+        tool_name, rule_content = validate_permission_rule(rule_string)
+        normalized = permission_rule_to_string(tool_name, rule_content)
+        if normalized not in merged:
+            merged.append(normalized)
+    return tuple(merged)

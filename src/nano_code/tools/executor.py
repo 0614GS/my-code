@@ -1,10 +1,15 @@
 """统一的校验 → 权限 → 执行与双重结果投影管线。"""
 
+import logging
 from dataclasses import dataclass
 
 from nano_code.messages import JsonObject, ToolCall, ToolResult
-from nano_code.permissions import PermissionBehavior, PermissionPolicy
+from nano_code.permissions import (
+    PermissionBehavior,
+    PermissionPolicy,
+)
 from nano_code.permissions.prompt import PermissionPrompter
+from nano_code.permissions.updates import PermissionUpdateApplier
 from nano_code.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
@@ -20,6 +25,8 @@ from nano_code.tools.base import (
 )
 from nano_code.tools.registry import ToolRegistry
 from nano_code.tools.result_store import ToolResultStore
+
+logger = logging.getLogger("nano_code.permissions")
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,12 +47,14 @@ class ToolExecutor:
         prompter: PermissionPrompter,
         context: ToolContext,
         result_store: ToolResultStore,
+        update_applier: PermissionUpdateApplier | None = None,
     ) -> None:
         self.registry = registry
         self.policy = policy
         self.prompter = prompter
         self.context = context
         self.result_store = result_store
+        self.update_applier = update_applier or PermissionUpdateApplier(policy)
 
     def present_use(self, call: ToolCall) -> ToolUsePresentation:
         """请求 Tool 解释调用语义；未知或异常工具使用安全回退。"""
@@ -107,6 +116,13 @@ class ToolExecutor:
         # 权限是独立策略层；只有静态策略及所需用户确认均通过后，才调用 Tool.execute。
         decision = await self.policy.decide(tool, call.input, self.context)
         if decision.behavior is PermissionBehavior.DENY:
+            logger.warning(
+                "Permission decision: tool=%s behavior=%s message=%s reason=%s",
+                tool.definition.name,
+                "deny",
+                decision.message,
+                decision.reason,
+            )
             return self._error(
                 call, f"Permission denied: {decision.message}", tool=tool
             )
@@ -121,6 +137,15 @@ class ToolExecutor:
                     if confirmation.feedback is not None
                     else ""
                 )
+                logger.warning(
+                    "Permission decision: tool=%s behavior=%s "
+                    "message=approval was not provided "
+                    "reason=%s feedback_provided=%s",
+                    tool.definition.name,
+                    "deny",
+                    decision.reason,
+                    confirmation.feedback is not None,
+                )
                 return self._error(
                     call,
                     "Permission denied: approval was not provided. "
@@ -128,6 +153,39 @@ class ToolExecutor:
                     tool=tool,
                     tool_input=permission_input,
                 )
+            if confirmation.updates:
+                try:
+                    self.update_applier.apply(confirmation.updates)
+                except (OSError, ValueError) as error:
+                    logger.warning(
+                        "Permission update failed: tool=%s error=%s",
+                        tool.definition.name,
+                        type(error).__name__,
+                    )
+                    return self._error(
+                        call,
+                        "Permission update failed; the tool was not executed.",
+                        tool=tool,
+                        tool_input=permission_input,
+                    )
+            logger.info(
+                "Permission decision: tool=%s behavior=%s message=%s reason=%s "
+                "rules=%s",
+                tool.definition.name,
+                "allow",
+                decision.message,
+                decision.reason,
+                ",".join(update.destination.value for update in confirmation.updates)
+                or "-",
+            )
+        else:
+            logger.info(
+                "Permission decision: tool=%s behavior=%s message=%s reason=%s",
+                tool.definition.name,
+                "allow",
+                decision.message,
+                decision.reason,
+            )
 
         try:
             # 工具专属权限检查可能规范化或约束输入；执行阶段必须使用获准的准确输入。

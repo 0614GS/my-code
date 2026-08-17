@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from nano_code.messages import JsonObject
-from nano_code.permissions import PermissionConfirmation
+from nano_code.permissions import PermissionConfirmation, PermissionUpdate
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.sessions import SessionSummary
@@ -66,6 +66,7 @@ class PermissionRequest:
     tool_input: JsonObject
     message: str
     presentation: ToolUsePresentation
+    suggestions: tuple[PermissionUpdate, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

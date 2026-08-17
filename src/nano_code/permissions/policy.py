@@ -6,12 +6,16 @@ from nano_code.messages import JsonObject
 from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionDecision,
+    PermissionDecisionKind,
+    PermissionDecisionReason,
     PermissionMode,
     PermissionRule,
+    PermissionUpdate,
+    PermissionUpdateType,
     ToolPermissionBehavior,
     ToolPermissionContext,
 )
-from nano_code.tools.base import Tool, ToolContext, ToolRisk
+from nano_code.tools.base import Tool, ToolContext
 
 
 class PermissionPolicy:
@@ -25,6 +29,64 @@ class PermissionPolicy:
         self.mode = mode
         self.rules = tuple(rules)
 
+    def add_rules(self, rules: Iterable[PermissionRule]) -> None:
+        """把规则注入当前权限 context。持久化由 update applier 负责。"""
+
+        existing = {
+            (rule.tool_name, rule.behavior.value, rule.rule_content)
+            for rule in self.rules
+        }
+        additions: list[PermissionRule] = []
+        for rule in rules:
+            key = (rule.tool_name, rule.behavior.value, rule.rule_content)
+            if key in existing:
+                continue
+            existing.add(key)
+            additions.append(rule)
+        self.rules = self.rules + tuple(additions)
+
+    def replace_rules(
+        self,
+        behavior: PermissionBehavior,
+        source: str,
+        rules: Iterable[PermissionRule],
+    ) -> None:
+        retained = tuple(
+            rule
+            for rule in self.rules
+            if rule.behavior is not behavior or rule.source != source
+        )
+        self.rules = retained
+        self.add_rules(rules)
+
+    def remove_rules(self, rules: Iterable[PermissionRule]) -> None:
+        removed = {
+            (rule.tool_name, rule.behavior, rule.rule_content, rule.source)
+            for rule in rules
+        }
+        self.rules = tuple(
+            rule
+            for rule in self.rules
+            if (rule.tool_name, rule.behavior, rule.rule_content, rule.source)
+            not in removed
+        )
+
+    def apply_update(self, update: PermissionUpdate) -> None:
+        """应用已经过持久化层验证的权限更新。"""
+
+        if update.type is PermissionUpdateType.ADD_RULES:
+            self.add_rules(update.rules)
+        elif update.type is PermissionUpdateType.REPLACE_RULES:
+            assert update.behavior is not None
+            self.replace_rules(update.behavior, update.destination.value, update.rules)
+        elif update.type is PermissionUpdateType.REMOVE_RULES:
+            self.remove_rules(update.rules)
+        elif update.type is PermissionUpdateType.SET_MODE:
+            assert update.mode is not None
+            self.mode = update.mode
+        else:
+            raise ValueError("Additional working directories are not supported yet")
+
     async def decide(
         self, tool: Tool, tool_input: JsonObject, context: ToolContext
     ) -> PermissionDecision:
@@ -37,7 +99,7 @@ class PermissionPolicy:
             return PermissionDecision(
                 behavior=PermissionBehavior.DENY,
                 message=f"{tool.definition.name} is denied by an explicit rule.",
-                reason=f"rule:{deny_rule.source}",
+                decision_reason=_rule_reason(deny_rule),
             )
 
         ask_rule = self._whole_tool_rule(tool, PermissionBehavior.ASK)
@@ -45,7 +107,7 @@ class PermissionPolicy:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
                 message=f"{tool.definition.name} requires confirmation by rule.",
-                reason=f"rule:{ask_rule.source}",
+                decision_reason=_rule_reason(ask_rule),
             )
 
         tool_result = await tool.check_permissions(
@@ -63,7 +125,9 @@ class PermissionPolicy:
             return PermissionDecision(
                 behavior=PermissionBehavior.DENY,
                 message=tool_result.message,
-                reason=tool_result.reason,
+                decision_reason=tool_result.decision_reason,
+                updated_input=tool_result.updated_input,
+                suggestions=tool_result.suggestions,
             )
         if (
             tool_result.behavior is ToolPermissionBehavior.ASK
@@ -72,18 +136,9 @@ class PermissionPolicy:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
                 message=tool_result.message,
-                reason=tool_result.reason,
-            )
-
-        # plan 模式根据当前具体调用收缩能力，而不只依赖静态工具类别，
-        # 因此只读 Bash 调用仍然可用。
-        if self.mode is PermissionMode.PLAN and not tool.is_read_only(
-            tool_input, context
-        ):
-            return PermissionDecision(
-                behavior=PermissionBehavior.DENY,
-                message=f"{tool.definition.name} is unavailable in plan mode.",
-                reason="mode:plan",
+                decision_reason=tool_result.decision_reason,
+                updated_input=tool_result.updated_input,
+                suggestions=tool_result.suggestions,
             )
 
         # bypass 只改变默认权限决策，不改变工具级安全边界。
@@ -92,7 +147,9 @@ class PermissionPolicy:
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
                 message="Allowed by bypassPermissions mode.",
-                reason="mode:bypassPermissions",
+                decision_reason=PermissionDecisionReason(
+                    PermissionDecisionKind.MODE, PermissionMode.BYPASS.value
+                ),
                 updated_input=_updated_input(tool_result.updated_input, tool_input),
             )
 
@@ -102,7 +159,7 @@ class PermissionPolicy:
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
                 message=f"{tool.definition.name} is allowed by an explicit rule.",
-                reason=f"rule:{allow_rule.source}",
+                decision_reason=_rule_reason(allow_rule),
                 updated_input=_updated_input(tool_result.updated_input, tool_input),
             )
 
@@ -110,16 +167,9 @@ class PermissionPolicy:
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
                 message=tool_result.message,
-                reason=tool_result.reason,
+                decision_reason=tool_result.decision_reason,
                 updated_input=_updated_input(tool_result.updated_input, tool_input),
-            )
-
-        if self.mode is PermissionMode.ACCEPT_EDITS and tool.risk is ToolRisk.WRITE:
-            return PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message="Workspace edits are allowed by acceptEdits mode.",
-                reason="mode:acceptEdits",
-                updated_input=_updated_input(tool_result.updated_input, tool_input),
+                suggestions=tool_result.suggestions,
             )
 
         # dontAsk 按拒绝处理：原本需要询问的操作会直接被拒绝。
@@ -130,7 +180,9 @@ class PermissionPolicy:
                     f"{tool.definition.name} needs confirmation, "
                     "but prompts are disabled."
                 ),
-                reason="mode:dontAsk",
+                decision_reason=PermissionDecisionReason(
+                    PermissionDecisionKind.MODE, PermissionMode.DONT_ASK.value
+                ),
             )
 
         # 普通工具局部 ask 与 passthrough 最终进入同一个 UI 边界，
@@ -138,8 +190,9 @@ class PermissionPolicy:
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             message=tool_result.message,
-            reason=tool_result.reason,
+            decision_reason=tool_result.decision_reason,
             updated_input=tool_result.updated_input,
+            suggestions=tool_result.suggestions,
         )
 
     def _whole_tool_rule(
@@ -157,3 +210,11 @@ class PermissionPolicy:
 
 def _updated_input(updated: JsonObject | None, original: JsonObject) -> JsonObject:
     return original if updated is None else updated
+
+
+def _rule_reason(rule: PermissionRule) -> PermissionDecisionReason:
+    return PermissionDecisionReason(
+        PermissionDecisionKind.RULE,
+        f"{rule.tool_name}:{rule.behavior.value}",
+        rule=rule,
+    )

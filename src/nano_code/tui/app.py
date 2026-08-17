@@ -305,7 +305,7 @@ class NanoCodeApp(App[None]):
         color: #fff8f2;
     }
 
-    #permission-feedback {
+    #permission-feedback, #permission-prefix {
         display: none;
         height: 3;
         margin: 0 1;

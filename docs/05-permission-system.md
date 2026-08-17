@@ -199,12 +199,34 @@ Tool                 具体输入是否只读、工具特有规则和安全语�
 PermissionPolicy     blanket 规则、mode、优先级和默认 ask
 ToolExecutor         校验、请求确认、执行获批 input、生成 tool_result
 PermissionPrompter   交互形式；不参与安全判断
+PermissionUpdate     会话 context 或 settings 的结构化变更
 ```
 
 Bash 分析器只自动允许能够静态证明安全的命令。简单管道和 compound command 会
-逐段检查，所有子命令都通过才视为只读；prefix allow 也必须覆盖每个子命令，不能
-用 `Bash(git:*)` 放行 `git status && rm file`。当前 content rule 已进入内核模型，
-设置文件持久化和“本次/长期允许”的 UI 仍留待后续。
+逐段检查，所有子命令都通过才视为只读；prefix/wildcard allow 也必须覆盖每个
+子命令，不能用 `Bash(git:*)` 放行 `git status && rm file`。规则字符串由
+`permissions/rules.py` 解析并规范化：`Tool(*)`/`Tool()` 等价于整工具规则，
+括号与反斜杠可转义，`*` 是 shell 通配符而 `\*` 匹配字面星号。
+
+所有内置工具都显式实现输入级权限。Read/Glob/Grep 只自动允许 cwd 内且通过
+realpath/symlink 边界检查的读取；Write/Edit 解释路径 content rule，并在
+`acceptEdits` 中自动允许普通工作区编辑；Todo 只修改 transcript 投影状态。
+`.git/` 与 `.nano-code/` 写入属于 bypass-immune safety ask，cwd 逃逸始终 deny。
+
+持久规则写在 settings 的 `permissions.allow/deny/ask` 数组中，按
+user < project < local 合并去重，重复规则保留 local > project > user 的
+最高优先级来源。解析器只校验通用 `Tool` / `Tool(content)` 语法；content 由目标
+工具解释。未知或尚未注册的工具规则会原样保留为 inactive，未来注册对应工具后
+自然生效。
+
+交互确认新增“Yes, and don't ask again”：Bash 会让用户输入命令前缀（如
+`git diff:*`），Write/Edit 使用工具建议的精确路径规则；更新默认写入 gitignored
+的 local settings，并立即更新当前权限 context。没有安全长期建议时不展示该选项，
+safety ask 只能当次批准。显式 deny/ask 仍然优先于 allow。每次权限决策都会
+通过 `nano_code.permissions` logger 记录：allow 为 info，deny 与被拒的 ask
+为 warning，日志包含工具、behavior、message、结构化 reason 和是否提供反馈，
+但不记录反馈原文，也不进入会话
+transcript。
 
 ## 13. 主要源码入口
 

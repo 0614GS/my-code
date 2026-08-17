@@ -8,10 +8,11 @@ from nano_code.core import (
     NanoCodePaths,
     SettingsFileError,
     SettingsLayer,
+    SettingsResolver,
     SettingsScope,
     SettingsStore,
 )
-from nano_code.permissions import PermissionMode
+from nano_code.permissions import PermissionBehavior, PermissionMode, PermissionRule
 
 
 def make_paths(tmp_path: Path) -> NanoCodePaths:
@@ -133,6 +134,159 @@ def test_shared_project_cannot_enable_bypass(tmp_path: Path) -> None:
 
     with pytest.raises(SettingsFileError, match="cannot enable bypassPermissions"):
         SettingsStore(paths).load()
+
+
+def test_permission_rule_arrays_are_parsed_and_serialized(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(
+        SettingsScope.USER,
+        SettingsLayer(
+            permission_allow_rules=("Bash(git status)", "Read"),
+            permission_deny_rules=("Bash(rm:*)",),
+            permission_ask_rules=("Bash(git push)",),
+        ),
+    )
+
+    document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
+    assert document["permissions"] == {
+        "allow": ["Bash(git status)", "Read"],
+        "deny": ["Bash(rm:*)"],
+        "ask": ["Bash(git push)"],
+    }
+    assert store.load_scope(SettingsScope.USER) == SettingsLayer(
+        permission_allow_rules=("Bash(git status)", "Read"),
+        permission_deny_rules=("Bash(rm:*)",),
+        permission_ask_rules=("Bash(git push)",),
+    )
+
+
+@pytest.mark.parametrize(
+    "document, message",
+    [
+        ({"permissions": {"ask": ["Bash(git push"]}}, "Malformed"),
+        ({"permissions": {"allow": [42]}}, "must be a string"),
+        ({"permissions": {"deny": "Bash(rm:*)"}}, "must be an array"),
+    ],
+)
+def test_invalid_permission_rules_are_rejected(
+    tmp_path: Path, document: object, message: str
+) -> None:
+    paths = make_paths(tmp_path)
+    paths.user_settings_path.parent.mkdir()
+    paths.user_settings_path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(SettingsFileError, match=message):
+        SettingsStore(paths).load()
+
+
+def test_unknown_and_non_bash_content_rules_are_preserved(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    paths.user_settings_path.parent.mkdir()
+    paths.user_settings_path.write_text(
+        json.dumps(
+            {
+                "permissions": {
+                    "allow": ["Missing(command)"],
+                    "deny": ["Read(README.md)"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = SettingsStore(paths).load()
+
+    assert loaded.permission_allow_rules == ("Missing(command)",)
+    assert loaded.permission_deny_rules == ("Read(README.md)",)
+
+
+def test_permission_rules_union_across_scopes_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(
+        SettingsScope.USER,
+        SettingsLayer(permission_allow_rules=("Bash(git status)", "Read")),
+    )
+    store.write(
+        SettingsScope.PROJECT,
+        SettingsLayer(permission_allow_rules=("Bash(git status)", "Bash(git diff)")),
+    )
+    store.write(
+        SettingsScope.LOCAL,
+        SettingsLayer(permission_allow_rules=("Bash(git diff)", "Read")),
+    )
+
+    assert store.load().permission_allow_rules == (
+        "Bash(git status)",
+        "Read",
+        "Bash(git diff)",
+    )
+
+
+def test_write_merges_known_fields_and_preserves_unknown_keys(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(
+        SettingsScope.USER,
+        SettingsLayer(
+            model="first-model",
+            permission_allow_rules=("Bash(git status)",),
+        ),
+    )
+    document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
+    document["futureSetting"] = {"enabled": True}
+    paths.user_settings_path.write_text(json.dumps(document), encoding="utf-8")
+
+    store.write(
+        SettingsScope.USER,
+        SettingsLayer(
+            model="second-model",
+            permission_deny_rules=("Bash(rm:*)",),
+        ),
+    )
+
+    document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
+    assert document["futureSetting"] == {"enabled": True}
+    assert document["model"] == "second-model"
+    assert document["permissions"] == {
+        "allow": ["Bash(git status)"],
+        "deny": ["Bash(rm:*)"],
+    }
+
+
+def test_resolver_records_highest_priority_source_for_duplicate_rules(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(
+        SettingsScope.USER,
+        SettingsLayer(permission_allow_rules=("Bash(git status)",)),
+    )
+    store.write(
+        SettingsScope.PROJECT,
+        SettingsLayer(permission_allow_rules=("Bash(git status)",)),
+    )
+    store.write(
+        SettingsScope.LOCAL,
+        SettingsLayer(permission_allow_rules=("Bash(git status)",)),
+    )
+
+    settings = SettingsResolver(paths).resolve(interactive=False)
+
+    assert settings.permission_rules == (
+        PermissionRule(
+            "Bash",
+            PermissionBehavior.ALLOW,
+            "git status",
+            source="localSettings",
+        ),
+    )
 
 
 @pytest.mark.parametrize("scope", [SettingsScope.PROJECT, SettingsScope.LOCAL])

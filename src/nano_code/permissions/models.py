@@ -37,6 +37,34 @@ class ToolPermissionBehavior(StrEnum):
     PASSTHROUGH = "passthrough"
 
 
+class PermissionDecisionKind(StrEnum):
+    """权限决定的稳定来源类别。"""
+
+    RULE = "rule"
+    MODE = "mode"
+    TOOL = "tool"
+    SAFETY = "safety"
+    USER = "user"
+
+
+class PermissionUpdateDestination(StrEnum):
+    """权限更新的生效或持久化目标。"""
+
+    SESSION = "session"
+    USER = "userSettings"
+    PROJECT = "projectSettings"
+    LOCAL = "localSettings"
+
+
+class PermissionUpdateType(StrEnum):
+    ADD_RULES = "addRules"
+    REPLACE_RULES = "replaceRules"
+    REMOVE_RULES = "removeRules"
+    SET_MODE = "setMode"
+    ADD_DIRECTORIES = "addDirectories"
+    REMOVE_DIRECTORIES = "removeDirectories"
+
+
 @dataclass(frozen=True, slots=True)
 class PermissionRule:
     """工具规则；可选内容由对应工具解释。"""
@@ -60,12 +88,96 @@ class PermissionRule:
 
 
 @dataclass(frozen=True, slots=True)
+class PermissionDecisionReason:
+    """结构化且可稳定序列化的权限决定来源。"""
+
+    kind: PermissionDecisionKind
+    detail: str
+    rule: PermissionRule | None = None
+
+    def __post_init__(self) -> None:
+        if not self.detail.strip():
+            raise ValueError("Permission decision reason detail cannot be blank")
+        if self.kind is PermissionDecisionKind.RULE and self.rule is None:
+            raise ValueError("Rule decision reason requires a rule")
+
+    def __str__(self) -> str:
+        if self.rule is not None:
+            return f"rule:{self.rule.source}"
+        return f"{self.kind.value}:{self.detail}"
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionUpdate:
+    """对会话权限 context 或某一 settings scope 的结构化修改。"""
+
+    type: PermissionUpdateType
+    destination: PermissionUpdateDestination
+    rules: tuple[PermissionRule, ...] = ()
+    behavior: PermissionBehavior | None = None
+    mode: PermissionMode | None = None
+    directories: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        rule_update = self.type in {
+            PermissionUpdateType.ADD_RULES,
+            PermissionUpdateType.REPLACE_RULES,
+            PermissionUpdateType.REMOVE_RULES,
+        }
+        if rule_update:
+            if not self.rules or self.behavior is None:
+                raise ValueError("Rule permission update requires rules and behavior")
+            if any(rule.behavior is not self.behavior for rule in self.rules):
+                raise ValueError("Permission update rules must match update behavior")
+        elif self.rules or self.behavior is not None:
+            raise ValueError("Non-rule permission update cannot include rules")
+
+        if self.type is PermissionUpdateType.SET_MODE:
+            if self.mode is None:
+                raise ValueError("setMode permission update requires a mode")
+        elif self.mode is not None:
+            raise ValueError("Only setMode permission updates can include a mode")
+
+        directory_update = self.type in {
+            PermissionUpdateType.ADD_DIRECTORIES,
+            PermissionUpdateType.REMOVE_DIRECTORIES,
+        }
+        if directory_update:
+            if not self.directories or any(
+                not value.strip() for value in self.directories
+            ):
+                raise ValueError("Directory permission update requires directories")
+        elif self.directories:
+            raise ValueError(
+                "Only directory permission updates can include directories"
+            )
+
+    @classmethod
+    def add_rules(
+        cls,
+        rules: tuple[PermissionRule, ...],
+        *,
+        destination: PermissionUpdateDestination,
+    ) -> PermissionUpdate:
+        if not rules:
+            raise ValueError("addRules requires at least one rule")
+        behavior = rules[0].behavior
+        return cls(
+            PermissionUpdateType.ADD_RULES,
+            destination,
+            rules=rules,
+            behavior=behavior,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ToolPermissionContext:
     """提供给工具专属权限检查的只读策略事实。"""
 
     mode: PermissionMode
     rules: tuple[PermissionRule, ...]
     tool_context: ToolContext
+    additional_working_directories: tuple[str, ...] = ()
 
     def rules_for(
         self, tool_name: str, behavior: PermissionBehavior
@@ -85,13 +197,24 @@ class ToolPermissionResult:
 
     behavior: ToolPermissionBehavior
     message: str
-    reason: str
+    decision_reason: PermissionDecisionReason
     updated_input: JsonObject | None = None
     bypass_immune: bool = False
+    suggestions: tuple[PermissionUpdate, ...] = ()
+
+    @property
+    def reason(self) -> str:
+        """兼容日志与旧 adapter 的稳定字符串表示。"""
+
+        return str(self.decision_reason)
 
     @classmethod
     def allow(
-        cls, tool_input: JsonObject, *, message: str, reason: str
+        cls,
+        tool_input: JsonObject,
+        *,
+        message: str,
+        reason: PermissionDecisionReason,
     ) -> ToolPermissionResult:
         return cls(ToolPermissionBehavior.ALLOW, message, reason, tool_input)
 
@@ -100,23 +223,42 @@ class ToolPermissionResult:
         cls,
         *,
         message: str,
-        reason: str,
+        reason: PermissionDecisionReason,
         bypass_immune: bool = False,
+        updated_input: JsonObject | None = None,
+        suggestions: tuple[PermissionUpdate, ...] = (),
     ) -> ToolPermissionResult:
         return cls(
             ToolPermissionBehavior.ASK,
             message,
             reason,
+            updated_input=updated_input,
             bypass_immune=bypass_immune,
+            suggestions=suggestions,
         )
 
     @classmethod
-    def deny(cls, *, message: str, reason: str) -> ToolPermissionResult:
+    def deny(
+        cls, *, message: str, reason: PermissionDecisionReason
+    ) -> ToolPermissionResult:
         return cls(ToolPermissionBehavior.DENY, message, reason)
 
     @classmethod
-    def passthrough(cls, *, message: str, reason: str) -> ToolPermissionResult:
-        return cls(ToolPermissionBehavior.PASSTHROUGH, message, reason)
+    def passthrough(
+        cls,
+        *,
+        message: str,
+        reason: PermissionDecisionReason,
+        updated_input: JsonObject | None = None,
+        suggestions: tuple[PermissionUpdate, ...] = (),
+    ) -> ToolPermissionResult:
+        return cls(
+            ToolPermissionBehavior.PASSTHROUGH,
+            message,
+            reason,
+            updated_input=updated_input,
+            suggestions=suggestions,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,8 +267,13 @@ class PermissionDecision:
 
     behavior: PermissionBehavior
     message: str
-    reason: str
+    decision_reason: PermissionDecisionReason
     updated_input: JsonObject | None = None
+    suggestions: tuple[PermissionUpdate, ...] = ()
+
+    @property
+    def reason(self) -> str:
+        return str(self.decision_reason)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,9 +282,12 @@ class PermissionConfirmation:
 
     allowed: bool
     feedback: str | None = None
+    updates: tuple[PermissionUpdate, ...] = ()
 
     def __post_init__(self) -> None:
         if self.allowed and self.feedback is not None:
             raise ValueError("Approval cannot include denial feedback")
         if self.feedback is not None and not self.feedback.strip():
             raise ValueError("Permission feedback cannot be blank")
+        if not self.allowed and self.updates:
+            raise ValueError("Denial cannot include permission updates")

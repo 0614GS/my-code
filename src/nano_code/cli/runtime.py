@@ -97,6 +97,7 @@ class DeferredPermissionPrompter:
                 tool_input=tool_input,
                 message=decision.message,
                 presentation=presentation,
+                suggestions=decision.suggestions,
             )
         )
 

@@ -4,8 +4,10 @@ from pathlib import Path
 
 from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
+from nano_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from nano_code.presentation import ToolResultPresentation
-from nano_code.tools.base import Tool, ToolContext, ToolOutput, ToolRisk
+from nano_code.tools.base import Tool, ToolContext, ToolOutput
+from nano_code.tools.builtin.file_permissions import check_write_permission
 from nano_code.tools.paths import relative_display_path, resolve_workspace_path
 from nano_code.tools.validation import required_string
 
@@ -27,15 +29,22 @@ class WriteFileTool(Tool):
             },
         )
 
-    @property
-    def risk(self) -> ToolRisk:
-        return ToolRisk.WRITE
-
     def get_tool_use_summary(self, tool_input: JsonObject) -> str:
         return required_string(tool_input, "path")
 
     def get_activity_description(self, tool_input: JsonObject) -> str:
         return f"Writing {required_string(tool_input, 'path')}"
+
+    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+        del tool_input, context
+        return False
+
+    async def check_permissions(
+        self, tool_input: JsonObject, context: ToolPermissionContext
+    ) -> ToolPermissionResult:
+        return check_write_permission(
+            self.definition.name, tool_input, context, must_exist=False
+        )
 
     def present_result(
         self, tool_input: JsonObject, output: ToolOutput

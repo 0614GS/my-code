@@ -4,14 +4,15 @@ from pathlib import Path
 
 from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
+from nano_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from nano_code.presentation import ToolResultPresentation
 from nano_code.tools.base import (
     Tool,
     ToolContext,
     ToolExecutionError,
     ToolOutput,
-    ToolRisk,
 )
+from nano_code.tools.builtin.file_permissions import check_read_permission
 from nano_code.tools.paths import relative_display_path, resolve_workspace_path
 from nano_code.tools.validation import optional_int, required_string
 
@@ -45,10 +46,6 @@ class ReadFileTool(Tool):
         )
 
     @property
-    def risk(self) -> ToolRisk:
-        return ToolRisk.READ
-
-    @property
     def concurrency_safe(self) -> bool:
         return True
 
@@ -57,6 +54,15 @@ class ReadFileTool(Tool):
 
     def get_activity_description(self, tool_input: JsonObject) -> str:
         return f"Reading {required_string(tool_input, 'path')}"
+
+    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+        del tool_input, context
+        return True
+
+    async def check_permissions(
+        self, tool_input: JsonObject, context: ToolPermissionContext
+    ) -> ToolPermissionResult:
+        return check_read_permission(self.definition.name, tool_input, context)
 
     def present_result(
         self, tool_input: JsonObject, output: ToolOutput

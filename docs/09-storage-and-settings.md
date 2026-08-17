@@ -63,11 +63,26 @@ Provider Profile 是一个命名连接配置，而不是另一套 SDK。当前�
 {
   "version": 1,
   "activeProvider": "anthropic",
-  "permissions": { "defaultMode": "default" },
+  "permissions": {
+    "defaultMode": "default",
+    "allow": ["Bash(git status)", "Read"],
+    "deny": ["Bash(rm:*)"],
+    "ask": ["Bash(git push)"]
+  },
   "maxOutputTokens": 8192,
   "contextChars": 160000
 }
 ```
+
+`permissions.allow/deny/ask` 中的每条规则按 `ToolName` 或 `ToolName(content)`
+解析；`Tool(*)`/`Tool()` 等价于整工具规则。规则跨 user/project/local 合并
+去重，重复规则保留 local > project > user 的最高优先级来源。规则解析不要求
+工具当前已注册；未知工具规则保留为 inactive。Bash 解释命令 content，文件工具
+解释规范化的 cwd 相对路径 exact/wildcard content。
+
+权限确认产生结构化 `PermissionUpdate`。长期允许默认使用 local scope：settings
+先原子写入成功，再更新当前内存 context；持久化失败时工具不会执行，也不会留下
+只在内存生效的授权。
 
 `maxTurns` 是可选的显式安全阀；省略时主 Agent 不设模型轮数上限。它统计的是一次
 用户输入内的模型 API 往返，而不是用户消息数量。

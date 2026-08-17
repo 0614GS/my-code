@@ -8,6 +8,9 @@ from nano_code.agent.contracts.model import ModelToolDefinition
 from nano_code.messages import JsonObject
 from nano_code.permissions import (
     PermissionBehavior,
+    PermissionDecisionKind,
+    PermissionDecisionReason,
+    PermissionMode,
     PermissionRule,
     ToolPermissionContext,
     ToolPermissionResult,
@@ -18,14 +21,22 @@ from nano_code.tools.base import (
     ToolContext,
     ToolExecutionError,
     ToolOutput,
-    ToolRisk,
 )
 from nano_code.tools.builtin.bash_permissions import (
     BashAnalysis,
     analyze_bash_command,
+    bash_rule_has_wildcard,
     bash_rule_matches,
 )
 from nano_code.tools.validation import optional_int, required_string
+
+
+def _rule_reason(rule: PermissionRule) -> PermissionDecisionReason:
+    return PermissionDecisionReason(
+        PermissionDecisionKind.RULE,
+        f"Bash:{rule.behavior.value}",
+        rule=rule,
+    )
 
 
 class BashTool(Tool):
@@ -52,10 +63,6 @@ class BashTool(Tool):
                 "additionalProperties": False,
             },
         )
-
-    @property
-    def risk(self) -> ToolRisk:
-        return ToolRisk.EXECUTE
 
     def get_tool_use_summary(self, tool_input: JsonObject) -> str:
         return compact_text(required_string(tool_input, "command"))
@@ -94,7 +101,7 @@ class BashTool(Tool):
         if deny_rule is not None:
             return ToolPermissionResult.deny(
                 message=f"Bash command is denied by a {deny_rule.source} rule.",
-                reason=f"rule:{deny_rule.source}",
+                reason=_rule_reason(deny_rule),
             )
 
         ask_rule = self._matching_rule(
@@ -105,8 +112,14 @@ class BashTool(Tool):
                 message=(
                     f"Bash command requires confirmation by a {ask_rule.source} rule."
                 ),
-                reason=f"rule:{ask_rule.source}",
+                reason=_rule_reason(ask_rule),
                 bypass_immune=True,
+            )
+
+        if context.mode is PermissionMode.PLAN and not analysis.is_read_only:
+            return ToolPermissionResult.deny(
+                message="Mutating Bash commands are unavailable in plan mode.",
+                reason=PermissionDecisionReason(PermissionDecisionKind.MODE, "plan"),
             )
 
         allow_rules = context.rules_for(self.definition.name, PermissionBehavior.ALLOW)
@@ -118,18 +131,22 @@ class BashTool(Tool):
             return ToolPermissionResult.allow(
                 tool_input,
                 message=f"Bash command is allowed by {sources} rule(s).",
-                reason=f"rule:{sources}",
+                reason=_rule_reason(matched_allow_rules[0]),
             )
 
         if analysis.is_read_only:
             return ToolPermissionResult.allow(
                 tool_input,
                 message="Bash command was proven read-only.",
-                reason="bash:read-only",
+                reason=PermissionDecisionReason(
+                    PermissionDecisionKind.TOOL, "bash-read-only"
+                ),
             )
         return ToolPermissionResult.passthrough(
             message=f"Allow Bash for this call? {analysis.reason}.",
-            reason="bash:approval-required",
+            reason=PermissionDecisionReason(
+                PermissionDecisionKind.TOOL, "bash-approval-required"
+            ),
         )
 
     def _matching_rule(
@@ -157,11 +174,16 @@ class BashTool(Tool):
         # 精确规则可以有意批准完整的复杂命令。前缀规则必须逐条子命令检查，
         # 否则 Bash(git:*) 会因为完整字符串以 git 开头而错误批准
         # ``git status && rm file``。
+        def needs_subcommand_coverage(rule_content: str) -> bool:
+            return rule_content.rstrip().endswith(
+                (":*", " *")
+            ) or bash_rule_has_wildcard(rule_content)
+
         exact = tuple(
             rule
             for rule in rules
             if rule.rule_content is not None
-            and not rule.rule_content.rstrip().endswith((":*", " *"))
+            and not needs_subcommand_coverage(rule.rule_content)
             and bash_rule_matches(rule.rule_content, command)
         )
         if exact:

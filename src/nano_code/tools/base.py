@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,14 +20,6 @@ if TYPE_CHECKING:
         ToolPermissionContext,
         ToolPermissionResult,
     )
-
-
-class ToolRisk(StrEnum):
-    """权限引擎消费的副作用类别。"""
-
-    READ = "read"
-    WRITE = "write"
-    EXECUTE = "execute"
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,11 +55,6 @@ class Tool(ABC):
     @abstractmethod
     def definition(self) -> ModelToolDefinition:
         """返回模型可见的定义。"""
-
-    @property
-    @abstractmethod
-    def risk(self) -> ToolRisk:
-        """返回默认副作用类别。"""
 
     @property
     def concurrency_safe(self) -> bool:
@@ -135,6 +121,7 @@ class Tool(ABC):
 
         return output.content
 
+    @abstractmethod
     def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
         """描述当前具体调用的副作用语义。
 
@@ -142,28 +129,15 @@ class Tool(ABC):
         其本身不会授予访问权限。
         """
 
-        del tool_input, context
-        return self.risk is ToolRisk.READ
+        raise NotImplementedError
 
+    @abstractmethod
     async def check_permissions(
         self, tool_input: JsonObject, context: ToolPermissionContext
     ) -> ToolPermissionResult:
         """返回供全局策略消费的工具局部判断。"""
 
-        # 局部导入可避免运行时循环：权限策略需要导入 Tool，
-        # 而与 provider/UI 无关的协议这里只需要其类型。
-        from nano_code.permissions.models import ToolPermissionResult
-
-        if self.is_read_only(tool_input, context.tool_context):
-            return ToolPermissionResult.allow(
-                tool_input,
-                message="This call is read-only.",
-                reason="tool:read-only",
-            )
-        return ToolPermissionResult.passthrough(
-            message=f"{self.definition.name} requires approval for this call.",
-            reason="tool:passthrough",
-        )
+        raise NotImplementedError
 
     @abstractmethod
     def validate_input(self, tool_input: JsonObject) -> None:

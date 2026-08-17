@@ -7,8 +7,13 @@ from pathlib import Path
 
 from nano_code.auth import CredentialSource, CredentialStore, resolve_api_key
 from nano_code.core.paths import NanoCodePaths, SettingsScope
-from nano_code.core.settings_store import SettingsStore
-from nano_code.permissions import PermissionMode
+from nano_code.core.settings_store import SettingsLayer, SettingsStore
+from nano_code.permissions import (
+    PermissionBehavior,
+    PermissionMode,
+    PermissionRule,
+    validate_permission_rule,
+)
 from nano_code.providers.profiles import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_ID,
@@ -46,6 +51,7 @@ class AgentSettings:
     max_output_tokens: int
     context_chars: int
     interactive: bool
+    permission_rules: tuple[PermissionRule, ...] = ()
     api_key: str | None = None
     credential_source: CredentialSource = CredentialSource.NONE
     base_url: str | None = None
@@ -118,9 +124,8 @@ class SettingsResolver:
         actual_overrides = overrides or SettingsOverrides()
         stored = self.store.load()
         user = self.store.load_scope(SettingsScope.USER)
-        project = self.store.load_scope(SettingsScope.PROJECT).overlay(
-            self.store.load_scope(SettingsScope.LOCAL)
-        )
+        local = self.store.load_scope(SettingsScope.LOCAL)
+        project = self.store.load_scope(SettingsScope.PROJECT).overlay(local)
         provider_id = self.active_provider_id(actual_overrides.provider_id)
         profiles = ProviderProfileStore(self.paths.providers_path).load()
         if not profiles:
@@ -180,7 +185,45 @@ class SettingsResolver:
                 else stored.context_chars or DEFAULT_CONTEXT_CHARS
             ),
             interactive=interactive,
+            permission_rules=_resolve_permission_rules(user, project, local),
             api_key=credential.api_key,
             credential_source=credential.source,
             base_url=base_url,
         )
+
+
+def _resolve_permission_rules(
+    user: SettingsLayer,
+    project: SettingsLayer,
+    local: SettingsLayer,
+) -> tuple[PermissionRule, ...]:
+    """按 local > project > user 合并规则，重复规则保留最高优先级来源。"""
+
+    behaviors = {
+        "allow": PermissionBehavior.ALLOW,
+        "deny": PermissionBehavior.DENY,
+        "ask": PermissionBehavior.ASK,
+    }
+    merged: list[PermissionRule] = []
+    seen: set[tuple[str, str, str | None]] = set()
+    for layer, source in (
+        (local, "localSettings"),
+        (project, "projectSettings"),
+        (user, "userSettings"),
+    ):
+        for behavior_name, behavior in behaviors.items():
+            for rule_string in getattr(layer, f"permission_{behavior_name}_rules"):
+                tool_name, content = validate_permission_rule(rule_string)
+                key = (tool_name, behavior.value, content)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(
+                    PermissionRule(
+                        tool_name,
+                        behavior,
+                        content,
+                        source=source,
+                    )
+                )
+    return tuple(merged)

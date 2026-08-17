@@ -145,8 +145,7 @@ Bash 工具报错会取消并行 sibling，因为批量 shell 命令常存在隐
 
 ### 权限语义
 
-nano-code 保留静态 `risk` 作为默认分类，同时让工具按具体输入实现
-`is_read_only(input, context)` 和 `check_permissions(input, context)`。后者返回
+nano-code 每个工具必须按具体输入实现 `is_read_only(input, context)` 和 `check_permissions(input, context)`。后者返回
 `allow | ask | deny | passthrough`，只表达工具领域内的事实；全局规则、mode 和
 最终 ask 收敛仍由 `PermissionPolicy` 统一处理。`ToolExecutor` 不识别 Bash、Read
 等具体类型，只保证 validation → permission → execution → result 的顺序。

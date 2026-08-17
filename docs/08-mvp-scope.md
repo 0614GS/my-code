@@ -23,6 +23,8 @@
 - 通过快照与提交后事件同步、支持 Ctrl+T 折叠的 TUI TodoList；
 - Anthropic SSE 文本流、TUI 增量 Markdown 和工具调用状态展示；
 - 底部内联权限选择及可返回模型的拒绝反馈。
+- settings 中的 `permissions.allow/deny/ask` 持久规则、结构化 PermissionUpdate、
+  local settings 级“不再询问”和标准库权限审计日志。
 
 ## 对照 Claude Code 保留的不变量
 
@@ -39,4 +41,4 @@
 
 ## 延后实现
 
-流式文本响应已经实现，但工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 不会执行或持久化。并行 safe 工具、cached microcompact、compact 后文件/plan/skill 工作集重建、Hooks、MCP/deferred tools、细粒度权限规则持久化以及 OS 级 sandbox 仍不属于当前阶段。Bash 的只读判定只减少可证明安全命令的确认次数，不等价于进程隔离；在 sandbox 完成前不应把 `bypassPermissions` 作为默认模式。
+流式文本响应已经实现，但工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 不会执行或持久化。并行 safe 工具、cached microcompact、compact 后文件/plan/skill 工作集重建、Hooks、MCP/deferred tools 以及 OS 级 sandbox 仍不属于当前阶段。Bash 的只读判定只减少可证明安全命令的确认次数，不等价于进程隔离；在 sandbox 完成前不应把 `bypassPermissions` 作为默认模式。

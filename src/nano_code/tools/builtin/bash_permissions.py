@@ -376,21 +376,102 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
 
 
 def bash_rule_matches(rule_content: str, command: str) -> bool:
-    """匹配精确规则或兼容 Claude 的 ``:*`` 命令前缀规则。"""
+    """匹配精确、``:*``/`` *`` 前缀或通用 ``*`` 通配规则。"""
 
     normalized_rule = rule_content.strip()
     normalized_command = command.strip()
     if normalized_rule.endswith(":*"):
         prefix = normalized_rule[:-2].rstrip()
-        return normalized_command == prefix or normalized_command.startswith(
-            prefix + " "
-        )
-    if normalized_rule.endswith(" *"):
+        return _prefix_matches(prefix, normalized_command)
+    if normalized_rule.endswith(" *") and not bash_rule_has_wildcard(
+        normalized_rule[:-2]
+    ):
         prefix = normalized_rule[:-2].rstrip()
-        return normalized_command == prefix or normalized_command.startswith(
-            prefix + " "
-        )
-    return normalized_command == normalized_rule
+        return _prefix_matches(prefix, normalized_command)
+    if bash_rule_has_wildcard(normalized_rule):
+        if (
+            normalized_rule.endswith(" *")
+            and _unescaped_star_count(normalized_rule) == 1
+        ):
+            if normalized_command == normalized_rule[:-2].rstrip():
+                return True
+        return _wildcard_matches(normalized_rule, normalized_command)
+    return normalized_command == _literal_rule_text(normalized_rule)
+
+
+def bash_rule_has_wildcard(rule_content: str) -> bool:
+    """判断规则是否包含未转义 ``*``（``:*`` 旧前缀除外）。"""
+
+    pattern = rule_content.strip()
+    if pattern.endswith(":*"):
+        return False
+    for index, character in enumerate(pattern):
+        if character == "*" and not _is_escaped(pattern, index):
+            return True
+    return False
+
+
+def _prefix_matches(prefix: str, command: str) -> bool:
+    return command == prefix or command.startswith(prefix + " ")
+
+
+def _unescaped_star_count(pattern: str) -> int:
+    return sum(
+        1
+        for index, character in enumerate(pattern)
+        if character == "*" and not _is_escaped(pattern, index)
+    )
+
+
+def _wildcard_matches(pattern: str, command: str) -> bool:
+    """把 ``*`` 当作任意长度匹配，``\\*`` 匹配字面星号。"""
+
+    regex_parts: list[str] = []
+    index = 0
+    while index < len(pattern):
+        character = pattern[index]
+        if character == "\\" and index + 1 < len(pattern):
+            following = pattern[index + 1]
+            if following == "*":
+                regex_parts.append(re.escape("*"))
+                index += 2
+                continue
+            if following == "\\":
+                regex_parts.append(re.escape("\\"))
+                index += 2
+                continue
+        if character == "*":
+            regex_parts.append(".*")
+        else:
+            regex_parts.append(re.escape(character))
+        index += 1
+    return re.fullmatch("".join(regex_parts), command, flags=re.DOTALL) is not None
+
+
+def _literal_rule_text(pattern: str) -> str:
+    """展开没有通配符的规则里的 ``\\*``/``\\\\`` 转义。"""
+
+    result: list[str] = []
+    index = 0
+    while index < len(pattern):
+        if pattern[index] == "\\" and index + 1 < len(pattern):
+            following = pattern[index + 1]
+            if following in {"*", "\\"}:
+                result.append(following)
+                index += 2
+                continue
+        result.append(pattern[index])
+        index += 1
+    return "".join(result)
+
+
+def _is_escaped(pattern: str, index: int) -> bool:
+    backslash_count = 0
+    cursor = index - 1
+    while cursor >= 0 and pattern[cursor] == "\\":
+        backslash_count += 1
+        cursor -= 1
+    return backslash_count % 2 == 1
 
 
 def _find_unsafe_shell_syntax(command: str) -> str | None:

@@ -6,7 +6,13 @@ import pytest
 from rich.console import Console
 from textual.widgets import Input, OptionList
 
-from nano_code.permissions import PermissionConfirmation
+from nano_code.permissions import (
+    PermissionBehavior,
+    PermissionConfirmation,
+    PermissionRule,
+    PermissionUpdate,
+    PermissionUpdateDestination,
+)
 from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.providers.profiles import ProviderProtocol
@@ -334,6 +340,12 @@ async def test_permission_request_uses_inline_panel_and_returns_explicit_choice(
         panel = app.query_one(PermissionPanel)
         assert panel.display is True
         assert app.query_one("#prompt", Input).display is False
+        options = app.query_one("#permission-options", OptionList)
+        assert [option.id for option in options.options] == [
+            "yes",
+            "no",
+            "feedback",
+        ]
         await pilot.press("1")
 
         assert await permission == PermissionConfirmation(True)
@@ -364,6 +376,84 @@ async def test_permission_feedback_is_returned_to_runtime() -> None:
 
         assert await permission == PermissionConfirmation(
             False, "Do not push; only show the diff."
+        )
+
+
+@pytest.mark.asyncio
+async def test_permission_remember_captures_bash_prefix() -> None:
+    app = NanoCodeApp(FakeRuntime())
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        permission = asyncio.create_task(
+            app._ask_permission(
+                PermissionRequest(
+                    "Bash",
+                    {"command": "git diff"},
+                    "Run command?",
+                    ToolUsePresentation("Bash", "git diff", "Running command"),
+                )
+            )
+        )
+        await pilot.pause()
+        await pilot.press("4")
+        await pilot.pause()
+
+        prefix = app.query_one("#permission-prefix", Input)
+        assert prefix.display is True
+        prefix.value = "git diff:*"
+        await pilot.press("enter")
+
+        assert await permission == PermissionConfirmation(
+            True,
+            updates=(
+                PermissionUpdate.add_rules(
+                    (
+                        PermissionRule(
+                            "Bash",
+                            PermissionBehavior.ALLOW,
+                            "git diff:*",
+                            source="localSettings",
+                        ),
+                    ),
+                    destination=PermissionUpdateDestination.LOCAL,
+                ),
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_permission_remember_uses_whole_tool_rule_for_non_bash() -> None:
+    app = NanoCodeApp(FakeRuntime())
+    suggestion = PermissionUpdate.add_rules(
+        (
+            PermissionRule(
+                "Write",
+                PermissionBehavior.ALLOW,
+                "a.txt",
+                source="localSettings",
+            ),
+        ),
+        destination=PermissionUpdateDestination.LOCAL,
+    )
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        permission = asyncio.create_task(
+            app._ask_permission(
+                PermissionRequest(
+                    "Write",
+                    {"path": "a.txt", "content": "x"},
+                    "Allow this write?",
+                    ToolUsePresentation("Write", "a.txt", "Writing a.txt"),
+                    suggestions=(suggestion,),
+                )
+            )
+        )
+        await pilot.pause()
+        await pilot.press("4")
+
+        assert await permission == PermissionConfirmation(
+            True,
+            updates=(suggestion,),
         )
 
 
