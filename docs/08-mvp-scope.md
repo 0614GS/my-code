@@ -40,6 +40,14 @@
 
 请求投影会合并相邻同 role 消息，并严格校验 tool-use/result 配对。提示词来源由 Registry 按生命周期解析；结构化 system context 只在请求边界渲染 XML，provider 自行决定是否映射缓存断点。超限不会删除旧轮次：先尝试稳定工具结果替换，再生成 compact summary；Provider 返回明确的上下文错误时最多响应式重试一次。
 
+## Bash 执行边界
+
+Bash 工具正式限定为提供 `/bin/bash` 的 POSIX 环境，并固定以 `/bin/bash -c` 执行；
+不会回退到 `/bin/sh`、zsh、PowerShell 或用户默认 shell。子进程环境移除 provider
+凭据、`BASH_ENV`、`ENV`、`SHELLOPTS`、`BASHOPTS`、`CDPATH` 与导出的 Bash
+函数。tree-sitter AST 只用于保守权限分析，分析失败表示 ask，不提供进程或文件系统
+隔离。
+
 ## 延后实现
 
 流式文本响应已经实现，但工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 不会执行或持久化。并行 safe 工具、Session fork、`state.json`、OAuth/Keychain、管理 UI、cached microcompact、compact 后文件/plan/skill 工作集重建、Hooks、MCP/deferred tools 以及 OS 级 sandbox 仍不属于当前阶段。Bash 的只读判定只减少可证明安全命令的确认次数，不等价于进程隔离；在 sandbox 完成前不应把 `bypassPermissions` 作为默认模式。

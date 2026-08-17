@@ -208,6 +208,20 @@ Bash 分析器只自动允许能够静态证明安全的命令。简单管道和
 `permissions/rules.py` 解析并规范化：`Tool(*)`/`Tool()` 等价于整工具规则，
 括号与反斜杠可转义，`*` 是 shell 通配符而 `\*` 匹配字面星号。
 
+nano-code 使用 `tree-sitter` 与 `tree-sitter-bash` 解析 Bash，不再使用词法拆分
+作为回退。首版只信任静态 simple command、引号拼接、`&&`/`||`/`;`/换行、
+pipeline、静态环境前缀和静态文件重定向。变量、glob、substitution、后台任务、
+subshell、控制流、函数与 heredoc 等复杂结构默认 ask；语法错误、未知节点和分析
+预算超限同样 fail closed。复杂 AST 中能够可靠定位的内部命令仅参与 deny/ask，
+不能支持自动 allow。AST 是权限判断输入，不是 OS sandbox。
+
+静态输出重定向不会自动继承只读语义。prefix/wildcard 规则只有在全部子命令均被
+覆盖且重定向 realpath 位于 cwd 内时才可批准写入；cwd 外目标、symlink 逃逸、动态
+目标和改变 cwd 的 compound redirect 仍需完整精确规则或交互确认。输入重定向只有
+cwd 内目标可自动只读，`/dev/null` 与文件描述符合并按安全特殊情况处理。只有
+`LANG`、`LC_*`、`TZ`、`NO_COLOR` 等静态环境变量可继承底层命令规则，`PATH`、
+`BASH_ENV` 和语言/工具行为变量不能继承普通 prefix 授权。
+
 所有内置工具都显式实现输入级权限。Read/Glob/Grep 只自动允许 cwd 内且通过
 realpath/symlink 边界检查的读取；Write/Edit 解释路径 content rule，并在
 `acceptEdits` 中自动允许普通工作区编辑；Todo 只修改 transcript 投影状态。

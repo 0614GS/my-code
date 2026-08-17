@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.tools.builtin.bash_permissions import (
+from nano_code.tools.builtin.bash.permissions import (
     analyze_bash_command,
     bash_rule_matches,
 )

@@ -6,7 +6,7 @@ from nano_code.permissions.rules import (
     validate_bash_rule_content,
     validate_permission_rule,
 )
-from nano_code.tools.builtin.bash_permissions import (
+from nano_code.tools.builtin.bash.permissions import (
     bash_rule_has_wildcard,
     bash_rule_matches,
 )

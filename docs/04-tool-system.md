@@ -150,9 +150,11 @@ nano-code 每个工具必须按具体输入实现 `is_read_only(input, context)`
 最终 ask 收敛仍由 `PermissionPolicy` 统一处理。`ToolExecutor` 不识别 Bash、Read
 等具体类型，只保证 validation → permission → execution → result 的顺序。
 
-Bash 的命令解析和参数白名单因此位于 `tools/builtin/bash_permissions.py`，而不是
-Executor。权限层批准了修改后的 input 时，Executor 必须把同一个 input 交给弹窗
-和执行阶段，避免“用户批准 A、工具执行 B”。
+Bash 位于 `tools/builtin/bash/` 领域包：`ast.py` 只产生静态解析事实，
+`semantics.py` 判断 argv 是否只读，`permissions.py` 编排规则与路径约束，
+`process.py` 负责进程生命周期。执行器固定调用 `/bin/bash -c`，不使用用户默认
+shell，也不回退到 `/bin/sh`。权限层批准了修改后的 input 时，Executor 必须把同一个
+input 交给弹窗和执行阶段，避免“用户批准 A、工具执行 B”。
 
 ### 双重结果投影
 
