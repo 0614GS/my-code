@@ -1,23 +1,35 @@
 from types import SimpleNamespace
 
+import pytest
+
 from nano_code.agent import (
     ModelAssistantMessage,
     ModelReasoningBlock,
+    ModelReasoningCompleted,
+    ModelReasoningDelta,
+    ModelReasoningStarted,
     ModelRequest,
     ModelTextBlock,
+    ModelTextCompleted,
+    ModelTextDelta,
+    ModelTextStarted,
     ModelToolResultBlock,
     ModelToolUseBlock,
     ModelUserMessage,
 )
 from nano_code.conversation import ProviderBinding, ProviderContinuationState
 from nano_code.prompts import SystemPrompt
-from nano_code.providers.openai_responses import OpenAIResponsesProvider
+from nano_code.providers.openai_responses import (
+    OpenAIResponsesProvider,
+    _OpenAIStreamNormalizer,
+)
 from nano_code.providers.profiles import ReasoningConfig
 
 
 class Item:
     def __init__(self, value: dict[str, object]) -> None:
         self.value = value
+        self.type = value.get("type")
 
     def model_dump(self, **_: object) -> dict[str, object]:
         return self.value
@@ -154,3 +166,95 @@ def test_request_is_stateless_and_requests_safe_reasoning_summary() -> None:
         "effort": "high",
     }
     assert params["include"] == ["reasoning.encrypted_content"]
+
+
+def test_stream_normalizer_serializes_interleaved_output_items() -> None:
+    normalizer = _OpenAIStreamNormalizer()
+    reasoning_delta = SimpleNamespace(
+        type="response.reasoning_summary_text.delta",
+        output_index=0,
+        summary_index=0,
+        delta="Safe ",
+    )
+    text_delta = SimpleNamespace(
+        type="response.output_text.delta",
+        output_index=1,
+        content_index=0,
+        delta="draft",
+    )
+    reasoning_done = SimpleNamespace(
+        type="response.output_item.done",
+        output_index=0,
+        item=Item(
+            {
+                "type": "reasoning",
+                "id": "reasoning",
+                "summary": [{"type": "summary_text", "text": "Safe summary"}],
+            }
+        ),
+    )
+    text_done = SimpleNamespace(
+        type="response.output_item.done",
+        output_index=1,
+        item=Item(
+            {
+                "type": "message",
+                "id": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "final"}],
+            }
+        ),
+    )
+
+    payloads = normalizer.feed(reasoning_delta)
+    assert [type(payload) for payload in payloads] == [
+        ModelReasoningStarted,
+        ModelReasoningDelta,
+    ]
+    assert normalizer.feed(text_delta) == []
+
+    payloads = normalizer.feed(reasoning_done)
+    assert [type(payload) for payload in payloads] == [
+        ModelReasoningCompleted,
+        ModelTextStarted,
+        ModelTextDelta,
+    ]
+    payloads = normalizer.feed(text_done)
+    assert [type(payload) for payload in payloads] == [ModelTextCompleted]
+    assert payloads[0].text == "final"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_rejects_non_increasing_provider_sequence() -> None:
+    provider = _provider()
+
+    class EventStream:
+        def __aiter__(self) -> "EventStream":
+            self._events = iter(
+                (
+                    SimpleNamespace(type="response.created", sequence_number=2),
+                    SimpleNamespace(type="response.in_progress", sequence_number=1),
+                )
+            )
+            return self
+
+        async def __anext__(self) -> object:
+            try:
+                return next(self._events)
+            except StopIteration as error:
+                raise StopAsyncIteration from error
+
+    class Responses:
+        async def create(self, **_: object) -> EventStream:
+            return EventStream()
+
+    provider.client = SimpleNamespace(responses=Responses())  # type: ignore[assignment]
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (ModelUserMessage((ModelTextBlock("hello"),)),),
+        (),
+        100,
+    )
+
+    with pytest.raises(RuntimeError, match="sequence numbers"):
+        _ = [event async for event in provider.stream(request)]

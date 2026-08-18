@@ -88,6 +88,15 @@ class AssistantMessage(Static):
             await self._flush_task
         self._apply_pending()
 
+    async def complete_stream(self, content: str) -> None:
+        """Replace accumulated deltas with the provider's completed snapshot."""
+
+        if self._flush_task is not None:
+            await self._flush_task
+        self._pending = ""
+        self._content = content
+        self.update(RichMarkdown(content))
+
     async def _flush_after_delay(self) -> None:
         try:
             # 合并高频 token 片段，使 Markdown 解析保持响应且工作量有界，
@@ -110,13 +119,11 @@ class ReasoningMessage(Static):
 
     def __init__(
         self,
-        reasoning_id: str,
         disclosure: ReasoningDisclosure,
         *,
         expanded: bool = True,
     ) -> None:
         super().__init__(classes="message reasoning")
-        self.reasoning_id = reasoning_id
         self.disclosure = disclosure
         self.parts: list[str] = []
         self.expanded = expanded
@@ -139,6 +146,7 @@ class ReasoningMessage(Static):
         self.refresh(layout=True)
 
     def load_presentation(self, presentation: ReasoningPresentation) -> None:
+        self.disclosure = presentation.disclosure
         self.parts = list(presentation.parts)
         self.completed = True
         self.refresh(layout=True)

@@ -23,7 +23,9 @@ from nano_code.application.chat.contracts import (
     ReasoningDelta,
     ReasoningStarted,
     StepLimitReached,
+    TextCompleted,
     TextDelta,
+    TextStarted,
     TodoListUpdated,
     ToolFinished,
     ToolStarted,
@@ -508,35 +510,52 @@ class NanoCodeApp(App[None]):
         activity.display = True
         await self._mount_message(UserMessage(prompt_text))
         assistant: AssistantMessage | None = None
+        active_reasoning: ReasoningMessage | None = None
         tools: dict[str, ToolCallMessage] = {}
-        reasoning: dict[str, ReasoningMessage] = {}
+        had_display = False
         completed = False
         try:
             async for event in self.runtime.stream(prompt_text):
                 if isinstance(event, AttachmentLoaded):
                     await self._mount_message(SystemMessage(event.display))
+                elif isinstance(event, TextStarted):
+                    assistant = AssistantMessage("")
+                    had_display = True
+                    await self._mount_message(assistant)
                 elif isinstance(event, TextDelta):
                     if assistant is None:
                         assistant = AssistantMessage("")
+                        had_display = True
                         await self._mount_message(assistant)
                     await assistant.append_delta(event.text)
                     self._scroll_to_end()
+                elif isinstance(event, TextCompleted):
+                    if assistant is None:
+                        assistant = AssistantMessage("")
+                        had_display = True
+                        await self._mount_message(assistant)
+                    await assistant.complete_stream(event.text)
+                    assistant = None
                 elif isinstance(event, ReasoningStarted):
-                    item = ReasoningMessage(event.id, event.disclosure)
-                    reasoning[event.id] = item
-                    await self._mount_message(item)
+                    active_reasoning = ReasoningMessage(event.disclosure)
+                    had_display = True
+                    await self._mount_message(active_reasoning)
                 elif isinstance(event, ReasoningDelta):
-                    reasoning_item = reasoning.get(event.id)
-                    if reasoning_item is None:
-                        reasoning_item = ReasoningMessage(event.id, event.disclosure)
-                        reasoning[event.id] = reasoning_item
-                        await self._mount_message(reasoning_item)
-                    reasoning_item.append_delta(event.part_index, event.text)
+                    if active_reasoning is None:
+                        active_reasoning = ReasoningMessage(event.disclosure)
+                        had_display = True
+                        await self._mount_message(active_reasoning)
+                    active_reasoning.append_delta(event.part_index, event.text)
                     self._scroll_to_end()
                 elif isinstance(event, ReasoningCompleted):
-                    completed_reasoning = reasoning.get(event.id)
-                    if completed_reasoning is not None:
-                        completed_reasoning.finish()
+                    if active_reasoning is None:
+                        active_reasoning = ReasoningMessage(
+                            event.presentation.disclosure
+                        )
+                        had_display = True
+                        await self._mount_message(active_reasoning)
+                    active_reasoning.load_presentation(event.presentation)
+                    active_reasoning = None
                 elif isinstance(event, ToolStarted):
                     if assistant is not None:
                         await assistant.finish_stream()
@@ -570,12 +589,11 @@ class NanoCodeApp(App[None]):
         except Exception as error:
             await self._mount_message(SystemMessage(f"Error: {error}", error=True))
         finally:
-            if not completed:
-                for item in reasoning.values():
-                    item.interrupt()
+            if not completed and active_reasoning is not None:
+                active_reasoning.interrupt()
             if assistant is not None:
                 await assistant.finish_stream()
-            if completed is False and not tools and assistant is None:
+            if completed is False and not tools and not had_display:
                 await self._mount_message(AssistantMessage("<no text response>"))
             activity.display = False
             prompt.disabled = False
@@ -694,9 +712,7 @@ class NanoCodeApp(App[None]):
             elif isinstance(entry, HistoryAssistantMessage):
                 await self._mount_message(AssistantMessage(entry.text))
             elif isinstance(entry, HistoryReasoning):
-                item = ReasoningMessage(
-                    entry.id, entry.presentation.disclosure, expanded=False
-                )
+                item = ReasoningMessage(entry.presentation.disclosure, expanded=False)
                 item.load_presentation(entry.presentation)
                 await self._mount_message(item)
             elif isinstance(entry, HistorySystemMessage):

@@ -21,12 +21,13 @@ from nano_code.agent.contracts.inbound import (
 from nano_code.agent.contracts.model import (
     ModelOutput,
     ModelOutputCompleted,
-    ModelReasoningBlock,
     ModelReasoningCompleted,
     ModelReasoningDelta,
     ModelReasoningStarted,
     ModelTextBlock,
+    ModelTextCompleted,
     ModelTextDelta,
+    ModelTextStarted,
     ModelToolUseBlock,
 )
 from nano_code.agent.contracts.session import (
@@ -47,7 +48,9 @@ from nano_code.agent.events import (
     AgentReasoningDelta,
     AgentReasoningStarted,
     AgentStepLimitReached,
+    AgentTextCompleted,
     AgentTextDelta,
+    AgentTextStarted,
     AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
@@ -139,34 +142,79 @@ class AgentEngine(AgentInboundPort):
             reactive_attempted = False
             while True:
                 response: ModelOutput | None = None
-                streamed_text = False
-                streamed_reasoning: set[str] = set()
+                expected_sequence = 0
+                active_display: str | None = None
+                active_disclosure: str | None = None
                 try:
                     async for model_event in self._model_call.stream(request.request):
-                        if isinstance(model_event, ModelTextDelta):
-                            streamed_text = True
-                            yield AgentTextDelta(model_event.text)
-                        elif isinstance(model_event, ModelReasoningStarted):
-                            streamed_reasoning.add(model_event.id)
-                            yield AgentReasoningStarted(
-                                model_event.id, model_event.disclosure
+                        if model_event.sequence_number != expected_sequence:
+                            raise RuntimeError(
+                                "Provider stream returned a non-contiguous sequence"
                             )
-                        elif isinstance(model_event, ModelReasoningDelta):
-                            streamed_reasoning.add(model_event.id)
+                        expected_sequence += 1
+                        payload = model_event.payload
+                        if isinstance(payload, ModelTextStarted):
+                            if active_display is not None:
+                                raise RuntimeError(
+                                    "Provider stream started overlapping display blocks"
+                                )
+                            active_display = "text"
+                            active_disclosure = None
+                            yield AgentTextStarted()
+                        elif isinstance(payload, ModelTextDelta):
+                            if active_display != "text":
+                                raise RuntimeError(
+                                    "Provider stream returned text outside a text block"
+                                )
+                            yield AgentTextDelta(payload.text)
+                        elif isinstance(payload, ModelTextCompleted):
+                            if active_display != "text":
+                                raise RuntimeError(
+                                    "Provider stream completed an inactive text block"
+                                )
+                            yield AgentTextCompleted(payload.text)
+                            active_display = None
+                        elif isinstance(payload, ModelReasoningStarted):
+                            if active_display is not None:
+                                raise RuntimeError(
+                                    "Provider stream started overlapping display blocks"
+                                )
+                            active_display = "reasoning"
+                            active_disclosure = payload.disclosure
+                            yield AgentReasoningStarted(payload.disclosure)
+                        elif isinstance(payload, ModelReasoningDelta):
+                            if active_display != "reasoning":
+                                raise RuntimeError(
+                                    "Provider stream returned reasoning outside a block"
+                                )
+                            if payload.disclosure != active_disclosure:
+                                raise RuntimeError(
+                                    "Provider stream changed reasoning disclosure "
+                                    "mid-block"
+                                )
                             yield AgentReasoningDelta(
-                                model_event.id,
-                                model_event.disclosure,
-                                model_event.part_index,
-                                model_event.text,
+                                payload.disclosure,
+                                payload.part_index,
+                                payload.text,
                             )
-                        elif isinstance(model_event, ModelReasoningCompleted):
-                            yield AgentReasoningCompleted(model_event.id)
-                        elif isinstance(model_event, ModelOutputCompleted):
+                        elif isinstance(payload, ModelReasoningCompleted):
+                            if active_display != "reasoning":
+                                raise RuntimeError(
+                                    "Provider stream completed inactive reasoning"
+                                )
+                            yield AgentReasoningCompleted(payload.presentation)
+                            active_display = None
+                            active_disclosure = None
+                        elif isinstance(payload, ModelOutputCompleted):
+                            if active_display is not None:
+                                raise RuntimeError(
+                                    "Provider stream ended with an active display block"
+                                )
                             if response is not None:
                                 raise RuntimeError(
                                     "Provider stream returned multiple final responses"
                                 )
-                            response = model_event.output
+                            response = payload.output
                 except ModelContextOverflow:
                     if reactive_attempted:
                         raise
@@ -178,21 +226,6 @@ class AgentEngine(AgentInboundPort):
 
             if response is None:
                 raise RuntimeError("Provider stream ended without a final response")
-            if not streamed_text:
-                for block in response.content:
-                    if isinstance(block, ModelTextBlock):
-                        yield AgentTextDelta(block.text)
-            for block in response.content:
-                if (
-                    isinstance(block, ModelReasoningBlock)
-                    and block.id not in streamed_reasoning
-                ):
-                    yield AgentReasoningStarted(block.id, block.presentation.disclosure)
-                    for index, part in enumerate(block.presentation.parts):
-                        yield AgentReasoningDelta(
-                            block.id, block.presentation.disclosure, index, part
-                        )
-                    yield AgentReasoningCompleted(block.id)
 
             input_tokens += response.usage.total_input_tokens
             output_tokens += response.usage.output_tokens
@@ -376,7 +409,7 @@ class AgentEngine(AgentInboundPort):
                     if block.text:
                         history.append(AgentHistoryAssistantMessage(block.text))
                 elif isinstance(block, ReasoningContent):
-                    history.append(AgentHistoryReasoning(block.id, block.presentation))
+                    history.append(AgentHistoryReasoning(block.presentation))
                 elif isinstance(block, ToolCall):
                     result = results.get(block.id)
                     history.append(

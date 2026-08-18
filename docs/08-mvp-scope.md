@@ -23,7 +23,8 @@
 - 区分请求派生与回合事件交付的 attachment 基础设施，支持 `request` / `live_session`
   retention、消息锚点、user-side 文本/reminder/observation 投影和窗口计量；
 - 通过快照与提交后事件同步、支持 Ctrl+T 折叠的 TUI TodoList；
-- 文本与 reasoning 流式事件、TUI 增量 Markdown/折叠 reasoning 和工具调用状态展示；
+- 请求内连续编号、单活动块的文本/reasoning 生命周期、TUI 原子收口的增量
+  Markdown/折叠 reasoning 和工具调用状态展示；
 - 底部内联权限选择及可返回模型的拒绝反馈。
 - settings 中的 `permissions.allow/deny/ask` 持久规则、结构化 PermissionUpdate、
   local settings 级“不再询问”和标准库权限审计日志。
@@ -53,4 +54,4 @@ Bash 工具正式限定为提供 `/bin/bash` 的 POSIX 环境，并固定以 `/b
 
 ## 延后实现
 
-工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 或 continuation 不会执行或持久化。不实现 OpenAI Chat Completions 及第三方 `reasoning_content` 扩展。TUI 已支持工作区内 UTF-8 文本文件和目录的 `@` 补全与临时 attachment；媒体 attachment、并行 safe 工具、Session fork、`state.json`、OAuth/Keychain、cached microcompact、Hooks、MCP/deferred tools 以及 OS 级 sandbox 仍不属于当前阶段。
+工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 或 continuation 不会执行或持久化。流式层不实现并行活动展示块、断线续传或以 provider sequence 作为 UI 身份；OpenAI 交错 output item 由 adapter 缓冲后按 output 顺序交付。不实现 OpenAI Chat Completions 及第三方 `reasoning_content` 扩展。TUI 已支持工作区内 UTF-8 文本文件和目录的 `@` 补全与临时 attachment；媒体 attachment、并行 safe 工具、Session fork、`state.json`、OAuth/Keychain、cached microcompact、Hooks、MCP/deferred tools 以及 OS 级 sandbox 仍不属于当前阶段。

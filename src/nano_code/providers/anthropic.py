@@ -26,7 +26,9 @@ from nano_code.agent.contracts.model import (
     ModelRequest,
     ModelStreamEvent,
     ModelTextBlock,
+    ModelTextCompleted,
     ModelTextDelta,
+    ModelTextStarted,
     ModelToolResultBlock,
     ModelToolUseBlock,
 )
@@ -39,9 +41,11 @@ from nano_code.conversation import (
     TokenUsage,
     to_json_object,
 )
+from nano_code.conversation.primitives import new_id
 from nano_code.prompts import PromptStability, SystemPrompt
 from nano_code.providers.base import ProviderCapabilities
 from nano_code.providers.profiles import ReasoningConfig
+from nano_code.providers.streaming import ModelStreamSequencer
 
 
 class AnthropicProvider(ModelCompletionPort):
@@ -106,6 +110,12 @@ class AnthropicProvider(ModelCompletionPort):
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """流式输出展示文本，随后发出经 SDK 校验的最终快照。"""
 
+        sequencer = ModelStreamSequencer()
+        started: set[int] = set()
+        completed: set[int] = set()
+        kinds: dict[int, str] = {}
+        text_parts: dict[int, str] = {}
+        thinking_parts: dict[int, str] = {}
         try:
             async with self.client.messages.stream(
                 model=self.model,
@@ -115,49 +125,102 @@ class AnthropicProvider(ModelCompletionPort):
                 tools=self._tools(request),
                 **cast(Any, self._reasoning_params()),
             ) as stream:
-                reasoning_ids: dict[int, str] = {}
                 async for event in stream:
-                    if (
-                        event.type == "content_block_delta"
-                        and event.delta.type == "text_delta"
+                    if event.type == "content_block_start":
+                        index = event.index
+                        kind = event.content_block.type
+                        kinds[index] = kind
+                        if kind == "text":
+                            started.add(index)
+                            text_parts[index] = str(
+                                getattr(event.content_block, "text", "")
+                            )
+                            yield sequencer.emit(ModelTextStarted())
+                        elif kind in {"thinking", "redacted_thinking"}:
+                            started.add(index)
+                            thinking_parts[index] = str(
+                                getattr(event.content_block, "thinking", "")
+                            )
+                            disclosure = (
+                                "verbatim" if kind == "thinking" else "redacted"
+                            )
+                            yield sequencer.emit(
+                                ModelReasoningStarted(
+                                    cast(Literal["verbatim", "redacted"], disclosure)
+                                )
+                            )
+                    elif event.type == "content_block_delta" and (
+                        event.delta.type == "text_delta"
                     ):
-                        yield ModelTextDelta(event.delta.text)
-                    elif (
-                        event.type == "content_block_start"
-                        and event.content_block.type
-                        in {"thinking", "redacted_thinking"}
-                    ):
-                        reasoning_id = f"anthropic:{event.index}"
-                        reasoning_ids[event.index] = reasoning_id
-                        disclosure = (
-                            "verbatim"
-                            if event.content_block.type == "thinking"
-                            else "redacted"
-                        )
-                        yield ModelReasoningStarted(
-                            reasoning_id,
-                            cast(Literal["verbatim", "redacted"], disclosure),
-                        )
+                        index = event.index
+                        if index not in started:
+                            started.add(index)
+                            kinds[index] = "text"
+                            text_parts[index] = ""
+                            yield sequencer.emit(ModelTextStarted())
+                        text_parts[index] = text_parts.get(index, "") + event.delta.text
+                        yield sequencer.emit(ModelTextDelta(event.delta.text))
                     elif (
                         event.type == "content_block_delta"
                         and event.delta.type == "thinking_delta"
                     ):
-                        reasoning_id = reasoning_ids.setdefault(
-                            event.index, f"anthropic:{event.index}"
+                        index = event.index
+                        if index not in started:
+                            started.add(index)
+                            kinds[index] = "thinking"
+                            thinking_parts[index] = ""
+                            yield sequencer.emit(ModelReasoningStarted("verbatim"))
+                        thinking_parts[index] = (
+                            thinking_parts.get(index, "") + event.delta.thinking
                         )
-                        yield ModelReasoningDelta(
-                            reasoning_id, "verbatim", 0, event.delta.thinking
+                        yield sequencer.emit(
+                            ModelReasoningDelta("verbatim", 0, event.delta.thinking)
                         )
-                    elif (
-                        event.type == "content_block_stop"
-                        and event.index in reasoning_ids
-                    ):
-                        yield ModelReasoningCompleted(reasoning_ids[event.index])
+                    elif event.type == "content_block_stop":
+                        index = event.index
+                        stopped_kind = kinds.get(index)
+                        if stopped_kind == "text":
+                            completed.add(index)
+                            yield sequencer.emit(
+                                ModelTextCompleted(text_parts.get(index, ""))
+                            )
+                        elif stopped_kind == "thinking":
+                            completed.add(index)
+                            thinking = thinking_parts.get(index, "")
+                            presentation = (
+                                ReasoningPresentation("verbatim", (thinking,))
+                                if thinking
+                                else ReasoningPresentation("hidden")
+                            )
+                            yield sequencer.emit(ModelReasoningCompleted(presentation))
+                        elif stopped_kind == "redacted_thinking":
+                            completed.add(index)
+                            yield sequencer.emit(
+                                ModelReasoningCompleted(
+                                    ReasoningPresentation("redacted")
+                                )
+                            )
                 final_message = cast(Message, await stream.get_final_message())
         except BadRequestError as error:
             _raise_context_overflow(error)
             raise
-        yield ModelOutputCompleted(output=self._response(final_message))
+        output = self._response(final_message)
+        for index, block in enumerate(output.content):
+            if not isinstance(block, (ModelTextBlock, ModelReasoningBlock)):
+                continue
+            if index not in started:
+                if isinstance(block, ModelTextBlock):
+                    yield sequencer.emit(ModelTextStarted())
+                else:
+                    yield sequencer.emit(
+                        ModelReasoningStarted(block.presentation.disclosure)
+                    )
+            if index not in completed:
+                if isinstance(block, ModelTextBlock):
+                    yield sequencer.emit(ModelTextCompleted(block.text))
+                else:
+                    yield sequencer.emit(ModelReasoningCompleted(block.presentation))
+        yield sequencer.emit(ModelOutputCompleted(output=output))
 
     @staticmethod
     def _messages(
@@ -240,7 +303,7 @@ class AnthropicProvider(ModelCompletionPort):
 
     def _response(self, response: Message) -> ModelOutput:
         content: list[ModelTextBlock | ModelToolUseBlock | ModelReasoningBlock] = []
-        for index, block in enumerate(response.content):
+        for block in response.content:
             if block.type == "thinking":
                 payload: dict[str, Any] = {
                     "type": "thinking",
@@ -249,8 +312,12 @@ class AnthropicProvider(ModelCompletionPort):
                 }
                 content.append(
                     ModelReasoningBlock(
-                        f"{response.id}:reasoning:{index}",
-                        ReasoningPresentation("verbatim", (block.thinking,)),
+                        new_id(),
+                        (
+                            ReasoningPresentation("verbatim", (block.thinking,))
+                            if block.thinking
+                            else ReasoningPresentation("hidden")
+                        ),
                         ProviderContinuationState(
                             self.binding, "active_trajectory", payload
                         ),
@@ -259,7 +326,7 @@ class AnthropicProvider(ModelCompletionPort):
             elif block.type == "redacted_thinking":
                 content.append(
                     ModelReasoningBlock(
-                        f"{response.id}:reasoning:{index}",
+                        new_id(),
                         ReasoningPresentation("redacted"),
                         ProviderContinuationState(
                             self.binding,

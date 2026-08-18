@@ -39,7 +39,15 @@ TUI 只通过 `application.chat.ChatRuntime` 的事件流提交输入、读取�
 
 ## 流式显示与持久化边界
 
-Provider adapter 把文本与 reasoning delta 转换为中立事件。增量正文只进入临时 `AssistantMessage`；`ReasoningMessage` 对实时内容默认展开，完成后可折叠，resume 历史默认折叠。verbatim/summary 使用不同标题，redacted/hidden 只显示安全占位。只有收到完整最终响应后才持久化；错误或取消保留临时内容并标记中断，不写入半截响应。`-p` 仍只输出最终正文。
+Provider adapter 把文本与 reasoning 转换为 started/delta/completed 中立生命周期，并把
+可能交错的 provider output item 顺序化为单活动展示块。增量只进入临时组件；completed
+携带最终正文或 presentation，并以该快照原子收口临时累计内容。最终 `ModelOutput` 不再
+驱动第二次展示，因此无需在 UI 事件中携带 reasoning UUID。
+
+`ReasoningMessage` 对实时内容默认展开，完成后可折叠，resume 历史默认折叠。
+verbatim/summary 使用不同标题，redacted/hidden 只显示安全占位。错误或取消只把当前
+未闭合组件标记中断，已经完成的前序 reasoning 保持正常；半截响应不写 Transcript。
+只有收到完整最终响应后才持久化，`-p` 仍只输出最终正文。
 
 工具开始时创建稳定的 `ToolCallMessage`，结束时用相同 tool ID 原位更新。显示名、参数摘要、活动描述和结果预览由对应 Tool 在核心层投影；TUI 只选择颜色、布局和展开方式，不识别 `Read`、`Bash` 等具体工具，也不从原始 tool result 猜测摘要。发送给模型的内容和用户展示内容是独立投影，UI 截断不改变模型上下文。
 

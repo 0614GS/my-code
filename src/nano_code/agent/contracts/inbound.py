@@ -84,7 +84,6 @@ class AgentHistoryAssistantMessage:
 
 @dataclass(frozen=True, slots=True)
 class AgentHistoryReasoning:
-    id: str
     presentation: ReasoningPresentation
 
 

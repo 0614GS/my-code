@@ -143,19 +143,27 @@ class ModelOutput:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelTextStarted:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class ModelTextDelta:
     text: str
 
 
 @dataclass(frozen=True, slots=True)
+class ModelTextCompleted:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class ModelReasoningStarted:
-    id: str
     disclosure: Literal["verbatim", "summary", "redacted", "hidden"]
 
 
 @dataclass(frozen=True, slots=True)
 class ModelReasoningDelta:
-    id: str
     disclosure: Literal["verbatim", "summary", "redacted", "hidden"]
     part_index: int
     text: str
@@ -163,7 +171,7 @@ class ModelReasoningDelta:
 
 @dataclass(frozen=True, slots=True)
 class ModelReasoningCompleted:
-    id: str
+    presentation: ReasoningPresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,12 +179,27 @@ class ModelOutputCompleted:
     output: ModelOutput
 
 
-type ModelStreamEvent = (
-    ModelTextDelta
+type ModelStreamPayload = (
+    ModelTextStarted
+    | ModelTextDelta
+    | ModelTextCompleted
     | ModelReasoningStarted
     | ModelReasoningDelta
     | ModelReasoningCompleted
     | ModelOutputCompleted
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelStreamEvent:
+    """一次 ModelCall 内、按 adapter 展示顺序编号的规范化事件。"""
+
+    sequence_number: int
+    payload: ModelStreamPayload
+
+    def __post_init__(self) -> None:
+        if self.sequence_number < 0:
+            raise ValueError("Model stream sequence number must not be negative")
+
 
 __all__ = [name for name in globals() if name.startswith("Model")]

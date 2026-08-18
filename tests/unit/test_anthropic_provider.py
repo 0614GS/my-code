@@ -1,13 +1,19 @@
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
 from anthropic.types import TextBlockParam
 
 from nano_code.agent import (
     ModelAssistantMessage,
     ModelReasoningBlock,
+    ModelReasoningCompleted,
+    ModelReasoningStarted,
     ModelRequest,
     ModelTextBlock,
+    ModelTextCompleted,
+    ModelTextDelta,
+    ModelTextStarted,
     ModelToolUseBlock,
     ModelUserMessage,
 )
@@ -23,6 +29,7 @@ from nano_code.prompts import (
 )
 from nano_code.providers import ProviderCapabilities
 from nano_code.providers.anthropic import AnthropicProvider, _system_prompt_param
+from nano_code.providers.profiles import ReasoningConfig
 
 
 def prompt() -> SystemPrompt:
@@ -157,3 +164,128 @@ def test_anthropic_response_preserves_thinking_block_order() -> None:
         "thinking": "hidden",
         "signature": "signed",
     }
+
+
+def test_anthropic_empty_thinking_is_hidden_but_continuation_is_preserved() -> None:
+    provider = object.__new__(AnthropicProvider)
+    provider.model = "deepseek-v4-flash"
+    provider.binding = ProviderBinding(
+        "anthropic-messages", "deepseek", "deepseek-v4-flash"
+    )
+    response = SimpleNamespace(
+        id="message",
+        content=[
+            SimpleNamespace(type="thinking", thinking="", signature="signed"),
+            SimpleNamespace(type="text", text="done"),
+        ],
+        stop_reason="end_turn",
+        usage=SimpleNamespace(
+            input_tokens=10,
+            output_tokens=5,
+            cache_creation_input_tokens=None,
+            cache_read_input_tokens=None,
+        ),
+    )
+
+    output = provider._response(response)  # type: ignore[arg-type]
+
+    reasoning = cast(ModelReasoningBlock, output.content[0])
+    assert reasoning.presentation == ReasoningPresentation("hidden")
+    assert reasoning.continuation is not None
+    assert reasoning.continuation.payload == {
+        "type": "thinking",
+        "thinking": "",
+        "signature": "signed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_empty_thinking_completes_hidden_without_replay() -> (
+    None
+):
+    provider = object.__new__(AnthropicProvider)
+    provider.model = "deepseek-v4-flash"
+    provider.binding = ProviderBinding(
+        "anthropic-messages", "deepseek", "deepseek-v4-flash"
+    )
+    provider.reasoning = ReasoningConfig(enabled=False)
+    provider._capabilities = ProviderCapabilities()
+    final = SimpleNamespace(
+        id="message",
+        content=[
+            SimpleNamespace(type="thinking", thinking="", signature="signed"),
+            SimpleNamespace(type="text", text="done"),
+        ],
+        stop_reason="end_turn",
+        usage=SimpleNamespace(
+            input_tokens=10,
+            output_tokens=5,
+            cache_creation_input_tokens=None,
+            cache_read_input_tokens=None,
+        ),
+    )
+    raw_events = (
+        SimpleNamespace(
+            type="content_block_start",
+            index=0,
+            content_block=SimpleNamespace(type="thinking", thinking=""),
+        ),
+        SimpleNamespace(type="content_block_stop", index=0),
+        SimpleNamespace(
+            type="content_block_start",
+            index=1,
+            content_block=SimpleNamespace(type="text", text=""),
+        ),
+        SimpleNamespace(
+            type="content_block_delta",
+            index=1,
+            delta=SimpleNamespace(type="text_delta", text="done"),
+        ),
+        SimpleNamespace(type="content_block_stop", index=1),
+    )
+
+    class Stream:
+        async def __aenter__(self) -> "Stream":
+            self._events = iter(raw_events)
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def __aiter__(self) -> "Stream":
+            return self
+
+        async def __anext__(self) -> object:
+            try:
+                return next(self._events)
+            except StopIteration as error:
+                raise StopAsyncIteration from error
+
+        async def get_final_message(self) -> object:
+            return final
+
+    class Messages:
+        def stream(self, **_: object) -> Stream:
+            return Stream()
+
+    provider.client = SimpleNamespace(messages=Messages())  # type: ignore[assignment]
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (ModelUserMessage((ModelTextBlock("hello"),)),),
+        (),
+        100,
+    )
+
+    events = [event async for event in provider.stream(request)]
+    payloads = [event.payload for event in events]
+
+    assert [event.sequence_number for event in events] == list(range(len(events)))
+    assert [type(payload) for payload in payloads[:-1]] == [
+        ModelReasoningStarted,
+        ModelReasoningCompleted,
+        ModelTextStarted,
+        ModelTextDelta,
+        ModelTextCompleted,
+    ]
+    completed = cast(ModelReasoningCompleted, payloads[1])
+    assert completed.presentation == ReasoningPresentation("hidden")

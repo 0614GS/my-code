@@ -7,8 +7,17 @@ from nano_code.application.chat.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
 )
-from nano_code.conversation import JsonObject, ReasoningDisclosure
+from nano_code.conversation import (
+    JsonObject,
+    ReasoningDisclosure,
+    ReasoningPresentation,
+)
 from nano_code.features.todos.models import TodoItem
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTextStarted:
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,14 +26,17 @@ class AgentTextDelta:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentTextCompleted:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class AgentReasoningStarted:
-    id: str
     disclosure: ReasoningDisclosure
 
 
 @dataclass(frozen=True, slots=True)
 class AgentReasoningDelta:
-    id: str
     disclosure: ReasoningDisclosure
     part_index: int
     text: str
@@ -32,7 +44,7 @@ class AgentReasoningDelta:
 
 @dataclass(frozen=True, slots=True)
 class AgentReasoningCompleted:
-    id: str
+    presentation: ReasoningPresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +81,9 @@ class AgentStepLimitReached:
 
 
 type AgentEvent = (
-    AgentTextDelta
+    AgentTextStarted
+    | AgentTextDelta
+    | AgentTextCompleted
     | AgentReasoningStarted
     | AgentReasoningDelta
     | AgentReasoningCompleted

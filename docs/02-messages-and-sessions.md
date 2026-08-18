@@ -36,16 +36,20 @@ assistant/tool 协议块。
 和 compact 输入中保持原位置；锚点被 compact 移出 working set 后交付随之裁剪。
 delivery 不持久化，因此 resume 或切换 session 后不会重放。
 
-## 3. 四类 ID
+## 3. 身份与流式顺序
 
-源码同时使用几种不同身份：
+源码刻意分开几种不同用途：
 
-- `Message.uuid`：本地消息记录 ID，用于 Transcript 链和 UI 更新。
-- `assistant.message.id`：模型响应 ID；一次流式响应拆出的多个 assistant 记录共享它。
-- `tool_use.id`：工具协议 ID，`tool_result.tool_use_id` 必须与之相同。
-- `sourceToolAssistantUUID`：工具结果指向产生该调用的本地 assistant UUID。
+- `Message.uuid` 是本地 Transcript 记录和父链身份。
+- `ReasoningContent.id` 是 reasoning 完成后生成的本地持久化身份；实时事件不携带它。
+- `tool_use.id` 是工具协议关联键，`tool_result.tool_use_id` 必须与之相同。
+- Anthropic message ID、OpenAI response/item ID 等原始身份只存在于匹配 provider 的
+  continuation payload，不进入 Application/TUI。
+- Model stream `sequence_number` 只表示单次请求内规范化事件的先后顺序，每次请求
+  重新计数，不能替代上述任何身份。
 
-不能用 `message.id` 替代 `uuid`：并行工具调用时，一个 API 响应可能被拆成多个本地消息。也不能用 assistant UUID 替代 tool ID：一个 assistant block 可以包含多个工具调用。
+因此流式展示不依赖 provider ID 或 UUID 去重。临时块在 completed 到达时原子收口，
+最终 `ModelOutput` 只写入一次 Conversation/Transcript。
 
 ## 4. JSONL Transcript schema
 

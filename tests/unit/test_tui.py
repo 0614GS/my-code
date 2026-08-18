@@ -14,10 +14,15 @@ from nano_code.application.chat.contracts import (
     PathSuggestion,
     PermissionHandler,
     PermissionRequest,
+    ReasoningCompleted,
+    ReasoningDelta,
+    ReasoningStarted,
     ResumedSession,
     RuntimeStatus,
     StepLimitReached,
+    TextCompleted,
     TextDelta,
+    TextStarted,
     TodoListUpdated,
     ToolFinished,
     ToolStarted,
@@ -30,6 +35,7 @@ from nano_code.application.chat.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
 )
+from nano_code.conversation import ReasoningPresentation
 from nano_code.features.todos.models import TodoItem
 from nano_code.permissions import (
     PermissionBehavior,
@@ -51,6 +57,7 @@ from nano_code.tui.widgets import (
     ActivityBar,
     AssistantMessage,
     PermissionPanel,
+    ReasoningMessage,
     SystemMessage,
     TodoPanel,
     ToolCallMessage,
@@ -174,6 +181,32 @@ class MaxStepsRuntime(FakeRuntime):
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
         self.prompts.append(prompt)
         yield StepLimitReached(MaxStepsReached(3, 3, 30, 6))
+
+
+class ReasoningRuntime(FakeRuntime):
+    async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
+        self.prompts.append(prompt)
+        yield ReasoningStarted("verbatim")
+        yield ReasoningDelta("verbatim", 0, "first draft")
+        yield ReasoningCompleted(ReasoningPresentation("verbatim", ("first final",)))
+        yield ReasoningStarted("summary")
+        yield ReasoningDelta("summary", 0, "second draft")
+        yield ReasoningCompleted(ReasoningPresentation("summary", ("second final",)))
+        yield TextStarted()
+        yield TextDelta("draft")
+        yield TextCompleted("corrected")
+        yield TurnCompleted(TurnSucceeded("corrected", 1, 1, 1))
+
+
+class InterruptedReasoningRuntime(FakeRuntime):
+    async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
+        self.prompts.append(prompt)
+        yield ReasoningStarted("summary")
+        yield ReasoningDelta("summary", 0, "complete")
+        yield ReasoningCompleted(ReasoningPresentation("summary", ("complete",)))
+        yield ReasoningStarted("summary")
+        yield ReasoningDelta("summary", 0, "partial")
+        raise RuntimeError("provider failed")
 
 
 def test_slash_registry_filters_candidates_by_prefix() -> None:
@@ -508,6 +541,40 @@ async def test_tui_streams_markdown_and_updates_tool_result_in_place() -> None:
         assert tool.result == ToolResultPresentation(summary="Wrote 4 bytes to a.txt")
         assert assistant.source == "**model response**"
         assert runtime.permission_result == PermissionConfirmation(True)
+
+
+@pytest.mark.asyncio
+async def test_tui_atomically_completes_multiple_reasoning_and_text_blocks() -> None:
+    app = NanoCodeApp(ReasoningRuntime())
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        app.query_one("#prompt", Input).value = "think"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        reasoning = list(app.query(ReasoningMessage))
+        assert len(reasoning) == 2
+        assert [item.parts for item in reasoning] == [
+            ["first final"],
+            ["second final"],
+        ]
+        assert all(item.completed and not item.interrupted for item in reasoning)
+        assert list(app.query(AssistantMessage))[-1].source == "corrected"
+
+
+@pytest.mark.asyncio
+async def test_tui_marks_only_active_reasoning_interrupted() -> None:
+    app = NanoCodeApp(InterruptedReasoningRuntime())
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        app.query_one("#prompt", Input).value = "think"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        reasoning = list(app.query(ReasoningMessage))
+        assert len(reasoning) == 2
+        assert reasoning[0].interrupted is False
+        assert reasoning[1].interrupted is True
 
 
 @pytest.mark.asyncio

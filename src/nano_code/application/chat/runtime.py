@@ -17,7 +17,9 @@ from nano_code.agent import (
     AgentReasoningStarted,
     AgentSessionView,
     AgentStepLimitReached,
+    AgentTextCompleted,
     AgentTextDelta,
+    AgentTextStarted,
     AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
@@ -45,7 +47,9 @@ from nano_code.application.chat.contracts import (
     ResumedSession,
     RuntimeStatus,
     StepLimitReached,
+    TextCompleted,
     TextDelta,
+    TextStarted,
     TodoListUpdated,
     ToolFinished,
     ToolStarted,
@@ -120,16 +124,18 @@ class DefaultChatRuntime:
             async for event in self.agent.stream(
                 AgentTurnInput(prompt, tuple(item.attachment for item in loaded))
             ):
-                if isinstance(event, AgentTextDelta):
+                if isinstance(event, AgentTextStarted):
+                    yield TextStarted()
+                elif isinstance(event, AgentTextDelta):
                     yield TextDelta(event.text)
+                elif isinstance(event, AgentTextCompleted):
+                    yield TextCompleted(event.text)
                 elif isinstance(event, AgentReasoningStarted):
-                    yield ReasoningStarted(event.id, event.disclosure)
+                    yield ReasoningStarted(event.disclosure)
                 elif isinstance(event, AgentReasoningDelta):
-                    yield ReasoningDelta(
-                        event.id, event.disclosure, event.part_index, event.text
-                    )
+                    yield ReasoningDelta(event.disclosure, event.part_index, event.text)
                 elif isinstance(event, AgentReasoningCompleted):
-                    yield ReasoningCompleted(event.id)
+                    yield ReasoningCompleted(event.presentation)
                 elif isinstance(event, AgentToolStarted):
                     yield ToolStarted(event.tool_use_id, event.presentation)
                 elif isinstance(event, AgentToolFinished):
@@ -265,7 +271,7 @@ class DefaultChatRuntime:
             elif isinstance(entry, AgentHistoryAssistantMessage):
                 history.append(HistoryAssistantMessage(entry.text))
             elif isinstance(entry, AgentHistoryReasoning):
-                history.append(HistoryReasoning(entry.id, entry.presentation))
+                history.append(HistoryReasoning(entry.presentation))
             elif isinstance(entry, AgentHistorySystemMessage):
                 history.append(HistorySystemMessage(entry.text))
             elif isinstance(entry, AgentHistoryToolCall):

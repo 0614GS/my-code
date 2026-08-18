@@ -7,6 +7,12 @@ import pytest
 from nano_code.agent import (
     AgentEngine,
     AgentMaxStepsReached,
+    AgentReasoningCompleted,
+    AgentReasoningDelta,
+    AgentReasoningStarted,
+    AgentTextCompleted,
+    AgentTextDelta,
+    AgentTextStarted,
     AgentTodoListUpdated,
     AgentTurnInput,
     AgentTurnSucceeded,
@@ -15,9 +21,15 @@ from nano_code.agent import (
     ModelOutput,
     ModelOutputCompleted,
     ModelReasoningBlock,
+    ModelReasoningCompleted,
+    ModelReasoningDelta,
+    ModelReasoningStarted,
     ModelRequest,
     ModelStreamEvent,
     ModelTextBlock,
+    ModelTextCompleted,
+    ModelTextDelta,
+    ModelTextStarted,
     ModelToolUseBlock,
 )
 from nano_code.context.attachments.models import (
@@ -32,6 +44,7 @@ from nano_code.conversation import (
     HumanMessage,
     ProviderBinding,
     ProviderContinuationState,
+    ReasoningContent,
     ReasoningPresentation,
     TextContent,
     TokenUsage,
@@ -41,6 +54,10 @@ from nano_code.conversation import (
 from nano_code.permissions import PermissionMode, PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
 from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
+from nano_code.providers.streaming import (
+    ModelStreamSequencer,
+    completed_output_payloads,
+)
 from nano_code.sessions import SessionStore
 from nano_code.tools import ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
@@ -60,7 +77,9 @@ class FakeModel:
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         output = await self.complete(request)
-        yield ModelOutputCompleted(output)
+        sequencer = ModelStreamSequencer()
+        for payload in completed_output_payloads(output):
+            yield sequencer.emit(payload)
 
 
 class OverflowOnceModel(FakeModel):
@@ -75,6 +94,25 @@ class OverflowOnceModel(FakeModel):
             raise ModelContextOverflow("too long")
         async for event in super().stream(request):
             yield event
+
+
+class NativeLifecycleModel(FakeModel):
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        output = await self.complete(request)
+        sequencer = ModelStreamSequencer()
+        payloads = (
+            ModelReasoningStarted("summary"),
+            ModelReasoningDelta("summary", 0, "partial"),
+            ModelReasoningCompleted(
+                ReasoningPresentation("summary", ("final summary",))
+            ),
+            ModelTextStarted(),
+            ModelTextDelta("dra"),
+            ModelTextCompleted("draft corrected"),
+            ModelOutputCompleted(output),
+        )
+        for payload in payloads:
+            yield sequencer.emit(payload)
 
 
 def _engine(
@@ -113,6 +151,33 @@ def _engine(
         max_steps=max_steps,
     )
     return engine, model, conversation, tool_round
+
+
+@pytest.mark.asyncio
+async def test_native_stream_lifecycle_is_not_replayed_from_final_output(
+    tmp_path: Path,
+) -> None:
+    reasoning = ModelReasoningBlock(
+        "local-reasoning",
+        ReasoningPresentation("summary", ("final summary",)),
+    )
+    engine, _, conversation, _ = _engine(
+        tmp_path,
+        [ModelOutput((reasoning, ModelTextBlock("draft corrected")), "end_turn")],
+        model_type=NativeLifecycleModel,
+    )
+
+    events = [event async for event in engine.stream(AgentTurnInput("hello"))]
+
+    assert sum(isinstance(event, AgentReasoningStarted) for event in events) == 1
+    assert sum(isinstance(event, AgentReasoningDelta) for event in events) == 1
+    assert sum(isinstance(event, AgentReasoningCompleted) for event in events) == 1
+    assert sum(isinstance(event, AgentTextStarted) for event in events) == 1
+    assert sum(isinstance(event, AgentTextDelta) for event in events) == 1
+    assert sum(isinstance(event, AgentTextCompleted) for event in events) == 1
+    assistant = conversation.history[-1]
+    assert isinstance(assistant, AssistantMessage)
+    assert sum(isinstance(block, ReasoningContent) for block in assistant.content) == 1
 
 
 @pytest.mark.asyncio

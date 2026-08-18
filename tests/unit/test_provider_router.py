@@ -5,6 +5,8 @@ from nano_code.agent import (
     ModelOutputCompleted,
     ModelRequest,
     ModelTextBlock,
+    ModelTextCompleted,
+    ModelTextStarted,
 )
 from nano_code.auth import CredentialSource
 from nano_code.conversation import TokenUsage
@@ -81,5 +83,7 @@ async def test_router_adapts_complete_only_provider_to_final_stream_event() -> N
 
     events = [event async for event in router.stream(empty_request())]
 
-    assert len(events) == 1
-    assert isinstance(events[0], ModelOutputCompleted)
+    assert [event.sequence_number for event in events] == [0, 1, 2]
+    assert isinstance(events[0].payload, ModelTextStarted)
+    assert isinstance(events[1].payload, ModelTextCompleted)
+    assert isinstance(events[2].payload, ModelOutputCompleted)

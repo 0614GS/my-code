@@ -16,8 +16,11 @@ from nano_code.agent.contracts.model import (
     ModelReasoningStarted,
     ModelRequest,
     ModelStreamEvent,
+    ModelStreamPayload,
     ModelTextBlock,
+    ModelTextCompleted,
     ModelTextDelta,
+    ModelTextStarted,
     ModelToolResultBlock,
     ModelToolUseBlock,
 )
@@ -31,8 +34,139 @@ from nano_code.conversation import (
     TokenUsage,
     to_json_object,
 )
+from nano_code.conversation.primitives import new_id
 from nano_code.providers.base import ProviderCapabilities
 from nano_code.providers.profiles import ReasoningConfig
+from nano_code.providers.streaming import ModelStreamSequencer
+
+type _DisplayKey = tuple[str, int]
+
+
+class _OpenAIStreamNormalizer:
+    """Serialize provider output items into one active display block."""
+
+    def __init__(self) -> None:
+        self.active: _DisplayKey | None = None
+        self.started: set[_DisplayKey] = set()
+        self.completed: set[_DisplayKey] = set()
+        self.pending: list[object] = []
+
+    def feed(self, event: object) -> list[ModelStreamPayload]:
+        key = self._key(event)
+        if key is None:
+            return []
+        if self.active is not None and self.active != key:
+            self.pending.append(event)
+            return []
+        payloads = self._process(event, key)
+        while self.active is None and self.pending:
+            pending = self.pending.pop(0)
+            pending_key = self._key(pending)
+            if pending_key is None:
+                continue
+            payloads.extend(self._process(pending, pending_key))
+        return payloads
+
+    def reconcile(self, response: object) -> list[ModelStreamPayload]:
+        """Close incomplete blocks and synthesize blocks absent from the SSE stream."""
+
+        payloads: list[ModelStreamPayload] = []
+        self.pending.clear()
+        for index, item in enumerate(getattr(response, "output", ())):
+            raw = _model_dump(item)
+            kind = raw.get("type")
+            if kind == "reasoning":
+                key = ("reasoning", index)
+                if key in self.completed:
+                    continue
+                presentation = _reasoning_presentation(raw)
+                if key not in self.started:
+                    payloads.append(ModelReasoningStarted(presentation.disclosure))
+                    self.started.add(key)
+                payloads.append(ModelReasoningCompleted(presentation))
+                self.completed.add(key)
+            elif kind == "message":
+                key = ("text", index)
+                if key in self.completed:
+                    continue
+                text = _message_text(raw)
+                if not text and key not in self.started:
+                    continue
+                if key not in self.started:
+                    payloads.append(ModelTextStarted())
+                    self.started.add(key)
+                payloads.append(ModelTextCompleted(text))
+                self.completed.add(key)
+        self.active = None
+        return payloads
+
+    @staticmethod
+    def _key(event: object) -> _DisplayKey | None:
+        raw_event = cast(Any, event)
+        event_type = getattr(raw_event, "type", "")
+        if event_type in {
+            "response.output_text.delta",
+            "response.refusal.delta",
+        }:
+            return ("text", int(raw_event.output_index))
+        if event_type == "response.reasoning_summary_text.delta":
+            return ("reasoning", int(raw_event.output_index))
+        if event_type == "response.output_item.done":
+            item_type = getattr(raw_event.item, "type", None)
+            if item_type == "reasoning":
+                return ("reasoning", int(raw_event.output_index))
+            if item_type == "message":
+                return ("text", int(raw_event.output_index))
+        return None
+
+    def _process(self, event: object, key: _DisplayKey) -> list[ModelStreamPayload]:
+        raw_event = cast(Any, event)
+        event_type = getattr(raw_event, "type", "")
+        payloads: list[ModelStreamPayload] = []
+        if event_type in {
+            "response.output_text.delta",
+            "response.refusal.delta",
+        }:
+            if key not in self.started:
+                self.started.add(key)
+                self.active = key
+                payloads.append(ModelTextStarted())
+            payloads.append(ModelTextDelta(str(raw_event.delta)))
+            return payloads
+        if event_type == "response.reasoning_summary_text.delta":
+            if key not in self.started:
+                self.started.add(key)
+                self.active = key
+                payloads.append(ModelReasoningStarted("summary"))
+            payloads.append(
+                ModelReasoningDelta(
+                    "summary",
+                    int(getattr(raw_event, "summary_index", 0)),
+                    str(raw_event.delta),
+                )
+            )
+            return payloads
+        if event_type == "response.output_item.done":
+            raw = _model_dump(raw_event.item)
+            if raw.get("type") == "reasoning":
+                presentation = _reasoning_presentation(raw)
+                if key not in self.started:
+                    self.started.add(key)
+                    payloads.append(ModelReasoningStarted(presentation.disclosure))
+                payloads.append(ModelReasoningCompleted(presentation))
+            else:
+                text = _message_text(raw)
+                if not text and key not in self.started:
+                    return []
+                if key not in self.started:
+                    self.started.add(key)
+                    payloads.append(ModelTextStarted())
+                payloads.append(ModelTextCompleted(text))
+            self.completed.add(key)
+            if self.active == key:
+                self.active = None
+            return payloads
+        return payloads
 
 
 class OpenAIResponsesProvider(ModelCompletionPort):
@@ -71,56 +205,40 @@ class OpenAIResponsesProvider(ModelCompletionPort):
         params = self._request_params(request)
         params["stream"] = True
         final: object | None = None
-        reasoning_ids: dict[int, str] = {}
-        started_reasoning: set[int] = set()
+        sequencer = ModelStreamSequencer()
+        normalizer = _OpenAIStreamNormalizer()
+        last_provider_sequence: int | None = None
         try:
             stream = await self.client.responses.create(**cast(Any, params))
             async for event in cast(Any, stream):
                 event_type = getattr(event, "type", "")
-                if event_type == "response.output_text.delta":
-                    yield ModelTextDelta(str(event.delta))
-                elif (
-                    event_type == "response.output_item.added"
-                    and getattr(event.item, "type", None) == "reasoning"
-                ):
-                    index = int(event.output_index)
-                    reasoning_id = str(
-                        getattr(event.item, "id", "") or f"openai:{index}"
-                    )
-                    reasoning_ids[index] = reasoning_id
-                elif event_type == "response.reasoning_summary_text.delta":
-                    index = int(event.output_index)
-                    reasoning_id = reasoning_ids.setdefault(
-                        index, str(getattr(event, "item_id", "") or f"openai:{index}")
-                    )
-                    if index not in started_reasoning:
-                        started_reasoning.add(index)
-                        yield ModelReasoningStarted(reasoning_id, "summary")
-                    yield ModelReasoningDelta(
-                        reasoning_id,
-                        "summary",
-                        int(getattr(event, "summary_index", 0)),
-                        str(event.delta),
-                    )
-                elif (
-                    event_type == "response.output_item.done"
-                    and int(event.output_index) in reasoning_ids
-                ):
-                    index = int(event.output_index)
-                    if index not in started_reasoning:
-                        started_reasoning.add(index)
-                        yield ModelReasoningStarted(reasoning_ids[index], "hidden")
-                    yield ModelReasoningCompleted(reasoning_ids[index])
-                elif event_type in {"response.completed", "response.incomplete"}:
+                provider_sequence = getattr(event, "sequence_number", None)
+                if isinstance(provider_sequence, int):
+                    if (
+                        last_provider_sequence is not None
+                        and provider_sequence <= last_provider_sequence
+                    ):
+                        raise RuntimeError(
+                            "OpenAI Responses stream sequence numbers are not "
+                            "increasing"
+                        )
+                    last_provider_sequence = provider_sequence
+                if event_type in {"response.completed", "response.incomplete"}:
                     final = event.response
                 elif event_type == "response.failed":
                     raise RuntimeError(f"OpenAI response failed: {event.response}")
+                else:
+                    for payload in normalizer.feed(event):
+                        yield sequencer.emit(payload)
         except BadRequestError as error:
             _raise_context_overflow(error)
             raise
         if final is None:
             raise RuntimeError("OpenAI Responses stream ended without a final response")
-        yield ModelOutputCompleted(self._response(final))
+        output = self._response(final)
+        for payload in normalizer.reconcile(final):
+            yield sequencer.emit(payload)
+        yield sequencer.emit(ModelOutputCompleted(output))
 
     def _request_params(self, request: ModelRequest) -> dict[str, object]:
         reasoning: dict[str, object] = {
@@ -185,7 +303,7 @@ class OpenAIResponsesProvider(ModelCompletionPort):
 
     def _response(self, response: object) -> ModelOutput:
         content: list[ModelTextBlock | ModelToolUseBlock | ModelReasoningBlock] = []
-        for index, item in enumerate(getattr(response, "output", ())):
+        for item in getattr(response, "output", ()):
             payload = _model_dump(item)
             item_type = payload.get("type")
             if item_type in {"reasoning", "function_call", "message"}:
@@ -194,28 +312,10 @@ class OpenAIResponsesProvider(ModelCompletionPort):
                 self.binding, "working_context", payload
             )
             if item_type == "reasoning":
-                parts = tuple(
-                    str(part["text"])
-                    for part in cast(list[object], payload.get("summary", []))
-                    if isinstance(part, dict)
-                    and part.get("type") == "summary_text"
-                    and isinstance(part.get("text"), str)
-                    and part["text"]
-                )
-                presentation = (
-                    ReasoningPresentation("summary", parts)
-                    if parts
-                    else ReasoningPresentation("hidden")
-                )
+                presentation = _reasoning_presentation(payload)
                 content.append(
                     ModelReasoningBlock(
-                        str(
-                            payload.get("id")
-                            or (
-                                f"{getattr(response, 'id', 'response')}"
-                                f":reasoning:{index}"
-                            )
-                        ),
+                        new_id(),
                         presentation,
                         continuation,
                     )
@@ -241,20 +341,9 @@ class OpenAIResponsesProvider(ModelCompletionPort):
                     ModelToolUseBlock(call_id, name, tool_input, continuation)
                 )
             elif item_type == "message":
-                texts: list[str] = []
-                for part in cast(list[object], payload.get("content", [])):
-                    if not isinstance(part, dict):
-                        continue
-                    if part.get("type") == "output_text" and isinstance(
-                        part.get("text"), str
-                    ):
-                        texts.append(cast(str, part["text"]))
-                    elif part.get("type") == "refusal" and isinstance(
-                        part.get("refusal"), str
-                    ):
-                        texts.append(cast(str, part["refusal"]))
-                if texts:
-                    content.append(ModelTextBlock("\n".join(texts), continuation))
+                text = _message_text(payload)
+                if text:
+                    content.append(ModelTextBlock(text, continuation))
         usage = getattr(response, "usage", None)
         cached_tokens = int(
             getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", 0)
@@ -277,6 +366,34 @@ def _model_dump(item: object) -> JsonObject:
     if not callable(dump):
         raise TypeError("Expected an OpenAI response output item")
     return to_json_object(dump(mode="json", exclude_none=False))
+
+
+def _reasoning_presentation(payload: JsonObject) -> ReasoningPresentation:
+    parts = tuple(
+        str(part["text"])
+        for part in cast(list[object], payload.get("summary", []))
+        if isinstance(part, dict)
+        and part.get("type") == "summary_text"
+        and isinstance(part.get("text"), str)
+        and part["text"]
+    )
+    return (
+        ReasoningPresentation("summary", parts)
+        if parts
+        else ReasoningPresentation("hidden")
+    )
+
+
+def _message_text(payload: JsonObject) -> str:
+    texts: list[str] = []
+    for part in cast(list[object], payload.get("content", [])):
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "output_text" and isinstance(part.get("text"), str):
+            texts.append(cast(str, part["text"]))
+        elif part.get("type") == "refusal" and isinstance(part.get("refusal"), str):
+            texts.append(cast(str, part["refusal"]))
+    return "\n".join(texts)
 
 
 def _openai_item(state: ProviderContinuationState) -> JsonObject:

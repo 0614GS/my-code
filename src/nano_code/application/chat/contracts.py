@@ -84,19 +84,27 @@ class PermissionRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class TextStarted:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class TextDelta:
     text: str
 
 
 @dataclass(frozen=True, slots=True)
+class TextCompleted:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class ReasoningStarted:
-    id: str
     disclosure: ReasoningDisclosure
 
 
 @dataclass(frozen=True, slots=True)
 class ReasoningDelta:
-    id: str
     disclosure: ReasoningDisclosure
     part_index: int
     text: str
@@ -104,7 +112,7 @@ class ReasoningDelta:
 
 @dataclass(frozen=True, slots=True)
 class ReasoningCompleted:
-    id: str
+    presentation: ReasoningPresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +152,9 @@ class StepLimitReached:
 
 type TurnEvent = (
     AttachmentLoaded
+    | TextStarted
     | TextDelta
+    | TextCompleted
     | ReasoningStarted
     | ReasoningDelta
     | ReasoningCompleted
@@ -168,7 +178,6 @@ class HistoryAssistantMessage:
 
 @dataclass(frozen=True, slots=True)
 class HistoryReasoning:
-    id: str
     presentation: ReasoningPresentation
 
 

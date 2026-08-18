@@ -107,6 +107,12 @@ settings 或入口显式提供 `max_steps` 时才在完整提交当前 ToolRound
 ModelCall 不增加 completed step 计数。会话事实由 `ConversationState` 管理，
 工具轮由 `ToolRoundPort` 管理，摘要由 `Compactor` 管理。
 
+`ModelCallPort.stream()` 返回带请求内连续 `sequence_number` 的 envelope；每次调用从
+0 重新编号。payload 使用 text/reasoning 的 started、delta、completed 生命周期，且
+provider adapter 必须保证同一时刻最多一个展示块处于活动状态。completed 携带最终
+展示快照，`ModelOutputCompleted` 只提交完整响应，不再次投影 UI 内容。Agent 校验序号
+和生命周期后剥离序号，Application/TUI 不把它当消息 ID 或断线续传游标。
+
 六边形边界由 `nano_code.agent` 统一声明：CLI/TUI 通过 `AgentInboundPort` 调用
 `submit`、`stream`、`status`、`context_status`、compact 和 resume；Engine 通过下列 outbound port
 请求外部能力。`context`、`providers`、`sessions` 和 `tools` 只实现这些协议或重新
