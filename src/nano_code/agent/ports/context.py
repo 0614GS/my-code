@@ -5,7 +5,7 @@ from typing import Protocol, runtime_checkable
 from nano_code.agent.contracts.context import ContextBudget, ContextPlan
 from nano_code.agent.contracts.model import ModelMessage
 from nano_code.agent.contracts.session import ContentReplacement, ConversationSnapshot
-from nano_code.messages import ConversationMessage
+from nano_code.conversation import ConversationMessage
 
 
 @runtime_checkable

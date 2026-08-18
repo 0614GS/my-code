@@ -6,21 +6,23 @@ from uuid import uuid4
 
 from nano_code.agent import AgentEngine, ConversationState
 from nano_code.agent.contracts.session import SessionStart
-from nano_code.attachments import AttachmentLoader, WorkspacePathSuggester
+from nano_code.application.chat.permissions import DeferredPermissionPrompter
+from nano_code.application.chat.runtime import DefaultChatRuntime
 from nano_code.auth import CredentialStore
-from nano_code.cli.runtime import CliChatRuntime, DeferredPermissionPrompter
 from nano_code.cli.services import CliProviderController, ProjectSessionSource
-from nano_code.context import (
-    AgentsUserContextResolver,
+from nano_code.context.attachments.sources import DerivedAttachmentResolver
+from nano_code.context.compaction import (
     CompactionCoordinator,
-    ContextPlanner,
-    ContextWindow,
-    DerivedAttachmentResolver,
+    CompactionService,
 )
-from nano_code.context.compaction import CompactionService
+from nano_code.context.planner import ContextPlanner
+from nano_code.context.user_context import AgentsUserContextResolver
+from nano_code.context.window import ContextWindow
 from nano_code.core.paths import NanoCodePaths, SettingsScope
 from nano_code.core.settings import AgentSettings
 from nano_code.core.settings_store import SettingsLayer, SettingsStore
+from nano_code.features.file_mentions import AttachmentLoader, WorkspacePathSuggester
+from nano_code.features.todos.reminder import TodoReminderAttachmentSource
 from nano_code.permissions import PermissionPolicy
 from nano_code.permissions.prompt import (
     HeadlessPrompter,
@@ -39,7 +41,6 @@ from nano_code.providers.profiles import (
 )
 from nano_code.providers.router import ProviderConnection, ProviderRouter
 from nano_code.sessions import SessionStore
-from nano_code.todos import TodoReminderAttachmentSource
 from nano_code.tools import ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
@@ -95,6 +96,7 @@ def _assemble_agent(
     ToolRegistry,
     PermissionPolicy,
     ToolContext,
+    ToolExecutor,
 ]:
     actual_session_id = session_id or str(uuid4())
     repository = SessionStore(
@@ -168,7 +170,7 @@ def _assemble_agent(
         compactor=CompactionCoordinator(context, CompactionService(provider)),
         max_steps=settings.max_steps,
     )
-    return engine, provider, registry, permission_policy, tool_context
+    return engine, provider, registry, permission_policy, tool_context, tool_executor
 
 
 def bootstrap_agent(
@@ -179,7 +181,7 @@ def bootstrap_agent(
 ) -> AgentEngine:
     """组装一个可由任意 driving adapter 使用的 Agent。"""
 
-    engine, _, _, _, _ = _assemble_agent(
+    engine, _, _, _, _, _ = _assemble_agent(
         settings,
         session_id,
         permission_prompter=permission_prompter,
@@ -190,16 +192,16 @@ def bootstrap_agent(
 def bootstrap_cli_runtime(
     settings: AgentSettings,
     session_id: str | None = None,
-) -> CliChatRuntime:
+) -> DefaultChatRuntime:
     """组装 TUI 所需的 Agent 与 CLI application adapter。"""
 
     prompter = DeferredPermissionPrompter()
-    engine, provider, registry, permission_policy, tool_context = _assemble_agent(
+    engine, provider, _, _, _, tool_executor = _assemble_agent(
         settings,
         session_id,
         permission_prompter=prompter,
     )
-    return CliChatRuntime(
+    return DefaultChatRuntime(
         agent=engine,
         settings=settings,
         permission_prompter=prompter,
@@ -207,6 +209,6 @@ def bootstrap_cli_runtime(
             ProviderManager(settings.paths), provider
         ),
         session_source=ProjectSessionSource(settings.paths.project_state_dir),
-        attachment_loader=AttachmentLoader(registry, permission_policy, tool_context),
+        attachment_loader=AttachmentLoader(tool_executor),
         path_suggester=WorkspacePathSuggester(settings.cwd),
     )

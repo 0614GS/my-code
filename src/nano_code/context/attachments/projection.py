@@ -8,13 +8,13 @@ from nano_code.agent.contracts.model import (
     ModelToolUseBlock,
     ModelUserMessage,
 )
-from nano_code.messages import (
+from nano_code.context.attachments.models import (
     AttachmentToolExchange,
     ContextAttachment,
-    ContextInstruction,
-    TextContent,
 )
-from nano_code.messages.xml import render_context_instruction
+from nano_code.context.documents import ContextInstruction
+from nano_code.context.xml import render_context_instruction
+from nano_code.conversation import TextContent
 
 
 class AttachmentProjector:

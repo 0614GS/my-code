@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from nano_code.agent import CompactBoundary, ContentReplacement
-from nano_code.messages import (
+from nano_code.conversation import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,

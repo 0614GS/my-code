@@ -15,7 +15,7 @@ from nano_code.agent.contracts.session import (
     SessionStart,
 )
 from nano_code.agent.ports.session import SessionRepository
-from nano_code.messages import (
+from nano_code.conversation import (
     AssistantMessage,
     ConversationMessage,
     HumanMessage,

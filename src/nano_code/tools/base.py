@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nano_code.agent.contracts.model import ModelToolDefinition
-from nano_code.messages import JsonObject
-from nano_code.presentation import (
+from nano_code.application.chat.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
     compact_text,
 )
+from nano_code.conversation import JsonObject
 
 if TYPE_CHECKING:
     from nano_code.permissions.models import (

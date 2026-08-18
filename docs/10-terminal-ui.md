@@ -27,12 +27,12 @@ NanoCodeApp
 ProviderScreen (modal)
 ResumeScreen (modal)
         ↕
-ChatRuntime protocol
+application.chat.ChatRuntime protocol
         ↕
-CliChatRuntime ── AgentInboundPort ← AgentEngine
+DefaultChatRuntime ── AgentInboundPort ← AgentEngine
 ```
 
-TUI 只通过 `ChatRuntime` 的事件流提交输入、读取安全状态、配置无凭据展示 DTO 并注册权限处理器，不接触 Provider SDK、ToolExecutor、SessionStore 或 AgentEngine。`core.bootstrap` 组装完整应用，CLI runtime 使用 `DeferredPermissionPrompter` 把核心权限询问转换成 UI DTO；无处理器时仍然 fail closed。DTO 携带前端无关的工具 presentation 和 TodoItem，因此以后可以增加普通终端、Web 或测试前端而不修改 Agent。
+TUI 只通过 `application.chat.ChatRuntime` 的事件流提交输入、读取安全状态、配置无凭据展示 DTO 并注册权限处理器，不接触 Provider SDK、ToolExecutor、SessionStore 或 AgentEngine。`core.bootstrap` 组装完整应用，Application runtime 使用 `DeferredPermissionPrompter` 把核心权限询问转换成 UI DTO；无处理器时仍然 fail closed。DTO 携带前端无关的工具 presentation 和 TodoItem，因此以后可以增加普通终端、Web 或测试前端而不修改 Agent。
 
 正常回答和显式 Step 上限是两种独立终态。TUI 收到 max-steps 终态后显示明确错误、
 结束 busy 状态并重新启用输入框，用户可以基于已经提交的工具结果继续对话。
@@ -68,6 +68,6 @@ TodoPanel 的初始值来自 `RuntimeStatus.todos`，resume 使用目标 session
 SessionStore；自动 compact 和 reactive compact 同样由 Agent 层决定。
 
 CLI 组合根把 `ProviderRouter`、`ToolRoundExecutor`、`ConversationState`、
-`ContextPlanner` 和 `CompactionCoordinator` 装配进 `AgentEngine`。`CliChatRuntime`
+`ContextPlanner` 和 `CompactionCoordinator` 装配进 `AgentEngine`。`DefaultChatRuntime`
 只通过 `AgentInboundPort` 的 status/context status、事件和 session 操作生成 DTO；session
 切换时由 runtime 在同一锁内切换 Transcript 与工具结果目录。

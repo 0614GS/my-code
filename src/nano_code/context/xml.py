@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from nano_code.messages.context import ContextInstruction
+from nano_code.context.documents import ContextInstruction
 
 type XmlTag = Literal["system-reminder", "conversation-summary"]
 

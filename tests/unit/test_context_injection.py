@@ -13,21 +13,20 @@ from nano_code.agent import (
     ModelUserMessage,
 )
 from nano_code.agent.errors import ContextOverflow
-from nano_code.context import (
-    ContextPlanner,
-    ContextWindow,
-    DerivedAttachmentResolver,
-    ModelInputNormalizer,
-)
-from nano_code.messages import (
+from nano_code.context.attachments.models import (
     AttachmentToolExchange,
     ContextAttachment,
-    ContextInstruction,
+)
+from nano_code.context.attachments.sources import DerivedAttachmentResolver
+from nano_code.context.documents import ContextInstruction, UserContextDocument
+from nano_code.context.normalization import ModelInputNormalizer
+from nano_code.context.planner import ContextPlanner
+from nano_code.context.window import ContextWindow
+from nano_code.context.xml import render_context_instruction
+from nano_code.conversation import (
     HumanMessage,
     TextContent,
-    UserContextDocument,
 )
-from nano_code.messages.xml import render_context_instruction
 from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
 
 

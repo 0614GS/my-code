@@ -10,10 +10,10 @@ from nano_code.agent.contracts.session import (
     ContentReplacement,
     SessionSnapshot,
 )
-from nano_code.messages import (
+from nano_code.context.attachments.models import ContextAttachment
+from nano_code.context.documents import ContextInstruction
+from nano_code.conversation import (
     AssistantMessage,
-    ContextAttachment,
-    ContextInstruction,
     ConversationSummaryMessage,
     HumanMessage,
     TextContent,

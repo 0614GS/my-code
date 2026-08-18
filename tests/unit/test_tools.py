@@ -4,8 +4,9 @@ from pathlib import Path
 import pytest
 
 from nano_code.agent import ModelToolDefinition
+from nano_code.application.chat.presentation import ToolResultPresentation
+from nano_code.conversation import JsonObject, ToolCall
 from nano_code.core import NanoCodePaths, SettingsScope, SettingsStore
-from nano_code.messages import JsonObject, ToolCall
 from nano_code.permissions import (
     PermissionBehavior,
     PermissionConfirmation,
@@ -22,11 +23,11 @@ from nano_code.permissions import (
 from nano_code.permissions.models import PermissionDecision
 from nano_code.permissions.prompt import HeadlessPrompter
 from nano_code.permissions.updates import PermissionUpdateApplier
-from nano_code.presentation import ToolResultPresentation
 from nano_code.tools import Tool, ToolContext, ToolRegistry
 from nano_code.tools.base import ToolOutput
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
+from nano_code.tools.invocation import ToolInvocation
 from nano_code.tools.paths import resolve_workspace_path
 from nano_code.tools.result_store import ToolResultStore
 
@@ -55,6 +56,14 @@ class FailingPrompter:
     ) -> PermissionConfirmation:
         del tool, tool_input, decision
         raise AssertionError("read-only Bash must not request user confirmation")
+
+
+class ExplodingPrompter:
+    async def confirm(
+        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
+    ) -> PermissionConfirmation:
+        del tool, tool_input, decision
+        raise RuntimeError("prompt transport failed")
 
 
 class ApprovingPrompter:
@@ -267,6 +276,38 @@ async def test_permission_denial_feedback_is_returned_to_model(tmp_path: Path) -
 
     assert outcome.result.is_error is True
     assert "Only explain the proposed change." in outcome.result.content
+    assert not (tmp_path / "a.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_permission_prompt_failure_fails_closed(tmp_path: Path) -> None:
+    executor = ToolExecutor(
+        registry=ToolRegistry(builtin_tools()),
+        policy=PermissionPolicy(PermissionMode.DEFAULT),
+        prompter=ExplodingPrompter(),
+        context=ToolContext(cwd=tmp_path),
+        result_store=ToolResultStore(tmp_path / "results"),
+    )
+
+    outcome = await executor.execute(
+        ToolCall("write-prompt-error", "Write", {"path": "a.txt", "content": "no"})
+    )
+
+    assert outcome.result.is_error is True
+    assert "Permission prompt failed (RuntimeError)" in outcome.result.content
+    assert not (tmp_path / "a.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_explicit_read_evidence_cannot_authorize_a_write(tmp_path: Path) -> None:
+    executor = build_executor(tmp_path, PermissionMode.DEFAULT)
+
+    outcome = await executor.execute(
+        ToolCall("forged-read", "Write", {"path": "a.txt", "content": "no"}),
+        invocation=ToolInvocation.explicit_file_mention(),
+    )
+
+    assert outcome.result.is_error is True
     assert not (tmp_path / "a.txt").exists()
 
 

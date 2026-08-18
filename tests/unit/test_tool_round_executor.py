@@ -8,7 +8,7 @@ from nano_code.agent import (
     ToolRoundCompleted,
     ToolRoundEvent,
 )
-from nano_code.messages import (
+from nano_code.conversation import (
     AssistantMessage,
     TextContent,
     TokenUsage,

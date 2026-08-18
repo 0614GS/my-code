@@ -19,12 +19,15 @@ from nano_code.agent import (
     ModelTextBlock,
     ModelToolUseBlock,
 )
-from nano_code.context import CompactionCoordinator, ContextPlanner, ContextWindow
-from nano_code.context.compaction import CompactionService
-from nano_code.messages import (
-    AssistantMessage,
+from nano_code.context.attachments.models import (
     AttachmentToolExchange,
     ContextAttachment,
+)
+from nano_code.context.compaction import CompactionCoordinator, CompactionService
+from nano_code.context.planner import ContextPlanner
+from nano_code.context.window import ContextWindow
+from nano_code.conversation import (
+    AssistantMessage,
     HumanMessage,
     TextContent,
     TokenUsage,

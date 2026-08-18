@@ -2,12 +2,15 @@
 
 from dataclasses import dataclass
 
-from nano_code.messages import (
+from nano_code.application.chat.presentation import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
+from nano_code.conversation import (
     ToolCall,
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)

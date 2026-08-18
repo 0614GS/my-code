@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 from nano_code.agent.contracts.session import ContentReplacement
-from nano_code.messages import (
+from nano_code.conversation import (
     AssistantMessage,
     ConversationMessage,
     ConversationSummaryMessage,

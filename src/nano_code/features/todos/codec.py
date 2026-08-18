@@ -1,34 +1,15 @@
-"""TodoWrite 输入的强类型领域模型。"""
+"""TodoWrite JSON input conversion at the Tool/feature boundary."""
 
-from dataclasses import dataclass
-from typing import Literal, cast
+from typing import cast
 
-from nano_code.messages import JsonObject
+from nano_code.conversation import JsonObject
+from nano_code.features.todos.models import TODO_STATUSES, TodoItem, TodoStatus
 
-type TodoStatus = Literal["pending", "in_progress", "completed"]
-
-_TODO_STATUSES = frozenset(("pending", "in_progress", "completed"))
-
-
-@dataclass(frozen=True, slots=True)
-class TodoItem:
-    """一个模型管理的任务及其进行时展示文本。"""
-
-    content: str
-    status: TodoStatus
-    active_form: str
-
-    def __post_init__(self) -> None:
-        if not self.content.strip():
-            raise ValueError("Todo content must not be empty")
-        if self.status not in _TODO_STATUSES:
-            raise ValueError(f"Unsupported todo status: {self.status}")
-        if not self.active_form.strip():
-            raise ValueError("Todo activeForm must not be empty")
+TODO_WRITE_TOOL_NAME = "TodoWrite"
 
 
 def parse_todo_input(tool_input: JsonObject) -> tuple[TodoItem, ...]:
-    """严格解析 TodoWrite 的完整输入对象。"""
+    """Strictly parse a complete TodoWrite input object."""
 
     if set(tool_input) != {"todos"}:
         raise ValueError("input must contain only 'todos'")
@@ -49,7 +30,7 @@ def parse_todo_input(tool_input: JsonObject) -> tuple[TodoItem, ...]:
         active_form = raw_item.get("activeForm")
         if not isinstance(content, str) or not content.strip():
             raise ValueError(f"todos[{index}].content must be a non-empty string")
-        if not isinstance(status, str) or status not in _TODO_STATUSES:
+        if not isinstance(status, str) or status not in TODO_STATUSES:
             raise ValueError(
                 f"todos[{index}].status must be pending, in_progress, or completed"
             )
@@ -59,4 +40,4 @@ def parse_todo_input(tool_input: JsonObject) -> tuple[TodoItem, ...]:
     return tuple(todos)
 
 
-__all__ = ["TodoItem", "TodoStatus", "parse_todo_input"]
+__all__ = ["TODO_WRITE_TOOL_NAME", "parse_todo_input"]

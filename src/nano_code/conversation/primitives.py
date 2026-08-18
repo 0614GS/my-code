@@ -1,4 +1,4 @@
-"""跨消息边界共享的最小值类型。"""
+"""Primitive values carried by conversation and tool content."""
 
 from dataclasses import dataclass
 from datetime import UTC, datetime

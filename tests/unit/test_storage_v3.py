@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from nano_code.auth import CredentialStore, CredentialStoreError
+from nano_code.conversation import HumanMessage
 from nano_code.core import (
     NanoCodePaths,
     SettingsFileError,
@@ -12,7 +13,6 @@ from nano_code.core import (
     SettingsScope,
     SettingsStore,
 )
-from nano_code.messages import HumanMessage
 from nano_code.providers.profiles import ProviderProfile, ProviderProfileStore
 from nano_code.sessions import (
     SessionCatalog,

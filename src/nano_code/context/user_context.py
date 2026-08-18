@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Protocol
 
-from nano_code.messages import ContextInstruction, UserContextDocument
+from nano_code.context.documents import ContextInstruction, UserContextDocument
 
 
 class UserContextResolver(Protocol):

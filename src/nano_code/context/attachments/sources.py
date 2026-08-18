@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable, Iterable
 
 from nano_code.agent.contracts.session import ConversationSnapshot
-from nano_code.messages import ContextAttachment
+from nano_code.context.attachments.models import ContextAttachment
 
 logger = logging.getLogger(__name__)
 

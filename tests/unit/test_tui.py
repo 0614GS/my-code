@@ -6,37 +6,19 @@ import pytest
 from rich.console import Console
 from textual.widgets import Input, OptionList
 
-from nano_code.permissions import (
-    PermissionBehavior,
-    PermissionConfirmation,
-    PermissionRule,
-    PermissionUpdate,
-    PermissionUpdateDestination,
-)
-from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
-from nano_code.providers.manager import ProviderUpdate, ProviderView
-from nano_code.providers.profiles import ProviderProtocol
-from nano_code.sessions import SessionSummary
-from nano_code.todos import TodoItem
-from nano_code.tui import (
+from nano_code.application.chat.contracts import (
     ContextStatus,
     HistoryAssistantMessage,
     HistoryUserMessage,
-    NanoCodeApp,
-    PermissionHandler,
-    ProviderScreen,
-    ResumedSession,
-    ResumeScreen,
-    RuntimeStatus,
-    TodoListUpdated,
-)
-from nano_code.tui.commands import SlashCommandRegistry
-from nano_code.tui.contracts import (
     MaxStepsReached,
     PathSuggestion,
+    PermissionHandler,
     PermissionRequest,
+    ResumedSession,
+    RuntimeStatus,
     StepLimitReached,
     TextDelta,
+    TodoListUpdated,
     ToolFinished,
     ToolStarted,
     TurnCompleted,
@@ -44,6 +26,27 @@ from nano_code.tui.contracts import (
     TurnOutcome,
     TurnSucceeded,
 )
+from nano_code.application.chat.presentation import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
+from nano_code.features.todos.models import TodoItem
+from nano_code.permissions import (
+    PermissionBehavior,
+    PermissionConfirmation,
+    PermissionRule,
+    PermissionUpdate,
+    PermissionUpdateDestination,
+)
+from nano_code.providers.manager import ProviderUpdate, ProviderView
+from nano_code.providers.profiles import ProviderProtocol
+from nano_code.sessions import SessionSummary
+from nano_code.tui import (
+    NanoCodeApp,
+    ProviderScreen,
+    ResumeScreen,
+)
+from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.widgets import (
     ActivityBar,
     AssistantMessage,

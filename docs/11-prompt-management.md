@@ -93,7 +93,7 @@ assistant tool-use 与 user tool-result，并与真实会话一起经过全局 t
 ## 5. XML 上下文块
 
 compact summary 使用独立 `ConversationSummaryMessage`；请求级 reminder 使用
-`ContextInstruction`。XML wrapper 集中位于 `messages/xml.py`，并由
+`ContextInstruction`。XML wrapper 集中位于 `context/xml.py`，并由
 `ModelInputNormalizer` 到请求边界才渲染 `<conversation-summary>` 或
 `<system-reminder>`。
 

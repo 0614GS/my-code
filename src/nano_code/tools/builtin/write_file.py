@@ -3,9 +3,9 @@
 from pathlib import Path
 
 from nano_code.agent.contracts.model import ModelToolDefinition
-from nano_code.messages import JsonObject
+from nano_code.application.chat.presentation import ToolResultPresentation
+from nano_code.conversation import JsonObject
 from nano_code.permissions.models import ToolPermissionContext, ToolPermissionResult
-from nano_code.presentation import ToolResultPresentation
 from nano_code.tools.base import Tool, ToolContext, ToolOutput
 from nano_code.tools.builtin.file_permissions import check_write_permission
 from nano_code.tools.paths import relative_display_path, resolve_workspace_path

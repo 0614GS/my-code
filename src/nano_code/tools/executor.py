@@ -1,27 +1,37 @@
 """统一的校验 → 权限 → 执行与双重结果投影管线。"""
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 
-from nano_code.messages import JsonObject, ToolCall, ToolResult
-from nano_code.permissions import (
-    PermissionBehavior,
-    PermissionPolicy,
-)
-from nano_code.permissions.prompt import PermissionPrompter
-from nano_code.permissions.updates import PermissionUpdateApplier
-from nano_code.presentation import (
+from nano_code.application.chat.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
     compact_text,
     generic_tool_use_presentation,
 )
+from nano_code.conversation import JsonObject, ToolCall, ToolResult
+from nano_code.permissions import (
+    PermissionBehavior,
+    PermissionDecision,
+    PermissionDecisionKind,
+    PermissionDecisionReason,
+    PermissionPolicy,
+)
+from nano_code.permissions.prompt import PermissionPrompter
+from nano_code.permissions.updates import PermissionUpdateApplier
 from nano_code.tools.base import (
     Tool,
     ToolContext,
     ToolExecutionError,
     ToolInputError,
     ToolOutput,
+)
+from nano_code.tools.invocation import (
+    ToolInvocation,
+    ToolInvocationAudit,
+    ToolInvocationHook,
+    ToolResultDelivery,
 )
 from nano_code.tools.registry import ToolRegistry
 from nano_code.tools.result_store import ToolResultStore
@@ -35,6 +45,30 @@ class ToolExecutionOutcome:
 
     result: ToolResult
     presentation: ToolResultPresentation
+    approved_input: JsonObject | None = None
+    metadata: JsonObject | None = None
+
+
+class LoggingToolInvocationAudit:
+    """Default structured permission audit sink."""
+
+    async def record_permission(
+        self,
+        invocation: ToolInvocation,
+        call: ToolCall,
+        decision: object,
+    ) -> None:
+        reason = getattr(decision, "reason", "unknown")
+        behavior = getattr(getattr(decision, "behavior", None), "value", "unknown")
+        message = getattr(decision, "message", "")
+        logger.info(
+            "Permission decision: tool=%s origin=%s behavior=%s message=%s reason=%s",
+            call.name,
+            invocation.origin.value,
+            behavior,
+            message,
+            reason,
+        )
 
 
 class ToolExecutor:
@@ -48,6 +82,8 @@ class ToolExecutor:
         context: ToolContext,
         result_store: ToolResultStore,
         update_applier: PermissionUpdateApplier | None = None,
+        hooks: Iterable[ToolInvocationHook] = (),
+        audit: ToolInvocationAudit | None = None,
     ) -> None:
         self.registry = registry
         self.policy = policy
@@ -55,6 +91,8 @@ class ToolExecutor:
         self.context = context
         self.result_store = result_store
         self.update_applier = update_applier or PermissionUpdateApplier(policy)
+        self.hooks = tuple(hooks)
+        self.audit = audit or LoggingToolInvocationAudit()
 
     def present_use(self, call: ToolCall) -> ToolUsePresentation:
         """请求 Tool 解释调用语义；未知或异常工具使用安全回退。"""
@@ -101,7 +139,13 @@ class ToolExecutor:
             ToolOutput(content=result.content, is_error=False),
         )
 
-    async def execute(self, call: ToolCall) -> ToolExecutionOutcome:
+    async def execute(
+        self,
+        call: ToolCall,
+        *,
+        invocation: ToolInvocation | None = None,
+    ) -> ToolExecutionOutcome:
+        actual_invocation = invocation or ToolInvocation()
         tool = self.registry.get(call.name)
         if tool is None:
             # 未知工具名以协议结果形式报告给模型，而不是中断整个智能体循环。
@@ -114,15 +158,30 @@ class ToolExecutor:
             return self._error(call, f"Invalid input: {error}", tool=tool)
 
         # 权限是独立策略层；只有静态策略及所需用户确认均通过后，才调用 Tool.execute。
-        decision = await self.policy.decide(tool, call.input, self.context)
-        if decision.behavior is PermissionBehavior.DENY:
-            logger.warning(
-                "Permission decision: tool=%s behavior=%s message=%s reason=%s",
-                tool.definition.name,
-                "deny",
-                decision.message,
-                decision.reason,
+        try:
+            decision = await self.policy.decide(
+                tool,
+                call.input,
+                self.context,
+                origin=actual_invocation.origin,
+                authorization=actual_invocation.authorization,
             )
+        except Exception as error:
+            return self._error(
+                call,
+                f"Unexpected {type(error).__name__} while checking permissions",
+                tool=tool,
+            )
+        try:
+            await self.audit.record_permission(actual_invocation, call, decision)
+        except Exception:
+            return self._error(
+                call,
+                "Tool audit failed; the tool was not executed.",
+                tool=tool,
+                tool_input=decision.updated_input or call.input,
+            )
+        if decision.behavior is PermissionBehavior.DENY:
             return self._error(
                 call, f"Permission denied: {decision.message}", tool=tool
             )
@@ -130,22 +189,40 @@ class ToolExecutor:
             permission_input = (
                 call.input if decision.updated_input is None else decision.updated_input
             )
-            confirmation = await self.prompter.confirm(tool, permission_input, decision)
+            try:
+                confirmation = await self.prompter.confirm(
+                    tool, permission_input, decision
+                )
+            except Exception as error:
+                return self._error(
+                    call,
+                    f"Permission prompt failed ({type(error).__name__}); "
+                    "the tool was not executed.",
+                    tool=tool,
+                    tool_input=permission_input,
+                )
             if not confirmation.allowed:
                 feedback = (
                     f" User feedback: {confirmation.feedback}"
                     if confirmation.feedback is not None
                     else ""
                 )
-                logger.warning(
-                    "Permission decision: tool=%s behavior=%s "
-                    "message=approval was not provided "
-                    "reason=%s feedback_provided=%s",
-                    tool.definition.name,
-                    "deny",
-                    decision.reason,
-                    confirmation.feedback is not None,
+                denied = PermissionDecision(
+                    PermissionBehavior.DENY,
+                    "approval was not provided.",
+                    PermissionDecisionReason(
+                        PermissionDecisionKind.USER, "interactive-denial"
+                    ),
+                    updated_input=permission_input,
                 )
+                try:
+                    await self.audit.record_permission(actual_invocation, call, denied)
+                except Exception:
+                    logger.exception(
+                        "Permission denial audit failed: tool=%s origin=%s",
+                        call.name,
+                        actual_invocation.origin.value,
+                    )
                 return self._error(
                     call,
                     "Permission denied: approval was not provided. "
@@ -156,7 +233,7 @@ class ToolExecutor:
             if confirmation.updates:
                 try:
                     self.update_applier.apply(confirmation.updates)
-                except (OSError, ValueError) as error:
+                except Exception as error:
                     logger.warning(
                         "Permission update failed: tool=%s error=%s",
                         tool.definition.name,
@@ -168,30 +245,33 @@ class ToolExecutor:
                         tool=tool,
                         tool_input=permission_input,
                     )
-            logger.info(
-                "Permission decision: tool=%s behavior=%s message=%s reason=%s "
-                "rules=%s",
-                tool.definition.name,
-                "allow",
-                decision.message,
-                decision.reason,
-                ",".join(update.destination.value for update in confirmation.updates)
-                or "-",
+            approved = PermissionDecision(
+                PermissionBehavior.ALLOW,
+                "Approved by the user.",
+                PermissionDecisionReason(
+                    PermissionDecisionKind.USER, "interactive-approval"
+                ),
+                updated_input=permission_input,
             )
-        else:
-            logger.info(
-                "Permission decision: tool=%s behavior=%s message=%s reason=%s",
-                tool.definition.name,
-                "allow",
-                decision.message,
-                decision.reason,
-            )
+            try:
+                await self.audit.record_permission(actual_invocation, call, approved)
+            except Exception:
+                return self._error(
+                    call,
+                    "Tool audit failed; the tool was not executed.",
+                    tool=tool,
+                    tool_input=permission_input,
+                )
 
         try:
             # 工具专属权限检查可能规范化或约束输入；执行阶段必须使用获准的准确输入。
             approved_input = (
                 call.input if decision.updated_input is None else decision.updated_input
             )
+            for hook in self.hooks:
+                await hook.before_execute(
+                    actual_invocation, call, tool, approved_input, self.context
+                )
             output = await tool.execute(approved_input, self.context)
 
             # Tool 分别决定用户展示语义和模型序列化；TUI 与 Executor 均不反向
@@ -200,14 +280,33 @@ class ToolExecutor:
             presentation = self._present_result(tool, approved_input, output)
 
             # 构造 API 块前先外置结果，使后续每一层看到相同、有界且可重放的内容。
-            content = self.result_store.externalize(call.id, model_content)
+            content = (
+                self.result_store.externalize(call.id, model_content)
+                if actual_invocation.result_delivery is ToolResultDelivery.EXTERNALIZED
+                else model_content
+            )
             result = ToolResult(
                 tool_use_id=call.id,
                 content=content,
                 is_error=output.is_error,
                 presentation=presentation,
             )
-            return ToolExecutionOutcome(result, presentation)
+            for hook in self.hooks:
+                try:
+                    await hook.after_execute(actual_invocation, call, result)
+                except Exception:
+                    logger.exception(
+                        "Post-tool hook failed after tool completion: "
+                        "tool=%s origin=%s",
+                        call.name,
+                        actual_invocation.origin.value,
+                    )
+            return ToolExecutionOutcome(
+                result,
+                presentation,
+                approved_input=approved_input,
+                metadata=output.metadata,
+            )
         except (ToolInputError, ToolExecutionError, OSError, UnicodeError) as error:
             return self._error(call, f"{type(error).__name__}: {error}", tool=tool)
         except Exception as error:

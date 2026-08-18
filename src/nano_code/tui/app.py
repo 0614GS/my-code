@@ -8,10 +8,7 @@ from textual.events import Key
 from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
 
-from nano_code.attachments import format_path_mention, mention_at_cursor
-from nano_code.permissions import PermissionConfirmation
-from nano_code.tui.commands import SlashCommandRegistry
-from nano_code.tui.contracts import (
+from nano_code.application.chat.contracts import (
     AttachmentLoaded,
     ChatRuntime,
     ContextStatus,
@@ -28,6 +25,9 @@ from nano_code.tui.contracts import (
     ToolStarted,
     TurnCompleted,
 )
+from nano_code.permissions import PermissionConfirmation
+from nano_code.tui.commands import SlashCommandRegistry
+from nano_code.tui.completion import format_path_mention, mention_at_cursor
 from nano_code.tui.provider_screen import ProviderScreen
 from nano_code.tui.resume_screen import ResumeScreen
 from nano_code.tui.widgets import (

@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from nano_code.messages.primitives import JsonObject, TokenUsage
-from nano_code.presentation import ToolResultPresentation
+from nano_code.application.chat.presentation import ToolResultPresentation
+from nano_code.conversation.primitives import JsonObject, TokenUsage
 
 
 @dataclass(frozen=True, slots=True)

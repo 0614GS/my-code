@@ -11,7 +11,8 @@ from nano_code.agent.contracts.session import (
     SessionMetadata,
     SessionStart,
 )
-from nano_code.messages import (
+from nano_code.application.chat.presentation import ToolResultPresentation
+from nano_code.conversation import (
     AssistantMessage,
     ConversationMessage,
     ConversationSummaryMessage,
@@ -23,9 +24,8 @@ from nano_code.messages import (
     ToolResultsMessage,
     to_json_object,
 )
-from nano_code.messages.primitives import JsonObject
+from nano_code.conversation.primitives import JsonObject
 from nano_code.permissions import PermissionMode
-from nano_code.presentation import ToolResultPresentation
 from nano_code.providers.ids import validate_provider_id
 from nano_code.sessions.records import (
     AssistantMessageRecord,

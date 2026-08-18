@@ -51,7 +51,7 @@ from nano_code.agent.ports.inbound import AgentInboundPort
 from nano_code.agent.ports.model import ModelCallPort
 from nano_code.agent.ports.session import SessionRepository
 from nano_code.agent.ports.tool import ToolRoundPort
-from nano_code.messages import (
+from nano_code.conversation import (
     AssistantMessage,
     ConversationMessage,
     ConversationSummaryMessage,
@@ -62,8 +62,8 @@ from nano_code.messages import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.todos.models import TodoItem
-from nano_code.todos.projection import project_todos
+from nano_code.features.todos.models import TodoItem
+from nano_code.features.todos.projection import project_todos
 
 
 class AgentEngine(AgentInboundPort):

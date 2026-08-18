@@ -1,37 +1,29 @@
-"""上下文规范化、token 统计与压缩。"""
+"""Request-time context contracts.
 
-from nano_code.context.attachment_projection import AttachmentProjector
-from nano_code.context.attachments import (
-    DerivedAttachmentResolver,
-    DerivedAttachmentSource,
+Concrete planners, resolvers, and compaction services live in explicit
+submodules so importing a context value object does not initialize adapters.
+"""
+
+from nano_code.context.attachments.models import (
+    AttachmentContent,
+    AttachmentRetention,
+    AttachmentToolExchange,
+    ContextAttachment,
 )
-from nano_code.context.compaction import (
-    CompactionCoordinator,
-    CompactionResult,
-    CompactionService,
+from nano_code.context.documents import (
+    ContextDocumentContent,
+    ContextInstruction,
+    ContextInstructionKind,
+    UserContextDocument,
 )
-from nano_code.context.microcompact import MicrocompactPolicy
-from nano_code.context.normalization import ModelInputNormalizer
-from nano_code.context.planner import ContextPlanner
-from nano_code.context.user_context import (
-    AgentsUserContextResolver,
-    EmptyUserContextResolver,
-    UserContextResolver,
-)
-from nano_code.context.window import ContextWindow
 
 __all__ = [
-    "ContextPlanner",
-    "ContextWindow",
-    "DerivedAttachmentResolver",
-    "DerivedAttachmentSource",
-    "AttachmentProjector",
-    "ModelInputNormalizer",
-    "MicrocompactPolicy",
-    "CompactionCoordinator",
-    "CompactionResult",
-    "CompactionService",
-    "AgentsUserContextResolver",
-    "EmptyUserContextResolver",
-    "UserContextResolver",
+    "AttachmentContent",
+    "AttachmentRetention",
+    "AttachmentToolExchange",
+    "ContextAttachment",
+    "ContextDocumentContent",
+    "ContextInstruction",
+    "ContextInstructionKind",
+    "UserContextDocument",
 ]

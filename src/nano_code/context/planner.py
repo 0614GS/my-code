@@ -16,7 +16,9 @@ from nano_code.agent.contracts.session import (
     ConversationSnapshot,
 )
 from nano_code.agent.ports.context import ContextPort
-from nano_code.context.attachments import DerivedAttachmentResolver
+from nano_code.context.attachments.models import ContextAttachment
+from nano_code.context.attachments.sources import DerivedAttachmentResolver
+from nano_code.context.documents import UserContextDocument
 from nano_code.context.microcompact import (
     MicrocompactPolicy,
     apply_content_replacements,
@@ -24,16 +26,14 @@ from nano_code.context.microcompact import (
 from nano_code.context.normalization import ModelInputNormalizer
 from nano_code.context.user_context import EmptyUserContextResolver, UserContextResolver
 from nano_code.context.window import ContextWindow
-from nano_code.messages import (
+from nano_code.context.xml import render_context_instruction
+from nano_code.conversation import (
     AssistantMessage,
-    ContextAttachment,
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
     TextContent,
-    UserContextDocument,
 )
-from nano_code.messages.xml import render_context_instruction
 from nano_code.prompts import PromptRegistry, SystemPrompt
 
 

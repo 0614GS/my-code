@@ -1,4 +1,4 @@
-"""Agent inbound port 与终端前端之间的 application adapter。"""
+"""Default interactive chat application runtime."""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -23,17 +23,7 @@ from nano_code.agent import (
 )
 from nano_code.agent.ports.inbound import AgentInboundPort
 from nano_code.agent.ports.session import SessionRepository
-from nano_code.attachments import AttachmentLoader, WorkspacePathSuggester
-from nano_code.core import AgentSettings
-from nano_code.messages import ContextAttachment, JsonObject
-from nano_code.permissions import PermissionConfirmation
-from nano_code.permissions.models import PermissionDecision
-from nano_code.presentation import generic_tool_use_presentation
-from nano_code.providers.manager import ProviderUpdate, ProviderView
-from nano_code.providers.router import ProviderConnection
-from nano_code.sessions import SessionSummary
-from nano_code.tools import Tool
-from nano_code.tui import (
+from nano_code.application.chat.contracts import (
     AttachmentLoaded,
     ContextStatus,
     HistoryAssistantMessage,
@@ -44,7 +34,6 @@ from nano_code.tui import (
     MaxStepsReached,
     PathSuggestion,
     PermissionHandler,
-    PermissionRequest,
     ResumedSession,
     RuntimeStatus,
     StepLimitReached,
@@ -57,10 +46,17 @@ from nano_code.tui import (
     TurnOutcome,
     TurnSucceeded,
 )
+from nano_code.application.chat.permissions import DeferredPermissionPrompter
+from nano_code.context.attachments.models import ContextAttachment
+from nano_code.core import AgentSettings
+from nano_code.features.file_mentions import AttachmentLoader, WorkspacePathSuggester
+from nano_code.providers.manager import ProviderUpdate, ProviderView
+from nano_code.providers.router import ProviderConnection
+from nano_code.sessions import SessionSummary
 
 
 class ProviderControlPort(Protocol):
-    """CliChatRuntime 使用的 provider profile/application 能力。"""
+    """DefaultChatRuntime 使用的 provider profile/application 能力。"""
 
     def providers(self, active_provider_id: str) -> tuple[ProviderView, ...]: ...
 
@@ -68,46 +64,15 @@ class ProviderControlPort(Protocol):
 
 
 class SessionSourcePort(Protocol):
-    """CliChatRuntime 使用的 session catalog 与 repository factory。"""
+    """DefaultChatRuntime 使用的 session catalog 与 repository factory。"""
 
     def list(self, *, exclude_session_id: str) -> tuple[SessionSummary, ...]: ...
 
     def open(self, session_id: str) -> SessionRepository: ...
 
 
-class DeferredPermissionPrompter:
-    """在不导入具体前端的情况下，将核心权限检查桥接到当前前端。"""
-
-    def __init__(self) -> None:
-        self._handler: PermissionHandler | None = None
-
-    def set_handler(self, handler: PermissionHandler) -> None:
-        self._handler = handler
-
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
-        if self._handler is None:
-            return PermissionConfirmation(False)
-        try:
-            presentation = tool.present_use(tool_input)
-        except Exception:
-            presentation = generic_tool_use_presentation(
-                tool.definition.name, tool_input
-            )
-        return await self._handler(
-            PermissionRequest(
-                tool_name=tool.definition.name,
-                tool_input=tool_input,
-                message=decision.message,
-                presentation=presentation,
-                suggestions=decision.suggestions,
-            )
-        )
-
-
-class CliChatRuntime:
-    """将 Agent inbound port 适配为 TUI 消费的窄接口。"""
+class DefaultChatRuntime:
+    """Adapt the Agent inbound port to the interactive chat contract."""
 
     def __init__(
         self,
@@ -181,11 +146,7 @@ class CliChatRuntime:
                     )
 
     async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
-        suggestions = await self.path_suggester.suggest(query)
-        return tuple(
-            PathSuggestion(item.path, item.is_directory, item.display)
-            for item in suggestions
-        )
+        return await self.path_suggester.suggest(query)
 
     async def _load_attachments(self, prompt: str) -> tuple[ContextAttachment, ...]:
         if self.attachment_loader is None:

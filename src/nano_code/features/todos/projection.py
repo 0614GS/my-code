@@ -1,28 +1,27 @@
-"""从追加式会话事实投影当前 Todo 状态。"""
+"""Project current Todo state from append-only conversation facts."""
 
 from dataclasses import dataclass
 
-from nano_code.messages import (
+from nano_code.conversation import (
     AssistantMessage,
     ConversationMessage,
     ToolCall,
     ToolResultsMessage,
 )
-from nano_code.todos.models import TodoItem, parse_todo_input
-
-TODO_WRITE_TOOL_NAME = "TodoWrite"
+from nano_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
+from nano_code.features.todos.models import TodoItem
 
 
 @dataclass(frozen=True, slots=True)
 class TodoProjection:
-    """最新 TodoWrite 状态及距其经过的 completed model call 数。"""
+    """Latest TodoWrite state and completed model calls since that write."""
 
     todos: tuple[TodoItem, ...]
     completed_model_calls_since_write: int
 
 
 def project_todos(messages: tuple[ConversationMessage, ...]) -> TodoProjection:
-    """按活动 session 历史中的最后一次成功 TodoWrite 投影状态。"""
+    """Project the latest successful TodoWrite from active session history."""
 
     completed_model_calls = _completed_model_calls_since_write(messages)
     successful_ids = {
@@ -46,8 +45,6 @@ def project_todos(messages: tuple[ConversationMessage, ...]) -> TodoProjection:
                 todos = parse_todo_input(block.input)
             except (TypeError, ValueError):
                 continue
-            # 与 CC 的运行时 AppState 一致：最后一项完成后清空可见列表，
-            # Transcript 中仍保留原始 tool input 作为恢复事实。
             if todos and all(todo.status == "completed" for todo in todos):
                 todos = ()
             return TodoProjection(todos, completed_model_calls)
@@ -70,4 +67,4 @@ def _completed_model_calls_since_write(
     return completed_calls
 
 
-__all__ = ["TODO_WRITE_TOOL_NAME", "TodoProjection", "project_todos"]
+__all__ = ["TodoProjection", "project_todos"]

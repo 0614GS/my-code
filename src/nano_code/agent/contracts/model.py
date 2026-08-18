@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from nano_code.messages.primitives import JsonObject, TokenUsage
+from nano_code.conversation.primitives import JsonObject, TokenUsage
 from nano_code.prompts import SystemPrompt
 
 

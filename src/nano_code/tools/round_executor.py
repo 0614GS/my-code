@@ -16,16 +16,16 @@ from nano_code.agent.contracts.tool import (
     ToolRoundEvent as _ToolRoundEvent,
 )
 from nano_code.agent.ports.tool import ToolRoundPort
-from nano_code.messages import (
+from nano_code.application.chat.presentation import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+    compact_text,
+)
+from nano_code.conversation import (
     AssistantMessage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
-)
-from nano_code.presentation import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-    compact_text,
 )
 from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from nano_code.tools.result_store import ToolResultStore

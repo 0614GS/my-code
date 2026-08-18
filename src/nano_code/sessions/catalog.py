@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from nano_code.agent.contracts.session import SessionMetadata, SessionStart
-from nano_code.messages import HumanMessage
+from nano_code.conversation import HumanMessage
 from nano_code.sessions.codec import decode_entry
 from nano_code.sessions.store import is_session_id
 

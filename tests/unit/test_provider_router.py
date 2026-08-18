@@ -7,7 +7,7 @@ from nano_code.agent import (
     ModelTextBlock,
 )
 from nano_code.auth import CredentialSource
-from nano_code.messages import TokenUsage
+from nano_code.conversation import TokenUsage
 from nano_code.prompts import SystemPrompt
 from nano_code.providers import ProviderCapabilities
 from nano_code.providers.profiles import ProviderProtocol

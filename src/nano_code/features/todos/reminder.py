@@ -1,13 +1,11 @@
-"""TodoWrite 的非持久化 live-session reminder attachment。"""
+"""Non-persistent, live-session TodoWrite reminder attachment."""
 
 from nano_code.agent.contracts.session import ConversationSnapshot
-from nano_code.messages import (
-    AssistantMessage,
-    ContextAttachment,
-    ContextInstruction,
-    ToolCall,
-)
-from nano_code.todos.projection import TODO_WRITE_TOOL_NAME, project_todos
+from nano_code.context.attachments.models import ContextAttachment
+from nano_code.context.documents import ContextInstruction
+from nano_code.conversation import AssistantMessage, ToolCall
+from nano_code.features.todos.codec import TODO_WRITE_TOOL_NAME
+from nano_code.features.todos.projection import project_todos
 
 TODO_REMINDER_MODEL_CALL_INTERVAL = 10
 
@@ -22,7 +20,7 @@ _REMINDER = (
 
 
 class TodoReminderAttachmentSource:
-    """每隔十个未使用 TodoWrite 的 completed model calls 注入提醒。"""
+    """Inject a reminder every ten completed model calls without TodoWrite."""
 
     def __call__(self, snapshot: ConversationSnapshot) -> tuple[ContextAttachment, ...]:
         projection = project_todos(snapshot.session_history or snapshot.messages)

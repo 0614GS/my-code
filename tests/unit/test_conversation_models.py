@@ -1,3 +1,5 @@
+"""Conversation fact model tests."""
+
 import pytest
 
 from nano_code.agent import (
@@ -7,7 +9,7 @@ from nano_code.agent import (
     ModelToolUseBlock,
     ModelUserMessage,
 )
-from nano_code.messages import (
+from nano_code.conversation import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,

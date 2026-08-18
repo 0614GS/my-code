@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
 
-from nano_code.messages import ContextAttachment, ConversationMessage
+from nano_code.context.attachments.models import ContextAttachment
+from nano_code.conversation import ConversationMessage
 
 CompactTrigger = Literal["auto", "manual", "reactive"]
 

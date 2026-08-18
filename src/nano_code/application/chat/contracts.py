@@ -1,15 +1,18 @@
-"""终端前端与对话运行时之间的窄接口。"""
+"""Frontend-neutral contracts for interactive chat applications."""
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from nano_code.messages import JsonObject
+from nano_code.application.chat.presentation import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
+from nano_code.conversation import JsonObject
+from nano_code.features.todos.models import TodoItem
 from nano_code.permissions import PermissionConfirmation, PermissionUpdate
-from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.sessions import SessionSummary
-from nano_code.todos.models import TodoItem
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,47 +173,26 @@ type PermissionHandler = Callable[
 
 
 class ChatRuntime(Protocol):
-    """TUI 所需能力；核心实现类型不会泄漏到此处。"""
+    """Capabilities required by an interactive chat frontend."""
 
-    async def submit(self, prompt: str) -> TurnOutcome:
-        """运行一个用户 Turn。"""
-        ...
+    async def submit(self, prompt: str) -> TurnOutcome: ...
 
-    def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
-        """运行一个用户 Turn，并产出可安全展示的生命周期事件。"""
-        ...
+    def stream(self, prompt: str) -> AsyncIterator[TurnEvent]: ...
 
-    async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
-        """Return bounded workspace path suggestions."""
-        ...
+    async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]: ...
 
-    def status(self) -> RuntimeStatus:
-        """返回安全且不含凭据的运行时快照。"""
-        ...
+    def status(self) -> RuntimeStatus: ...
 
-    def context_status(self) -> ContextStatus:
-        """返回不修改上下文的安全预算快照。"""
-        ...
+    def context_status(self) -> ContextStatus: ...
 
-    async def compact(self) -> ContextStatus:
-        """执行一次手动 compact，并返回新的预算快照。"""
-        ...
+    async def compact(self) -> ContextStatus: ...
 
-    def set_permission_handler(self, handler: PermissionHandler) -> None:
-        """将权限提示路由到当前前端。"""
+    def set_permission_handler(self, handler: PermissionHandler) -> None: ...
 
-    def providers(self) -> tuple[ProviderView, ...]:
-        """返回不含凭据的 provider profile。"""
-        ...
+    def providers(self) -> tuple[ProviderView, ...]: ...
 
-    async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
-        """持久化、激活并热切换一个 provider profile。"""
-        ...
+    async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus: ...
 
-    async def list_sessions(self) -> tuple[SessionSummary, ...]:
-        """列出当前项目中除活动会话外的可恢复会话。"""
-        ...
+    async def list_sessions(self) -> tuple[SessionSummary, ...]: ...
 
-    async def resume_session(self, session_id: str) -> ResumedSession:
-        """严格加载并切换会话，返回与核心消息类型解耦的历史投影。"""
-        ...
+    async def resume_session(self, session_id: str) -> ResumedSession: ...

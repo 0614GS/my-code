@@ -1,10 +1,10 @@
-# 包边界与依赖方向提案
+# 包边界与依赖方向
 
-> 状态：Proposed，第一轮关键决策已确认。本文用于迁移前评审，不表示目录重构已经完成。
+> 状态：Accepted，迁移已完成。第 1 至第 7 步均已落地并通过验收。
 
 ## 1. 背景
 
-nano-code 当前同时采用了两种组织方式：Agent、Context、Tools、Sessions 等按技术子系统
+迁移启动时，nano-code 同时采用了两种组织方式：Agent、Context、Tools、Sessions 等按技术子系统
 分包，Todo 和 `@path` 等能力则开始纵向穿过多个子系统。随着能力增加，一些概念的所有权
 已经不再清晰：
 
@@ -167,23 +167,23 @@ tui/
 
 ### 5.3 工具执行与授权
 
-当前 file mention loader 直接取得 Read/Glob 工具，调用 validation、特殊权限入口和
-`Tool.execute()`。这复用了工具实现，却绕开 `ToolExecutor` 的完整生命周期。未来一旦增加
-PreToolUse/PostToolUse hooks、统一审计、取消或结果外置，两条调用路径会发生行为漂移。
+迁移前 file mention loader 直接取得 Read/Glob 工具，调用 validation、特殊权限入口和
+`Tool.execute()`，形成了与 `ToolExecutor` 平行的执行路径。现在 loader 只向同一个
+`ToolExecutor` 提交 invocation，不再直接执行 Tool 或调用 PermissionPolicy。
 
-已确认 file mention 直接复用 Tool，但必须通过唯一 Tool invocation 边界，而不是直接调用
-`Tool.execute()`。Invocation 应显式携带调用来源和授权证据，例如：
+File mention 直接复用 Tool，并通过唯一 Tool invocation 边界执行。Invocation 显式携带调用
+来源、授权证据和结果交付方式：
 
 ```text
 ToolInvocationOrigin.USER_FILE_MENTION
 AuthorizationEvidence.EXPLICIT_USER_INPUT
 ```
 
-该证据只把普通 `ask` 解释为用户已对本次读取作出确认，不能覆盖 whole-tool deny、path
-deny、工作区逃逸、符号链接逃逸或工具自身的 safety deny。实现上扩展统一的
-`ToolExecutor`/Tool invocation port，使 loader 能选择“不写 Transcript，但仍执行 validation、
-availability、permission、hook、audit、cancel 和结果限制”的调用模式。在此之前不继续增加
-新的直接 `Tool.execute()` 调用。
+该证据只把普通 `ask` 解释为用户已对本次只读调用作出确认，不能覆盖 whole-tool deny、
+path deny、工作区逃逸、符号链接逃逸或工具自身的 safety deny。Inline 结果不写 Transcript
+也不进入工具结果外置存储，但仍经过 validation、availability、permission、hook、audit、
+cancel 和工具自身的结果限制。审计或 pre-execute hook 失败时 fail closed；取消保持可传播；
+post-execute hook 失败不能把已经完成的调用伪装成未执行。
 
 ## 6. Todo 的边界
 
@@ -228,7 +228,7 @@ session projection 生命周期，不构成提取通用 projection registry 的�
 
 ## 7. Application 与前端边界
 
-当前 `tui.contracts.ChatRuntime` 是前端无关的应用端口，`cli.runtime.CliChatRuntime` 则是
+迁移前 `tui.contracts.ChatRuntime` 是前端无关的应用端口，`cli.runtime.CliChatRuntime` 则是
 该端口的主要实现。它们的目录名与真实职责相反。
 
 建议迁移为：
@@ -269,7 +269,7 @@ src/nano_code/
     ports/
     engine.py
 
-  conversation/          # 由当前 messages/conversation + agent/conversation 演进
+  conversation/          # 会话事实及其紧邻的 content/primitives
     models.py
     state.py
 
@@ -303,10 +303,26 @@ src/nano_code/
     bootstrap.py
 ```
 
-已确认将当前 `messages` 改名为 `conversation`。迁移不能只改目录名：需要同时确认
+已确认将原 `messages` 改名为 `conversation`。迁移不能只改目录名：需要同时确认
 `TextContent`、`JsonObject`、`TokenUsage` 等 primitive 的最终所有者，避免换名后继续保留
 相同的含混依赖。Conversation 包只拥有会话事实及紧邻的内容值对象，不成为新的共享类型
 杂物包。
+
+第 4 步迁移后，`TextContent`、`ToolCall`、`ToolResult` 和 `TokenUsage` 归
+`conversation`；`JsonObject`/`JsonValue` 继续位于 `conversation.primitives`，因为它们是
+ToolCall input、ToolResult 持久化以及模型请求之间共享的 JSON 内容约束，而不是无所有者的
+全局类型。若未来出现不经过 Conversation/Tool 内容边界的第二种 JSON 领域语义，再提取独立
+contract，而不是预先建立顶层 `types`。
+
+`ContextInstruction`、`UserContextDocument` 和 XML marker 投影归 `context`；
+`ContextAttachment` 及 retention/content block 归 `context.attachments.models`。Context 和
+attachment 包入口保持轻量，source、projection、planner 等实现必须从明确子模块导入，避免
+Agent contract 只引用 attachment model 时初始化整个 Context adapter。
+
+`ConversationState` 本轮仍保留在 `agent.conversation`。它当前直接依赖 Agent-owned
+`SessionRepository`、compaction contract 和 session snapshot；在这些 port 的所有权尚未迁移
+前，仅移动文件会制造 `conversation → agent` 反向依赖。后续若要实现目标草图中的
+`conversation/state.py`，应先将上述会话事务 contract 一并下沉，而不是添加转发 import。
 
 ## 9. 后续能力对边界的要求
 
@@ -419,6 +435,28 @@ deny、path deny、工作区/符号链接逃逸和工具 safety deny 不可被�
 6. **迁移 Todo feature**：保留强类型产品能力，明确 Tool adapter 与会话投影的关系；Plan
    Mode 不共享该投影机制。
 7. **最后处理命名与公开导出**：删除过渡 re-export，更新文档和 import，检查循环依赖。
+
+### 10.1 当前迁移进度
+
+- [x] 第 1 步：新增静态 import 边界测试，约束 Application Chat 不反向依赖 CLI/TUI，核心
+  机制不依赖 Chat runtime，并禁止生产代码重新使用旧权威路径。
+- [x] 第 2 步：`application/chat` 已成为 Chat contract、presentation、permission bridge 和
+  默认 runtime 的权威位置；生产调用方已切换到新路径。
+- [x] 第 3 步：`features.file_mentions` 已分别拥有模型、提交解析、加载用例和候选索引；
+  光标识别及候选文本插入由 `tui.completion` 拥有，顶层 `attachments.py` 已删除。
+- [x] 第 4 步：会话事实与 primitives 已迁入 `conversation`；用户上下文值对象、XML 投影和
+  attachment model/source/projection 已归入 `context` 的明确子模块，原 `messages` 包已删除。
+- [x] 第 5 步：file mention 使用带来源、授权证据和 inline 结果模式的统一 Tool invocation；
+  deny、显式 ask、取消、hook/审计失败和部分失败均有回归测试。
+- [x] 第 6 步：Todo 模型、Tool input codec、Conversation 投影和 reminder 已迁入
+  `features.todos`；`TodoWriteTool` 保持为只依赖 codec 的薄适配器。
+- [x] 第 7 步：删除 `nano_code.tui.contracts`、`nano_code.cli.runtime` 和
+  `nano_code.presentation` 的临时 re-export，并完成公开导出清理。
+
+第 2 步曾保留的三个兼容模块现已删除；`CliChatRuntime` 过渡别名也不再公开。TUI 包根只
+公开具体 UI 适配器，不再转发 Application Chat contract。`application.chat.__init__` 刻意
+保持轻量；调用方从明确的 `contracts`、`presentation`、`permissions` 或 `runtime` 子模块
+导入，避免只需要底层展示值对象时初始化完整的 Application runtime。
 
 每一步都必须运行 `ruff format --check .`、`ruff check .`、`mypy src` 和 `pytest`。涉及权限
 或执行管线的步骤必须额外覆盖 deny 不可绕过、ask 的显式授权语义、取消和部分失败。

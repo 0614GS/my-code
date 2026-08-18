@@ -1,7 +1,7 @@
 """上下文消息预算的最终防线。"""
 
 from nano_code.agent.errors import ContextOverflow as _ContextOverflow
-from nano_code.messages import (
+from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,

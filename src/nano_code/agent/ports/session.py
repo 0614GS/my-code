@@ -7,7 +7,7 @@ from nano_code.agent.contracts.session import (
     ContentReplacement,
     SessionSnapshot,
 )
-from nano_code.messages import ConversationMessage
+from nano_code.conversation import ConversationMessage
 
 
 @runtime_checkable

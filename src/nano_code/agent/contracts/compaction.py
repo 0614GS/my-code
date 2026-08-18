@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.messages import ConversationSummaryMessage, TokenUsage
+from nano_code.conversation import ConversationSummaryMessage, TokenUsage
 
 from .session import CompactBoundary, ContentReplacement
 

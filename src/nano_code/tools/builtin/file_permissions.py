@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from nano_code.messages import JsonObject
+from nano_code.conversation import JsonObject
 from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionDecisionKind,

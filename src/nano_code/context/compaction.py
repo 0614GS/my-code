@@ -18,7 +18,7 @@ from nano_code.agent.contracts.session import (
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
 from nano_code.agent.ports.model import ModelCompletionPort
-from nano_code.messages import (
+from nano_code.conversation import (
     ConversationSummaryMessage,
     TokenUsage,
 )

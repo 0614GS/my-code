@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from nano_code.messages.conversation import TextContent
+from nano_code.conversation import TextContent
 
 type ContextInstructionKind = Literal["system_reminder"]
 

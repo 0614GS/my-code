@@ -4,9 +4,10 @@ import pytest
 
 import nano_code.prompts.system as system
 from nano_code.agent import ModelTextBlock
-from nano_code.context import ModelInputNormalizer
-from nano_code.messages import ContextInstruction, ConversationSummaryMessage
-from nano_code.messages.xml import render_context_instruction, wrap_xml
+from nano_code.context.documents import ContextInstruction
+from nano_code.context.normalization import ModelInputNormalizer
+from nano_code.context.xml import render_context_instruction, wrap_xml
+from nano_code.conversation import ConversationSummaryMessage
 from nano_code.prompts import (
     PromptRegistry,
     PromptSection,

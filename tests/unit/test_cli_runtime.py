@@ -3,11 +3,18 @@ from pathlib import Path
 import pytest
 
 from nano_code.agent import AgentTurnInput, AgentTurnSucceeded
+from nano_code.application.chat.contracts import (
+    HistoryAssistantMessage,
+    HistoryToolCall,
+    HistoryUserMessage,
+)
+from nano_code.application.chat.presentation import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
+from nano_code.application.chat.runtime import DefaultChatRuntime
 from nano_code.auth import CredentialSource
-from nano_code.cli.runtime import CliChatRuntime
-from nano_code.core import AgentSettings, NanoCodePaths
-from nano_code.core.bootstrap import bootstrap_cli_runtime
-from nano_code.messages import (
+from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
     TextContent,
@@ -16,14 +23,10 @@ from nano_code.messages import (
     ToolResult,
     ToolResultsMessage,
 )
+from nano_code.core import AgentSettings, NanoCodePaths
+from nano_code.core.bootstrap import bootstrap_cli_runtime
 from nano_code.permissions import PermissionMode
-from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
 from nano_code.sessions import SessionStore
-from nano_code.tui import (
-    HistoryAssistantMessage,
-    HistoryToolCall,
-    HistoryUserMessage,
-)
 
 _CURRENT_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 _TARGET_SESSION_ID = "22222222-2222-2222-2222-222222222222"
@@ -38,7 +41,7 @@ class CapturingAgent:
         return AgentTurnSucceeded("done", 1, TokenUsage())
 
 
-def _bootstrap_runtime(tmp_path: Path) -> CliChatRuntime:
+def _bootstrap_runtime(tmp_path: Path) -> DefaultChatRuntime:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     paths = NanoCodePaths.discover(

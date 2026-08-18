@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from nano_code.messages import JsonObject
+from nano_code.conversation import JsonObject
 from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionDecision,
@@ -16,6 +16,7 @@ from nano_code.permissions.models import (
     ToolPermissionContext,
 )
 from nano_code.tools.base import Tool, ToolContext
+from nano_code.tools.invocation import AuthorizationEvidence, ToolInvocationOrigin
 
 
 class PermissionPolicy:
@@ -88,7 +89,13 @@ class PermissionPolicy:
             raise ValueError("Additional working directories are not supported yet")
 
     async def decide(
-        self, tool: Tool, tool_input: JsonObject, context: ToolContext
+        self,
+        tool: Tool,
+        tool_input: JsonObject,
+        context: ToolContext,
+        *,
+        origin: ToolInvocationOrigin = ToolInvocationOrigin.MODEL,
+        authorization: AuthorizationEvidence = AuthorizationEvidence.NONE,
     ) -> PermissionDecision:
         """组合全局策略与基于具体输入的工具局部判断。"""
 
@@ -102,8 +109,14 @@ class PermissionPolicy:
                 decision_reason=_rule_reason(deny_rule),
             )
 
+        explicit_read = (
+            origin is ToolInvocationOrigin.USER_FILE_MENTION
+            and authorization is AuthorizationEvidence.EXPLICIT_USER_INPUT
+            and tool.is_read_only(tool_input, context)
+        )
+
         ask_rule = self._whole_tool_rule(tool, PermissionBehavior.ASK)
-        if ask_rule is not None:
+        if ask_rule is not None and not explicit_read:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
                 message=f"{tool.definition.name} requires confirmation by rule.",
@@ -128,6 +141,15 @@ class PermissionPolicy:
                 decision_reason=tool_result.decision_reason,
                 updated_input=tool_result.updated_input,
                 suggestions=tool_result.suggestions,
+            )
+        if explicit_read:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="Allowed by the user's explicit @path mention.",
+                decision_reason=PermissionDecisionReason(
+                    PermissionDecisionKind.USER, "explicit-file-mention"
+                ),
+                updated_input=_updated_input(tool_result.updated_input, tool_input),
             )
         if (
             tool_result.behavior is ToolPermissionBehavior.ASK
@@ -193,47 +215,6 @@ class PermissionPolicy:
             decision_reason=tool_result.decision_reason,
             updated_input=tool_result.updated_input,
             suggestions=tool_result.suggestions,
-        )
-
-    async def decide_explicit_user_read(
-        self, tool: Tool, tool_input: JsonObject, context: ToolContext
-    ) -> PermissionDecision:
-        """Authorize an explicit ``@path`` read without weakening any deny rule.
-
-        The mention itself is the user's approval for this one read.  Input-level
-        validation and safety checks still run, and both blanket and path-specific
-        deny decisions remain authoritative.
-        """
-
-        deny_rule = self._whole_tool_rule(tool, PermissionBehavior.DENY)
-        if deny_rule is not None:
-            return PermissionDecision(
-                PermissionBehavior.DENY,
-                f"{tool.definition.name} is denied by an explicit rule.",
-                _rule_reason(deny_rule),
-            )
-        tool_result = await tool.check_permissions(
-            tool_input,
-            ToolPermissionContext(
-                mode=self.mode,
-                rules=self.rules,
-                tool_context=context,
-            ),
-        )
-        if tool_result.behavior is ToolPermissionBehavior.DENY:
-            return PermissionDecision(
-                PermissionBehavior.DENY,
-                tool_result.message,
-                tool_result.decision_reason,
-                updated_input=tool_result.updated_input,
-            )
-        return PermissionDecision(
-            PermissionBehavior.ALLOW,
-            "Allowed by the user's explicit @path mention.",
-            PermissionDecisionReason(
-                PermissionDecisionKind.USER, "explicit-file-mention"
-            ),
-            updated_input=_updated_input(tool_result.updated_input, tool_input),
         )
 
     def _whole_tool_rule(

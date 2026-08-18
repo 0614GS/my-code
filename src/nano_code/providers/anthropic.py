@@ -26,7 +26,7 @@ from nano_code.agent.contracts.model import (
 )
 from nano_code.agent.errors import ModelContextOverflow
 from nano_code.agent.ports.model import ModelCompletionPort
-from nano_code.messages import TokenUsage, to_json_object
+from nano_code.conversation import TokenUsage, to_json_object
 from nano_code.prompts import PromptStability, SystemPrompt
 from nano_code.providers.base import ProviderCapabilities
 

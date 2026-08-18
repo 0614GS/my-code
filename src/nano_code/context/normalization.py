@@ -9,18 +9,17 @@ from nano_code.agent.contracts.model import (
     ModelUserMessage,
 )
 from nano_code.agent.contracts.session import AttachmentDelivery
-from nano_code.messages import (
+from nano_code.context.attachments.models import ContextAttachment
+from nano_code.context.attachments.projection import AttachmentProjector
+from nano_code.context.documents import UserContextDocument
+from nano_code.context.xml import render_context_instruction, wrap_xml
+from nano_code.conversation import (
     AssistantMessage,
-    ContextAttachment,
     ConversationMessage,
     HumanMessage,
     TextContent,
     ToolResultsMessage,
-    UserContextDocument,
 )
-from nano_code.messages.xml import render_context_instruction, wrap_xml
-
-from .attachment_projection import AttachmentProjector
 
 
 class ModelInputNormalizer:

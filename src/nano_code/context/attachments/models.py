@@ -4,10 +4,8 @@ from dataclasses import dataclass, field
 from typing import Literal
 from uuid import uuid4
 
-from nano_code.messages.conversation import TextContent
-from nano_code.messages.primitives import JsonObject
-
-from .context import ContextInstruction
+from nano_code.context.documents import ContextInstruction
+from nano_code.conversation import JsonObject, TextContent
 
 type AttachmentRetention = Literal["request", "live_session"]
 

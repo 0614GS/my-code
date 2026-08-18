@@ -3,9 +3,12 @@
 from dataclasses import dataclass
 
 from nano_code.agent.contracts.inbound import AgentMaxStepsReached, AgentTurnSucceeded
-from nano_code.messages import JsonObject
-from nano_code.presentation import ToolResultPresentation, ToolUsePresentation
-from nano_code.todos.models import TodoItem
+from nano_code.application.chat.presentation import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
+from nano_code.conversation import JsonObject
+from nano_code.features.todos.models import TodoItem
 
 
 @dataclass(frozen=True, slots=True)
