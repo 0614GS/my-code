@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.conversation import ConversationMessage
+from nano_code.providers.catalog import ModelLimits
 
 CompactTrigger = Literal["auto", "manual", "reactive"]
 
@@ -23,6 +24,9 @@ class SessionStart:
     max_steps: int | None
     max_output_tokens: int
     context_chars: int
+    model_limits: ModelLimits = ModelLimits()
+    model_limit_source: str | None = None
+    compact_trigger_tokens: int | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -40,6 +44,8 @@ class SessionStart:
             raise ValueError("max_steps must be positive or null")
         if self.max_output_tokens < 1 or self.context_chars < 1:
             raise ValueError("Session limits must be positive")
+        if self.compact_trigger_tokens is not None and self.compact_trigger_tokens < 1:
+            raise ValueError("Session compact trigger must be positive or null")
 
 
 @dataclass(frozen=True, slots=True)

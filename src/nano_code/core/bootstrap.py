@@ -1,6 +1,6 @@
 """应用存储初始化与 Agent 依赖图的唯一 composition root。"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -35,7 +35,10 @@ from nano_code.permissions.prompt import (
 )
 from nano_code.permissions.updates import PermissionUpdateApplier
 from nano_code.prompts import build_system_prompt_registry
+from nano_code.providers.catalog import ActiveModelState, resolve_environment
+from nano_code.providers.discovery import ModelDiscoveryService, resolve_without_network
 from nano_code.providers.manager import ProviderManager
+from nano_code.providers.model_cache import ModelCatalogCache
 from nano_code.providers.profiles import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_ID,
@@ -56,6 +59,36 @@ class StorageInitialization:
     created_settings: bool
     created_providers: bool
     created_credentials: bool
+
+
+async def discover_active_model(
+    settings: AgentSettings, *, timeout_seconds: float = 3.0
+) -> AgentSettings:
+    """Best-effort startup discovery; failure remains observable and non-fatal."""
+
+    profile = ProviderProfile(
+        id=settings.provider_id,
+        model=settings.model,
+        protocol=settings.protocol,
+        base_url=settings.base_url,
+        reasoning=settings.reasoning,
+        limits=settings.model_limits,
+        compact=settings.compact,
+    )
+    descriptor, discovered_at, error = await ModelDiscoveryService(
+        ModelCatalogCache(settings.paths.model_cache_path)
+    ).resolve(
+        profile,
+        api_key=settings.api_key,
+        timeout_seconds=timeout_seconds,
+    )
+    return replace(
+        settings,
+        model_limits=descriptor.limits,
+        model_descriptor=descriptor,
+        model_discovered_at=discovered_at,
+        model_discovery_error=error,
+    )
 
 
 def initialize_user_storage(paths: NanoCodePaths) -> StorageInitialization:
@@ -100,8 +133,25 @@ def _assemble_agent(
     PermissionPolicy,
     ToolContext,
     ToolExecutor,
+    ActiveModelState,
 ]:
     actual_session_id = session_id or str(uuid4())
+    descriptor = settings.model_descriptor or resolve_without_network(
+        settings.protocol,
+        settings.base_url,
+        settings.model,
+        settings.model_limits,
+    )
+    active_model_state = ActiveModelState(
+        resolve_environment(
+            descriptor,
+            requested_output_tokens=settings.max_output_tokens,
+            configured_trigger_tokens=settings.compact.trigger_input_tokens,
+            discovered_at=settings.model_discovered_at,
+            discovery_error=settings.model_discovery_error,
+        )
+    )
+    model_environment = active_model_state.get()
     repository = SessionStore(
         settings.paths.project_state_dir,
         actual_session_id,
@@ -115,6 +165,9 @@ def _assemble_agent(
             max_steps=settings.max_steps,
             max_output_tokens=settings.max_output_tokens,
             context_chars=settings.context_chars,
+            model_limits=descriptor.limits,
+            model_limit_source=descriptor.source.value,
+            compact_trigger_tokens=model_environment.compact_trigger_tokens,
         ),
     )
     conversation = ConversationState(repository)
@@ -148,6 +201,8 @@ def _assemble_agent(
             api_key=settings.api_key,
             credential_source=settings.credential_source,
             reasoning=settings.reasoning,
+            limits=settings.model_limits,
+            compact=settings.compact,
         )
     )
     context = ContextPlanner(
@@ -160,6 +215,7 @@ def _assemble_agent(
             (TodoReminderAttachmentSource(),)
         ),
         binding_resolver=lambda: provider.binding,
+        active_model_state=active_model_state,
     )
     tool_round = ToolRoundExecutor(
         tool_executor,
@@ -175,7 +231,15 @@ def _assemble_agent(
         compactor=CompactionCoordinator(context, CompactionService(provider)),
         max_steps=settings.max_steps,
     )
-    return engine, provider, registry, permission_policy, tool_context, tool_executor
+    return (
+        engine,
+        provider,
+        registry,
+        permission_policy,
+        tool_context,
+        tool_executor,
+        active_model_state,
+    )
 
 
 def bootstrap_agent(
@@ -186,7 +250,7 @@ def bootstrap_agent(
 ) -> AgentEngine:
     """组装一个可由任意 driving adapter 使用的 Agent。"""
 
-    engine, _, _, _, _, _ = _assemble_agent(
+    engine, _, _, _, _, _, _ = _assemble_agent(
         settings,
         session_id,
         permission_prompter=permission_prompter,
@@ -201,7 +265,7 @@ def bootstrap_cli_runtime(
     """组装 TUI 所需的 Agent 与 CLI application adapter。"""
 
     prompter = DeferredPermissionPrompter()
-    engine, provider, _, _, _, tool_executor = _assemble_agent(
+    engine, provider, _, _, _, tool_executor, active_model_state = _assemble_agent(
         settings,
         session_id,
         permission_prompter=prompter,
@@ -211,7 +275,10 @@ def bootstrap_cli_runtime(
         settings=settings,
         permission_prompter=prompter,
         provider_control=CliProviderController(
-            ProviderManager(settings.paths), provider
+            ProviderManager(settings.paths),
+            provider,
+            active_model_state,
+            settings.max_output_tokens,
         ),
         session_source=ProjectSessionSource(settings.paths.project_state_dir),
         attachment_loader=AttachmentLoader(

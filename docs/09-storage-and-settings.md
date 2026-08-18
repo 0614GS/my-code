@@ -37,7 +37,13 @@ Provider Profile 是一个命名连接配置。支持 `anthropic-messages` 与�
     "anthropic": {
       "protocol": "anthropic-messages",
       "defaultModel": "claude-sonnet-4-6",
-      "reasoning": {"enabled": true, "effort": "auto", "context": "auto"}
+      "reasoning": {"enabled": true, "effort": "auto", "context": "auto"},
+      "limits": {
+        "contextWindowTokens": null,
+        "maxInputTokens": null,
+        "maxOutputTokens": null
+      },
+      "compact": {"triggerInputTokens": null}
     }
   }
 }
@@ -45,7 +51,17 @@ Provider Profile 是一个命名连接配置。支持 `anthropic-messages` 与�
 
 `settings.json` 的 `activeProvider` 指向当前 Profile；API Key 只存在 `.credentials.json`，并以 `{"kind":"apiKey","apiKey":"..."}` 的可扩展鉴别联合保存。项目级配置不能定义或选择 Provider，避免不可信仓库重定向认证请求。Provider ID 在三类文件中使用同一校验规则。
 
-旧 profile schema v2 可读，并解释为“不主动请求 reasoning、仍解析 provider 主动返回”；下一次保存写为 v3。环境变量优先级为 `NANO_CODE_API_KEY`，随后按协议选择 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`；model/base URL 同样使用对应协议前缀。
+旧 profile schema v2 可读，并解释为“不主动请求 reasoning、无 limits override、compact
+使用 Auto”；下一次保存写为 v3。`triggerInputTokens` 是下一次请求预计 input token 的
+绝对阈值；空值表示有效输入上限的 90%。能力未知时默认上限为 200,000 token，
+对应默认 compact 阈值 180,000 token。保存时拒绝非正数及超过已知 profile 上限的值。
+环境变量优先级为 `NANO_CODE_API_KEY`，随后按协议选择 `ANTHROPIC_API_KEY` 或
+`OPENAI_API_KEY`；model/base URL 同样使用对应协议前缀。
+
+模型目录缓存保存在私有 `.model-catalog.json`，按 profile、protocol 与规范化 endpoint
+隔离且不含凭据。启动刷新超时为 3 秒，手工刷新为 10 秒；失败使用缓存、内置官方目录或
+200,000-token fallback，并保留可观察错误。OpenAI `/v1/models` 只证明模型可用，不提供
+context window；只有官方精确 model ID 才合并内置能力，第三方兼容模型保持未知并允许覆盖。
 
 ## 配置层与优先级
 
@@ -108,9 +124,8 @@ CLI 参数解析只产生 `SettingsOverrides`，不读取磁盘或凭据；`cli.
 
 Provider 的默认模型和 endpoint 归入 `providers.json`；项目配置仍可用 `agent.model` 覆盖模型，但不能定义或选择 Provider。settings 不再接受 `baseUrl` 作为连接配置入口。
 
-`contextChars` 是本地工作集触发 compact 的保守字符阈值，不代表 Provider 宣称的
-精确 token window。实际预算会优先使用最近一次模型响应的 usage，并为输出 token
-单独预留空间。
+`contextChars` 只作为旧配置兼容和异常内存增长硬保护，不写入新 Provider 配置界面。
+正常 compact 由 Profile 的 input-token 阈值驱动，并为输出 token 单独预留空间。
 
 未知字段读取时忽略、写回时保留，已知字段类型错误则启动失败。`NANO_CODE_PROVIDER`/`--provider` 覆盖活动 Profile，`ANTHROPIC_BASE_URL`/`--base-url` 覆盖其 URL，`NANO_CODE_API_KEY` 或兼容的 `ANTHROPIC_API_KEY` 覆盖该 Profile 的持久化 Key。项目级和 local settings 均不能指定 Provider URL 或活动 Provider；共享项目配置同样禁止设置 `bypassPermissions`。
 

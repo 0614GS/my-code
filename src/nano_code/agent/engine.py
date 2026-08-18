@@ -242,6 +242,8 @@ class AgentEngine(AgentInboundPort):
                 ),
                 parent_uuid=self._last_uuid,
                 usage=response.usage,
+                provider_binding=request.request_binding,
+                request_input_tokens_estimate=request.request_input_tokens_estimate,
             )
             # 先持久化 assistant 的完整 tool_use，再进入执行阶段。
             self._conversation.append(assistant_message)

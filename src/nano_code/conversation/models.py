@@ -146,6 +146,8 @@ class AssistantMessage:
     uuid: str = field(default_factory=new_id)
     parent_uuid: str | None = None
     timestamp: str = field(default_factory=utc_now)
+    provider_binding: ProviderBinding | None = None
+    request_input_tokens_estimate: int | None = None
     kind: Literal["assistant"] = field(default="assistant", init=False)
 
     def __post_init__(self) -> None:
@@ -167,6 +169,11 @@ class AssistantMessage:
             raise ValueError("Assistant message contained no actionable content")
         if not isinstance(self.usage, TokenUsage):
             raise TypeError("Assistant messages require token usage")
+        if (
+            self.request_input_tokens_estimate is not None
+            and self.request_input_tokens_estimate < 1
+        ):
+            raise ValueError("Assistant request token estimate must be positive")
 
     @property
     def starts_human_turn(self) -> bool:

@@ -17,6 +17,7 @@
 - `TranscriptEntry`、`ConversationMessage`、`ModelRequest` 和 provider wire type 分层边界；
 - 分段提示词、static/session/request 生命周期和 provider 自声明缓存能力；
 - assistant usage 持久化、可观察预算、稳定 microcompact 和完整/响应式 compact；
+- Provider 模型分页发现、能力缓存/覆盖、真实 usage 校准与 Unicode token 预算；
 - 超大工具结果落盘并给模型返回稳定预览。
 - 基于完整 session history 投影的 TodoWrite 状态，以及采用独立 10/10 completed-model-call 阈值、
   仅保留在当前进程模型历史中的 todo reminder；

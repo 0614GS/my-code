@@ -357,6 +357,7 @@ class OpenAIResponsesProvider(ModelCompletionPort):
                 input_tokens=max(0, total_input_tokens - cached_tokens),
                 output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
                 cache_read_input_tokens=cached_tokens,
+                provider_reported=usage is not None,
             ),
         )
 

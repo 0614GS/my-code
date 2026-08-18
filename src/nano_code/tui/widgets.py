@@ -6,6 +6,7 @@ import asyncio
 
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown as RichMarkdown
+from rich.table import Table
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -298,24 +299,28 @@ class ActivityBar(Horizontal):
 
 
 class StatusBar(Static):
-    def __init__(self, status: RuntimeStatus) -> None:
+    def __init__(self, status: RuntimeStatus, context_usage: str) -> None:
         super().__init__()
-        self.set_status(status)
+        self.set_status(status, context_usage)
 
-    def set_status(self, status: RuntimeStatus) -> None:
-        self.update(
-            Text.assemble(
-                (status.model, "dim"),
-                ("  ·  ", "dim"),
-                (status.permission_mode, "dim"),
-                ("  ·  ", "dim"),
-                (f"{status.working_message_count} messages", "dim"),
-                (
-                    "    Ctrl+T todos" if status.todos else "    / for commands",
-                    "#a59c94",
-                ),
-            )
+    def set_status(self, status: RuntimeStatus, context_usage: str) -> None:
+        self.context_usage = context_usage
+        left = Text.assemble(
+            (status.model, "dim"),
+            ("  ·  ", "dim"),
+            (status.permission_mode, "dim"),
+            ("  ·  ", "dim"),
+            (f"{status.working_message_count} messages", "dim"),
+            (
+                "    Ctrl+T todos" if status.todos else "    / for commands",
+                "#a59c94",
+            ),
         )
+        table = Table.grid(expand=True, padding=(0, 0))
+        table.add_column()
+        table.add_column(justify="right", no_wrap=True)
+        table.add_row(left, Text(context_usage, style="dim"))
+        self.update(table)
 
 
 class PermissionPanel(Vertical):

@@ -30,6 +30,7 @@ from nano_code.conversation import (
 )
 from nano_code.conversation.primitives import JsonObject
 from nano_code.permissions import PermissionMode
+from nano_code.providers.catalog import ModelLimits
 from nano_code.providers.ids import validate_provider_id
 from nano_code.sessions.records import (
     AssistantMessageRecord,
@@ -77,6 +78,9 @@ def decode_entry(value: object) -> DecodedEntry:
             entry.max_steps,
             entry.max_output_tokens,
             entry.context_chars,
+            entry.model_limits,
+            entry.model_limit_source,
+            entry.compact_trigger_tokens,
         )
     if isinstance(entry, SessionMetadataRecord):
         return SessionMetadata(
@@ -139,6 +143,9 @@ def encode_start(start: SessionStart) -> JsonObject:
             start.max_steps,
             start.max_output_tokens,
             start.context_chars,
+            start.model_limits,
+            start.model_limit_source,
+            start.compact_trigger_tokens,
         )
     )
 
@@ -176,6 +183,8 @@ def message_to_record(message: ConversationMessage) -> MessageRecord:
             message.timestamp,
             assistant_content,
             message.usage,
+            message.provider_binding,
+            message.request_input_tokens_estimate,
         )
     if isinstance(message, ToolResultsMessage):
         result_content: tuple[ToolResultRecord, ...] = tuple(
@@ -216,6 +225,8 @@ def record_to_message(record: MessageRecord) -> ConversationMessage:
             record.uuid,
             record.parent_uuid,
             record.timestamp,
+            record.provider_binding,
+            record.request_input_tokens_estimate,
         )
     if isinstance(record, ToolResultsMessageRecord):
         result_content: tuple[ToolResult, ...] = tuple(
@@ -247,6 +258,13 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             max_steps=entry.max_steps,
             max_output_tokens=entry.max_output_tokens,
             context_chars=entry.context_chars,
+            model_limits={
+                "context_window_tokens": entry.model_limits.context_window_tokens,
+                "max_input_tokens": entry.model_limits.max_input_tokens,
+                "max_output_tokens": entry.model_limits.max_output_tokens,
+            },
+            model_limit_source=entry.model_limit_source,
+            compact_trigger_tokens=entry.compact_trigger_tokens,
         )
         return base
     if isinstance(entry, SessionMetadataRecord):
@@ -274,6 +292,10 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
     elif isinstance(entry, AssistantMessageRecord):
         base["content"] = [_assistant_block_json(b) for b in entry.content]
         base["usage"] = _usage_json(entry.usage)
+        if entry.provider_binding is not None:
+            base["provider_binding"] = _binding_json(entry.provider_binding)
+        if entry.request_input_tokens_estimate is not None:
+            base["request_input_tokens_estimate"] = entry.request_input_tokens_estimate
     elif isinstance(entry, ToolResultsMessageRecord):
         base["content"] = [_result_json(b) for b in entry.content]
         base["source_assistant_uuid"] = entry.source_assistant_uuid
@@ -306,7 +328,18 @@ def entry_from_json(value: object) -> TranscriptEntry:
     expected_fields = _ENTRY_FIELDS.get(kind)
     if expected_fields is None:
         raise TranscriptDecodeError(f"Unsupported transcript entry type: {kind}")
-    _require_exact_fields(data, expected_fields)
+    actual_expected = expected_fields
+    if kind == "assistant_message":
+        optional = {"provider_binding", "request_input_tokens_estimate"}
+        actual_expected = expected_fields | (frozenset(data) & optional)
+    elif kind == "session_started":
+        optional = {
+            "model_limits",
+            "model_limit_source",
+            "compact_trigger_tokens",
+        }
+        actual_expected = expected_fields | (frozenset(data) & optional)
+    _require_exact_fields(data, actual_expected)
     if kind == "session_started":
         cwd = _string(data, "cwd")
         if not Path(cwd).is_absolute():
@@ -331,6 +364,9 @@ def entry_from_json(value: object) -> TranscriptEntry:
             _optional_positive_int(data, "max_steps"),
             _positive_int(data, "max_output_tokens"),
             _positive_int(data, "context_chars"),
+            _model_limits(data.get("model_limits")),
+            _optional_non_empty_string(data, "model_limit_source"),
+            _optional_positive_int(data, "compact_trigger_tokens"),
         )
     if kind == "session_metadata":
         return SessionMetadataRecord(
@@ -360,7 +396,15 @@ def entry_from_json(value: object) -> TranscriptEntry:
         if not assistant_content:
             raise TranscriptDecodeError("Assistant content must not be empty")
         return AssistantMessageRecord(
-            *common, assistant_content, _usage(data.get("usage"))
+            *common,
+            assistant_content,
+            _usage(data.get("usage")),
+            _optional_binding(data.get("provider_binding")),
+            (
+                _positive_int(data, "request_input_tokens_estimate")
+                if "request_input_tokens_estimate" in data
+                else None
+            ),
         )
     if kind == "tool_results_message":
         raw = _list(data, "content")
@@ -433,14 +477,18 @@ def _assistant_block_json(
 
 def _continuation_json(state: ProviderContinuationState) -> JsonObject:
     return {
-        "binding": {
-            "protocol": state.binding.protocol,
-            "provider_id": state.binding.provider_id,
-            "model": state.binding.model,
-            "base_url": state.binding.base_url,
-        },
+        "binding": _binding_json(state.binding),
         "replay_scope": state.replay_scope,
         "payload": state.payload,
+    }
+
+
+def _binding_json(binding: ProviderBinding) -> JsonObject:
+    return {
+        "protocol": binding.protocol,
+        "provider_id": binding.provider_id,
+        "model": binding.model,
+        "base_url": binding.base_url,
     }
 
 
@@ -466,6 +514,7 @@ def _usage_json(usage: TokenUsage) -> JsonObject:
         "output_tokens": usage.output_tokens,
         "cache_creation_input_tokens": usage.cache_creation_input_tokens,
         "cache_read_input_tokens": usage.cache_read_input_tokens,
+        "provider_reported": usage.provider_reported,
     }
 
 
@@ -540,6 +589,21 @@ def _optional_positive_int(data: Mapping[str, object], key: str) -> int | None:
     return value
 
 
+def _model_limits(value: object) -> ModelLimits:
+    if value is None:
+        return ModelLimits()
+    raw = _object(value)
+    _require_exact_fields(
+        raw,
+        frozenset({"context_window_tokens", "max_input_tokens", "max_output_tokens"}),
+    )
+    return ModelLimits(
+        _optional_positive_int(raw, "context_window_tokens"),
+        _optional_positive_int(raw, "max_input_tokens"),
+        _optional_positive_int(raw, "max_output_tokens"),
+    )
+
+
 def _assistant_block(
     value: object,
 ) -> TextContentRecord | ToolCallRecord | ReasoningContentRecord:
@@ -596,7 +660,23 @@ def _optional_continuation(
         return None
     item = _object(raw)
     _require_exact_fields(item, frozenset({"binding", "replay_scope", "payload"}))
-    binding_raw = _object(item.get("binding"))
+    try:
+        binding = _optional_binding(item.get("binding"))
+        if binding is None:
+            raise TranscriptDecodeError("continuation binding is required")
+        return ProviderContinuationState(
+            binding,
+            _string(item, "replay_scope"),  # type: ignore[arg-type]
+            to_json_object(item.get("payload")),
+        )
+    except (TypeError, ValueError) as error:
+        raise TranscriptDecodeError(str(error)) from error
+
+
+def _optional_binding(value: object) -> ProviderBinding | None:
+    if value is None:
+        return None
+    binding_raw = _object(value)
     _require_exact_fields(
         binding_raw, frozenset({"protocol", "provider_id", "model", "base_url"})
     )
@@ -604,18 +684,13 @@ def _optional_continuation(
     if base_url is not None and not isinstance(base_url, str):
         raise TranscriptDecodeError("binding base_url must be string or null")
     try:
-        binding = ProviderBinding(
+        return ProviderBinding(
             _string(binding_raw, "protocol"),
             _string(binding_raw, "provider_id"),
             _string(binding_raw, "model"),
             base_url,
         )
-        return ProviderContinuationState(
-            binding,
-            _string(item, "replay_scope"),  # type: ignore[arg-type]
-            to_json_object(item.get("payload")),
-        )
-    except (TypeError, ValueError) as error:
+    except ValueError as error:
         raise TranscriptDecodeError(str(error)) from error
 
 
@@ -651,17 +726,15 @@ def _result(value: object) -> ToolResultRecord:
 
 def _usage(value: object) -> TokenUsage:
     data = _object(value)
-    _require_exact_fields(
-        data,
-        frozenset(
-            {
-                "input_tokens",
-                "output_tokens",
-                "cache_creation_input_tokens",
-                "cache_read_input_tokens",
-            }
-        ),
-    )
+    expected = {
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    }
+    if "provider_reported" in data:
+        expected.add("provider_reported")
+    _require_exact_fields(data, frozenset(expected))
     values = []
     for key in (
         "input_tokens",
@@ -674,7 +747,10 @@ def _usage(value: object) -> TokenUsage:
             raise TranscriptDecodeError("Usage counts must be integers")
         values.append(raw)
     try:
-        return TokenUsage(*values)
+        reported = data.get("provider_reported", False)
+        if not isinstance(reported, bool):
+            raise TranscriptDecodeError("provider_reported must be boolean")
+        return TokenUsage(values[0], values[1], values[2], values[3], reported)
     except ValueError as error:
         raise TranscriptDecodeError(str(error)) from error
 

@@ -14,10 +14,12 @@ from nano_code.permissions import (
     PermissionRule,
     validate_permission_rule,
 )
+from nano_code.providers.catalog import ModelDescriptor, ModelLimits
 from nano_code.providers.ids import validate_provider_id
 from nano_code.providers.profiles import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_ID,
+    CompactConfig,
     ProviderProfile,
     ProviderProfileStore,
     ProviderProtocol,
@@ -60,6 +62,11 @@ class AgentSettings:
     base_url: str | None = None
     protocol: ProviderProtocol = ProviderProtocol.ANTHROPIC_MESSAGES
     reasoning: ReasoningConfig = ReasoningConfig()
+    model_limits: ModelLimits = ModelLimits()
+    compact: CompactConfig = CompactConfig()
+    model_descriptor: ModelDescriptor | None = None
+    model_discovered_at: str | None = None
+    model_discovery_error: str | None = None
 
     def __post_init__(self) -> None:
         if not self.provider_id.strip():
@@ -203,6 +210,8 @@ class SettingsResolver:
             base_url=base_url,
             protocol=profile.protocol,
             reasoning=profile.reasoning,
+            model_limits=profile.limits,
+            compact=profile.compact,
         )
 
 

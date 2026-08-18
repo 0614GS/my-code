@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from nano_code.auth import CredentialStore, resolve_api_key
 from nano_code.core.paths import NanoCodePaths
 from nano_code.core.settings_store import SettingsStore
+from nano_code.providers.catalog import ModelLimits
+from nano_code.providers.discovery import ModelDiscoveryService
+from nano_code.providers.model_cache import ModelCatalogCache
 from nano_code.providers.profiles import (
+    CompactConfig,
     ProviderProfile,
     ProviderProfileStore,
     ProviderProtocol,
@@ -27,6 +31,14 @@ class ProviderView:
     active: bool
     has_stored_key: bool
     reasoning: ReasoningConfig = ReasoningConfig()
+    limits: ModelLimits = ModelLimits()
+    compact: CompactConfig = CompactConfig()
+    models: tuple[str, ...] = ()
+    capability_source: str | None = None
+    discovered_at: str | None = None
+    discovery_error: str | None = None
+    warning: str | None = None
+    resolved_limits: ModelLimits = ModelLimits()
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +51,8 @@ class ProviderUpdate:
     api_key: str | None = None
     protocol: ProviderProtocol = ProviderProtocol.ANTHROPIC_MESSAGES
     reasoning: ReasoningConfig = ReasoningConfig()
+    limits: ModelLimits = ModelLimits()
+    compact: CompactConfig = CompactConfig()
 
 
 class ProviderManager:
@@ -55,19 +69,75 @@ class ProviderManager:
         self.profiles = ProviderProfileStore(paths.providers_path)
         self.credentials = CredentialStore(paths.credentials_path)
         self.settings = SettingsStore(paths)
+        self.model_cache = ModelCatalogCache(paths.model_cache_path)
 
     def list(self, active_provider: str) -> tuple[ProviderView, ...]:
-        return tuple(
-            ProviderView(
-                id=profile.id,
-                protocol=profile.protocol,
-                model=profile.model,
-                base_url=profile.base_url,
-                active=profile.id == active_provider,
-                has_stored_key=self.credentials.load_api_key(profile.id) is not None,
-                reasoning=profile.reasoning,
+        views: list[ProviderView] = []
+        for profile in self.profiles.load().values():
+            cached = self.model_cache.load(
+                self.model_cache.binding_key(
+                    profile.id, profile.protocol.value, profile.base_url
+                )
             )
-            for profile in self.profiles.load().values()
+            models = cached.models if cached is not None else ()
+            selected = next((item for item in models if item.id == profile.model), None)
+            views.append(
+                ProviderView(
+                    id=profile.id,
+                    protocol=profile.protocol,
+                    model=profile.model,
+                    base_url=profile.base_url,
+                    active=profile.id == active_provider,
+                    has_stored_key=self.credentials.load_api_key(profile.id)
+                    is not None,
+                    reasoning=profile.reasoning,
+                    limits=profile.limits,
+                    compact=profile.compact,
+                    models=tuple(item.id for item in models),
+                    capability_source=(selected.source.value if selected else None),
+                    discovered_at=cached.fetched_at if cached is not None else None,
+                    resolved_limits=selected.limits if selected else ModelLimits(),
+                )
+            )
+        return tuple(views)
+
+    async def refresh_models(self, provider_id: str) -> ProviderView:
+        profiles = self.profiles.load()
+        try:
+            profile = profiles[provider_id]
+        except KeyError as error:
+            raise ValueError(f"Unknown provider: {provider_id}") from error
+        credential = resolve_api_key(
+            self.credentials,
+            self.environ,
+            provider_id=provider_id,
+            protocol=profile.protocol.value,
+        )
+        selected, fetched_at, discovery_error = await ModelDiscoveryService(
+            self.model_cache
+        ).resolve(profile, api_key=credential.api_key, timeout_seconds=10.0)
+        cached = self.model_cache.load(
+            self.model_cache.binding_key(
+                profile.id, profile.protocol.value, profile.base_url
+            )
+        )
+        models = cached.models if cached is not None else (selected,)
+        return ProviderView(
+            profile.id,
+            profile.protocol,
+            profile.model,
+            profile.base_url,
+            False,
+            credential.api_key is not None,
+            profile.reasoning,
+            profile.limits,
+            profile.compact,
+            tuple(item.id for item in models),
+            selected.source.value,
+            fetched_at,
+            discovery_error,
+            None,
+            selected.limits,
         )
 
     def configure(self, update: ProviderUpdate) -> ProviderConnection:
@@ -77,6 +147,8 @@ class ProviderManager:
             model=update.model,
             base_url=update.base_url,
             reasoning=update.reasoning,
+            limits=update.limits,
+            compact=update.compact,
         )
         profiles = self.profiles.load()
 
@@ -115,4 +187,6 @@ class ProviderManager:
             api_key=credential.api_key,
             credential_source=credential.source,
             reasoning=profile.reasoning,
+            limits=profile.limits,
+            compact=profile.compact,
         )

@@ -5,10 +5,12 @@ from typing import Literal
 
 from nano_code.application.chat.presentation import ToolResultPresentation
 from nano_code.conversation import (
+    ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
 )
 from nano_code.conversation.primitives import JsonObject, TokenUsage
+from nano_code.providers.catalog import ModelLimits
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +24,9 @@ class SessionStartedRecord:
     max_steps: int | None
     max_output_tokens: int
     context_chars: int
+    model_limits: ModelLimits = ModelLimits()
+    model_limit_source: str | None = None
+    compact_trigger_tokens: int | None = None
     type: Literal["session_started"] = "session_started"
     schema_version: Literal[5] = 5
 
@@ -86,6 +91,8 @@ class AssistantMessageRecord:
     timestamp: str
     content: tuple[TextContentRecord | ToolCallRecord | ReasoningContentRecord, ...]
     usage: TokenUsage
+    provider_binding: ProviderBinding | None = None
+    request_input_tokens_estimate: int | None = None
     type: Literal["assistant_message"] = "assistant_message"
     schema_version: Literal[5] = 5
 

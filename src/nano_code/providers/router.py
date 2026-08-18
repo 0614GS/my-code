@@ -12,8 +12,13 @@ from nano_code.conversation import ProviderBinding
 from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.base import ProviderCapabilities
 from nano_code.providers.call import CompleteModelCallAdapter
+from nano_code.providers.catalog import ModelLimits
 from nano_code.providers.openai_responses import OpenAIResponsesProvider
-from nano_code.providers.profiles import ProviderProtocol, ReasoningConfig
+from nano_code.providers.profiles import (
+    CompactConfig,
+    ProviderProtocol,
+    ReasoningConfig,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +32,8 @@ class ProviderConnection:
     api_key: str | None
     credential_source: CredentialSource
     reasoning: ReasoningConfig = ReasoningConfig()
+    limits: ModelLimits = ModelLimits()
+    compact: CompactConfig = CompactConfig()
 
 
 type ProviderFactory = Callable[[ProviderConnection], ModelCompletionPort]

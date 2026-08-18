@@ -176,17 +176,25 @@ TranscriptEntry / JSONL（持久化与恢复事实）
 `ContextBudget` 和完整 `ModelRequest`，Agent Loop 不再直接拼装请求。相邻同 role 消息在规范化时合并，
 重复、孤立或未闭合的工具调用在进入 Provider 前失败。
 
-预算优先以最近一次 assistant 的真实 input、cache creation/read 与 output usage
-为锚点，只对
-其后新增消息和尚未计入 usage 的 attachment 作字符估算；没有 usage 的旧会话才估算完整
-system、user context、tool schema、messages 和 attachments。`contextChars` 当前仍是触发 compact 的保守字符阈值，不冒充精确的模型
-token 上限，`/context` 会同时显示字符组成和 token 估算。
+预算先对完整 `ModelRequest` 做确定性的 Unicode token 估算，覆盖 system prompt、
+工具 schema、规范化消息、实际回放的 continuation、JSON 标点和 framing。找到最近一条
+binding 完全匹配、带真实 provider usage 与当次请求估算的 assistant 时，使用
+`reported_input + current_estimate - anchor_estimate` 校准；旧 Transcript、缺失 usage 或
+切换 endpoint/model 时退回 tokenizer estimate。`contextChars` 只保留为异常体积硬保护，
+不再触发正常 compact。
 
-microcompact 只处理旧的 Read、Bash、Grep、Glob 结果。原文不改写，JSONL 追加
+microcompact 在 projected input 达到 resolved token 阈值时处理旧的 Read、Bash、Grep、Glob
+结果，按旧到新替换并在每次替换后重新 token 化，目标为阈值的 90%。原文不改写，JSONL 追加
 `content_replacement`，每次按 tool ID 重放同一占位文本。完整 compact 使用独立、
 无工具的模型请求；摘要成功后依次追加 `compact_boundary` 和 summary message，随后
 仅释放内存中的旧工作集。摘要失败不会产生有效 boundary。Provider 明确报告上下文
-超限时最多执行一次 reactive compact。
+清理后仍达到阈值则执行完整 compact；Provider 明确报告超限时最多执行一次 reactive compact。
+
+模型有效输入上限优先使用 `max_input_tokens`，并受
+`context_window_tokens - resolved_max_output_tokens` 约束；未知模型使用保守的
+200,000-token fallback。自动 compact 阈值为有效输入上限的 90%，Profile 可保存绝对
+`triggerInputTokens`。`/context` 以 `used / max`（千 token）展示当前预计输入与有效输入上限，
+并补充测量方式、compact 阈值、压缩次数与降级警告；同一 `used / max` 指标常驻 TUI 右下角。
 
 当前有意未实现 cached microcompact、preserved tail、文件/plan/skill 工作集重建和
 compact hooks。这些能力以后应接入现有 planner、boundary 和 replay 边界，而不是

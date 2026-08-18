@@ -1,5 +1,7 @@
 """使用密码安全 API key 输入框的 provider profile 编辑器。"""
 
+from collections.abc import Awaitable, Callable
+
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -8,8 +10,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Switch
 from textual.widgets.option_list import Option
 
+from nano_code.providers.catalog import ModelLimits
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.providers.profiles import (
+    CompactConfig,
     ProviderProfile,
     ProviderProtocol,
     ReasoningConfig,
@@ -21,10 +25,15 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
-    def __init__(self, providers: tuple[ProviderView, ...]) -> None:
+    def __init__(
+        self,
+        providers: tuple[ProviderView, ...],
+        refresh_models: Callable[[str], Awaitable[ProviderView]] | None = None,
+    ) -> None:
         super().__init__()
         self.providers = providers
         self._by_id = {provider.id: provider for provider in providers}
+        self._refresh_models = refresh_models
 
     def compose(self) -> ComposeResult:
         options = [
@@ -68,6 +77,21 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
                     )
                     yield Label("Model")
                     yield Input(id="provider-model", placeholder="model name")
+                    yield Label("Choose a discovered model (optional)")
+                    yield Select(
+                        (),
+                        id="provider-model-list",
+                        prompt="Use manual model input",
+                    )
+                    yield Label("Discovered models: none", id="provider-models-status")
+                    yield Label("Context window tokens (optional)")
+                    yield Input(id="provider-context-window", placeholder="Auto")
+                    yield Label("Max input tokens (optional)")
+                    yield Input(id="provider-max-input", placeholder="Auto")
+                    yield Label("Max output tokens (optional)")
+                    yield Input(id="provider-max-output", placeholder="Auto")
+                    yield Label("Compact input-token trigger (blank = Auto)")
+                    yield Input(id="provider-compact-trigger", placeholder="Auto (90%)")
                     yield Label("Enable reasoning")
                     yield Switch(True, id="provider-reasoning-enabled")
                     yield Label("Reasoning effort")
@@ -84,6 +108,7 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
                     yield Label("", id="provider-error")
             with Horizontal(id="provider-actions"):
                 yield Button("New", id="provider-new")
+                yield Button("Refresh Models", id="provider-refresh")
                 yield Button("Save & Use", id="provider-save", variant="primary")
                 yield Button("Cancel", id="provider-cancel")
 
@@ -109,6 +134,11 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
     def new_provider(self) -> None:
         self._new_profile()
 
+    @on(Select.Changed, "#provider-model-list")
+    def select_discovered_model(self, event: Select.Changed) -> None:
+        if isinstance(event.value, str) and event.value:
+            self.query_one("#provider-model", Input).value = event.value
+
     @on(Button.Pressed, "#provider-save")
     def save_provider(self) -> None:
         provider_id = self.query_one("#provider-id", Input).value.strip()
@@ -125,12 +155,22 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
             or "auto",
         )
         try:
+            limits = ModelLimits(
+                self._optional_positive("#provider-context-window"),
+                self._optional_positive("#provider-max-input"),
+                self._optional_positive("#provider-max-output"),
+            )
+            compact = CompactConfig(
+                self._optional_positive("#provider-compact-trigger")
+            )
             ProviderProfile(
                 id=provider_id,
                 model=model,
                 protocol=protocol,
                 base_url=base_url,
                 reasoning=reasoning,
+                limits=limits,
+                compact=compact,
             )
             if api_key is not None and any(char.isspace() for char in api_key):
                 raise ValueError("API key must not contain whitespace")
@@ -145,8 +185,30 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
                 api_key=api_key,
                 protocol=protocol,
                 reasoning=reasoning,
+                limits=limits,
+                compact=compact,
             )
         )
+
+    @on(Button.Pressed, "#provider-refresh")
+    async def refresh_provider_models(self) -> None:
+        provider_id = self.query_one("#provider-id", Input).value.strip()
+        if not provider_id or self._refresh_models is None:
+            self.query_one("#provider-error", Label).update(
+                "Save the provider before refreshing models."
+            )
+            return
+        button = self.query_one("#provider-refresh", Button)
+        button.disabled = True
+        self.query_one("#provider-models-status", Label).update("Loading models…")
+        try:
+            provider = await self._refresh_models(provider_id)
+            self._by_id[provider.id] = provider
+            self._show_discovery(provider)
+        except Exception as error:
+            self.query_one("#provider-error", Label).update(str(error))
+        finally:
+            button.disabled = False
 
     @on(Button.Pressed, "#provider-cancel")
     def cancel_provider(self) -> None:
@@ -168,6 +230,17 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
         self.query_one("#provider-reasoning-effort", Input).value = "auto"
         self.query_one("#provider-reasoning-context", Input).value = "auto"
         self.query_one("#provider-key", Input).value = ""
+        for selector in (
+            "#provider-context-window",
+            "#provider-max-input",
+            "#provider-max-output",
+            "#provider-compact-trigger",
+        ):
+            self.query_one(selector, Input).value = ""
+        self.query_one("#provider-models-status", Label).update(
+            "Discovered models: none"
+        )
+        self.query_one("#provider-model-list", Select).set_options(())
         self.query_one("#provider-key-status", Label).update("New provider")
         self.query_one("#provider-error", Label).update("")
         provider_id.focus()
@@ -189,8 +262,52 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
             "#provider-reasoning-context", Input
         ).value = provider.reasoning.context
         self.query_one("#provider-key", Input).value = ""
+        self.query_one("#provider-context-window", Input).value = _number_text(
+            provider.limits.context_window_tokens
+        )
+        self.query_one("#provider-max-input", Input).value = _number_text(
+            provider.limits.max_input_tokens
+        )
+        self.query_one("#provider-max-output", Input).value = _number_text(
+            provider.limits.max_output_tokens
+        )
+        self.query_one("#provider-compact-trigger", Input).value = _number_text(
+            provider.compact.trigger_input_tokens
+        )
         key_status = (
             "Stored key configured" if provider.has_stored_key else "No stored key"
         )
         self.query_one("#provider-key-status", Label).update(key_status)
         self.query_one("#provider-error", Label).update("")
+        self._show_discovery(provider)
+
+    def _show_discovery(self, provider: ProviderView) -> None:
+        details = f"Discovered models: {len(provider.models)}"
+        if provider.capability_source:
+            details += f" · source {provider.capability_source}"
+        if provider.discovered_at:
+            details += f" · {provider.discovered_at}"
+        self.query_one("#provider-models-status", Label).update(details)
+        model_list = self.query_one("#provider-model-list", Select)
+        model_list.set_options((model, model) for model in provider.models)
+        if provider.model in provider.models:
+            model_list.value = provider.model
+        self.query_one("#provider-error", Label).update(
+            provider.discovery_error or provider.warning or ""
+        )
+
+    def _optional_positive(self, selector: str) -> int | None:
+        value = self.query_one(selector, Input).value.strip()
+        if not value:
+            return None
+        try:
+            parsed = int(value)
+        except ValueError as error:
+            raise ValueError(f"{selector[1:]} must be a positive integer") from error
+        if parsed < 1:
+            raise ValueError(f"{selector[1:]} must be a positive integer")
+        return parsed
+
+
+def _number_text(value: int | None) -> str:
+    return "" if value is None else str(value)

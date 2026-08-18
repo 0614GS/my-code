@@ -18,6 +18,7 @@ class TokenUsage:
     output_tokens: int = 0
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
+    provider_reported: bool = False
 
     def __post_init__(self) -> None:
         values = (

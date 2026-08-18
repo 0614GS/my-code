@@ -160,6 +160,12 @@ Agent 工作集则从最后一个有效 summary 开始。
 content replacements → compact boundary → summary message → working set replacement
 ```
 
+Transcript v5 的 assistant message 可选保存 `provider_binding`、
+`request_input_tokens_estimate`，usage 同时标记是否由 Provider 实际报告。这些字段不改变
+schema 版本；旧记录缺失时不会把零 usage 当成事实，而是使用本地 tokenizer。session start
+同时保存启动时解析出的 limits、来源和 compact threshold 诊断快照；恢复请求仍以当前
+Profile、endpoint 与模型能力为准。
+
 因此摘要模型失败不会写入 boundary，后续 JSONL 写入失败也不会让当前进程先使用一份
 未持久化的工作集。`SessionSnapshot` 只是 hydration DTO；AgentEngine 不读取
 SessionStore，后续 API 投影只依赖 `ConversationState.context_snapshot()`。

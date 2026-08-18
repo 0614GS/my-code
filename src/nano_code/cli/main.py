@@ -12,6 +12,7 @@ from nano_code.core import SettingsResolver
 from nano_code.core.bootstrap import (
     bootstrap_agent,
     bootstrap_cli_runtime,
+    discover_active_model,
     initialize_user_storage,
 )
 from nano_code.providers.profiles import ProviderProfileStore
@@ -23,6 +24,8 @@ async def _submit(options: CliOptions, resolver: SettingsResolver) -> int:
         options.settings_overrides,
         interactive=options.interactive,
     )
+    if settings.paths.providers_path.exists():
+        settings = await discover_active_model(settings)
     agent = bootstrap_agent(settings, options.session_id)
     result = await agent.submit(AgentTurnInput(options.prompt or ""))
     if isinstance(result, AgentTurnSucceeded):
@@ -40,6 +43,8 @@ async def run(options: CliOptions, resolver: SettingsResolver) -> int:
         options.settings_overrides,
         interactive=options.interactive,
     )
+    if settings.paths.providers_path.exists():
+        settings = await discover_active_model(settings)
     runtime = bootstrap_cli_runtime(settings, options.session_id)
     await NanoCodeTui(runtime).run()
     return 0

@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from nano_code.providers.catalog import ModelLimits
 from nano_code.providers.profiles import (
+    CompactConfig,
     ProviderProfile,
     ProviderProfileError,
     ProviderProfileStore,
@@ -77,3 +79,30 @@ def test_v2_profile_loads_reasoning_disabled_and_writes_v3(tmp_path: Path) -> No
 
     assert loaded.reasoning == ReasoningConfig(enabled=False)
     assert json.loads(path.read_text(encoding="utf-8"))["version"] == 3
+
+
+def test_profile_round_trips_model_limits_and_absolute_compact_threshold(
+    tmp_path: Path,
+) -> None:
+    store = ProviderProfileStore(tmp_path / "providers.json")
+    profile = ProviderProfile(
+        id="openai",
+        protocol=ProviderProtocol.OPENAI_RESPONSES,
+        model="custom",
+        limits=ModelLimits(100_000, 80_000, 20_000),
+        compact=CompactConfig(60_000),
+    )
+
+    store.write((profile,))
+
+    assert store.load()["openai"] == profile
+
+
+def test_profile_rejects_compact_threshold_above_known_input_limit() -> None:
+    with pytest.raises(ProviderProfileError, match="exceeds"):
+        ProviderProfile(
+            id="openai",
+            model="custom",
+            limits=ModelLimits(max_input_tokens=10_000),
+            compact=CompactConfig(10_001),
+        )

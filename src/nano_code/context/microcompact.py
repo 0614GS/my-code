@@ -1,5 +1,6 @@
 """对旧工具结果生成稳定、可重放的轻量压缩决策。"""
 
+from collections.abc import Callable
 from dataclasses import replace
 
 from nano_code.agent.contracts.session import ContentReplacement
@@ -88,6 +89,52 @@ class MicrocompactPolicy:
             proposed.append(replacement)
             current_chars -= len(block.content) - len(replacement.content)
             if current_chars <= self.target_chars:
+                break
+        return tuple(proposed)
+
+    def propose_tokens(
+        self,
+        messages: tuple[ConversationMessage, ...],
+        existing: tuple[ContentReplacement, ...],
+        *,
+        current_tokens: int,
+        trigger_tokens: int,
+        estimate: Callable[[tuple[ConversationMessage, ...]], int],
+    ) -> tuple[ContentReplacement, ...]:
+        """Replace oldest eligible results until the retokenized request is safe."""
+
+        if current_tokens < trigger_tokens:
+            return ()
+        target_tokens = max(1, trigger_tokens * 9 // 10)
+        replacements = {item.tool_use_id: item for item in existing}
+        tool_names = {
+            block.id: block.name
+            for message in messages
+            if isinstance(message, AssistantMessage)
+            for block in message.content
+            if isinstance(block, ToolCall)
+        }
+        candidates = [
+            block
+            for message in messages
+            if isinstance(message, ToolResultsMessage)
+            for block in message.content
+            if block.tool_use_id not in replacements
+            and tool_names.get(block.tool_use_id) in _ELIGIBLE_TOOLS
+            and len(block.content) >= self.min_result_chars
+        ]
+        if self.keep_recent_results:
+            candidates = candidates[: -self.keep_recent_results]
+        proposed: list[ContentReplacement] = []
+        for block in candidates:
+            replacement = ContentReplacement.for_tool_result(
+                tool_use_id=block.tool_use_id,
+                tool_name=tool_names[block.tool_use_id],
+                original_chars=len(block.content),
+            )
+            proposed.append(replacement)
+            view = apply_content_replacements(messages, existing + tuple(proposed))
+            if estimate(view) <= target_tokens:
                 break
         return tuple(proposed)
 

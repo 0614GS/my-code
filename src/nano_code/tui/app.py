@@ -356,6 +356,7 @@ class NanoCodeApp(App[None]):
 
     def compose(self) -> ComposeResult:
         status = self.runtime.status()
+        context_usage = _format_context_usage(self.runtime.context_status())
         with VerticalScroll(id="conversation"):
             yield WelcomePanel(status)
         yield TodoPanel(status.todos)
@@ -367,7 +368,7 @@ class NanoCodeApp(App[None]):
                 placeholder="Ask nano-code anything, or type / for commands",
                 id="prompt",
             )
-            yield StatusBar(status)
+            yield StatusBar(status, context_usage)
 
     def on_mount(self) -> None:
         self.query_one("#prompt", Input).focus()
@@ -600,7 +601,9 @@ class NanoCodeApp(App[None]):
             prompt.focus()
             self._busy = False
             status = self.runtime.status()
-            self.query_one(StatusBar).set_status(status)
+            self.query_one(StatusBar).set_status(
+                status, _format_context_usage(self.runtime.context_status())
+            )
             self.query_one(TodoPanel).set_todos(status.todos)
             activity.set_todos(status.todos)
 
@@ -608,7 +611,10 @@ class NanoCodeApp(App[None]):
     async def _manage_providers(self) -> None:
         try:
             update = await self.push_screen_wait(
-                ProviderScreen(self.runtime.providers())
+                ProviderScreen(
+                    self.runtime.providers(),
+                    getattr(self.runtime, "refresh_provider_models", None),
+                )
             )
             if update is None:
                 return
@@ -618,7 +624,9 @@ class NanoCodeApp(App[None]):
                 SystemMessage(f"Provider configuration failed: {error}", error=True)
             )
         else:
-            self.query_one(StatusBar).set_status(status)
+            self.query_one(StatusBar).set_status(
+                status, _format_context_usage(self.runtime.context_status())
+            )
             self.query_one(TodoPanel).set_todos(status.todos)
             self.query_one(ActivityBar).set_todos(status.todos)
             welcome = self.query_one(WelcomePanel)
@@ -650,7 +658,9 @@ class NanoCodeApp(App[None]):
                 return
             resumed = await self.runtime.resume_session(session_id)
             await self._render_history(resumed.history)
-            self.query_one(StatusBar).set_status(resumed.status)
+            self.query_one(StatusBar).set_status(
+                resumed.status, _format_context_usage(self.runtime.context_status())
+            )
             self.query_one(TodoPanel).set_todos(
                 resumed.status.todos, reset_session=True
             )
@@ -690,7 +700,9 @@ class NanoCodeApp(App[None]):
             prompt.focus()
             self._busy = False
             runtime_status = self.runtime.status()
-            self.query_one(StatusBar).set_status(runtime_status)
+            self.query_one(StatusBar).set_status(
+                runtime_status, _format_context_usage(self.runtime.context_status())
+            )
             self.query_one(TodoPanel).set_todos(runtime_status.todos)
             activity.set_todos(runtime_status.todos)
 
@@ -813,22 +825,34 @@ def _highlighted_option_id(palette: OptionList) -> str | None:
 
 
 def _render_context_status(status: ContextStatus) -> str:
-    return "\n".join(
-        (
-            f"Estimated input: {status.estimated_input_tokens} tokens",
-            f"Reserved output: {status.reserved_output_tokens} tokens",
-            f"Estimated total: {status.estimated_total_tokens} tokens",
-            (
-                "Characters: "
-                f"messages {status.message_chars} · system {status.system_chars} · "
-                f"user context {status.user_context_chars} · "
-                f"attachments {status.attachment_chars} · "
-                f"tools {status.tool_schema_chars}"
-            ),
-            (
-                f"Working messages: {status.working_message_count} · "
-                f"microcompacts: {status.replacement_count} · "
-                f"compacts: {status.compact_count}"
-            ),
-        )
+    measured = (
+        "provider calibrated"
+        if status.measurement == "reported_calibrated"
+        else "local estimate"
     )
+    lines = [
+        f"Context: {_format_context_usage(status)}",
+        f"Measured by: {measured}",
+        (
+            f"Compact at: {_format_token_k(status.compact_trigger_tokens)}"
+            + (
+                " (auto)"
+                if status.configured_compact_trigger_tokens is None
+                else " (configured)"
+            )
+        ),
+        f"Compactions: {status.replacement_count} micro · {status.compact_count} full",
+    ]
+    if status.warning:
+        lines.append(f"Warning: {status.warning}")
+    return "\n".join(lines)
+
+
+def _format_context_usage(status: ContextStatus) -> str:
+    used = status.input_tokens or status.estimated_input_tokens
+    return f"{_format_token_k(used)} / {_format_token_k(status.input_limit_tokens)}"
+
+
+def _format_token_k(tokens: int) -> str:
+    value = f"{tokens / 1000:.1f}".removesuffix(".0")
+    return f"{value}k"

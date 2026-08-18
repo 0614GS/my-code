@@ -89,6 +89,10 @@ class NanoCodePaths:
         return self.config_home / "providers.json"
 
     @property
+    def model_cache_path(self) -> Path:
+        return self.config_home / ".model-catalog.json"
+
+    @property
     def project_config_dir(self) -> Path:
         return self.cwd / ".nano-code"
 

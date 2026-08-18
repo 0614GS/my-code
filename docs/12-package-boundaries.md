@@ -2,6 +2,11 @@
 
 > 状态：Accepted，迁移已完成。第 1 至第 7 步均已落地并通过验收。
 
+Provider availability、model capabilities、actual usage、local estimate 与 compact policy
+是五个独立维度：Provider adapter 只处理 wire payload，`providers` 的目录端口与缓存解析
+模型能力，`context` 对完整请求计量并实施策略，application DTO 才向 TUI 暴露结果。TUI
+不得导入 SDK、缓存文件或 Provider 原始 payload。
+
 ## 1. 背景
 
 迁移启动时，nano-code 同时采用了两种组织方式：Agent、Context、Tools、Sessions 等按技术子系统

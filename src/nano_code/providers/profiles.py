@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from nano_code.providers.catalog import ModelLimits
 from nano_code.providers.ids import validate_provider_id
 from nano_code.providers.validation import validate_base_url
 
@@ -51,6 +52,15 @@ class ReasoningConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CompactConfig:
+    trigger_input_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.trigger_input_tokens is not None and self.trigger_input_tokens < 1:
+            raise ProviderProfileError("compact triggerInputTokens must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderProfile:
     """构造模型 provider 适配器所需的非敏感设置。"""
 
@@ -59,6 +69,8 @@ class ProviderProfile:
     protocol: ProviderProtocol = ProviderProtocol.ANTHROPIC_MESSAGES
     base_url: str | None = None
     reasoning: ReasoningConfig = ReasoningConfig()
+    limits: ModelLimits = ModelLimits()
+    compact: CompactConfig = CompactConfig()
 
     def __post_init__(self) -> None:
         try:
@@ -76,6 +88,17 @@ class ProviderProfile:
                 ) from error
             object.__setattr__(self, "base_url", normalized)
         self.reasoning.for_protocol(self.protocol)
+        known_limit = self.limits.effective_input_limit(
+            self.limits.max_output_tokens or 1
+        )
+        if (
+            known_limit is not None
+            and self.compact.trigger_input_tokens is not None
+            and self.compact.trigger_input_tokens > known_limit
+        ):
+            raise ProviderProfileError(
+                "compact triggerInputTokens exceeds the profile model input limit"
+            )
 
 
 class ProviderProfileStore:
@@ -93,7 +116,10 @@ class ProviderProfileStore:
             raise ProviderProfileError(
                 f"Cannot read provider profiles {self.path}: {error}"
             ) from error
-        if not isinstance(raw, dict) or raw.get("version") not in {2, _SCHEMA_VERSION}:
+        if not isinstance(raw, dict) or raw.get("version") not in {
+            2,
+            _SCHEMA_VERSION,
+        }:
             raise ProviderProfileError(
                 "Provider profiles must use schema version "
                 f"{_SCHEMA_VERSION}: {self.path}. Recreate the provider profile."
@@ -109,7 +135,11 @@ class ProviderProfileStore:
                     f"Each provider must be a named object: {self.path}"
                 )
             result[provider_id] = _parse_profile(
-                provider_id, value, self.path, legacy=raw.get("version") == 2
+                provider_id,
+                value,
+                self.path,
+                legacy=raw.get("version") == 2,
+                token_schema=raw.get("version") == _SCHEMA_VERSION,
             )
         return result
 
@@ -146,7 +176,12 @@ class ProviderProfileStore:
 
 
 def _parse_profile(
-    provider_id: str, raw: dict[object, object], path: Path, *, legacy: bool = False
+    provider_id: str,
+    raw: dict[object, object],
+    path: Path,
+    *,
+    legacy: bool = False,
+    token_schema: bool = False,
 ) -> ProviderProfile:
     model = raw.get("defaultModel")
     protocol = raw.get("protocol")
@@ -179,12 +214,19 @@ def _parse_profile(
         ):
             raise ProviderProfileError(f"invalid provider reasoning config: {path}")
         reasoning = ReasoningConfig(enabled, effort, context)
+    limits = ModelLimits()
+    compact = CompactConfig()
+    if token_schema:
+        limits = _parse_limits(raw.get("limits"), path)
+        compact = _parse_compact(raw.get("compact"), path)
     return ProviderProfile(
         id=provider_id,
         model=model,
         protocol=parsed_protocol,
         base_url=base_url,
         reasoning=reasoning,
+        limits=limits,
+        compact=compact,
     )
 
 
@@ -197,10 +239,47 @@ def _profile_document(profile: ProviderProfile) -> dict[str, object]:
             "effort": profile.reasoning.effort,
             "context": profile.reasoning.context,
         },
+        "limits": {
+            "contextWindowTokens": profile.limits.context_window_tokens,
+            "maxInputTokens": profile.limits.max_input_tokens,
+            "maxOutputTokens": profile.limits.max_output_tokens,
+        },
+        "compact": {
+            "triggerInputTokens": profile.compact.trigger_input_tokens,
+        },
     }
     if profile.base_url is not None:
         document["baseUrl"] = profile.base_url
     return document
+
+
+def _parse_limits(value: object, path: Path) -> ModelLimits:
+    if value is None:
+        return ModelLimits()
+    if not isinstance(value, dict):
+        raise ProviderProfileError(f"provider limits must be an object: {path}")
+    return ModelLimits(
+        _optional_positive(value, "contextWindowTokens", path),
+        _optional_positive(value, "maxInputTokens", path),
+        _optional_positive(value, "maxOutputTokens", path),
+    )
+
+
+def _parse_compact(value: object, path: Path) -> CompactConfig:
+    if value is None:
+        return CompactConfig()
+    if not isinstance(value, dict):
+        raise ProviderProfileError(f"provider compact must be an object: {path}")
+    return CompactConfig(_optional_positive(value, "triggerInputTokens", path))
+
+
+def _optional_positive(raw: dict[object, object], key: str, path: Path) -> int | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ProviderProfileError(f"provider {key} must be positive or null: {path}")
+    return value
 
 
 def _atomic_private_json_write(path: Path, document: object) -> None:

@@ -355,6 +355,7 @@ class AnthropicProvider(ModelCompletionPort):
                     response.usage.cache_creation_input_tokens or 0
                 ),
                 cache_read_input_tokens=response.usage.cache_read_input_tokens or 0,
+                provider_reported=True,
             ),
         )
 

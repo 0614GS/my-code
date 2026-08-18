@@ -74,6 +74,8 @@ class ProviderControlPort(Protocol):
 
     async def configure(self, update: ProviderUpdate) -> ProviderConnection: ...
 
+    async def refresh_models(self, provider_id: str) -> ProviderView: ...
+
 
 class SessionSourcePort(Protocol):
     """DefaultChatRuntime 使用的 session catalog 与 repository factory。"""
@@ -206,6 +208,16 @@ class DefaultChatRuntime:
             working_message_count=status.working_message_count,
             replacement_count=status.replacement_count,
             compact_count=status.compact_count,
+            input_tokens=budget.input_tokens,
+            input_limit_tokens=budget.input_limit_tokens,
+            compact_trigger_tokens=budget.compact_trigger_tokens,
+            remaining_input_tokens=budget.remaining_input_tokens,
+            measurement=budget.measurement,
+            model_limit_source=budget.model_limit_source.value,
+            configured_compact_trigger_tokens=(
+                budget.configured_compact_trigger_tokens
+            ),
+            warning=budget.warning,
         )
 
     async def compact(self) -> ContextStatus:
@@ -218,6 +230,9 @@ class DefaultChatRuntime:
 
     def providers(self) -> tuple[ProviderView, ...]:
         return self.provider_control.providers(self.settings.provider_id)
+
+    async def refresh_provider_models(self, provider_id: str) -> ProviderView:
+        return await self.provider_control.refresh_models(provider_id)
 
     async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
         connection = await self.provider_control.configure(update)

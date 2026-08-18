@@ -52,12 +52,14 @@ from nano_code.tui import (
     ProviderScreen,
     ResumeScreen,
 )
+from nano_code.tui.app import _format_context_usage, _render_context_status
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.widgets import (
     ActivityBar,
     AssistantMessage,
     PermissionPanel,
     ReasoningMessage,
+    StatusBar,
     SystemMessage,
     TodoPanel,
     ToolCallMessage,
@@ -297,12 +299,15 @@ async def test_context_and_compact_render_runtime_diagnostics() -> None:
     app = NanoCodeApp(runtime)
 
     async with app.run_test(size=(100, 32)) as pilot:
+        assert app.query_one(StatusBar).context_usage == "0.1k / 200k"
+
         app.query_one("#prompt", Input).value = "/context"
         await pilot.press("enter")
         await pilot.pause()
-        assert "Estimated input: 100 tokens" in str(
-            app.query(SystemMessage)[-1].render()
-        )
+        context = str(app.query(SystemMessage)[-1].render())
+        assert "Context: 0.1k / 200k" in context
+        assert "Measured by: local estimate" in context
+        assert "Characters:" not in context
 
         app.query_one("#prompt", Input).value = "/compact"
         await pilot.press("enter")
@@ -310,6 +315,18 @@ async def test_context_and_compact_render_runtime_diagnostics() -> None:
 
         assert runtime.compact_calls == 1
         assert "Conversation compacted" in str(app.query(SystemMessage)[-1].render())
+
+
+def test_context_usage_uses_estimated_input_over_effective_input_max() -> None:
+    status = FakeRuntime().context_status()
+
+    assert _format_context_usage(status) == "0.1k / 200k"
+    assert _render_context_status(status).splitlines() == [
+        "Context: 0.1k / 200k",
+        "Measured by: local estimate",
+        "Compact at: 180k (auto)",
+        "Compactions: 1 micro · 0 full",
+    ]
 
 
 @pytest.mark.asyncio

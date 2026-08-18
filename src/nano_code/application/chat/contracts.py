@@ -72,6 +72,14 @@ class ContextStatus:
     compact_count: int
     user_context_chars: int = 0
     attachment_chars: int = 0
+    input_tokens: int = 0
+    input_limit_tokens: int = 200_000
+    compact_trigger_tokens: int = 180_000
+    remaining_input_tokens: int = 0
+    measurement: str = "tokenizer_estimate"
+    model_limit_source: str = "fallback"
+    configured_compact_trigger_tokens: int | None = None
+    warning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +240,8 @@ class ChatRuntime(Protocol):
     def set_permission_handler(self, handler: PermissionHandler) -> None: ...
 
     def providers(self) -> tuple[ProviderView, ...]: ...
+
+    async def refresh_provider_models(self, provider_id: str) -> ProviderView: ...
 
     async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus: ...
 
