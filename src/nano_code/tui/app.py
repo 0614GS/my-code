@@ -13,11 +13,15 @@ from nano_code.application.chat.contracts import (
     ChatRuntime,
     ContextStatus,
     HistoryAssistantMessage,
+    HistoryReasoning,
     HistorySystemMessage,
     HistoryToolCall,
     HistoryUserMessage,
     PathSuggestion,
     PermissionRequest,
+    ReasoningCompleted,
+    ReasoningDelta,
+    ReasoningStarted,
     StepLimitReached,
     TextDelta,
     TodoListUpdated,
@@ -34,6 +38,7 @@ from nano_code.tui.widgets import (
     ActivityBar,
     AssistantMessage,
     PermissionPanel,
+    ReasoningMessage,
     StatusBar,
     SystemMessage,
     TodoPanel,
@@ -504,6 +509,7 @@ class NanoCodeApp(App[None]):
         await self._mount_message(UserMessage(prompt_text))
         assistant: AssistantMessage | None = None
         tools: dict[str, ToolCallMessage] = {}
+        reasoning: dict[str, ReasoningMessage] = {}
         completed = False
         try:
             async for event in self.runtime.stream(prompt_text):
@@ -515,6 +521,22 @@ class NanoCodeApp(App[None]):
                         await self._mount_message(assistant)
                     await assistant.append_delta(event.text)
                     self._scroll_to_end()
+                elif isinstance(event, ReasoningStarted):
+                    item = ReasoningMessage(event.id, event.disclosure)
+                    reasoning[event.id] = item
+                    await self._mount_message(item)
+                elif isinstance(event, ReasoningDelta):
+                    reasoning_item = reasoning.get(event.id)
+                    if reasoning_item is None:
+                        reasoning_item = ReasoningMessage(event.id, event.disclosure)
+                        reasoning[event.id] = reasoning_item
+                        await self._mount_message(reasoning_item)
+                    reasoning_item.append_delta(event.part_index, event.text)
+                    self._scroll_to_end()
+                elif isinstance(event, ReasoningCompleted):
+                    completed_reasoning = reasoning.get(event.id)
+                    if completed_reasoning is not None:
+                        completed_reasoning.finish()
                 elif isinstance(event, ToolStarted):
                     if assistant is not None:
                         await assistant.finish_stream()
@@ -548,6 +570,9 @@ class NanoCodeApp(App[None]):
         except Exception as error:
             await self._mount_message(SystemMessage(f"Error: {error}", error=True))
         finally:
+            if not completed:
+                for item in reasoning.values():
+                    item.interrupt()
             if assistant is not None:
                 await assistant.finish_stream()
             if completed is False and not tools and assistant is None:
@@ -581,7 +606,7 @@ class NanoCodeApp(App[None]):
             welcome = self.query_one(WelcomePanel)
             welcome.status = status
             welcome.refresh()
-            endpoint = status.base_url or "Anthropic SDK default"
+            endpoint = status.base_url or "SDK default"
             await self._mount_message(
                 SystemMessage(
                     f"Using provider {status.provider_id!r} · "
@@ -656,6 +681,7 @@ class NanoCodeApp(App[None]):
         history: tuple[
             HistoryUserMessage
             | HistoryAssistantMessage
+            | HistoryReasoning
             | HistorySystemMessage
             | HistoryToolCall,
             ...,
@@ -667,6 +693,12 @@ class NanoCodeApp(App[None]):
                 await self._mount_message(UserMessage(entry.text))
             elif isinstance(entry, HistoryAssistantMessage):
                 await self._mount_message(AssistantMessage(entry.text))
+            elif isinstance(entry, HistoryReasoning):
+                item = ReasoningMessage(
+                    entry.id, entry.presentation.disclosure, expanded=False
+                )
+                item.load_presentation(entry.presentation)
+                await self._mount_message(item)
             elif isinstance(entry, HistorySystemMessage):
                 await self._mount_message(SystemMessage(entry.text))
             elif isinstance(entry, HistoryToolCall):
@@ -676,7 +708,11 @@ class NanoCodeApp(App[None]):
 
     async def _mount_message(
         self,
-        message: UserMessage | AssistantMessage | SystemMessage | ToolCallMessage,
+        message: UserMessage
+        | AssistantMessage
+        | ReasoningMessage
+        | SystemMessage
+        | ToolCallMessage,
     ) -> None:
         conversation = self.query_one("#conversation", VerticalScroll)
         await conversation.mount(message)

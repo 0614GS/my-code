@@ -12,9 +12,9 @@ from nano_code.agent import (
     AgentTurnSucceeded,
     ConversationState,
     ModelContextOverflow,
-    ModelOpaqueAssistantBlock,
     ModelOutput,
     ModelOutputCompleted,
+    ModelReasoningBlock,
     ModelRequest,
     ModelStreamEvent,
     ModelTextBlock,
@@ -30,6 +30,9 @@ from nano_code.context.window import ContextWindow
 from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -199,10 +202,14 @@ async def test_engine_closes_tool_loop_and_preserves_results(tmp_path: Path) -> 
 async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
     tmp_path: Path,
 ) -> None:
-    opaque = ModelOpaqueAssistantBlock(
-        "anthropic-messages",
-        "claude-test",
-        {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+    opaque = ModelReasoningBlock(
+        "thinking",
+        ReasoningPresentation("verbatim", ("hidden",)),
+        ProviderContinuationState(
+            ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
+            "active_trajectory",
+            {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+        ),
     )
     engine, model, conversation, _ = _engine(
         tmp_path,
@@ -221,13 +228,13 @@ async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
     assert isinstance(result, AgentTurnSucceeded)
     assert result.text == "finished"
     assert any(
-        isinstance(block, ModelOpaqueAssistantBlock)
+        isinstance(block, ModelReasoningBlock)
         for message in model.requests[1].messages
         for block in message.content
     )
     persisted = conversation.repository.load().history[1]
     assert isinstance(persisted, AssistantMessage)
-    assert persisted.content[0].kind == "provider_opaque"
+    assert persisted.content[0].kind == "reasoning"
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
-"""运行时会话消息；其判别类型不暴露模型 API role。"""
+"""运行时会话消息；展示内容与 provider 续接状态严格分离。"""
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -12,10 +13,69 @@ from nano_code.conversation.primitives import (
     utc_now,
 )
 
+type ReasoningDisclosure = Literal["verbatim", "summary", "redacted", "hidden"]
+type ReplayScope = Literal["active_trajectory", "working_context"]
+
+_PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningPresentation:
+    """唯一可越过 application/UI 边界的 reasoning 内容。"""
+
+    disclosure: ReasoningDisclosure
+    parts: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.disclosure not in {"verbatim", "summary", "redacted", "hidden"}:
+            raise ValueError("Unsupported reasoning disclosure")
+        if not all(isinstance(part, str) and bool(part) for part in self.parts):
+            raise ValueError("Reasoning presentation parts must be non-empty strings")
+        if self.disclosure in {"verbatim", "summary"} and not self.parts:
+            raise ValueError("Visible reasoning must contain presentation parts")
+        if self.disclosure in {"redacted", "hidden"} and self.parts:
+            raise ValueError("Hidden reasoning must not contain presentation parts")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderBinding:
+    """阻止私有续接数据跨 profile、模型或 endpoint 回放。"""
+
+    protocol: str
+    provider_id: str
+    model: str
+    base_url: str | None = None
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, str) and bool(value.strip())
+            for value in (self.protocol, self.provider_id, self.model)
+        ):
+            raise ValueError("Provider binding strings must not be empty")
+        if _PROVIDER_ID.fullmatch(self.provider_id) is None:
+            raise ValueError("Provider binding provider_id is invalid")
+        if self.base_url is not None and not self.base_url.strip():
+            raise ValueError("Provider binding base_url must be non-empty or null")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderContinuationState:
+    """不透明、只供匹配 adapter 回放的 provider 原始状态。"""
+
+    binding: ProviderBinding
+    replay_scope: ReplayScope
+    payload: JsonObject
+
+    def __post_init__(self) -> None:
+        if self.replay_scope not in {"active_trajectory", "working_context"}:
+            raise ValueError("Unsupported provider continuation replay scope")
+        object.__setattr__(self, "payload", to_json_object(self.payload))
+
 
 @dataclass(frozen=True, slots=True)
 class TextContent:
     text: str
+    continuation: ProviderContinuationState | None = None
     kind: Literal["text"] = field(default="text", init=False)
 
 
@@ -24,28 +84,25 @@ class ToolCall:
     id: str
     name: str
     input: JsonObject
+    continuation: ProviderContinuationState | None = None
     kind: Literal["tool_call"] = field(default="tool_call", init=False)
 
     def __post_init__(self) -> None:
         if not self.id or not self.name:
             raise ValueError("Tool call id and name must not be empty")
+        object.__setattr__(self, "input", to_json_object(self.input))
 
 
 @dataclass(frozen=True, slots=True)
-class OpaqueAssistantContent:
-    """Provider payload retained only to continue a trusted assistant trajectory."""
-
-    protocol: str
-    model: str
-    payload: JsonObject
-    kind: Literal["provider_opaque"] = field(default="provider_opaque", init=False)
+class ReasoningContent:
+    id: str
+    presentation: ReasoningPresentation
+    continuation: ProviderContinuationState | None = None
+    kind: Literal["reasoning"] = field(default="reasoning", init=False)
 
     def __post_init__(self) -> None:
-        if not self.protocol.strip() or not self.model.strip():
-            raise ValueError("Opaque assistant source must not be empty")
-        payload = to_json_object(self.payload)
-        _validate_opaque_payload(payload)
-        object.__setattr__(self, "payload", payload)
+        if not self.id.strip():
+            raise ValueError("Reasoning id must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +141,7 @@ class HumanMessage:
 
 @dataclass(frozen=True, slots=True)
 class AssistantMessage:
-    content: tuple[TextContent | ToolCall | OpaqueAssistantContent, ...]
+    content: tuple["AssistantContent", ...]
     usage: TokenUsage
     uuid: str = field(default_factory=new_id)
     parent_uuid: str | None = None
@@ -95,10 +152,12 @@ class AssistantMessage:
         if not self.content:
             raise ValueError("Assistant message content must not be empty")
         if not all(
-            isinstance(block, (TextContent, ToolCall, OpaqueAssistantContent))
+            isinstance(block, (TextContent, ToolCall, ReasoningContent))
             for block in self.content
         ):
-            raise TypeError("Assistant messages may contain only text and tool calls")
+            raise TypeError(
+                "Assistant messages may contain only text and tool calls or reasoning"
+            )
         if not any(
             isinstance(block, ToolCall)
             or isinstance(block, TextContent)
@@ -170,23 +229,7 @@ class ConversationSummaryMessage:
 type ConversationMessage = (
     HumanMessage | AssistantMessage | ToolResultsMessage | ConversationSummaryMessage
 )
-type AssistantContent = TextContent | ToolCall | OpaqueAssistantContent
-
-
-def _validate_opaque_payload(payload: JsonObject) -> None:
-    kind = payload.get("type")
-    if kind == "thinking":
-        if set(payload) != {"type", "thinking", "signature"} or not all(
-            isinstance(payload.get(key), str) for key in ("thinking", "signature")
-        ):
-            raise ValueError("Invalid Anthropic thinking payload")
-        return
-    if kind == "redacted_thinking":
-        if set(payload) != {"type", "data"} or not isinstance(payload.get("data"), str):
-            raise ValueError("Invalid Anthropic redacted thinking payload")
-        return
-    raise ValueError("Unsupported opaque assistant payload")
-
+type AssistantContent = TextContent | ToolCall | ReasoningContent
 
 __all__ = [
     "AssistantContent",
@@ -194,7 +237,12 @@ __all__ = [
     "ConversationMessage",
     "ConversationSummaryMessage",
     "HumanMessage",
-    "OpaqueAssistantContent",
+    "ProviderBinding",
+    "ProviderContinuationState",
+    "ReasoningContent",
+    "ReasoningDisclosure",
+    "ReasoningPresentation",
+    "ReplayScope",
     "TextContent",
     "ToolCall",
     "ToolResult",

@@ -5,11 +5,15 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, OptionList
+from textual.widgets import Button, Input, Label, OptionList, Select, Switch
 from textual.widgets.option_list import Option
 
 from nano_code.providers.manager import ProviderUpdate, ProviderView
-from nano_code.providers.profiles import ProviderProfile
+from nano_code.providers.profiles import (
+    ProviderProfile,
+    ProviderProtocol,
+    ReasoningConfig,
+)
 
 
 class ProviderScreen(ModalScreen[ProviderUpdate | None]):
@@ -33,7 +37,7 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
         with Vertical(id="provider-dialog"):
             yield Label("Provider profiles", id="provider-title")
             yield Label(
-                "All profiles use the Anthropic Messages API.",
+                "Choose a provider protocol and its reasoning policy.",
                 id="provider-description",
             )
             with Horizontal(id="provider-content"):
@@ -41,6 +45,22 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
                 with Vertical(id="provider-form"):
                     yield Label("Provider ID")
                     yield Input(id="provider-id", placeholder="company-gateway")
+                    yield Label("Protocol")
+                    yield Select(
+                        (
+                            (
+                                "Anthropic Messages",
+                                ProviderProtocol.ANTHROPIC_MESSAGES.value,
+                            ),
+                            (
+                                "OpenAI Responses",
+                                ProviderProtocol.OPENAI_RESPONSES.value,
+                            ),
+                        ),
+                        id="provider-protocol",
+                        allow_blank=False,
+                        value=ProviderProtocol.ANTHROPIC_MESSAGES.value,
+                    )
                     yield Label("Base URL (blank uses SDK default)")
                     yield Input(
                         id="provider-url",
@@ -48,6 +68,12 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
                     )
                     yield Label("Model")
                     yield Input(id="provider-model", placeholder="model name")
+                    yield Label("Enable reasoning")
+                    yield Switch(True, id="provider-reasoning-enabled")
+                    yield Label("Reasoning effort")
+                    yield Input(id="provider-reasoning-effort", value="auto")
+                    yield Label("Responses context (auto/current_turn/all_turns)")
+                    yield Input(id="provider-reasoning-context", value="auto")
                     yield Label("API Key")
                     yield Input(
                         id="provider-key",
@@ -89,8 +115,23 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
         base_url = self.query_one("#provider-url", Input).value.strip() or None
         model = self.query_one("#provider-model", Input).value.strip()
         api_key = self.query_one("#provider-key", Input).value.strip() or None
+        protocol = ProviderProtocol(
+            str(self.query_one("#provider-protocol", Select).value)
+        )
+        reasoning = ReasoningConfig(
+            self.query_one("#provider-reasoning-enabled", Switch).value,
+            self.query_one("#provider-reasoning-effort", Input).value.strip() or "auto",
+            self.query_one("#provider-reasoning-context", Input).value.strip()
+            or "auto",
+        )
         try:
-            ProviderProfile(id=provider_id, model=model, base_url=base_url)
+            ProviderProfile(
+                id=provider_id,
+                model=model,
+                protocol=protocol,
+                base_url=base_url,
+                reasoning=reasoning,
+            )
             if api_key is not None and any(char.isspace() for char in api_key):
                 raise ValueError("API key must not contain whitespace")
         except ValueError as error:
@@ -102,6 +143,8 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
                 model=model,
                 base_url=base_url,
                 api_key=api_key,
+                protocol=protocol,
+                reasoning=reasoning,
             )
         )
 
@@ -118,6 +161,12 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
         provider_id.value = ""
         self.query_one("#provider-url", Input).value = ""
         self.query_one("#provider-model", Input).value = ""
+        self.query_one(
+            "#provider-protocol", Select
+        ).value = ProviderProtocol.ANTHROPIC_MESSAGES.value
+        self.query_one("#provider-reasoning-enabled", Switch).value = True
+        self.query_one("#provider-reasoning-effort", Input).value = "auto"
+        self.query_one("#provider-reasoning-context", Input).value = "auto"
         self.query_one("#provider-key", Input).value = ""
         self.query_one("#provider-key-status", Label).update("New provider")
         self.query_one("#provider-error", Label).update("")
@@ -129,6 +178,16 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
         provider_id.disabled = True
         self.query_one("#provider-url", Input).value = provider.base_url or ""
         self.query_one("#provider-model", Input).value = provider.model
+        self.query_one("#provider-protocol", Select).value = provider.protocol.value
+        self.query_one(
+            "#provider-reasoning-enabled", Switch
+        ).value = provider.reasoning.enabled
+        self.query_one(
+            "#provider-reasoning-effort", Input
+        ).value = provider.reasoning.effort
+        self.query_one(
+            "#provider-reasoning-context", Input
+        ).value = provider.reasoning.context
         self.query_one("#provider-key", Input).value = ""
         key_status = (
             "Stored key configured" if provider.has_stored_key else "No stored key"

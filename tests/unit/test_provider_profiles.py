@@ -9,6 +9,7 @@ from nano_code.providers.profiles import (
     ProviderProfileError,
     ProviderProfileStore,
     ProviderProtocol,
+    ReasoningConfig,
 )
 
 
@@ -51,3 +52,28 @@ def test_provider_catalog_requires_supported_protocol(tmp_path: Path) -> None:
 def test_provider_id_is_safe_for_configuration_keys() -> None:
     with pytest.raises(ProviderProfileError, match="provider ID"):
         ProviderProfile(id="../escape", model="model")
+
+
+def test_v2_profile_loads_reasoning_disabled_and_writes_v3(tmp_path: Path) -> None:
+    path = tmp_path / "providers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "providers": {
+                    "anthropic": {
+                        "protocol": "anthropic-messages",
+                        "defaultModel": "claude-test",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = ProviderProfileStore(path)
+
+    loaded = store.load()["anthropic"]
+    store.write((loaded,))
+
+    assert loaded.reasoning == ReasoningConfig(enabled=False)
+    assert json.loads(path.read_text(encoding="utf-8"))["version"] == 3

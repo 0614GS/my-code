@@ -11,7 +11,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.events import Key
+from textual.events import Click, Key
 from textual.widgets import Input, Label, LoadingIndicator, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -21,6 +21,7 @@ from nano_code.application.chat.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
 )
+from nano_code.conversation import ReasoningDisclosure, ReasoningPresentation
 from nano_code.features.todos.models import TodoItem
 from nano_code.permissions import (
     PermissionBehavior,
@@ -102,6 +103,65 @@ class AssistantMessage(Static):
         self._content += self._pending
         self._pending = ""
         self.update(RichMarkdown(self._content))
+
+
+class ReasoningMessage(Static):
+    """只消费安全 presentation 的可折叠 reasoning 展示。"""
+
+    def __init__(
+        self,
+        reasoning_id: str,
+        disclosure: ReasoningDisclosure,
+        *,
+        expanded: bool = True,
+    ) -> None:
+        super().__init__(classes="message reasoning")
+        self.reasoning_id = reasoning_id
+        self.disclosure = disclosure
+        self.parts: list[str] = []
+        self.expanded = expanded
+        self.completed = False
+        self.interrupted = False
+
+    def append_delta(self, part_index: int, content: str) -> None:
+        while len(self.parts) <= part_index:
+            self.parts.append("")
+        self.parts[part_index] += content
+        self.refresh(layout=True)
+
+    def finish(self) -> None:
+        self.completed = True
+        self.refresh(layout=True)
+
+    def interrupt(self) -> None:
+        self.completed = True
+        self.interrupted = True
+        self.refresh(layout=True)
+
+    def load_presentation(self, presentation: ReasoningPresentation) -> None:
+        self.parts = list(presentation.parts)
+        self.completed = True
+        self.refresh(layout=True)
+
+    def on_click(self, _: Click) -> None:
+        if self.completed:
+            self.expanded = not self.expanded
+            self.refresh(layout=True)
+
+    def render(self) -> RenderableType:
+        title = "思考过程" if self.disclosure == "verbatim" else "思考摘要"
+        if self.disclosure == "redacted":
+            body = "思考内容已由模型提供方隐藏"
+        elif self.disclosure == "hidden":
+            body = "模型已完成思考"
+        else:
+            body = "\n\n".join(self.parts)
+        suffix = " · 已中断" if self.interrupted else ""
+        marker = "▾" if self.expanded else "▸"
+        header = Text(f"{marker} {title}{suffix}", style="dim italic")
+        if not self.expanded:
+            return header
+        return Group(header, RichMarkdown(body) if body else Text("…", style="dim"))
 
 
 class ToolCallMessage(Static):

@@ -8,7 +8,11 @@ from nano_code.application.chat.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
 )
-from nano_code.conversation import JsonObject
+from nano_code.conversation import (
+    JsonObject,
+    ReasoningDisclosure,
+    ReasoningPresentation,
+)
 from nano_code.features.todos.models import TodoItem
 from nano_code.permissions import PermissionConfirmation, PermissionUpdate
 from nano_code.providers.manager import ProviderUpdate, ProviderView
@@ -85,6 +89,25 @@ class TextDelta:
 
 
 @dataclass(frozen=True, slots=True)
+class ReasoningStarted:
+    id: str
+    disclosure: ReasoningDisclosure
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningDelta:
+    id: str
+    disclosure: ReasoningDisclosure
+    part_index: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningCompleted:
+    id: str
+
+
+@dataclass(frozen=True, slots=True)
 class AttachmentLoaded:
     path: str
     is_directory: bool
@@ -122,6 +145,9 @@ class StepLimitReached:
 type TurnEvent = (
     AttachmentLoaded
     | TextDelta
+    | ReasoningStarted
+    | ReasoningDelta
+    | ReasoningCompleted
     | ToolStarted
     | ToolFinished
     | TodoListUpdated
@@ -141,6 +167,12 @@ class HistoryAssistantMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class HistoryReasoning:
+    id: str
+    presentation: ReasoningPresentation
+
+
+@dataclass(frozen=True, slots=True)
 class HistorySystemMessage:
     text: str
 
@@ -156,6 +188,7 @@ class HistoryToolCall:
 type HistoryEntry = (
     HistoryUserMessage
     | HistoryAssistantMessage
+    | HistoryReasoning
     | HistorySystemMessage
     | HistoryToolCall
 )

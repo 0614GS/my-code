@@ -7,7 +7,7 @@ from nano_code.application.chat.presentation import (
     ToolUsePresentation,
 )
 from nano_code.context.attachments.models import ContextAttachment
-from nano_code.conversation import TokenUsage
+from nano_code.conversation import ReasoningPresentation, TokenUsage
 from nano_code.features.todos.models import TodoItem
 
 from .context import ContextBudget
@@ -83,6 +83,12 @@ class AgentHistoryAssistantMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentHistoryReasoning:
+    id: str
+    presentation: ReasoningPresentation
+
+
+@dataclass(frozen=True, slots=True)
 class AgentHistorySystemMessage:
     text: str
 
@@ -98,6 +104,7 @@ class AgentHistoryToolCall:
 type AgentHistoryEntry = (
     AgentHistoryUserMessage
     | AgentHistoryAssistantMessage
+    | AgentHistoryReasoning
     | AgentHistorySystemMessage
     | AgentHistoryToolCall
 )
@@ -114,6 +121,7 @@ class AgentSessionView:
 __all__ = [
     "AgentContextStatus",
     "AgentHistoryAssistantMessage",
+    "AgentHistoryReasoning",
     "AgentHistoryEntry",
     "AgentHistorySystemMessage",
     "AgentHistoryToolCall",

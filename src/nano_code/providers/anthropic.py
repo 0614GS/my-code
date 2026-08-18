@@ -1,7 +1,7 @@
 """Anthropic Messages API 适配器。"""
 
 from collections.abc import AsyncIterator, Iterable
-from typing import cast
+from typing import Any, Literal, cast
 
 from anthropic import AsyncAnthropic, BadRequestError
 from anthropic.types import (
@@ -17,9 +17,12 @@ from anthropic.types import (
 
 from nano_code.agent.contracts.model import (
     ModelMessage,
-    ModelOpaqueAssistantBlock,
     ModelOutput,
     ModelOutputCompleted,
+    ModelReasoningBlock,
+    ModelReasoningCompleted,
+    ModelReasoningDelta,
+    ModelReasoningStarted,
     ModelRequest,
     ModelStreamEvent,
     ModelTextBlock,
@@ -29,9 +32,16 @@ from nano_code.agent.contracts.model import (
 )
 from nano_code.agent.errors import ModelContextOverflow
 from nano_code.agent.ports.model import ModelCompletionPort
-from nano_code.conversation import TokenUsage, to_json_object
+from nano_code.conversation import (
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
+    TokenUsage,
+    to_json_object,
+)
 from nano_code.prompts import PromptStability, SystemPrompt
 from nano_code.providers.base import ProviderCapabilities
+from nano_code.providers.profiles import ReasoningConfig
 
 
 class AnthropicProvider(ModelCompletionPort):
@@ -43,8 +53,14 @@ class AnthropicProvider(ModelCompletionPort):
         *,
         api_key: str | None = None,
         base_url: str | None = None,
+        provider_id: str = "anthropic",
+        reasoning: ReasoningConfig | None = None,
     ) -> None:
         self.model = model
+        self.binding = ProviderBinding(
+            "anthropic-messages", provider_id, model, base_url
+        )
+        self.reasoning = reasoning or ReasoningConfig(enabled=False)
         self.client = AsyncAnthropic(api_key=api_key, base_url=base_url)
         # 自定义 endpoint 对 Anthropic 扩展字段的实现程度未知，默认保持兼容。
         self._capabilities = self.capabilities_for(base_url)
@@ -76,8 +92,9 @@ class AnthropicProvider(ModelCompletionPort):
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=self._system(request.system_prompt),
-                messages=self._messages(request.messages, model=self.model),
+                messages=self._messages(request.messages, binding=self.binding),
                 tools=self._tools(request),
+                **cast(Any, self._reasoning_params()),
             )
         except BadRequestError as error:
             _raise_context_overflow(error)
@@ -94,15 +111,48 @@ class AnthropicProvider(ModelCompletionPort):
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=self._system(request.system_prompt),
-                messages=self._messages(request.messages, model=self.model),
+                messages=self._messages(request.messages, binding=self.binding),
                 tools=self._tools(request),
+                **cast(Any, self._reasoning_params()),
             ) as stream:
+                reasoning_ids: dict[int, str] = {}
                 async for event in stream:
                     if (
                         event.type == "content_block_delta"
                         and event.delta.type == "text_delta"
                     ):
                         yield ModelTextDelta(event.delta.text)
+                    elif (
+                        event.type == "content_block_start"
+                        and event.content_block.type
+                        in {"thinking", "redacted_thinking"}
+                    ):
+                        reasoning_id = f"anthropic:{event.index}"
+                        reasoning_ids[event.index] = reasoning_id
+                        disclosure = (
+                            "verbatim"
+                            if event.content_block.type == "thinking"
+                            else "redacted"
+                        )
+                        yield ModelReasoningStarted(
+                            reasoning_id,
+                            cast(Literal["verbatim", "redacted"], disclosure),
+                        )
+                    elif (
+                        event.type == "content_block_delta"
+                        and event.delta.type == "thinking_delta"
+                    ):
+                        reasoning_id = reasoning_ids.setdefault(
+                            event.index, f"anthropic:{event.index}"
+                        )
+                        yield ModelReasoningDelta(
+                            reasoning_id, "verbatim", 0, event.delta.thinking
+                        )
+                    elif (
+                        event.type == "content_block_stop"
+                        and event.index in reasoning_ids
+                    ):
+                        yield ModelReasoningCompleted(reasoning_ids[event.index])
                 final_message = cast(Message, await stream.get_final_message())
         except BadRequestError as error:
             _raise_context_overflow(error)
@@ -111,7 +161,10 @@ class AnthropicProvider(ModelCompletionPort):
 
     @staticmethod
     def _messages(
-        messages: Iterable[ModelMessage], *, model: str | None = None
+        messages: Iterable[ModelMessage],
+        *,
+        binding: ProviderBinding | None = None,
+        model: str | None = None,
     ) -> list[MessageParam]:
         # 上下文层已经移除了 Transcript 元数据并校验协议；适配器只转换 SDK 类型。
         normalized: list[MessageParam] = []
@@ -147,16 +200,21 @@ class AnthropicProvider(ModelCompletionPort):
                         }
                     )
                 elif (
-                    isinstance(block, ModelOpaqueAssistantBlock)
-                    and block.protocol == "anthropic-messages"
-                    and block.model == model
+                    isinstance(block, ModelReasoningBlock)
+                    and block.continuation is not None
+                    and _binding_matches(
+                        block.continuation.binding,
+                        binding
+                        or ProviderBinding(
+                            "anthropic-messages", "anthropic", model or "unknown"
+                        ),
+                    )
                 ):
-                    if block.payload["type"] == "thinking":
-                        content.append(cast(ThinkingBlockParam, dict(block.payload)))
+                    payload = _anthropic_payload(block.continuation)
+                    if payload["type"] == "thinking":
+                        content.append(cast(ThinkingBlockParam, dict(payload)))
                     else:
-                        content.append(
-                            cast(RedactedThinkingBlockParam, dict(block.payload))
-                        )
+                        content.append(cast(RedactedThinkingBlockParam, dict(payload)))
             normalized.append({"role": message.role, "content": content})
         return normalized
 
@@ -181,28 +239,33 @@ class AnthropicProvider(ModelCompletionPort):
         return tools
 
     def _response(self, response: Message) -> ModelOutput:
-        content: list[
-            ModelTextBlock | ModelToolUseBlock | ModelOpaqueAssistantBlock
-        ] = []
-        for block in response.content:
+        content: list[ModelTextBlock | ModelToolUseBlock | ModelReasoningBlock] = []
+        for index, block in enumerate(response.content):
             if block.type == "thinking":
+                payload: dict[str, Any] = {
+                    "type": "thinking",
+                    "thinking": block.thinking,
+                    "signature": block.signature,
+                }
                 content.append(
-                    ModelOpaqueAssistantBlock(
-                        "anthropic-messages",
-                        self.model,
-                        {
-                            "type": "thinking",
-                            "thinking": block.thinking,
-                            "signature": block.signature,
-                        },
+                    ModelReasoningBlock(
+                        f"{response.id}:reasoning:{index}",
+                        ReasoningPresentation("verbatim", (block.thinking,)),
+                        ProviderContinuationState(
+                            self.binding, "active_trajectory", payload
+                        ),
                     )
                 )
             elif block.type == "redacted_thinking":
                 content.append(
-                    ModelOpaqueAssistantBlock(
-                        "anthropic-messages",
-                        self.model,
-                        {"type": "redacted_thinking", "data": block.data},
+                    ModelReasoningBlock(
+                        f"{response.id}:reasoning:{index}",
+                        ReasoningPresentation("redacted"),
+                        ProviderContinuationState(
+                            self.binding,
+                            "active_trajectory",
+                            {"type": "redacted_thinking", "data": block.data},
+                        ),
                     )
                 )
             elif block.type == "text":
@@ -227,6 +290,36 @@ class AnthropicProvider(ModelCompletionPort):
                 cache_read_input_tokens=response.usage.cache_read_input_tokens or 0,
             ),
         )
+
+    def _reasoning_params(self) -> dict[str, object]:
+        if not self.reasoning.enabled:
+            return {}
+        params: dict[str, object] = {"thinking": {"type": "adaptive"}}
+        if self.reasoning.effort != "auto":
+            params["output_config"] = {"effort": self.reasoning.effort}
+        return params
+
+
+def _binding_matches(actual: ProviderBinding, expected: ProviderBinding) -> bool:
+    return actual == expected
+
+
+def _anthropic_payload(state: ProviderContinuationState) -> dict[str, object]:
+    payload = state.payload
+    kind = payload.get("type")
+    if kind == "thinking":
+        valid = set(payload) == {"type", "thinking", "signature"} and all(
+            isinstance(payload.get(key), str) for key in ("thinking", "signature")
+        )
+    elif kind == "redacted_thinking":
+        valid = set(payload) == {"type", "data"} and isinstance(
+            payload.get("data"), str
+        )
+    else:
+        valid = False
+    if not valid:
+        raise ValueError("Invalid Anthropic continuation payload")
+    return cast(dict[str, object], dict(payload))
 
 
 def _system_prompt_param(

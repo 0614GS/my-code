@@ -43,9 +43,10 @@
 working set 时被裁剪，resume 或切换 session 时清空。
 
 attachment 始终是临时 user-side context：observation 与 instruction 在 Context 层渲染为
-`<system-reminder>`，不会伪造 assistant tool-use/tool-result。Anthropic opaque thinking
-不是 attachment；它只在最近的真实 assistant 工具轨迹中回放，完成后从普通请求和 compact
-视图剥离。活动 thinking 文本、签名或 redacted data 计入窗口估算。
+`<system-reminder>`，不会伪造 assistant tool-use/tool-result。Provider continuation
+不是 attachment：`active_trajectory` 只选择最近未闭合工具轨迹，`working_context` 选择
+compact 后工作集；binding 不匹配即剥离。Compact 输入只保留可见对话和工具事实。
+窗口估算只统计本次实际回放的 payload，避免 presentation 与 payload 重复计量。
 
 ## 3. Token 计量
 

@@ -7,6 +7,7 @@ from nano_code.agent.contracts.context import ContextPlan
 from nano_code.agent.contracts.inbound import (
     AgentContextStatus,
     AgentHistoryAssistantMessage,
+    AgentHistoryReasoning,
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
@@ -20,6 +21,10 @@ from nano_code.agent.contracts.inbound import (
 from nano_code.agent.contracts.model import (
     ModelOutput,
     ModelOutputCompleted,
+    ModelReasoningBlock,
+    ModelReasoningCompleted,
+    ModelReasoningDelta,
+    ModelReasoningStarted,
     ModelTextBlock,
     ModelTextDelta,
     ModelToolUseBlock,
@@ -38,6 +43,9 @@ from nano_code.agent.conversation import ConversationState
 from nano_code.agent.errors import ContextOverflow, ModelContextOverflow
 from nano_code.agent.events import (
     AgentEvent,
+    AgentReasoningCompleted,
+    AgentReasoningDelta,
+    AgentReasoningStarted,
     AgentStepLimitReached,
     AgentTextDelta,
     AgentTodoListUpdated,
@@ -56,7 +64,7 @@ from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
-    OpaqueAssistantContent,
+    ReasoningContent,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -132,11 +140,27 @@ class AgentEngine(AgentInboundPort):
             while True:
                 response: ModelOutput | None = None
                 streamed_text = False
+                streamed_reasoning: set[str] = set()
                 try:
                     async for model_event in self._model_call.stream(request.request):
                         if isinstance(model_event, ModelTextDelta):
                             streamed_text = True
                             yield AgentTextDelta(model_event.text)
+                        elif isinstance(model_event, ModelReasoningStarted):
+                            streamed_reasoning.add(model_event.id)
+                            yield AgentReasoningStarted(
+                                model_event.id, model_event.disclosure
+                            )
+                        elif isinstance(model_event, ModelReasoningDelta):
+                            streamed_reasoning.add(model_event.id)
+                            yield AgentReasoningDelta(
+                                model_event.id,
+                                model_event.disclosure,
+                                model_event.part_index,
+                                model_event.text,
+                            )
+                        elif isinstance(model_event, ModelReasoningCompleted):
+                            yield AgentReasoningCompleted(model_event.id)
                         elif isinstance(model_event, ModelOutputCompleted):
                             if response is not None:
                                 raise RuntimeError(
@@ -158,17 +182,28 @@ class AgentEngine(AgentInboundPort):
                 for block in response.content:
                     if isinstance(block, ModelTextBlock):
                         yield AgentTextDelta(block.text)
+            for block in response.content:
+                if (
+                    isinstance(block, ModelReasoningBlock)
+                    and block.id not in streamed_reasoning
+                ):
+                    yield AgentReasoningStarted(block.id, block.presentation.disclosure)
+                    for index, part in enumerate(block.presentation.parts):
+                        yield AgentReasoningDelta(
+                            block.id, block.presentation.disclosure, index, part
+                        )
+                    yield AgentReasoningCompleted(block.id)
 
             input_tokens += response.usage.total_input_tokens
             output_tokens += response.usage.output_tokens
             assistant_message = AssistantMessage(
                 content=tuple(
-                    TextContent(block.text)
+                    TextContent(block.text, block.continuation)
                     if isinstance(block, ModelTextBlock)
-                    else ToolCall(block.id, block.name, block.input)
+                    else ToolCall(block.id, block.name, block.input, block.continuation)
                     if isinstance(block, ModelToolUseBlock)
-                    else OpaqueAssistantContent(
-                        block.protocol, block.model, block.payload
+                    else ReasoningContent(
+                        block.id, block.presentation, block.continuation
                     )
                     for block in response.content
                 ),
@@ -184,7 +219,7 @@ class AgentEngine(AgentInboundPort):
                 if isinstance(block, ModelTextBlock)
             ).strip()
             tool_calls = tuple(
-                ToolCall(block.id, block.name, block.input)
+                ToolCall(block.id, block.name, block.input, block.continuation)
                 for block in response.content
                 if isinstance(block, ModelToolUseBlock)
             )
@@ -308,6 +343,7 @@ class AgentEngine(AgentInboundPort):
     ) -> tuple[
         AgentHistoryUserMessage
         | AgentHistoryAssistantMessage
+        | AgentHistoryReasoning
         | AgentHistorySystemMessage
         | AgentHistoryToolCall,
         ...,
@@ -322,6 +358,7 @@ class AgentEngine(AgentInboundPort):
         history: list[
             AgentHistoryUserMessage
             | AgentHistoryAssistantMessage
+            | AgentHistoryReasoning
             | AgentHistorySystemMessage
             | AgentHistoryToolCall
         ] = []
@@ -338,6 +375,8 @@ class AgentEngine(AgentInboundPort):
                 if isinstance(block, TextContent):
                     if block.text:
                         history.append(AgentHistoryAssistantMessage(block.text))
+                elif isinstance(block, ReasoningContent):
+                    history.append(AgentHistoryReasoning(block.id, block.presentation))
                 elif isinstance(block, ToolCall):
                     result = results.get(block.id)
                     history.append(

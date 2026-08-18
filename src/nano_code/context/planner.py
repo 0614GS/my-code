@@ -1,11 +1,12 @@
 """从会话快照生成完整 ModelRequest。"""
 
 import json
+from collections.abc import Callable
 
 from nano_code.agent.contracts.context import ContextBudget, ContextPlan
 from nano_code.agent.contracts.model import (
     ModelMessage,
-    ModelOpaqueAssistantBlock,
+    ModelReasoningBlock,
     ModelRequest,
     ModelTextBlock,
     ModelToolDefinition,
@@ -33,7 +34,9 @@ from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
-    OpaqueAssistantContent,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningContent,
     TextContent,
     ToolCall,
     ToolResultsMessage,
@@ -55,6 +58,7 @@ class ContextPlanner(ContextPort):
         microcompact: MicrocompactPolicy | None = None,
         user_context_resolver: UserContextResolver | None = None,
         attachment_resolver: DerivedAttachmentResolver | None = None,
+        binding_resolver: Callable[[], ProviderBinding] | None = None,
     ) -> None:
         if max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
@@ -68,6 +72,7 @@ class ContextPlanner(ContextPort):
         )
         self.user_context_resolver = user_context_resolver or EmptyUserContextResolver()
         self.attachment_resolver = attachment_resolver or DerivedAttachmentResolver()
+        self.binding_resolver = binding_resolver
         self.attachment_projector = self.normalizer.attachment_projector
         self._user_context_cache: tuple[UserContextDocument, ...] | None = None
 
@@ -79,15 +84,18 @@ class ContextPlanner(ContextPort):
             delivery.attachment for delivery in snapshot.attachment_deliveries
         )
         attachment_chars = self.attachment_projector.measure(delivered + attachments)
+        binding = self.binding_resolver() if self.binding_resolver is not None else None
         selected = self.window.ensure_fits(
             effective,
-            additional_chars=attachment_chars + _active_opaque_chars(effective),
+            additional_chars=attachment_chars
+            + _replayed_continuation_chars(effective, binding),
         )
         model_messages = self.normalizer.normalize(
             user_context,
             selected,
             attachments,
             snapshot.attachment_deliveries,
+            active_binding=binding,
         )
         system_prompt = self.prompt.resolve()
         budget = self._budget(
@@ -111,11 +119,13 @@ class ContextPlanner(ContextPort):
         effective, _ = self._effective_messages(snapshot, propose=False)
         user_context = self._get_user_context()
         attachments = self._get_attachments(snapshot)
+        binding = self.binding_resolver() if self.binding_resolver is not None else None
         messages = self.normalizer.normalize(
             user_context,
             effective,
             attachments,
             snapshot.attachment_deliveries,
+            active_binding=binding,
         )
         return self._budget(
             effective,
@@ -220,11 +230,20 @@ def _message_chars(messages: tuple[ModelMessage, ...]) -> int:
     for message in messages:
         for block in message.content:
             if isinstance(block, ModelTextBlock):
-                size += len(block.text)
+                size += (
+                    _continuation_chars(block.continuation)
+                    if block.continuation is not None
+                    else len(block.text)
+                )
             elif isinstance(block, ModelToolUseBlock):
-                size += len(block.name) + len(str(block.input))
-            elif isinstance(block, ModelOpaqueAssistantBlock):
-                size += _opaque_chars(block.payload)
+                size += (
+                    _continuation_chars(block.continuation)
+                    if block.continuation is not None
+                    else len(block.name) + len(str(block.input))
+                )
+            elif isinstance(block, ModelReasoningBlock):
+                if block.continuation is not None:
+                    size += _continuation_chars(block.continuation)
             else:
                 size += len(block.content)
     return size
@@ -262,17 +281,39 @@ def _deliveries_after_last_assistant(
     )
 
 
-def _active_opaque_chars(conversation: tuple[ConversationMessage, ...]) -> int:
-    if not conversation or not isinstance(conversation[-1], ToolResultsMessage):
-        return 0
-    source_uuid = conversation[-1].source_assistant_uuid
-    return sum(
-        _opaque_chars(block.payload)
-        for message in conversation
-        if isinstance(message, AssistantMessage) and message.uuid == source_uuid
-        for block in message.content
-        if isinstance(block, OpaqueAssistantContent)
+def _replayed_continuation_chars(
+    conversation: tuple[ConversationMessage, ...],
+    binding: ProviderBinding | None,
+) -> int:
+    source_uuid = (
+        conversation[-1].source_assistant_uuid
+        if conversation and isinstance(conversation[-1], ToolResultsMessage)
+        else None
     )
+    return sum(
+        max(
+            0,
+            _continuation_chars(continuation) - _fallback_block_chars(block),
+        )
+        for message in conversation
+        if isinstance(message, AssistantMessage)
+        for block in message.content
+        for continuation in (_block_continuation(block),)
+        if continuation is not None
+        and (binding is None or continuation.binding == binding)
+        and (
+            continuation.replay_scope == "working_context"
+            or message.uuid == source_uuid
+        )
+    )
+
+
+def _fallback_block_chars(block: object) -> int:
+    if isinstance(block, TextContent):
+        return len(block.text)
+    if isinstance(block, ToolCall):
+        return len(block.name) + len(str(block.input))
+    return 0
 
 
 def _tool_schema_chars(tools: tuple[ModelToolDefinition, ...]) -> int:
@@ -305,7 +346,7 @@ def _conversation_chars(messages: tuple[ConversationMessage, ...]) -> int:
                     if isinstance(block, TextContent)
                     else len(block.name) + len(str(block.input))
                     if isinstance(block, ToolCall)
-                    else _opaque_chars(block.payload)
+                    else 0
                 )
         else:
             size += sum(len(result.content) for result in message.content)
@@ -338,11 +379,17 @@ def _chars_to_tokens(chars: int) -> int:
     return (chars + 3) // 4
 
 
-def _opaque_chars(payload: object) -> int:
+def _continuation_chars(state: ProviderContinuationState) -> int:
     return len(
         json.dumps(
-            payload,
+            state.payload,
             ensure_ascii=False,
             separators=(",", ":"),
         )
     )
+
+
+def _block_continuation(block: object) -> ProviderContinuationState | None:
+    if isinstance(block, (TextContent, ToolCall, ReasoningContent)):
+        return block.continuation
+    return None

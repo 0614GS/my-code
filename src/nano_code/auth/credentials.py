@@ -192,12 +192,16 @@ def resolve_api_key(
     environ: Mapping[str, str] | None = None,
     *,
     provider_id: str = _DEFAULT_PROVIDER_ID,
+    protocol: str = "anthropic-messages",
 ) -> ResolvedCredential:
     """优先解析临时环境变量覆盖，其次使用持久化登录 key。"""
 
     environment = os.environ if environ is None else environ
+    protocol_variable = (
+        "OPENAI_API_KEY" if protocol == "openai-responses" else "ANTHROPIC_API_KEY"
+    )
     environment_key = environment.get("NANO_CODE_API_KEY") or environment.get(
-        "ANTHROPIC_API_KEY"
+        protocol_variable
     )
     if environment_key and environment_key.strip():
         return ResolvedCredential(environment_key, CredentialSource.ENVIRONMENT)

@@ -463,11 +463,12 @@ deny、path deny、工作区/符号链接逃逸和工具 safety deny 不可被�
 4. `@path` 的显式授权不覆盖任何 deny 或工作区安全边界。
 5. Todo 状态只来自已成功提交的 TodoWrite 会话事实；失败调用不更新 UI。
 6. TUI 不读取 Transcript、Provider SDK、ToolExecutor 或 ContextPlanner 内部状态。
-7. 组合根继续注入同一套运行时 Tool、Permission 和 workspace 能力，不复制动态配置。
-8. Plan 正文只是一条普通 AssistantMessage；不新增 plan record、attachment 或文件事实来源。
-9. Plan runtime flag 不持久化，resume 后回到普通模式。
-10. Explorer Subagent 不能写入父 Conversation，也不能扩大父级权限或 Plan Mode 能力范围。
-11. Explorer 不向用户请求权限；受委托的只读 ask 自动允许，其他不能自动允许的调用
+7. UI 只消费 reasoning presentation；continuation payload、签名、redacted data 和密文不得越过 Application 边界。
+8. 组合根继续注入同一套运行时 Tool、Permission 和 workspace 能力，不复制动态配置。
+9. Plan 正文只是一条普通 AssistantMessage；不新增 plan record、attachment 或文件事实来源。
+10. Plan runtime flag 不持久化，resume 后回到普通模式。
+11. Explorer Subagent 不能写入父 Conversation，也不能扩大父级权限或 Plan Mode 能力范围。
+12. Explorer 不向用户请求权限；受委托的只读 ask 自动允许，其他不能自动允许的调用
     fail closed。
 
 ## 12. 已确认决策与延后事项

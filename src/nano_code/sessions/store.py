@@ -136,7 +136,7 @@ class SessionStore(SessionRepository):
                 if (
                     line_number == 1
                     and isinstance(legacy_version, int)
-                    and legacy_version != 4
+                    and legacy_version != 5
                 ):
                     raise ValueError(
                         f"Transcript schema v{legacy_version} is incompatible: "

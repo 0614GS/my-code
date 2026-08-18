@@ -1,4 +1,4 @@
-"""Anthropic Messages 兼容服务的具名连接 profile。"""
+"""按协议配置的具名 provider profile。"""
 
 import json
 import os
@@ -13,7 +13,7 @@ from nano_code.providers.validation import validate_base_url
 
 DEFAULT_PROVIDER_ID = "anthropic"
 DEFAULT_MODEL = "claude-sonnet-4-6"
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 class ProviderProfileError(ValueError):
@@ -24,6 +24,30 @@ class ProviderProtocol(StrEnum):
     """nano-code 支持的线路协议。"""
 
     ANTHROPIC_MESSAGES = "anthropic-messages"
+    OPENAI_RESPONSES = "openai-responses"
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningConfig:
+    enabled: bool = True
+    effort: str = "auto"
+    context: str = "auto"
+
+    def for_protocol(self, protocol: ProviderProtocol) -> "ReasoningConfig":
+        anthropic = {"auto", "low", "medium", "high", "max"}
+        openai = {"auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
+        allowed = (
+            anthropic if protocol is ProviderProtocol.ANTHROPIC_MESSAGES else openai
+        )
+        if self.effort not in allowed:
+            raise ProviderProfileError(
+                f"Unsupported {protocol.value} reasoning effort: {self.effort}"
+            )
+        if self.context not in {"auto", "current_turn", "all_turns"}:
+            raise ProviderProfileError(f"Unsupported reasoning context: {self.context}")
+        if protocol is ProviderProtocol.ANTHROPIC_MESSAGES and self.context != "auto":
+            raise ProviderProfileError("Anthropic reasoning context must be auto")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +58,7 @@ class ProviderProfile:
     model: str
     protocol: ProviderProtocol = ProviderProtocol.ANTHROPIC_MESSAGES
     base_url: str | None = None
+    reasoning: ReasoningConfig = ReasoningConfig()
 
     def __post_init__(self) -> None:
         try:
@@ -50,6 +75,7 @@ class ProviderProfile:
                     f"invalid provider base URL: {error}"
                 ) from error
             object.__setattr__(self, "base_url", normalized)
+        self.reasoning.for_protocol(self.protocol)
 
 
 class ProviderProfileStore:
@@ -67,7 +93,7 @@ class ProviderProfileStore:
             raise ProviderProfileError(
                 f"Cannot read provider profiles {self.path}: {error}"
             ) from error
-        if not isinstance(raw, dict) or raw.get("version") != _SCHEMA_VERSION:
+        if not isinstance(raw, dict) or raw.get("version") not in {2, _SCHEMA_VERSION}:
             raise ProviderProfileError(
                 "Provider profiles must use schema version "
                 f"{_SCHEMA_VERSION}: {self.path}. Recreate the provider profile."
@@ -82,7 +108,9 @@ class ProviderProfileStore:
                 raise ProviderProfileError(
                     f"Each provider must be a named object: {self.path}"
                 )
-            result[provider_id] = _parse_profile(provider_id, value, self.path)
+            result[provider_id] = _parse_profile(
+                provider_id, value, self.path, legacy=raw.get("version") == 2
+            )
         return result
 
     def ensure_exists(self, default: ProviderProfile) -> bool:
@@ -118,11 +146,12 @@ class ProviderProfileStore:
 
 
 def _parse_profile(
-    provider_id: str, raw: dict[object, object], path: Path
+    provider_id: str, raw: dict[object, object], path: Path, *, legacy: bool = False
 ) -> ProviderProfile:
     model = raw.get("defaultModel")
     protocol = raw.get("protocol")
     base_url = raw.get("baseUrl")
+    reasoning_raw = raw.get("reasoning")
     if not isinstance(model, str):
         raise ProviderProfileError(f"provider model must be a string: {path}")
     if not isinstance(protocol, str):
@@ -135,11 +164,27 @@ def _parse_profile(
         raise ProviderProfileError(
             f"Unsupported provider protocol {protocol!r}: {path}"
         ) from error
+    if legacy:
+        reasoning = ReasoningConfig(enabled=False)
+    else:
+        if not isinstance(reasoning_raw, dict):
+            raise ProviderProfileError(f"provider reasoning must be an object: {path}")
+        enabled = reasoning_raw.get("enabled")
+        effort = reasoning_raw.get("effort")
+        context = reasoning_raw.get("context", "auto")
+        if (
+            not isinstance(enabled, bool)
+            or not isinstance(effort, str)
+            or not isinstance(context, str)
+        ):
+            raise ProviderProfileError(f"invalid provider reasoning config: {path}")
+        reasoning = ReasoningConfig(enabled, effort, context)
     return ProviderProfile(
         id=provider_id,
         model=model,
         protocol=parsed_protocol,
         base_url=base_url,
+        reasoning=reasoning,
     )
 
 
@@ -147,6 +192,11 @@ def _profile_document(profile: ProviderProfile) -> dict[str, object]:
     document: dict[str, object] = {
         "protocol": profile.protocol.value,
         "defaultModel": profile.model,
+        "reasoning": {
+            "enabled": profile.reasoning.enabled,
+            "effort": profile.reasoning.effort,
+            "context": profile.reasoning.context,
+        },
     }
     if profile.base_url is not None:
         document["baseUrl"] = profile.base_url

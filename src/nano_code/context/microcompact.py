@@ -8,7 +8,7 @@ from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
-    OpaqueAssistantContent,
+    ReasoningContent,
     TextContent,
     ToolCall,
     ToolResult,
@@ -136,5 +136,5 @@ def _effective_message_chars(
                 if isinstance(block, TextContent):
                     size += len(block.text)
                 else:
-                    assert isinstance(block, OpaqueAssistantContent)
+                    assert isinstance(block, ReasoningContent)
     return size

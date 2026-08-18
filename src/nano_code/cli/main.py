@@ -14,6 +14,7 @@ from nano_code.core.bootstrap import (
     bootstrap_cli_runtime,
     initialize_user_storage,
 )
+from nano_code.providers.profiles import ProviderProfileStore
 from nano_code.tui import NanoCodeTui
 
 
@@ -65,8 +66,17 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(2) from error
     if isinstance(options, AuthOptions):
         provider_id = resolver.active_provider_id(options.provider_override)
+        protocol = (
+            ProviderProfileStore(resolver.paths.providers_path)
+            .load()[provider_id]
+            .protocol.value
+        )
         try:
-            raise SystemExit(run_auth_command(options, resolver.paths, provider_id))
+            raise SystemExit(
+                run_auth_command(
+                    options, resolver.paths, provider_id, protocol=protocol
+                )
+            )
         except (EOFError, KeyboardInterrupt):
             print("Cancelled.", file=sys.stderr)
             raise SystemExit(130) from None

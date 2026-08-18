@@ -1,16 +1,20 @@
-"""完整、provider 无关的模型请求与输出协议。"""
+"""完整、provider 无关的模型请求、reasoning 展示与续接协议。"""
 
 from dataclasses import dataclass, field
 from typing import Literal
 
-from nano_code.conversation.primitives import JsonObject, TokenUsage, to_json_object
+from nano_code.conversation import (
+    JsonObject,
+    ProviderContinuationState,
+    ReasoningPresentation,
+    TokenUsage,
+    to_json_object,
+)
 from nano_code.prompts import SystemPrompt
 
 
 @dataclass(frozen=True, slots=True)
 class ModelToolDefinition:
-    """一次模型请求可见的工具名称、说明和输入 schema。"""
-
     name: str
     description: str
     input_schema: JsonObject
@@ -19,6 +23,7 @@ class ModelToolDefinition:
 @dataclass(frozen=True, slots=True)
 class ModelTextBlock:
     text: str
+    continuation: ProviderContinuationState | None = None
     type: Literal["text"] = field(default="text", init=False)
 
 
@@ -27,7 +32,13 @@ class ModelToolUseBlock:
     id: str
     name: str
     input: JsonObject
+    continuation: ProviderContinuationState | None = None
     type: Literal["tool_use"] = field(default="tool_use", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.id or not self.name:
+            raise ValueError("Model tool use id and name must not be empty")
+        object.__setattr__(self, "input", to_json_object(self.input))
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,38 +50,19 @@ class ModelToolResultBlock:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelOpaqueAssistantBlock:
-    """Opaque provider response content eligible for protocol-bound replay."""
-
-    protocol: str
-    model: str
-    payload: JsonObject
-    type: Literal["provider_opaque"] = field(default="provider_opaque", init=False)
+class ModelReasoningBlock:
+    id: str
+    presentation: ReasoningPresentation
+    continuation: ProviderContinuationState | None = None
+    type: Literal["reasoning"] = field(default="reasoning", init=False)
 
     def __post_init__(self) -> None:
-        if not self.protocol.strip() or not self.model.strip():
-            raise ValueError("Opaque model source must not be empty")
-        payload = to_json_object(self.payload)
-        kind = payload.get("type")
-        if kind == "thinking":
-            valid = set(payload) == {"type", "thinking", "signature"} and all(
-                isinstance(payload.get(key), str) for key in ("thinking", "signature")
-            )
-        elif kind == "redacted_thinking":
-            valid = set(payload) == {"type", "data"} and isinstance(
-                payload.get("data"), str
-            )
-        else:
-            valid = False
-        if not valid:
-            raise ValueError("Unsupported opaque model payload")
-        object.__setattr__(self, "payload", payload)
+        if not self.id.strip():
+            raise ValueError("Model reasoning id must not be empty")
 
 
 type ModelUserContent = ModelTextBlock | ModelToolResultBlock
-type ModelAssistantContent = (
-    ModelTextBlock | ModelToolUseBlock | ModelOpaqueAssistantBlock
-)
+type ModelAssistantContent = ModelTextBlock | ModelToolUseBlock | ModelReasoningBlock
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,12 +89,12 @@ class ModelAssistantMessage:
         if not self.content:
             raise ValueError("Model assistant message content must not be empty")
         if not all(
-            isinstance(
-                block, (ModelTextBlock, ModelToolUseBlock, ModelOpaqueAssistantBlock)
-            )
+            isinstance(block, (ModelTextBlock, ModelToolUseBlock, ModelReasoningBlock))
             for block in self.content
         ):
-            raise TypeError("Model assistant messages contain only text or tool uses")
+            raise TypeError(
+                "Model assistant messages contain only text or tool uses or reasoning"
+            )
         if not any(
             isinstance(block, ModelToolUseBlock)
             or isinstance(block, ModelTextBlock)
@@ -137,9 +129,7 @@ class ModelOutput:
         if not self.content:
             raise ValueError("Model output contained no supported content blocks")
         if not all(
-            isinstance(
-                block, (ModelTextBlock, ModelToolUseBlock, ModelOpaqueAssistantBlock)
-            )
+            isinstance(block, (ModelTextBlock, ModelToolUseBlock, ModelReasoningBlock))
             for block in self.content
         ):
             raise TypeError("Model output contains only assistant content")
@@ -158,26 +148,35 @@ class ModelTextDelta:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelReasoningStarted:
+    id: str
+    disclosure: Literal["verbatim", "summary", "redacted", "hidden"]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelReasoningDelta:
+    id: str
+    disclosure: Literal["verbatim", "summary", "redacted", "hidden"]
+    part_index: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ModelReasoningCompleted:
+    id: str
+
+
+@dataclass(frozen=True, slots=True)
 class ModelOutputCompleted:
     output: ModelOutput
 
 
-type ModelStreamEvent = ModelTextDelta | ModelOutputCompleted
+type ModelStreamEvent = (
+    ModelTextDelta
+    | ModelReasoningStarted
+    | ModelReasoningDelta
+    | ModelReasoningCompleted
+    | ModelOutputCompleted
+)
 
-__all__ = [
-    "ModelAssistantContent",
-    "ModelAssistantMessage",
-    "ModelMessage",
-    "ModelOutput",
-    "ModelOutputCompleted",
-    "ModelOpaqueAssistantBlock",
-    "ModelRequest",
-    "ModelStreamEvent",
-    "ModelTextBlock",
-    "ModelTextDelta",
-    "ModelToolResultBlock",
-    "ModelToolDefinition",
-    "ModelToolUseBlock",
-    "ModelUserContent",
-    "ModelUserMessage",
-]
+__all__ = [name for name in globals() if name.startswith("Model")]

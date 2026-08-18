@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider", help="named provider profile override")
     parser.add_argument(
         "--base-url",
-        help="Anthropic-compatible API base URL override",
+        help="provider API base URL override",
     )
     parser.add_argument(
         "--permission-mode",
@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command")
     auth_parser = subparsers.add_parser(
-        "auth", help="manage the user-level Anthropic API key"
+        "auth", help="manage the active provider API key"
     )
     auth_commands = auth_parser.add_subparsers(dest="auth_action", required=True)
     auth_commands.add_parser("login", help="store an API key for future sessions")

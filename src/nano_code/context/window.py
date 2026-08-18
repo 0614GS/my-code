@@ -5,7 +5,7 @@ from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
-    OpaqueAssistantContent,
+    ReasoningContent,
     TextContent,
     ToolCall,
     ToolResult,
@@ -56,7 +56,7 @@ class ContextWindow:
                     size += len(block.name) + len(str(block.input))
                 elif isinstance(block, ToolResult):
                     size += len(block.content)
-                elif isinstance(block, OpaqueAssistantContent):
+                elif isinstance(block, ReasoningContent):
                     # Completed provider-private reasoning is not ordinary context.
                     # The normalized active trajectory is budgeted by ContextPlanner.
                     continue

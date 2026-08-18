@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import ConversationState, ModelOpaqueAssistantBlock
+from nano_code.agent import ConversationState, ModelReasoningBlock
 from nano_code.agent.contracts.compaction import CompactionOutcome
 from nano_code.agent.contracts.session import (
     AttachmentDelivery,
@@ -17,7 +17,10 @@ from nano_code.conversation import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,
-    OpaqueAssistantContent,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningContent,
+    ReasoningPresentation,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -71,14 +74,14 @@ def test_resume_repairs_trailing_tool_calls(tmp_path: Path) -> None:
     human = HumanMessage("read")
     assistant = AssistantMessage(
         (
-            OpaqueAssistantContent(
-                "anthropic-messages",
-                "claude-test",
-                {
-                    "type": "thinking",
-                    "thinking": "hidden",
-                    "signature": "signed",
-                },
+            ReasoningContent(
+                "thinking",
+                ReasoningPresentation("verbatim", ("hidden",)),
+                ProviderContinuationState(
+                    ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
+                    "active_trajectory",
+                    {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+                ),
             ),
             TextContent("working"),
             ToolCall("call", "Read", {"path": "x"}),
@@ -99,7 +102,7 @@ def test_resume_repairs_trailing_tool_calls(tmp_path: Path) -> None:
     assert target.load_calls == 1
     request_messages = ModelInputNormalizer().normalize((), resumed, ())
     assert any(
-        isinstance(block, ModelOpaqueAssistantBlock)
+        isinstance(block, ModelReasoningBlock)
         for message in request_messages
         for block in message.content
     )

@@ -8,7 +8,10 @@ from nano_code.conversation import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,
-    OpaqueAssistantContent,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningContent,
+    ReasoningPresentation,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -58,7 +61,7 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
         "conversation_summary_message",
         "session_metadata",
     ]
-    assert all(entry["schema_version"] == 4 for entry in entries)
+    assert all(entry["schema_version"] == 5 for entry in entries)
     assert entries[0]["max_steps"] is None
     assert "max_turns" not in entries[0]
     assert all("role" not in entry and "origin" not in entry for entry in entries)
@@ -70,19 +73,19 @@ def test_codec_round_trip_each_message_variant() -> None:
         assert entry_from_json(entry_to_json(record)) == record
 
 
-def test_provider_opaque_assistant_content_round_trips_v4(tmp_path: Path) -> None:
+def test_reasoning_assistant_content_round_trips_v5(tmp_path: Path) -> None:
     store = _store(tmp_path)
     human = HumanMessage("hello")
     assistant = AssistantMessage(
         (
-            OpaqueAssistantContent(
-                "anthropic-messages",
-                "claude-test",
-                {
-                    "type": "thinking",
-                    "thinking": "hidden",
-                    "signature": "signed",
-                },
+            ReasoningContent(
+                "thinking",
+                ReasoningPresentation("verbatim", ("hidden",)),
+                ProviderContinuationState(
+                    ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
+                    "active_trajectory",
+                    {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+                ),
             ),
             ToolCall("call", "Read", {"path": "x"}),
         ),
@@ -97,7 +100,7 @@ def test_provider_opaque_assistant_content_round_trips_v4(tmp_path: Path) -> Non
     assistant_record = next(
         entry for entry in document if entry["type"] == "assistant_message"
     )
-    assert assistant_record["content"][0]["type"] == "provider_opaque"
+    assert assistant_record["content"][0]["type"] == "reasoning"
 
 
 @pytest.mark.parametrize(
@@ -163,6 +166,7 @@ def test_structured_records_and_compact_boundary_are_atomic(tmp_path: Path) -> N
         ({"type": "message", "version": 1}, 1),
         ({"type": "session_started", "schema_version": 2}, 2),
         ({"type": "session_started", "schema_version": 3}, 3),
+        ({"type": "session_started", "schema_version": 4}, 4),
     ],
 )
 def test_catalog_skips_legacy_transcript(

@@ -3,7 +3,7 @@
 from nano_code.agent.contracts.model import (
     ModelAssistantMessage,
     ModelMessage,
-    ModelOpaqueAssistantBlock,
+    ModelReasoningBlock,
     ModelTextBlock,
     ModelToolResultBlock,
     ModelToolUseBlock,
@@ -18,7 +18,9 @@ from nano_code.conversation import (
     AssistantMessage,
     ConversationMessage,
     HumanMessage,
-    OpaqueAssistantContent,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningContent,
     TextContent,
     ToolCall,
     ToolResultsMessage,
@@ -37,6 +39,7 @@ class ModelInputNormalizer:
         history: tuple[ConversationMessage, ...],
         attachments: tuple[ContextAttachment, ...],
         attachment_deliveries: tuple[AttachmentDelivery, ...] = (),
+        active_binding: ProviderBinding | None = None,
     ) -> tuple[ModelMessage, ...]:
         candidates = [
             *(_context_message(item) for item in user_context),
@@ -44,7 +47,8 @@ class ModelInputNormalizer:
                 history,
                 attachment_deliveries,
                 self.attachment_projector,
-                replay_active_opaque=True,
+                replay_continuation=True,
+                active_binding=active_binding,
             ),
             *self.attachment_projector.project_many(attachments),
         ]
@@ -65,7 +69,7 @@ class ModelInputNormalizer:
                     messages,
                     attachment_deliveries,
                     self.attachment_projector,
-                    replay_active_opaque=False,
+                    replay_continuation=False,
                 )
             )
         )
@@ -102,22 +106,58 @@ class ModelInputNormalizer:
 
 
 def _conversation_message(
-    message: ConversationMessage, *, include_opaque: bool = False
+    message: ConversationMessage,
+    *,
+    active_trajectory: bool = False,
+    replay_continuation: bool = True,
+    active_binding: ProviderBinding | None = None,
 ) -> ModelMessage:
     if isinstance(message, HumanMessage):
         return ModelUserMessage((ModelTextBlock(message.content),))
     if isinstance(message, AssistantMessage):
         return ModelAssistantMessage(
             tuple(
-                ModelTextBlock(block.text)
+                ModelTextBlock(
+                    block.text,
+                    _selected_continuation(
+                        block.continuation,
+                        active_trajectory,
+                        replay_continuation,
+                        active_binding,
+                    ),
+                )
                 if isinstance(block, TextContent)
-                else ModelToolUseBlock(block.id, block.name, block.input)
+                else ModelToolUseBlock(
+                    block.id,
+                    block.name,
+                    block.input,
+                    _selected_continuation(
+                        block.continuation,
+                        active_trajectory,
+                        replay_continuation,
+                        active_binding,
+                    ),
+                )
                 if isinstance(block, ToolCall)
-                else ModelOpaqueAssistantBlock(
-                    block.protocol, block.model, block.payload
+                else ModelReasoningBlock(
+                    block.id,
+                    block.presentation,
+                    _selected_continuation(
+                        block.continuation,
+                        active_trajectory,
+                        replay_continuation,
+                        active_binding,
+                    ),
                 )
                 for block in message.content
-                if include_opaque or not isinstance(block, OpaqueAssistantContent)
+                if not isinstance(block, ReasoningContent)
+                or _selected_continuation(
+                    block.continuation,
+                    active_trajectory,
+                    replay_continuation,
+                    active_binding,
+                )
+                is not None
             )
         )
     if isinstance(message, ToolResultsMessage):
@@ -152,14 +192,15 @@ def _conversation_history(
     attachment_deliveries: tuple[AttachmentDelivery, ...],
     attachment_projector: AttachmentProjector,
     *,
-    replay_active_opaque: bool,
+    replay_continuation: bool,
+    active_binding: ProviderBinding | None = None,
 ) -> list[ModelMessage]:
     by_anchor: dict[str, list[ContextAttachment]] = {}
     for delivery in attachment_deliveries:
         by_anchor.setdefault(delivery.anchor_uuid, []).append(delivery.attachment)
-    active_opaque_uuid = (
+    active_trajectory_uuid = (
         messages[-1].source_assistant_uuid
-        if replay_active_opaque
+        if replay_continuation
         and messages
         and isinstance(messages[-1], ToolResultsMessage)
         else None
@@ -169,16 +210,33 @@ def _conversation_history(
         projected.append(
             _conversation_message(
                 message,
-                include_opaque=(
+                active_trajectory=(
                     isinstance(message, AssistantMessage)
-                    and message.uuid == active_opaque_uuid
+                    and message.uuid == active_trajectory_uuid
                 ),
+                replay_continuation=replay_continuation,
+                active_binding=active_binding,
             )
         )
         projected.extend(
             attachment_projector.project_many(tuple(by_anchor.get(message.uuid, ())))
         )
     return projected
+
+
+def _selected_continuation(
+    continuation: ProviderContinuationState | None,
+    active_trajectory: bool,
+    replay: bool,
+    active_binding: ProviderBinding | None = None,
+) -> ProviderContinuationState | None:
+    if continuation is None or not replay:
+        return None
+    if active_binding is not None and continuation.binding != active_binding:
+        return None
+    if continuation.replay_scope == "working_context":
+        return continuation
+    return continuation if active_trajectory else None
 
 
 def _merge_adjacent(messages: tuple[ModelMessage, ...]) -> tuple[ModelMessage, ...]:

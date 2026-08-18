@@ -17,7 +17,10 @@ from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
-    OpaqueAssistantContent,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningContent,
+    ReasoningPresentation,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -35,7 +38,7 @@ from nano_code.sessions.records import (
     ConversationSummaryMessageRecord,
     HumanMessageRecord,
     MessageRecord,
-    ProviderOpaqueContentRecord,
+    ReasoningContentRecord,
     SessionMetadataRecord,
     SessionStartedRecord,
     TextContentRecord,
@@ -158,13 +161,13 @@ def message_to_record(message: ConversationMessage) -> MessageRecord:
         )
     if isinstance(message, AssistantMessage):
         assistant_content: tuple[
-            TextContentRecord | ToolCallRecord | ProviderOpaqueContentRecord, ...
+            TextContentRecord | ToolCallRecord | ReasoningContentRecord, ...
         ] = tuple(
-            TextContentRecord(b.text)
+            TextContentRecord(b.text, b.continuation)
             if isinstance(b, TextContent)
-            else ToolCallRecord(b.id, b.name, b.input)
+            else ToolCallRecord(b.id, b.name, b.input, b.continuation)
             if isinstance(b, ToolCall)
-            else ProviderOpaqueContentRecord(b.protocol, b.model, b.payload)
+            else ReasoningContentRecord(b.id, b.presentation, b.continuation)
             for b in message.content
         )
         return AssistantMessageRecord(
@@ -197,15 +200,15 @@ def record_to_message(record: MessageRecord) -> ConversationMessage:
             record.content, record.uuid, record.parent_uuid, record.timestamp
         )
     if isinstance(record, AssistantMessageRecord):
-        assistant_content: tuple[
-            TextContent | ToolCall | OpaqueAssistantContent, ...
-        ] = tuple(
-            TextContent(b.text)
-            if isinstance(b, TextContentRecord)
-            else ToolCall(b.id, b.name, b.input)
-            if isinstance(b, ToolCallRecord)
-            else OpaqueAssistantContent(b.protocol, b.model, b.payload)
-            for b in record.content
+        assistant_content: tuple[TextContent | ToolCall | ReasoningContent, ...] = (
+            tuple(
+                TextContent(b.text, b.continuation)
+                if isinstance(b, TextContentRecord)
+                else ToolCall(b.id, b.name, b.input, b.continuation)
+                if isinstance(b, ToolCallRecord)
+                else ReasoningContent(b.id, b.presentation, b.continuation)
+                for b in record.content
+            )
         )
         return AssistantMessage(
             assistant_content,
@@ -297,7 +300,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
         data = to_json_object(value)
     except TypeError as error:
         raise TranscriptDecodeError("Transcript entry must be an object") from error
-    if data.get("schema_version") != 4:
+    if data.get("schema_version") != 5:
         raise TranscriptDecodeError("Unsupported transcript schema version")
     kind = _string(data, "type")
     expected_fields = _ENTRY_FIELDS.get(kind)
@@ -396,22 +399,48 @@ def entry_from_json(value: object) -> TranscriptEntry:
 
 
 def _assistant_block_json(
-    block: TextContentRecord | ToolCallRecord | ProviderOpaqueContentRecord,
+    block: TextContentRecord | ToolCallRecord | ReasoningContentRecord,
 ) -> JsonObject:
     if isinstance(block, TextContentRecord):
-        return {"type": "text", "text": block.text}
+        result: JsonObject = {"type": "text", "text": block.text}
+        if block.continuation is not None:
+            result["continuation"] = _continuation_json(block.continuation)
+        return result
     if isinstance(block, ToolCallRecord):
-        return {
+        result = {
             "type": "tool_call",
             "id": block.id,
             "name": block.name,
             "input": block.input,
         }
+        if block.continuation is not None:
+            result["continuation"] = _continuation_json(block.continuation)
+        return result
     return {
-        "type": "provider_opaque",
-        "protocol": block.protocol,
-        "model": block.model,
-        "payload": block.payload,
+        "type": "reasoning",
+        "id": block.id,
+        "presentation": {
+            "disclosure": block.presentation.disclosure,
+            "parts": list(block.presentation.parts),
+        },
+        "continuation": (
+            _continuation_json(block.continuation)
+            if block.continuation is not None
+            else None
+        ),
+    }
+
+
+def _continuation_json(state: ProviderContinuationState) -> JsonObject:
+    return {
+        "binding": {
+            "protocol": state.binding.protocol,
+            "provider_id": state.binding.provider_id,
+            "model": state.binding.model,
+            "base_url": state.binding.base_url,
+        },
+        "replay_scope": state.replay_scope,
+        "payload": state.payload,
     }
 
 
@@ -513,38 +542,81 @@ def _optional_positive_int(data: Mapping[str, object], key: str) -> int | None:
 
 def _assistant_block(
     value: object,
-) -> TextContentRecord | ToolCallRecord | ProviderOpaqueContentRecord:
+) -> TextContentRecord | ToolCallRecord | ReasoningContentRecord:
     data = _object(value)
     kind = _string(data, "type")
     if kind == "text":
-        _require_exact_fields(data, frozenset({"type", "text"}))
-        return TextContentRecord(_string(data, "text"))
+        expected = {"type", "text"}
+        if "continuation" in data:
+            expected.add("continuation")
+        _require_exact_fields(data, frozenset(expected))
+        return TextContentRecord(_string(data, "text"), _optional_continuation(data))
     if kind == "tool_call":
-        _require_exact_fields(data, frozenset({"type", "id", "name", "input"}))
+        expected = {"type", "id", "name", "input"}
+        if "continuation" in data:
+            expected.add("continuation")
+        _require_exact_fields(data, frozenset(expected))
         try:
             input_ = to_json_object(data.get("input"))
         except TypeError as error:
             raise TranscriptDecodeError("Tool input must be an object") from error
-        return ToolCallRecord(_string(data, "id"), _string(data, "name"), input_)
-    if kind == "provider_opaque":
+        return ToolCallRecord(
+            _string(data, "id"),
+            _string(data, "name"),
+            input_,
+            _optional_continuation(data),
+        )
+    if kind == "reasoning":
         _require_exact_fields(
             data,
-            frozenset({"type", "protocol", "model", "payload"}),
+            frozenset({"type", "id", "presentation", "continuation"}),
         )
         try:
-            payload = to_json_object(data.get("payload"))
-            # Reuse the domain validator at the untrusted transcript boundary.
-            opaque = OpaqueAssistantContent(
-                _string(data, "protocol"),
-                _string(data, "model"),
-                payload,
+            raw_presentation = _object(data.get("presentation"))
+            _require_exact_fields(raw_presentation, frozenset({"disclosure", "parts"}))
+            parts = _list(raw_presentation, "parts")
+            if not all(isinstance(part, str) for part in parts):
+                raise TranscriptDecodeError("reasoning parts must be strings")
+            presentation = ReasoningPresentation(
+                _string(raw_presentation, "disclosure"),  # type: ignore[arg-type]
+                tuple(part for part in parts if isinstance(part, str)),
             )
+            continuation = _optional_continuation(data)
         except (TypeError, ValueError) as error:
             raise TranscriptDecodeError(str(error)) from error
-        return ProviderOpaqueContentRecord(
-            opaque.protocol, opaque.model, opaque.payload
-        )
+        return ReasoningContentRecord(_string(data, "id"), presentation, continuation)
     raise TranscriptDecodeError(f"Unsupported assistant content: {kind}")
+
+
+def _optional_continuation(
+    data: Mapping[str, object],
+) -> ProviderContinuationState | None:
+    raw = data.get("continuation")
+    if raw is None:
+        return None
+    item = _object(raw)
+    _require_exact_fields(item, frozenset({"binding", "replay_scope", "payload"}))
+    binding_raw = _object(item.get("binding"))
+    _require_exact_fields(
+        binding_raw, frozenset({"protocol", "provider_id", "model", "base_url"})
+    )
+    base_url = binding_raw.get("base_url")
+    if base_url is not None and not isinstance(base_url, str):
+        raise TranscriptDecodeError("binding base_url must be string or null")
+    try:
+        binding = ProviderBinding(
+            _string(binding_raw, "protocol"),
+            _string(binding_raw, "provider_id"),
+            _string(binding_raw, "model"),
+            base_url,
+        )
+        return ProviderContinuationState(
+            binding,
+            _string(item, "replay_scope"),  # type: ignore[arg-type]
+            to_json_object(item.get("payload")),
+        )
+    except (TypeError, ValueError) as error:
+        raise TranscriptDecodeError(str(error)) from error
 
 
 def _result(value: object) -> ToolResultRecord:

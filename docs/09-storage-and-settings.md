@@ -28,21 +28,24 @@ nano-code 采用 Claude Code 的分离方式：运行状态归入用户目录，
 
 ## Provider Profiles
 
-Provider Profile 是一个命名连接配置，而不是另一套 SDK。当前唯一协议为 `anthropic-messages`；不同 Profile 可以分别设置 Base URL、模型和 API Key，最终都由 Anthropic Python SDK 发起请求。非敏感定义保存在 `providers.json`：
+Provider Profile 是一个命名连接配置。支持 `anthropic-messages` 与官方 `openai-responses`；不同 Profile 可以分别设置 Base URL、模型、reasoning 和 API Key。非敏感定义保存在 `providers.json`：
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "providers": {
     "anthropic": {
       "protocol": "anthropic-messages",
-      "defaultModel": "claude-sonnet-4-6"
+      "defaultModel": "claude-sonnet-4-6",
+      "reasoning": {"enabled": true, "effort": "auto", "context": "auto"}
     }
   }
 }
 ```
 
 `settings.json` 的 `activeProvider` 指向当前 Profile；API Key 只存在 `.credentials.json`，并以 `{"kind":"apiKey","apiKey":"..."}` 的可扩展鉴别联合保存。项目级配置不能定义或选择 Provider，避免不可信仓库重定向认证请求。Provider ID 在三类文件中使用同一校验规则。
+
+旧 profile schema v2 可读，并解释为“不主动请求 reasoning、仍解析 provider 主动返回”；下一次保存写为 v3。环境变量优先级为 `NANO_CODE_API_KEY`，随后按协议选择 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`；model/base URL 同样使用对应协议前缀。
 
 ## 配置层与优先级
 

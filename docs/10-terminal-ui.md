@@ -39,7 +39,7 @@ TUI 只通过 `application.chat.ChatRuntime` 的事件流提交输入、读取�
 
 ## 流式显示与持久化边界
 
-Anthropic 适配器把 SSE 文本 delta 转换为 provider-neutral 事件，Agent 再投影成 TUI 事件。增量文本只进入临时 `AssistantMessage`，并以约 30 FPS 的短批次合并后交给 Rich Markdown 渲染；只有收到 SDK 的完整最终 Message 后，Agent 才验证并持久化 assistant message、读取完整工具参数和执行工具。连接中断时屏幕可保留部分文本用于反馈，但 Transcript 不写入半截响应。
+Provider adapter 把文本与 reasoning delta 转换为中立事件。增量正文只进入临时 `AssistantMessage`；`ReasoningMessage` 对实时内容默认展开，完成后可折叠，resume 历史默认折叠。verbatim/summary 使用不同标题，redacted/hidden 只显示安全占位。只有收到完整最终响应后才持久化；错误或取消保留临时内容并标记中断，不写入半截响应。`-p` 仍只输出最终正文。
 
 工具开始时创建稳定的 `ToolCallMessage`，结束时用相同 tool ID 原位更新。显示名、参数摘要、活动描述和结果预览由对应 Tool 在核心层投影；TUI 只选择颜色、布局和展开方式，不识别 `Read`、`Bash` 等具体工具，也不从原始 tool result 猜测摘要。发送给模型的内容和用户展示内容是独立投影，UI 截断不改变模型上下文。
 
@@ -58,7 +58,7 @@ TodoPanel 的初始值来自 `RuntimeStatus.todos`，resume 使用目标 session
 
 当前 `/clear` 只清理已渲染消息，不删除 Transcript 或运行时上下文。长消息列表虚拟化尚未实现；模型增量、工具状态和权限请求均由 runtime 事件驱动，TUI 不轮询核心对象。
 
-`/provider` 打开独立的 ProviderScreen。URL、模型和 Profile ID 可见；API Key 使用 password Input，空值表示保留旧 Key，ProviderView 只暴露 `has_stored_key` 布尔值。保存后由 runtime 持久化并切换 ProviderRouter，TUI 不直接读写配置文件。环境变量覆盖仍优先于已保存值。
+`/provider` 打开独立的 ProviderScreen。协议、URL、模型、reasoning 开关及协议相关 effort/context 可见；API Key 使用 password Input，空值表示保留旧 Key，ProviderView 只暴露 `has_stored_key` 布尔值。保存后由 runtime 持久化并切换 ProviderRouter，TUI 不直接读写配置文件。
 
 `/resume` 打开独立的 ResumeScreen。列表只展示当前项目的其他可恢复会话：首行是第一次用户输入的归一化预览，次行右侧是相对修改时间；支持方向键、Enter 和 Esc。选择后由 runtime 严格加载目标会话并原子切换 session-scoped 状态，再把历史投影为 `HistoryEntry` 返回 TUI 重建消息组件。工具结果优先复用 Transcript 中的展示快照；旧记录才由 Tool 重新投影。选择器和 TUI 均不读取 JSONL，也不持有核心消息类型。
 

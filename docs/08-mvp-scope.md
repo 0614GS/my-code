@@ -2,13 +2,13 @@
 
 ## 目标
 
-第一阶段先打通一条可测试的纵向链路：用户输入被持久化后，Agent 构造模型上下文，调用 Anthropic Messages API，执行受权限控制的工具，再把匹配的 `tool_result` 送回模型。
+第一阶段先打通一条可测试的纵向链路：用户输入被持久化后，Agent 构造模型上下文，通过 Anthropic Messages 或 OpenAI Responses 调用模型，执行受权限控制的工具，再把匹配的工具结果送回模型。
 
 ## 本阶段包含
 
 - 带 slash 命令选择、项目会话 `/resume` 的轻量 TUI，以及 `nanocode -p "..."` 单次运行；
 - 用户级 API Key 登录、状态、退出及环境变量临时覆盖；
-- 与 Agent Loop 解耦的模型 Provider 协议及 Anthropic 适配器；
+- 与 Agent Loop 解耦的模型 Provider 协议，以及 Anthropic Messages、OpenAI Responses stateless 适配器；
 - Read、Glob、Grep、Write、Edit、Bash 和 TodoWrite 七个内置工具；
 - 输入感知的工具权限协议、Bash 保守只读分析，以及 `default`、`acceptEdits`、`plan`、`dontAsk`、`bypassPermissions` 权限模式；
 - 无交互环境 fail closed，工作区文件路径防逃逸；
@@ -23,12 +23,12 @@
 - 区分请求派生与回合事件交付的 attachment 基础设施，支持 `request` / `live_session`
   retention、消息锚点、user-side 文本/reminder/observation 投影和窗口计量；
 - 通过快照与提交后事件同步、支持 Ctrl+T 折叠的 TUI TodoList；
-- Anthropic SSE 文本流、TUI 增量 Markdown 和工具调用状态展示；
+- 文本与 reasoning 流式事件、TUI 增量 Markdown/折叠 reasoning 和工具调用状态展示；
 - 底部内联权限选择及可返回模型的拒绝反馈。
 - settings 中的 `permissions.allow/deny/ask` 持久规则、结构化 PermissionUpdate、
   local settings 级“不再询问”和标准库权限审计日志。
-- v3 settings、v4 Transcript、v2 provider/credential 存储，以及带启动快照与 metadata 的 Session；
-- Anthropic thinking/redacted-thinking 的隐藏持久化、工具轨迹回放和 protocol/model 绑定。
+- v3 settings、v5 Transcript、v3 provider/v2 credential 存储，以及带启动快照与 metadata 的 Session；
+- 四种 reasoning disclosure、隐藏 continuation，以及 protocol/profile/model/endpoint 绑定。
 
 ## 对照 Claude Code 保留的不变量
 
@@ -53,4 +53,4 @@ Bash 工具正式限定为提供 `/bin/bash` 的 POSIX 环境，并固定以 `/b
 
 ## 延后实现
 
-流式文本响应已经实现，但工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 不会执行或持久化。TUI 已支持工作区内 UTF-8 文本文件和目录的 `@` 补全与临时 attachment；媒体 attachment、并行 safe 工具、Session fork、`state.json`、OAuth/Keychain、管理 UI、cached microcompact、compact 后文件/plan/skill 工作集重建、Hooks、MCP/deferred tools 以及 OS 级 sandbox 仍不属于当前阶段。Bash 的只读判定只减少可证明安全命令的确认次数，不等价于进程隔离；在 sandbox 完成前不应把 `bypassPermissions` 作为默认模式。
+工具仍在完整 assistant message 到达后串行调度；半截工具 JSON 或 continuation 不会执行或持久化。不实现 OpenAI Chat Completions 及第三方 `reasoning_content` 扩展。TUI 已支持工作区内 UTF-8 文本文件和目录的 `@` 补全与临时 attachment；媒体 attachment、并行 safe 工具、Session fork、`state.json`、OAuth/Keychain、cached microcompact、Hooks、MCP/deferred tools 以及 OS 级 sandbox 仍不属于当前阶段。

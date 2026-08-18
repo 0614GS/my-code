@@ -6,7 +6,7 @@ import pytest
 from nano_code.agent import (
     AttachmentDelivery,
     ConversationSnapshot,
-    ModelOpaqueAssistantBlock,
+    ModelReasoningBlock,
     ModelTextBlock,
     ModelUserMessage,
 )
@@ -24,7 +24,10 @@ from nano_code.context.xml import render_context_instruction
 from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
-    OpaqueAssistantContent,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningContent,
+    ReasoningPresentation,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -93,10 +96,14 @@ def test_attachment_projection_cannot_create_tool_protocol_blocks() -> None:
 
 def test_opaque_thinking_replays_only_for_active_tool_trajectory() -> None:
     human = HumanMessage("inspect")
-    opaque = OpaqueAssistantContent(
-        "anthropic-messages",
-        "claude-test",
-        {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+    opaque = ReasoningContent(
+        "thinking",
+        ReasoningPresentation("verbatim", ("hidden",)),
+        ProviderContinuationState(
+            ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
+            "active_trajectory",
+            {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+        ),
     )
     assistant = AssistantMessage(
         (opaque, ToolCall("call", "Read", {"path": "x"})),
@@ -120,12 +127,12 @@ def test_opaque_thinking_replays_only_for_active_tool_trajectory() -> None:
     )
 
     assert any(
-        isinstance(block, ModelOpaqueAssistantBlock)
+        isinstance(block, ModelReasoningBlock)
         for message in active
         for block in message.content
     )
     assert not any(
-        isinstance(block, ModelOpaqueAssistantBlock)
+        isinstance(block, ModelReasoningBlock)
         for messages in (compact, completed)
         for message in messages
         for block in message.content

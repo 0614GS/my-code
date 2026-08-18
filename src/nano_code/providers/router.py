@@ -8,10 +8,12 @@ from typing import Protocol, runtime_checkable
 from nano_code.agent.contracts.model import ModelOutput, ModelRequest, ModelStreamEvent
 from nano_code.agent.ports.model import ModelCallPort, ModelCompletionPort
 from nano_code.auth import CredentialSource
+from nano_code.conversation import ProviderBinding
 from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.base import ProviderCapabilities
 from nano_code.providers.call import CompleteModelCallAdapter
-from nano_code.providers.profiles import ProviderProtocol
+from nano_code.providers.openai_responses import OpenAIResponsesProvider
+from nano_code.providers.profiles import ProviderProtocol, ReasoningConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +26,7 @@ class ProviderConnection:
     base_url: str | None
     api_key: str | None
     credential_source: CredentialSource
+    reasoning: ReasoningConfig = ReasoningConfig()
 
 
 type ProviderFactory = Callable[[ProviderConnection], ModelCompletionPort]
@@ -61,12 +64,24 @@ class ProviderRouter(ModelCallPort, ModelCompletionPort):
         return self._connection
 
     @property
+    def binding(self) -> ProviderBinding:
+        connection = self._connection
+        return ProviderBinding(
+            connection.protocol.value,
+            connection.id,
+            connection.model,
+            connection.base_url,
+        )
+
+    @property
     def capabilities(self) -> ProviderCapabilities:
         """无需提前创建网络客户端即可暴露当前连接能力。"""
 
         match self._connection.protocol:
             case ProviderProtocol.ANTHROPIC_MESSAGES:
                 return AnthropicProvider.capabilities_for(self._connection.base_url)
+            case ProviderProtocol.OPENAI_RESPONSES:
+                return ProviderCapabilities()
 
     async def complete(self, request: ModelRequest) -> ModelOutput:
         # 在一次完整请求期间持有锁，使 profile 切换成为明确的 ModelCall 间操作，
@@ -112,4 +127,14 @@ def _build_provider(connection: ProviderConnection) -> ModelCompletionPort:
                 model=connection.model,
                 api_key=connection.api_key,
                 base_url=connection.base_url,
+                provider_id=connection.id,
+                reasoning=connection.reasoning,
+            )
+        case ProviderProtocol.OPENAI_RESPONSES:
+            return OpenAIResponsesProvider(
+                model=connection.model,
+                api_key=connection.api_key,
+                base_url=connection.base_url,
+                provider_id=connection.id,
+                reasoning=connection.reasoning,
             )

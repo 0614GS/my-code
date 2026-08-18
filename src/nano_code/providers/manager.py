@@ -11,6 +11,7 @@ from nano_code.providers.profiles import (
     ProviderProfile,
     ProviderProfileStore,
     ProviderProtocol,
+    ReasoningConfig,
 )
 from nano_code.providers.router import ProviderConnection
 
@@ -25,6 +26,7 @@ class ProviderView:
     base_url: str | None
     active: bool
     has_stored_key: bool
+    reasoning: ReasoningConfig = ReasoningConfig()
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,8 @@ class ProviderUpdate:
     model: str
     base_url: str | None
     api_key: str | None = None
+    protocol: ProviderProtocol = ProviderProtocol.ANTHROPIC_MESSAGES
+    reasoning: ReasoningConfig = ReasoningConfig()
 
 
 class ProviderManager:
@@ -61,6 +65,7 @@ class ProviderManager:
                 base_url=profile.base_url,
                 active=profile.id == active_provider,
                 has_stored_key=self.credentials.load_api_key(profile.id) is not None,
+                reasoning=profile.reasoning,
             )
             for profile in self.profiles.load().values()
         )
@@ -68,9 +73,10 @@ class ProviderManager:
     def configure(self, update: ProviderUpdate) -> ProviderConnection:
         profile = ProviderProfile(
             id=update.id,
-            protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
+            protocol=update.protocol,
             model=update.model,
             base_url=update.base_url,
+            reasoning=update.reasoning,
         )
         profiles = self.profiles.load()
 
@@ -94,12 +100,19 @@ class ProviderManager:
             self.credentials,
             self.environ,
             provider_id=provider_id,
+            protocol=profile.protocol.value,
+        )
+        prefix = (
+            "OPENAI"
+            if profile.protocol is ProviderProtocol.OPENAI_RESPONSES
+            else "ANTHROPIC"
         )
         return ProviderConnection(
             id=profile.id,
             protocol=profile.protocol,
-            model=self.environ.get("ANTHROPIC_MODEL") or profile.model,
-            base_url=self.environ.get("ANTHROPIC_BASE_URL") or profile.base_url,
+            model=self.environ.get(f"{prefix}_MODEL") or profile.model,
+            base_url=self.environ.get(f"{prefix}_BASE_URL") or profile.base_url,
             api_key=credential.api_key,
             credential_source=credential.source,
+            reasoning=profile.reasoning,
         )

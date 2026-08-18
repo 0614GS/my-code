@@ -5,7 +5,7 @@ from nano_code.auth import CredentialSource, CredentialStore
 from nano_code.core import NanoCodePaths, SettingsScope, SettingsStore
 from nano_code.core.bootstrap import initialize_user_storage
 from nano_code.providers.manager import ProviderManager, ProviderUpdate
-from nano_code.providers.profiles import ProviderProfileStore
+from nano_code.providers.profiles import ProviderProfileStore, ProviderProtocol
 
 
 def make_manager(tmp_path: Path) -> tuple[ProviderManager, NanoCodePaths]:
@@ -93,3 +93,29 @@ def test_provider_views_never_expose_key_value(tmp_path: Path) -> None:
 
     assert view.has_stored_key is True
     assert "secret-key" not in repr(view)
+
+
+def test_openai_profile_uses_protocol_specific_environment(tmp_path: Path) -> None:
+    manager, paths = make_manager(tmp_path)
+    manager = ProviderManager(
+        paths,
+        environ={
+            "OPENAI_API_KEY": "openai-key",
+            "OPENAI_MODEL": "gpt-env",
+            "OPENAI_BASE_URL": "https://openai.example/v1",
+        },
+    )
+
+    connection = manager.configure(
+        ProviderUpdate(
+            id="openai",
+            protocol=ProviderProtocol.OPENAI_RESPONSES,
+            model="gpt-stored",
+            base_url=None,
+        )
+    )
+
+    assert connection.protocol is ProviderProtocol.OPENAI_RESPONSES
+    assert connection.api_key == "openai-key"
+    assert connection.model == "gpt-env"
+    assert connection.base_url == "https://openai.example/v1"

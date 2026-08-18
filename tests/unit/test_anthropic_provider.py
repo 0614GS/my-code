@@ -5,11 +5,16 @@ from anthropic.types import TextBlockParam
 
 from nano_code.agent import (
     ModelAssistantMessage,
-    ModelOpaqueAssistantBlock,
+    ModelReasoningBlock,
     ModelRequest,
     ModelTextBlock,
     ModelToolUseBlock,
     ModelUserMessage,
+)
+from nano_code.conversation import (
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
 )
 from nano_code.prompts import (
     PromptStability,
@@ -83,15 +88,24 @@ def test_user_context_and_attachments_surround_conversation_messages() -> None:
 
 
 def test_anthropic_thinking_round_trips_only_for_matching_model() -> None:
-    thinking = ModelOpaqueAssistantBlock(
-        "anthropic-messages",
-        "claude-test",
-        {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+    binding = ProviderBinding("anthropic-messages", "anthropic", "claude-test")
+    thinking = ModelReasoningBlock(
+        "thinking",
+        ReasoningPresentation("verbatim", ("hidden",)),
+        ProviderContinuationState(
+            binding,
+            "active_trajectory",
+            {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+        ),
     )
-    redacted = ModelOpaqueAssistantBlock(
-        "anthropic-messages",
-        "claude-test",
-        {"type": "redacted_thinking", "data": "ciphertext"},
+    redacted = ModelReasoningBlock(
+        "redacted",
+        ReasoningPresentation("redacted"),
+        ProviderContinuationState(
+            binding,
+            "active_trajectory",
+            {"type": "redacted_thinking", "data": "ciphertext"},
+        ),
     )
     message = ModelAssistantMessage(
         (thinking, redacted, ModelToolUseBlock("call", "Read", {"path": "x"}))
@@ -100,14 +114,19 @@ def test_anthropic_thinking_round_trips_only_for_matching_model() -> None:
     matching = AnthropicProvider._messages((message,), model="claude-test")
     mismatched = AnthropicProvider._messages((message,), model="other-model")
 
-    assert matching[0]["content"][:2] == [thinking.payload, redacted.payload]
+    assert matching[0]["content"][:2] == [
+        thinking.continuation.payload,
+        redacted.continuation.payload,
+    ]  # type: ignore[union-attr]
     assert [block["type"] for block in mismatched[0]["content"]] == ["tool_use"]
 
 
 def test_anthropic_response_preserves_thinking_block_order() -> None:
     provider = object.__new__(AnthropicProvider)
     provider.model = "claude-test"
+    provider.binding = ProviderBinding("anthropic-messages", "anthropic", "claude-test")
     response = SimpleNamespace(
+        id="message",
         content=[
             SimpleNamespace(type="thinking", thinking="hidden", signature="signed"),
             SimpleNamespace(type="text", text="working"),
@@ -126,12 +145,14 @@ def test_anthropic_response_preserves_thinking_block_order() -> None:
     output = provider._response(response)  # type: ignore[arg-type]
 
     assert [block.type for block in output.content] == [
-        "provider_opaque",
+        "reasoning",
         "text",
-        "provider_opaque",
+        "reasoning",
         "tool_use",
     ]
-    assert cast(ModelOpaqueAssistantBlock, output.content[0]).payload == {
+    continuation = cast(ModelReasoningBlock, output.content[0]).continuation
+    assert continuation is not None
+    assert continuation.payload == {
         "type": "thinking",
         "thinking": "hidden",
         "signature": "signed",

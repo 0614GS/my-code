@@ -7,10 +7,14 @@ from typing import Protocol
 
 from nano_code.agent import (
     AgentHistoryAssistantMessage,
+    AgentHistoryReasoning,
     AgentHistorySystemMessage,
     AgentHistoryToolCall,
     AgentHistoryUserMessage,
     AgentMaxStepsReached,
+    AgentReasoningCompleted,
+    AgentReasoningDelta,
+    AgentReasoningStarted,
     AgentSessionView,
     AgentStepLimitReached,
     AgentTextDelta,
@@ -28,12 +32,16 @@ from nano_code.application.chat.contracts import (
     ContextStatus,
     HistoryAssistantMessage,
     HistoryEntry,
+    HistoryReasoning,
     HistorySystemMessage,
     HistoryToolCall,
     HistoryUserMessage,
     MaxStepsReached,
     PathSuggestion,
     PermissionHandler,
+    ReasoningCompleted,
+    ReasoningDelta,
+    ReasoningStarted,
     ResumedSession,
     RuntimeStatus,
     StepLimitReached,
@@ -114,6 +122,14 @@ class DefaultChatRuntime:
             ):
                 if isinstance(event, AgentTextDelta):
                     yield TextDelta(event.text)
+                elif isinstance(event, AgentReasoningStarted):
+                    yield ReasoningStarted(event.id, event.disclosure)
+                elif isinstance(event, AgentReasoningDelta):
+                    yield ReasoningDelta(
+                        event.id, event.disclosure, event.part_index, event.text
+                    )
+                elif isinstance(event, AgentReasoningCompleted):
+                    yield ReasoningCompleted(event.id)
                 elif isinstance(event, AgentToolStarted):
                     yield ToolStarted(event.tool_use_id, event.presentation)
                 elif isinstance(event, AgentToolFinished):
@@ -206,6 +222,8 @@ class DefaultChatRuntime:
             base_url=connection.base_url,
             api_key=connection.api_key,
             credential_source=connection.credential_source,
+            protocol=connection.protocol,
+            reasoning=connection.reasoning,
         )
         return self.status()
 
@@ -246,6 +264,8 @@ class DefaultChatRuntime:
                 history.append(HistoryUserMessage(entry.text))
             elif isinstance(entry, AgentHistoryAssistantMessage):
                 history.append(HistoryAssistantMessage(entry.text))
+            elif isinstance(entry, AgentHistoryReasoning):
+                history.append(HistoryReasoning(entry.id, entry.presentation))
             elif isinstance(entry, AgentHistorySystemMessage):
                 history.append(HistorySystemMessage(entry.text))
             elif isinstance(entry, AgentHistoryToolCall):

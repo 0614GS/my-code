@@ -41,7 +41,6 @@ from nano_code.providers.profiles import (
     DEFAULT_PROVIDER_ID,
     ProviderProfile,
     ProviderProfileStore,
-    ProviderProtocol,
 )
 from nano_code.providers.router import ProviderConnection, ProviderRouter
 from nano_code.sessions import SessionStore
@@ -143,11 +142,12 @@ def _assemble_agent(
     provider = ProviderRouter(
         ProviderConnection(
             id=settings.provider_id,
-            protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
+            protocol=settings.protocol,
             model=settings.model,
             base_url=settings.base_url,
             api_key=settings.api_key,
             credential_source=settings.credential_source,
+            reasoning=settings.reasoning,
         )
     )
     context = ContextPlanner(
@@ -159,6 +159,7 @@ def _assemble_agent(
         attachment_resolver=DerivedAttachmentResolver(
             (TodoReminderAttachmentSource(),)
         ),
+        binding_resolver=lambda: provider.binding,
     )
     tool_round = ToolRoundExecutor(
         tool_executor,

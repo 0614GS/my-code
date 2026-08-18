@@ -20,6 +20,8 @@ from nano_code.providers.profiles import (
     DEFAULT_PROVIDER_ID,
     ProviderProfile,
     ProviderProfileStore,
+    ProviderProtocol,
+    ReasoningConfig,
 )
 from nano_code.providers.validation import validate_base_url
 
@@ -56,6 +58,8 @@ class AgentSettings:
     api_key: str | None = None
     credential_source: CredentialSource = CredentialSource.NONE
     base_url: str | None = None
+    protocol: ProviderProtocol = ProviderProtocol.ANTHROPIC_MESSAGES
+    reasoning: ReasoningConfig = ReasoningConfig()
 
     def __post_init__(self) -> None:
         if not self.provider_id.strip():
@@ -150,16 +154,22 @@ class SettingsResolver:
             CredentialStore(self.paths.credentials_path),
             self.environ,
             provider_id=provider_id,
+            protocol=profile.protocol.value,
+        )
+        prefix = (
+            "OPENAI"
+            if profile.protocol is ProviderProtocol.OPENAI_RESPONSES
+            else "ANTHROPIC"
         )
         model = (
             actual_overrides.model
-            or self.environ.get("ANTHROPIC_MODEL")
+            or self.environ.get(f"{prefix}_MODEL")
             or stored.model
             or profile.model
         )
         base_url = (
             actual_overrides.base_url
-            or self.environ.get("ANTHROPIC_BASE_URL")
+            or self.environ.get(f"{prefix}_BASE_URL")
             or profile.base_url
         )
         return AgentSettings(
@@ -191,6 +201,8 @@ class SettingsResolver:
             api_key=credential.api_key,
             credential_source=credential.source,
             base_url=base_url,
+            protocol=profile.protocol,
+            reasoning=profile.reasoning,
         )
 
 

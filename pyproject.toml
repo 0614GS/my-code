@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.121.0,<0.122.0",
+    "openai>=2,<3",
     "textual>=8.2.8,<9.0.0",
     "tree-sitter>=0.26.0,<0.27.0",
     "tree-sitter-bash>=0.25.1,<0.26.0",
