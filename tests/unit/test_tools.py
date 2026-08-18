@@ -27,7 +27,6 @@ from nano_code.tools import Tool, ToolContext, ToolRegistry
 from nano_code.tools.base import ToolOutput
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
-from nano_code.tools.invocation import ToolInvocation
 from nano_code.tools.paths import resolve_workspace_path
 from nano_code.tools.result_store import ToolResultStore
 
@@ -295,19 +294,6 @@ async def test_permission_prompt_failure_fails_closed(tmp_path: Path) -> None:
 
     assert outcome.result.is_error is True
     assert "Permission prompt failed (RuntimeError)" in outcome.result.content
-    assert not (tmp_path / "a.txt").exists()
-
-
-@pytest.mark.asyncio
-async def test_explicit_read_evidence_cannot_authorize_a_write(tmp_path: Path) -> None:
-    executor = build_executor(tmp_path, PermissionMode.DEFAULT)
-
-    outcome = await executor.execute(
-        ToolCall("forged-read", "Write", {"path": "a.txt", "content": "no"}),
-        invocation=ToolInvocation.explicit_file_mention(),
-    )
-
-    assert outcome.result.is_error is True
     assert not (tmp_path / "a.txt").exists()
 
 

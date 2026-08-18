@@ -16,7 +16,6 @@ from nano_code.permissions.models import (
     ToolPermissionContext,
 )
 from nano_code.tools.base import Tool, ToolContext
-from nano_code.tools.invocation import AuthorizationEvidence, ToolInvocationOrigin
 
 
 class PermissionPolicy:
@@ -93,9 +92,6 @@ class PermissionPolicy:
         tool: Tool,
         tool_input: JsonObject,
         context: ToolContext,
-        *,
-        origin: ToolInvocationOrigin = ToolInvocationOrigin.MODEL,
-        authorization: AuthorizationEvidence = AuthorizationEvidence.NONE,
     ) -> PermissionDecision:
         """组合全局策略与基于具体输入的工具局部判断。"""
 
@@ -109,14 +105,8 @@ class PermissionPolicy:
                 decision_reason=_rule_reason(deny_rule),
             )
 
-        explicit_read = (
-            origin is ToolInvocationOrigin.USER_FILE_MENTION
-            and authorization is AuthorizationEvidence.EXPLICIT_USER_INPUT
-            and tool.is_read_only(tool_input, context)
-        )
-
         ask_rule = self._whole_tool_rule(tool, PermissionBehavior.ASK)
-        if ask_rule is not None and not explicit_read:
+        if ask_rule is not None:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
                 message=f"{tool.definition.name} requires confirmation by rule.",
@@ -141,15 +131,6 @@ class PermissionPolicy:
                 decision_reason=tool_result.decision_reason,
                 updated_input=tool_result.updated_input,
                 suggestions=tool_result.suggestions,
-            )
-        if explicit_read:
-            return PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message="Allowed by the user's explicit @path mention.",
-                decision_reason=PermissionDecisionReason(
-                    PermissionDecisionKind.USER, "explicit-file-mention"
-                ),
-                updated_input=_updated_input(tool_result.updated_input, tool_input),
             )
         if (
             tool_result.behavior is ToolPermissionBehavior.ASK

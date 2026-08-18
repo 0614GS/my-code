@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from nano_code.tools.base import ToolInputError
+from nano_code.workspace import WorkspaceBoundaryError, WorkspaceSecurity
 
 _SENSITIVE_WRITE_ROOTS = frozenset({".git", ".nano-code"})
 
@@ -16,20 +17,10 @@ def resolve_workspace_path(
 ) -> Path:
     """解析路径，并拒绝通过遍历或符号链接逃逸 ``cwd``。"""
 
-    root = cwd.resolve()
-    candidate = Path(raw_path).expanduser()
-    if not candidate.is_absolute():
-        candidate = root / candidate
-
-    # resolve(strict=False) 会跟随所有已存在的符号链接组成部分，同时允许最终路径
-    # 尚未创建。若在解析前检查，工作区内符号链接可能将写入指向工作区外。
-    resolved = candidate.resolve(strict=False)
-
-    # 路径包含关系是工具安全不变量，即使权限策略处于 bypass 模式也必须执行。
-    if not resolved.is_relative_to(root):
-        raise ToolInputError(f"Path escapes the workspace: {raw_path}")
-    if must_exist and not resolved.exists():
-        raise ToolInputError(f"Path does not exist: {raw_path}")
+    try:
+        resolved = WorkspaceSecurity(cwd).resolve(raw_path, must_exist=must_exist)
+    except WorkspaceBoundaryError as error:
+        raise ToolInputError(str(error)) from error
 
     del writable  # 写入敏感路径由权限层强制询问；执行层只维持 cwd 边界。
     return resolved
@@ -45,4 +36,4 @@ def is_sensitive_write_path(cwd: Path, path: Path) -> bool:
 def relative_display_path(cwd: Path, path: Path) -> str:
     """返回稳定的工作区相对展示路径。"""
 
-    return path.resolve().relative_to(cwd.resolve()).as_posix()
+    return WorkspaceSecurity(cwd).display(path)

@@ -21,13 +21,14 @@
 - 基于完整 session history 投影的 TodoWrite 状态，以及采用独立 10/10 completed-model-call 阈值、
   仅保留在当前进程模型历史中的 todo reminder；
 - 区分请求派生与回合事件交付的 attachment 基础设施，支持 `request` / `live_session`
-  retention、消息锚点、文本/reminder/合成工具交换投影和窗口计量；
+  retention、消息锚点、user-side 文本/reminder/observation 投影和窗口计量；
 - 通过快照与提交后事件同步、支持 Ctrl+T 折叠的 TUI TodoList；
 - Anthropic SSE 文本流、TUI 增量 Markdown 和工具调用状态展示；
 - 底部内联权限选择及可返回模型的拒绝反馈。
 - settings 中的 `permissions.allow/deny/ask` 持久规则、结构化 PermissionUpdate、
   local settings 级“不再询问”和标准库权限审计日志。
-- v3 settings 与 Transcript，v2 provider/credential 存储，以及带启动快照与 metadata 的 Session。
+- v3 settings、v4 Transcript、v2 provider/credential 存储，以及带启动快照与 metadata 的 Session；
+- Anthropic thinking/redacted-thinking 的隐藏持久化、工具轨迹回放和 protocol/model 绑定。
 
 ## 对照 Claude Code 保留的不变量
 

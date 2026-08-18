@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from nano_code.conversation import JsonObject
@@ -22,6 +21,7 @@ from nano_code.tools.paths import (
     is_sensitive_write_path,
     resolve_workspace_path,
 )
+from nano_code.workspace import matching_path_rule
 
 
 def check_read_permission(
@@ -169,44 +169,11 @@ def _matching_rule(
     behavior: PermissionBehavior,
     path: str,
 ) -> PermissionRule | None:
-    candidates = (path, f"./{path}") if path != "." else (".", "./")
     for rule in context.rules_for(tool_name, behavior):
         assert rule.rule_content is not None
-        if any(
-            _wildcard_matches(rule.rule_content, candidate) for candidate in candidates
-        ):
+        if matching_path_rule(rule.rule_content, path):
             return rule
     return None
-
-
-def _wildcard_matches(pattern: str, value: str) -> bool:
-    pattern = pattern.strip().replace("\\/", "/")
-    parts: list[str] = []
-    index = 0
-    has_wildcard = False
-    while index < len(pattern):
-        if pattern[index] == "\\" and index + 1 < len(pattern):
-            following = pattern[index + 1]
-            if following in {"*", "\\"}:
-                parts.append(re.escape(following))
-                index += 2
-                continue
-        if pattern[index] == "*":
-            parts.append(".*")
-            has_wildcard = True
-        else:
-            parts.append(re.escape(pattern[index]))
-        index += 1
-    regex = "".join(parts)
-    return (
-        re.fullmatch(regex, value, flags=re.DOTALL) is not None
-        if has_wildcard
-        else value == _literal(pattern)
-    )
-
-
-def _literal(pattern: str) -> str:
-    return pattern.replace(r"\*", "*").replace(r"\\", "\\")
 
 
 def _rule_reason(rule: PermissionRule) -> PermissionDecisionReason:

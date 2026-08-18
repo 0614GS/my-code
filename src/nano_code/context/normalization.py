@@ -3,6 +3,7 @@
 from nano_code.agent.contracts.model import (
     ModelAssistantMessage,
     ModelMessage,
+    ModelOpaqueAssistantBlock,
     ModelTextBlock,
     ModelToolResultBlock,
     ModelToolUseBlock,
@@ -17,7 +18,9 @@ from nano_code.conversation import (
     AssistantMessage,
     ConversationMessage,
     HumanMessage,
+    OpaqueAssistantContent,
     TextContent,
+    ToolCall,
     ToolResultsMessage,
 )
 
@@ -38,7 +41,10 @@ class ModelInputNormalizer:
         candidates = [
             *(_context_message(item) for item in user_context),
             *_conversation_history(
-                history, attachment_deliveries, self.attachment_projector
+                history,
+                attachment_deliveries,
+                self.attachment_projector,
+                replay_active_opaque=True,
             ),
             *self.attachment_projector.project_many(attachments),
         ]
@@ -56,7 +62,10 @@ class ModelInputNormalizer:
         result = _merge_adjacent(
             tuple(
                 _conversation_history(
-                    messages, attachment_deliveries, self.attachment_projector
+                    messages,
+                    attachment_deliveries,
+                    self.attachment_projector,
+                    replay_active_opaque=False,
                 )
             )
         )
@@ -92,7 +101,9 @@ class ModelInputNormalizer:
             )
 
 
-def _conversation_message(message: ConversationMessage) -> ModelMessage:
+def _conversation_message(
+    message: ConversationMessage, *, include_opaque: bool = False
+) -> ModelMessage:
     if isinstance(message, HumanMessage):
         return ModelUserMessage((ModelTextBlock(message.content),))
     if isinstance(message, AssistantMessage):
@@ -101,7 +112,12 @@ def _conversation_message(message: ConversationMessage) -> ModelMessage:
                 ModelTextBlock(block.text)
                 if isinstance(block, TextContent)
                 else ModelToolUseBlock(block.id, block.name, block.input)
+                if isinstance(block, ToolCall)
+                else ModelOpaqueAssistantBlock(
+                    block.protocol, block.model, block.payload
+                )
                 for block in message.content
+                if include_opaque or not isinstance(block, OpaqueAssistantContent)
             )
         )
     if isinstance(message, ToolResultsMessage):
@@ -135,13 +151,30 @@ def _conversation_history(
     messages: tuple[ConversationMessage, ...],
     attachment_deliveries: tuple[AttachmentDelivery, ...],
     attachment_projector: AttachmentProjector,
+    *,
+    replay_active_opaque: bool,
 ) -> list[ModelMessage]:
     by_anchor: dict[str, list[ContextAttachment]] = {}
     for delivery in attachment_deliveries:
         by_anchor.setdefault(delivery.anchor_uuid, []).append(delivery.attachment)
+    active_opaque_uuid = (
+        messages[-1].source_assistant_uuid
+        if replay_active_opaque
+        and messages
+        and isinstance(messages[-1], ToolResultsMessage)
+        else None
+    )
     projected: list[ModelMessage] = []
     for message in messages:
-        projected.append(_conversation_message(message))
+        projected.append(
+            _conversation_message(
+                message,
+                include_opaque=(
+                    isinstance(message, AssistantMessage)
+                    and message.uuid == active_opaque_uuid
+                ),
+            )
+        )
         projected.extend(
             attachment_projector.project_many(tuple(by_anchor.get(message.uuid, ())))
         )

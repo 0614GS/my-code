@@ -19,7 +19,7 @@ class SessionStartedRecord:
     max_output_tokens: int
     context_chars: int
     type: Literal["session_started"] = "session_started"
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +29,7 @@ class SessionMetadataRecord:
     title: str | None = None
     last_prompt: str | None = None
     type: Literal["session_metadata"] = "session_metadata"
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +44,14 @@ class ToolCallRecord:
     name: str
     input: JsonObject
     type: Literal["tool_call"] = "tool_call"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderOpaqueContentRecord:
+    protocol: str
+    model: str
+    payload: JsonObject
+    type: Literal["provider_opaque"] = "provider_opaque"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +70,7 @@ class HumanMessageRecord:
     timestamp: str
     content: str
     type: Literal["human_message"] = "human_message"
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,10 +78,12 @@ class AssistantMessageRecord:
     uuid: str
     parent_uuid: str | None
     timestamp: str
-    content: tuple[TextContentRecord | ToolCallRecord, ...]
+    content: tuple[
+        TextContentRecord | ToolCallRecord | ProviderOpaqueContentRecord, ...
+    ]
     usage: TokenUsage
     type: Literal["assistant_message"] = "assistant_message"
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +94,7 @@ class ToolResultsMessageRecord:
     content: tuple[ToolResultRecord, ...]
     source_assistant_uuid: str
     type: Literal["tool_results_message"] = "tool_results_message"
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +104,7 @@ class ConversationSummaryMessageRecord:
     timestamp: str
     content: str
     type: Literal["conversation_summary_message"] = "conversation_summary_message"
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +114,7 @@ class ContentReplacementRecord:
     original_chars: int
     content: str
     type: Literal["content_replacement"] = "content_replacement"
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +125,7 @@ class CompactBoundaryRecord:
     trigger: Literal["auto", "manual", "reactive"]
     pre_compact_chars: int
     type: Literal["compact_boundary"] = "compact_boundary"
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
 
 
 type MessageRecord = (

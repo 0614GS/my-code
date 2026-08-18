@@ -21,7 +21,11 @@ from nano_code.context.window import ContextWindow
 from nano_code.core.paths import NanoCodePaths, SettingsScope
 from nano_code.core.settings import AgentSettings
 from nano_code.core.settings_store import SettingsLayer, SettingsStore
-from nano_code.features.file_mentions import AttachmentLoader, WorkspacePathSuggester
+from nano_code.features.file_mentions import (
+    AttachmentLoader,
+    WorkspaceAttachmentReader,
+    WorkspacePathSuggester,
+)
 from nano_code.features.todos.reminder import TodoReminderAttachmentSource
 from nano_code.permissions import PermissionPolicy
 from nano_code.permissions.prompt import (
@@ -209,6 +213,8 @@ def bootstrap_cli_runtime(
             ProviderManager(settings.paths), provider
         ),
         session_source=ProjectSessionSource(settings.paths.project_state_dir),
-        attachment_loader=AttachmentLoader(tool_executor),
+        attachment_loader=AttachmentLoader(
+            WorkspaceAttachmentReader(settings.cwd, tool_executor.policy)
+        ),
         path_suggester=WorkspacePathSuggester(settings.cwd),
     )

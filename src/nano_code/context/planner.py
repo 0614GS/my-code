@@ -5,6 +5,7 @@ import json
 from nano_code.agent.contracts.context import ContextBudget, ContextPlan
 from nano_code.agent.contracts.model import (
     ModelMessage,
+    ModelOpaqueAssistantBlock,
     ModelRequest,
     ModelTextBlock,
     ModelToolDefinition,
@@ -32,7 +33,10 @@ from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
+    OpaqueAssistantContent,
     TextContent,
+    ToolCall,
+    ToolResultsMessage,
 )
 from nano_code.prompts import PromptRegistry, SystemPrompt
 
@@ -75,7 +79,10 @@ class ContextPlanner(ContextPort):
             delivery.attachment for delivery in snapshot.attachment_deliveries
         )
         attachment_chars = self.attachment_projector.measure(delivered + attachments)
-        selected = self.window.ensure_fits(effective, additional_chars=attachment_chars)
+        selected = self.window.ensure_fits(
+            effective,
+            additional_chars=attachment_chars + _active_opaque_chars(effective),
+        )
         model_messages = self.normalizer.normalize(
             user_context,
             selected,
@@ -216,6 +223,8 @@ def _message_chars(messages: tuple[ModelMessage, ...]) -> int:
                 size += len(block.text)
             elif isinstance(block, ModelToolUseBlock):
                 size += len(block.name) + len(str(block.input))
+            elif isinstance(block, ModelOpaqueAssistantBlock):
+                size += _opaque_chars(block.payload)
             else:
                 size += len(block.content)
     return size
@@ -253,6 +262,19 @@ def _deliveries_after_last_assistant(
     )
 
 
+def _active_opaque_chars(conversation: tuple[ConversationMessage, ...]) -> int:
+    if not conversation or not isinstance(conversation[-1], ToolResultsMessage):
+        return 0
+    source_uuid = conversation[-1].source_assistant_uuid
+    return sum(
+        _opaque_chars(block.payload)
+        for message in conversation
+        if isinstance(message, AssistantMessage) and message.uuid == source_uuid
+        for block in message.content
+        if isinstance(block, OpaqueAssistantContent)
+    )
+
+
 def _tool_schema_chars(tools: tuple[ModelToolDefinition, ...]) -> int:
     return sum(
         len(
@@ -282,6 +304,8 @@ def _conversation_chars(messages: tuple[ConversationMessage, ...]) -> int:
                     len(block.text)
                     if isinstance(block, TextContent)
                     else len(block.name) + len(str(block.input))
+                    if isinstance(block, ToolCall)
+                    else _opaque_chars(block.payload)
                 )
         else:
             size += sum(len(result.content) for result in message.content)
@@ -312,3 +336,13 @@ def _estimate(
 
 def _chars_to_tokens(chars: int) -> int:
     return (chars + 3) // 4
+
+
+def _opaque_chars(payload: object) -> int:
+    return len(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )

@@ -7,7 +7,9 @@ from anthropic import AsyncAnthropic, BadRequestError
 from anthropic.types import (
     Message,
     MessageParam,
+    RedactedThinkingBlockParam,
     TextBlockParam,
+    ThinkingBlockParam,
     ToolParam,
     ToolResultBlockParam,
     ToolUseBlockParam,
@@ -15,6 +17,7 @@ from anthropic.types import (
 
 from nano_code.agent.contracts.model import (
     ModelMessage,
+    ModelOpaqueAssistantBlock,
     ModelOutput,
     ModelOutputCompleted,
     ModelRequest,
@@ -73,7 +76,7 @@ class AnthropicProvider(ModelCompletionPort):
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=self._system(request.system_prompt),
-                messages=self._messages(request.messages),
+                messages=self._messages(request.messages, model=self.model),
                 tools=self._tools(request),
             )
         except BadRequestError as error:
@@ -91,7 +94,7 @@ class AnthropicProvider(ModelCompletionPort):
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=self._system(request.system_prompt),
-                messages=self._messages(request.messages),
+                messages=self._messages(request.messages, model=self.model),
                 tools=self._tools(request),
             ) as stream:
                 async for event in stream:
@@ -107,12 +110,18 @@ class AnthropicProvider(ModelCompletionPort):
         yield ModelOutputCompleted(output=self._response(final_message))
 
     @staticmethod
-    def _messages(messages: Iterable[ModelMessage]) -> list[MessageParam]:
+    def _messages(
+        messages: Iterable[ModelMessage], *, model: str | None = None
+    ) -> list[MessageParam]:
         # 上下文层已经移除了 Transcript 元数据并校验协议；适配器只转换 SDK 类型。
         normalized: list[MessageParam] = []
         for message in messages:
             content: list[
-                TextBlockParam | ToolUseBlockParam | ToolResultBlockParam
+                TextBlockParam
+                | ToolUseBlockParam
+                | ToolResultBlockParam
+                | ThinkingBlockParam
+                | RedactedThinkingBlockParam
             ] = []
             for block in message.content:
                 if isinstance(block, ModelTextBlock):
@@ -137,6 +146,17 @@ class AnthropicProvider(ModelCompletionPort):
                             "is_error": block.is_error,
                         }
                     )
+                elif (
+                    isinstance(block, ModelOpaqueAssistantBlock)
+                    and block.protocol == "anthropic-messages"
+                    and block.model == model
+                ):
+                    if block.payload["type"] == "thinking":
+                        content.append(cast(ThinkingBlockParam, dict(block.payload)))
+                    else:
+                        content.append(
+                            cast(RedactedThinkingBlockParam, dict(block.payload))
+                        )
             normalized.append({"role": message.role, "content": content})
         return normalized
 
@@ -160,13 +180,32 @@ class AnthropicProvider(ModelCompletionPort):
             )
         return tools
 
-    @staticmethod
-    def _response(response: Message) -> ModelOutput:
-        # thinking 和服务端工具块不在首个 MVP 范围内。如果响应不含受支持的
-        # text/tool_use 块，ModelResponse 会显式失败，而不是持久化丢失信息的空消息。
-        content: list[ModelTextBlock | ModelToolUseBlock] = []
+    def _response(self, response: Message) -> ModelOutput:
+        content: list[
+            ModelTextBlock | ModelToolUseBlock | ModelOpaqueAssistantBlock
+        ] = []
         for block in response.content:
-            if block.type == "text":
+            if block.type == "thinking":
+                content.append(
+                    ModelOpaqueAssistantBlock(
+                        "anthropic-messages",
+                        self.model,
+                        {
+                            "type": "thinking",
+                            "thinking": block.thinking,
+                            "signature": block.signature,
+                        },
+                    )
+                )
+            elif block.type == "redacted_thinking":
+                content.append(
+                    ModelOpaqueAssistantBlock(
+                        "anthropic-messages",
+                        self.model,
+                        {"type": "redacted_thinking", "data": block.data},
+                    )
+                )
+            elif block.type == "text":
                 content.append(ModelTextBlock(text=block.text))
             elif block.type == "tool_use":
                 content.append(

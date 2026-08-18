@@ -17,6 +17,7 @@ from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
+    OpaqueAssistantContent,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -34,6 +35,7 @@ from nano_code.sessions.records import (
     ConversationSummaryMessageRecord,
     HumanMessageRecord,
     MessageRecord,
+    ProviderOpaqueContentRecord,
     SessionMetadataRecord,
     SessionStartedRecord,
     TextContentRecord,
@@ -155,10 +157,14 @@ def message_to_record(message: ConversationMessage) -> MessageRecord:
             message.uuid, message.parent_uuid, message.timestamp, message.content
         )
     if isinstance(message, AssistantMessage):
-        assistant_content: tuple[TextContentRecord | ToolCallRecord, ...] = tuple(
+        assistant_content: tuple[
+            TextContentRecord | ToolCallRecord | ProviderOpaqueContentRecord, ...
+        ] = tuple(
             TextContentRecord(b.text)
             if isinstance(b, TextContent)
             else ToolCallRecord(b.id, b.name, b.input)
+            if isinstance(b, ToolCall)
+            else ProviderOpaqueContentRecord(b.protocol, b.model, b.payload)
             for b in message.content
         )
         return AssistantMessageRecord(
@@ -191,10 +197,14 @@ def record_to_message(record: MessageRecord) -> ConversationMessage:
             record.content, record.uuid, record.parent_uuid, record.timestamp
         )
     if isinstance(record, AssistantMessageRecord):
-        assistant_content: tuple[TextContent | ToolCall, ...] = tuple(
+        assistant_content: tuple[
+            TextContent | ToolCall | OpaqueAssistantContent, ...
+        ] = tuple(
             TextContent(b.text)
             if isinstance(b, TextContentRecord)
             else ToolCall(b.id, b.name, b.input)
+            if isinstance(b, ToolCallRecord)
+            else OpaqueAssistantContent(b.protocol, b.model, b.payload)
             for b in record.content
         )
         return AssistantMessage(
@@ -287,7 +297,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
         data = to_json_object(value)
     except TypeError as error:
         raise TranscriptDecodeError("Transcript entry must be an object") from error
-    if data.get("schema_version") != 3:
+    if data.get("schema_version") != 4:
         raise TranscriptDecodeError("Unsupported transcript schema version")
     kind = _string(data, "type")
     expected_fields = _ENTRY_FIELDS.get(kind)
@@ -385,17 +395,24 @@ def entry_from_json(value: object) -> TranscriptEntry:
     raise AssertionError("Validated transcript discriminator was not handled")
 
 
-def _assistant_block_json(block: TextContentRecord | ToolCallRecord) -> JsonObject:
-    return (
-        {"type": "text", "text": block.text}
-        if isinstance(block, TextContentRecord)
-        else {
+def _assistant_block_json(
+    block: TextContentRecord | ToolCallRecord | ProviderOpaqueContentRecord,
+) -> JsonObject:
+    if isinstance(block, TextContentRecord):
+        return {"type": "text", "text": block.text}
+    if isinstance(block, ToolCallRecord):
+        return {
             "type": "tool_call",
             "id": block.id,
             "name": block.name,
             "input": block.input,
         }
-    )
+    return {
+        "type": "provider_opaque",
+        "protocol": block.protocol,
+        "model": block.model,
+        "payload": block.payload,
+    }
 
 
 def _result_json(block: ToolResultRecord) -> JsonObject:
@@ -494,7 +511,9 @@ def _optional_positive_int(data: Mapping[str, object], key: str) -> int | None:
     return value
 
 
-def _assistant_block(value: object) -> TextContentRecord | ToolCallRecord:
+def _assistant_block(
+    value: object,
+) -> TextContentRecord | ToolCallRecord | ProviderOpaqueContentRecord:
     data = _object(value)
     kind = _string(data, "type")
     if kind == "text":
@@ -507,6 +526,24 @@ def _assistant_block(value: object) -> TextContentRecord | ToolCallRecord:
         except TypeError as error:
             raise TranscriptDecodeError("Tool input must be an object") from error
         return ToolCallRecord(_string(data, "id"), _string(data, "name"), input_)
+    if kind == "provider_opaque":
+        _require_exact_fields(
+            data,
+            frozenset({"type", "protocol", "model", "payload"}),
+        )
+        try:
+            payload = to_json_object(data.get("payload"))
+            # Reuse the domain validator at the untrusted transcript boundary.
+            opaque = OpaqueAssistantContent(
+                _string(data, "protocol"),
+                _string(data, "model"),
+                payload,
+            )
+        except (TypeError, ValueError) as error:
+            raise TranscriptDecodeError(str(error)) from error
+        return ProviderOpaqueContentRecord(
+            opaque.protocol, opaque.model, opaque.payload
+        )
     raise TranscriptDecodeError(f"Unsupported assistant content: {kind}")
 
 

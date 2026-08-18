@@ -149,13 +149,14 @@ context/
   attachments/
     models.py          # ContextAttachment、retention、content block
     sources.py         # DerivedAttachmentSource / Resolver
-    projection.py      # ContextAttachment → ModelMessage
+    projection.py      # ContextAttachment → ModelUserMessage
 
 features/
   file_mentions/
     models.py          # FileMention、line range
     parser.py          # 提交文本中的 mention 解析
     loader.py          # mention → attachment 的应用用例
+    reader.py          # 独立、有界的 workspace 读取
     suggestions.py     # 工作区路径候选端口/实现
 
 tui/
@@ -167,23 +168,14 @@ tui/
 
 ### 5.3 工具执行与授权
 
-迁移前 file mention loader 直接取得 Read/Glob 工具，调用 validation、特殊权限入口和
-`Tool.execute()`，形成了与 `ToolExecutor` 平行的执行路径。现在 loader 只向同一个
-`ToolExecutor` 提交 invocation，不再直接执行 Tool 或调用 PermissionPolicy。
+File mention loader 使用独立的 workspace reader，不取得 ToolRegistry、ToolExecutor、ToolCall、
+hook、audit 或工具结果存储。中立 workspace 安全层由文件工具和 mention reader 共用，集中
+维护 canonical path、工作区/符号链接边界、展示路径和 path-rule 匹配；两条路径各自实现 I/O。
 
-File mention 直接复用 Tool，并通过唯一 Tool invocation 边界执行。Invocation 显式携带调用
-来源、授权证据和结果交付方式：
-
-```text
-ToolInvocationOrigin.USER_FILE_MENTION
-AuthorizationEvidence.EXPLICIT_USER_INPUT
-```
-
-该证据只把普通 `ask` 解释为用户已对本次只读调用作出确认，不能覆盖 whole-tool deny、
-path deny、工作区逃逸、符号链接逃逸或工具自身的 safety deny。Inline 结果不写 Transcript
-也不进入工具结果外置存储，但仍经过 validation、availability、permission、hook、audit、
-cancel 和工具自身的结果限制。审计或 pre-execute hook 失败时 fail closed；取消保持可传播；
-post-execute hook 失败不能把已经完成的调用伪装成未执行。
+显式 mention 本身满足普通 ask，但不能覆盖 Read/Glob 的 whole-tool deny、path deny、工作区
+逃逸或符号链接逃逸。reader 对文件执行 UTF-8、NUL、8 MiB、范围和默认 2000 行限制；目录
+只稳定列出最多 500 个直接子项并跳过越界符号链接。单项失败继续处理后续 mention，取消
+继续传播。PermissionPolicy 是动态对象，新增或替换规则会在下一次读取即时生效。
 
 ## 6. Todo 的边界
 
@@ -467,7 +459,7 @@ deny、path deny、工作区/符号链接逃逸和工具 safety deny 不可被�
 
 1. Transcript 只保存原始用户提示和真实模型/工具会话事实，不保存临时 attachment 正文。
 2. `live_session` attachment 在当前进程后续请求中按锚点可见，resume 后清空。
-3. attachment 的合成 tool-use/tool-result 始终配对并经过统一模型消息校验。
+3. attachment projection 只能产生 `ModelUserMessage`，不得产生 assistant/tool 协议块。
 4. `@path` 的显式授权不覆盖任何 deny 或工作区安全边界。
 5. Todo 状态只来自已成功提交的 TodoWrite 会话事实；失败调用不更新 UI。
 6. TUI 不读取 Transcript、Provider SDK、ToolExecutor 或 ContextPlanner 内部状态。

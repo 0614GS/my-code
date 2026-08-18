@@ -6,6 +6,7 @@ from nano_code.features.file_mentions.models import (
     LoadedAttachment,
 )
 from nano_code.features.file_mentions.parser import parse_file_mentions
+from nano_code.features.file_mentions.reader import WorkspaceAttachmentReader
 from nano_code.features.file_mentions.suggestions import WorkspacePathSuggester
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "LoadedAttachment",
     "WorkspacePathSuggester",
     "parse_file_mentions",
+    "WorkspaceAttachmentReader",
 ]

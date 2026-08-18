@@ -17,21 +17,6 @@ class ToolInvocationOrigin(StrEnum):
     """The application capability that initiated a tool call."""
 
     MODEL = "model"
-    USER_FILE_MENTION = "user_file_mention"
-
-
-class AuthorizationEvidence(StrEnum):
-    """Trusted evidence that can satisfy an ordinary permission prompt."""
-
-    NONE = "none"
-    EXPLICIT_USER_INPUT = "explicit_user_input"
-
-
-class ToolResultDelivery(StrEnum):
-    """How a successful model-visible result leaves the execution boundary."""
-
-    EXTERNALIZED = "externalized"
-    INLINE = "inline"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,16 +24,6 @@ class ToolInvocation:
     """Security-relevant metadata for one invocation."""
 
     origin: ToolInvocationOrigin = ToolInvocationOrigin.MODEL
-    authorization: AuthorizationEvidence = AuthorizationEvidence.NONE
-    result_delivery: ToolResultDelivery = ToolResultDelivery.EXTERNALIZED
-
-    @classmethod
-    def explicit_file_mention(cls) -> ToolInvocation:
-        return cls(
-            origin=ToolInvocationOrigin.USER_FILE_MENTION,
-            authorization=AuthorizationEvidence.EXPLICIT_USER_INPUT,
-            result_delivery=ToolResultDelivery.INLINE,
-        )
 
 
 class ToolInvocationHook(Protocol):
@@ -83,10 +58,8 @@ class ToolInvocationAudit(Protocol):
 
 
 __all__ = [
-    "AuthorizationEvidence",
     "ToolInvocation",
     "ToolInvocationAudit",
     "ToolInvocationHook",
     "ToolInvocationOrigin",
-    "ToolResultDelivery",
 ]

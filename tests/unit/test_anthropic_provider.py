@@ -1,11 +1,14 @@
+from types import SimpleNamespace
 from typing import cast
 
 from anthropic.types import TextBlockParam
 
 from nano_code.agent import (
     ModelAssistantMessage,
+    ModelOpaqueAssistantBlock,
     ModelRequest,
     ModelTextBlock,
+    ModelToolUseBlock,
     ModelUserMessage,
 )
 from nano_code.prompts import (
@@ -77,3 +80,59 @@ def test_user_context_and_attachments_surround_conversation_messages() -> None:
     assert normalized[0]["content"][0]["text"] == "user context"
     assert normalized[1]["content"][0]["text"] == "history"
     assert normalized[2]["content"][0]["text"] == "attachment"
+
+
+def test_anthropic_thinking_round_trips_only_for_matching_model() -> None:
+    thinking = ModelOpaqueAssistantBlock(
+        "anthropic-messages",
+        "claude-test",
+        {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+    )
+    redacted = ModelOpaqueAssistantBlock(
+        "anthropic-messages",
+        "claude-test",
+        {"type": "redacted_thinking", "data": "ciphertext"},
+    )
+    message = ModelAssistantMessage(
+        (thinking, redacted, ModelToolUseBlock("call", "Read", {"path": "x"}))
+    )
+
+    matching = AnthropicProvider._messages((message,), model="claude-test")
+    mismatched = AnthropicProvider._messages((message,), model="other-model")
+
+    assert matching[0]["content"][:2] == [thinking.payload, redacted.payload]
+    assert [block["type"] for block in mismatched[0]["content"]] == ["tool_use"]
+
+
+def test_anthropic_response_preserves_thinking_block_order() -> None:
+    provider = object.__new__(AnthropicProvider)
+    provider.model = "claude-test"
+    response = SimpleNamespace(
+        content=[
+            SimpleNamespace(type="thinking", thinking="hidden", signature="signed"),
+            SimpleNamespace(type="text", text="working"),
+            SimpleNamespace(type="redacted_thinking", data="ciphertext"),
+            SimpleNamespace(type="tool_use", id="call", name="Read", input={}),
+        ],
+        stop_reason="tool_use",
+        usage=SimpleNamespace(
+            input_tokens=10,
+            output_tokens=5,
+            cache_creation_input_tokens=None,
+            cache_read_input_tokens=None,
+        ),
+    )
+
+    output = provider._response(response)  # type: ignore[arg-type]
+
+    assert [block.type for block in output.content] == [
+        "provider_opaque",
+        "text",
+        "provider_opaque",
+        "tool_use",
+    ]
+    assert cast(ModelOpaqueAssistantBlock, output.content[0]).payload == {
+        "type": "thinking",
+        "thinking": "hidden",
+        "signature": "signed",
+    }

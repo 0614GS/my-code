@@ -8,6 +8,7 @@ from nano_code.conversation import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,
+    OpaqueAssistantContent,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -57,7 +58,7 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
         "conversation_summary_message",
         "session_metadata",
     ]
-    assert all(entry["schema_version"] == 3 for entry in entries)
+    assert all(entry["schema_version"] == 4 for entry in entries)
     assert entries[0]["max_steps"] is None
     assert "max_turns" not in entries[0]
     assert all("role" not in entry and "origin" not in entry for entry in entries)
@@ -67,6 +68,36 @@ def test_codec_round_trip_each_message_variant() -> None:
     for message in _chain():
         record = message_to_record(message)
         assert entry_from_json(entry_to_json(record)) == record
+
+
+def test_provider_opaque_assistant_content_round_trips_v4(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    human = HumanMessage("hello")
+    assistant = AssistantMessage(
+        (
+            OpaqueAssistantContent(
+                "anthropic-messages",
+                "claude-test",
+                {
+                    "type": "thinking",
+                    "thinking": "hidden",
+                    "signature": "signed",
+                },
+            ),
+            ToolCall("call", "Read", {"path": "x"}),
+        ),
+        TokenUsage(),
+        parent_uuid=human.uuid,
+    )
+    store.append(human)
+    store.append(assistant)
+
+    assert store.load().history == (human, assistant)
+    document = [json.loads(line) for line in store.path.read_text().splitlines()]
+    assistant_record = next(
+        entry for entry in document if entry["type"] == "assistant_message"
+    )
+    assert assistant_record["content"][0]["type"] == "provider_opaque"
 
 
 @pytest.mark.parametrize(
@@ -131,6 +162,7 @@ def test_structured_records_and_compact_boundary_are_atomic(tmp_path: Path) -> N
     [
         ({"type": "message", "version": 1}, 1),
         ({"type": "session_started", "schema_version": 2}, 2),
+        ({"type": "session_started", "schema_version": 3}, 3),
     ],
 )
 def test_catalog_skips_legacy_transcript(

@@ -12,6 +12,7 @@ from nano_code.agent import (
     AgentTurnSucceeded,
     ConversationState,
     ModelContextOverflow,
+    ModelOpaqueAssistantBlock,
     ModelOutput,
     ModelOutputCompleted,
     ModelRequest,
@@ -20,8 +21,8 @@ from nano_code.agent import (
     ModelToolUseBlock,
 )
 from nano_code.context.attachments.models import (
-    AttachmentToolExchange,
     ContextAttachment,
+    ContextObservation,
 )
 from nano_code.context.compaction import CompactionCoordinator, CompactionService
 from nano_code.context.planner import ContextPlanner
@@ -139,14 +140,7 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
     )
     attachment = ContextAttachment(
         "file",
-        (
-            AttachmentToolExchange(
-                "Read",
-                {"path": "notes.txt"},
-                "1→hello",
-                tool_use_id="attachment-read",
-            ),
-        ),
+        (ContextObservation("File: notes.txt", "     1\thello"),),
         retention="live_session",
     )
 
@@ -155,7 +149,7 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
 
     for request in model.requests:
         assert any(
-            isinstance(block, ModelToolUseBlock) and block.id == "attachment-read"
+            isinstance(block, ModelTextBlock) and "notes.txt" in block.text
             for message in request.messages
             for block in message.content
         )
@@ -199,6 +193,41 @@ async def test_engine_closes_tool_loop_and_preserves_results(tmp_path: Path) -> 
     assert len(tool_messages) == 1
     assert "hello" in tool_messages[0].content[0].content
     assert len(model.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
+    tmp_path: Path,
+) -> None:
+    opaque = ModelOpaqueAssistantBlock(
+        "anthropic-messages",
+        "claude-test",
+        {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+    )
+    engine, model, conversation, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput(
+                (opaque, ModelToolUseBlock("read", "Read", {"path": "missing"})),
+                "tool_use",
+                TokenUsage(3, 2),
+            ),
+            ModelOutput((ModelTextBlock("finished"),), "end_turn", TokenUsage(5, 1)),
+        ],
+    )
+
+    result = await engine.submit(AgentTurnInput("read"))
+
+    assert isinstance(result, AgentTurnSucceeded)
+    assert result.text == "finished"
+    assert any(
+        isinstance(block, ModelOpaqueAssistantBlock)
+        for message in model.requests[1].messages
+        for block in message.content
+    )
+    persisted = conversation.repository.load().history[1]
+    assert isinstance(persisted, AssistantMessage)
+    assert persisted.content[0].kind == "provider_opaque"
 
 
 @pytest.mark.asyncio

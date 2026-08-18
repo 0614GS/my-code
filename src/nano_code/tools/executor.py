@@ -31,7 +31,6 @@ from nano_code.tools.invocation import (
     ToolInvocation,
     ToolInvocationAudit,
     ToolInvocationHook,
-    ToolResultDelivery,
 )
 from nano_code.tools.registry import ToolRegistry
 from nano_code.tools.result_store import ToolResultStore
@@ -45,8 +44,6 @@ class ToolExecutionOutcome:
 
     result: ToolResult
     presentation: ToolResultPresentation
-    approved_input: JsonObject | None = None
-    metadata: JsonObject | None = None
 
 
 class LoggingToolInvocationAudit:
@@ -163,8 +160,6 @@ class ToolExecutor:
                 tool,
                 call.input,
                 self.context,
-                origin=actual_invocation.origin,
-                authorization=actual_invocation.authorization,
             )
         except Exception as error:
             return self._error(
@@ -280,11 +275,7 @@ class ToolExecutor:
             presentation = self._present_result(tool, approved_input, output)
 
             # 构造 API 块前先外置结果，使后续每一层看到相同、有界且可重放的内容。
-            content = (
-                self.result_store.externalize(call.id, model_content)
-                if actual_invocation.result_delivery is ToolResultDelivery.EXTERNALIZED
-                else model_content
-            )
+            content = self.result_store.externalize(call.id, model_content)
             result = ToolResult(
                 tool_use_id=call.id,
                 content=content,
@@ -301,12 +292,7 @@ class ToolExecutor:
                         call.name,
                         actual_invocation.origin.value,
                     )
-            return ToolExecutionOutcome(
-                result,
-                presentation,
-                approved_input=approved_input,
-                metadata=output.metadata,
-            )
+            return ToolExecutionOutcome(result, presentation)
         except (ToolInputError, ToolExecutionError, OSError, UnicodeError) as error:
             return self._error(call, f"{type(error).__name__}: {error}", tool=tool)
         except Exception as error:

@@ -42,6 +42,11 @@
 不写 Transcript；它们在后续请求和 compact 输入中按锚点位置重放，锚点离开
 working set 时被裁剪，resume 或切换 session 时清空。
 
+attachment 始终是临时 user-side context：observation 与 instruction 在 Context 层渲染为
+`<system-reminder>`，不会伪造 assistant tool-use/tool-result。Anthropic opaque thinking
+不是 attachment；它只在最近的真实 assistant 工具轨迹中回放，完成后从普通请求和 compact
+视图剥离。活动 thinking 文本、签名或 redacted data 计入窗口估算。
+
 ## 3. Token 计量
 
 阈值判断的规范入口是 `tokenCountWithEstimation()`：

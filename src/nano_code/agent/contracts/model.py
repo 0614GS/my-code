@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from nano_code.conversation.primitives import JsonObject, TokenUsage
+from nano_code.conversation.primitives import JsonObject, TokenUsage, to_json_object
 from nano_code.prompts import SystemPrompt
 
 
@@ -38,8 +38,39 @@ class ModelToolResultBlock:
     type: Literal["tool_result"] = field(default="tool_result", init=False)
 
 
+@dataclass(frozen=True, slots=True)
+class ModelOpaqueAssistantBlock:
+    """Opaque provider response content eligible for protocol-bound replay."""
+
+    protocol: str
+    model: str
+    payload: JsonObject
+    type: Literal["provider_opaque"] = field(default="provider_opaque", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.protocol.strip() or not self.model.strip():
+            raise ValueError("Opaque model source must not be empty")
+        payload = to_json_object(self.payload)
+        kind = payload.get("type")
+        if kind == "thinking":
+            valid = set(payload) == {"type", "thinking", "signature"} and all(
+                isinstance(payload.get(key), str) for key in ("thinking", "signature")
+            )
+        elif kind == "redacted_thinking":
+            valid = set(payload) == {"type", "data"} and isinstance(
+                payload.get("data"), str
+            )
+        else:
+            valid = False
+        if not valid:
+            raise ValueError("Unsupported opaque model payload")
+        object.__setattr__(self, "payload", payload)
+
+
 type ModelUserContent = ModelTextBlock | ModelToolResultBlock
-type ModelAssistantContent = ModelTextBlock | ModelToolUseBlock
+type ModelAssistantContent = (
+    ModelTextBlock | ModelToolUseBlock | ModelOpaqueAssistantBlock
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +97,19 @@ class ModelAssistantMessage:
         if not self.content:
             raise ValueError("Model assistant message content must not be empty")
         if not all(
-            isinstance(block, (ModelTextBlock, ModelToolUseBlock))
+            isinstance(
+                block, (ModelTextBlock, ModelToolUseBlock, ModelOpaqueAssistantBlock)
+            )
             for block in self.content
         ):
             raise TypeError("Model assistant messages contain only text or tool uses")
+        if not any(
+            isinstance(block, ModelToolUseBlock)
+            or isinstance(block, ModelTextBlock)
+            and bool(block.text)
+            for block in self.content
+        ):
+            raise ValueError("Model assistant message contained no actionable content")
 
 
 type ModelMessage = ModelUserMessage | ModelAssistantMessage
@@ -97,10 +137,19 @@ class ModelOutput:
         if not self.content:
             raise ValueError("Model output contained no supported content blocks")
         if not all(
-            isinstance(block, (ModelTextBlock, ModelToolUseBlock))
+            isinstance(
+                block, (ModelTextBlock, ModelToolUseBlock, ModelOpaqueAssistantBlock)
+            )
             for block in self.content
         ):
             raise TypeError("Model output contains only assistant content")
+        if not any(
+            isinstance(block, ModelToolUseBlock)
+            or isinstance(block, ModelTextBlock)
+            and bool(block.text)
+            for block in self.content
+        ):
+            raise ValueError("Model output contained no actionable content blocks")
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +170,7 @@ __all__ = [
     "ModelMessage",
     "ModelOutput",
     "ModelOutputCompleted",
+    "ModelOpaqueAssistantBlock",
     "ModelRequest",
     "ModelStreamEvent",
     "ModelTextBlock",

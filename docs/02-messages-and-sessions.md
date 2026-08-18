@@ -16,7 +16,8 @@ ConversationState ──追加持久化──→ TranscriptEntry
 
 `ConversationMessage` 是按语义判别的联合：`HumanMessage`、`AssistantMessage`、
 `ToolResultsMessage` 和 `ConversationSummaryMessage`。只有 assistant 能包含
-`TextContent | ToolCall` 并且必须携带 `TokenUsage`；只有 tool-results 能包含带本地
+`TextContent | ToolCall | OpaqueAssistantContent` 并且必须携带 `TokenUsage`；opaque
+内容只保存可信 provider 返回的协议连续性 payload，不作为文本或工具事实。只有 tool-results 能包含带本地
 `presentation` 的 `ToolResult`。因此非法的 role/origin/content 组合无法构造。
 
 `ContextPlanner` 是唯一的 conversation → model 投影边界。它把四种会话消息转换为
@@ -26,8 +27,9 @@ ConversationState ──追加持久化──→ TranscriptEntry
 
 nano-code 将非 Transcript 输入分成 `UserContextDocument` 和 `ContextAttachment`：前者
 在会话生命周期内缓存并放在历史之前；后者是带明确 retention 的模型可见附加上下文。
-`ContextAttachment` 可包含文本、结构化 reminder 或受信任的合成
-tool-use/tool-result 交换，但不进入 JSONL 或父链。
+`ContextAttachment` 可包含文本、结构化 reminder 或 provider-neutral 的
+`ContextObservation`，但不进入 JSONL 或父链；它始终投影到 user side，不能产生
+assistant/tool 协议块。
 
 `request` attachment 只对当前模型请求有效。`live_session` attachment 会以
 `AttachmentDelivery` 锚定到当前 working set 中的一条消息，在本进程的后续请求
@@ -49,7 +51,7 @@ delivery 不持久化，因此 resume 或切换 session 后不会重放。
 
 主会话按项目目录和 session ID 写入 JSONL；子 Agent 写入独立 sidechain 文件。核心实现位于 `claude-code/src/utils/sessionStorage.ts`。nano-code 的对应磁盘布局见 [09-storage-and-settings.md](09-storage-and-settings.md)。
 
-当前 schema 是 breaking version 3，每行都有 `schema_version: 3`。第一条必须是 `session_started`，记录 Session ID、canonical cwd、创建时间和初始 provider/model/permission/agent 限制快照，其中 Step 安全阀使用 `max_steps`。后续联合 discriminator 为：
+当前 schema 是 breaking version 4，每行都有 `schema_version: 4`。第一条必须是 `session_started`，记录 Session ID、canonical cwd、创建时间和初始 provider/model/permission/agent 限制快照，其中 Step 安全阀使用 `max_steps`。后续联合 discriminator 为：
 
 - `human_message`、`assistant_message`、`tool_results_message`、`conversation_summary_message`；
 - `session_metadata`、`content_replacement`、`compact_boundary`。
@@ -57,7 +59,8 @@ delivery 不持久化，因此 resume 或切换 session 后不会重放。
 records 定义在 sessions adapter 内，严格 codec 是唯一同时依赖 `TranscriptEntry` 和
 `ConversationMessage` 的模块。旧 `type: "message"`、未知 schema version、未知字段及非法
 内容组合全部拒绝；不提供迁移或 fallback parser。SessionCatalog 会跳过这类旧候选，显式
-resume 则报告带路径和重建提示的版本不兼容错误。只有 EOF 处没有换行且无法解析的中断尾记录可以忽略；完整坏行始终拒绝恢复。
+resume 则报告带路径和重建提示的版本不兼容错误。assistant content 在 v4 新增严格的
+`provider_opaque` record，保存来源 protocol、model 和原样 payload。只有 EOF 处没有换行且无法解析的中断尾记录可以忽略；完整坏行始终拒绝恢复。
 
 ## 5. 父链、分支与恢复
 
@@ -124,7 +127,13 @@ nano-code 将“列出会话”和“恢复会话”分开处理：
 
 工具结果额外保存可选的 `presentation` 快照。它不是发送给 Anthropic Messages API
 的内容，而是 Tool 在执行当时生成的前端无关摘要；恢复 UI 时优先复用它，从而避免
-升级展示逻辑后历史会话突然改变。该字段在 schema version 3 中是可选字段。
+升级展示逻辑后历史会话突然改变。该字段在 schema version 4 中是可选字段。
+
+Anthropic 的 `thinking` 与 `redacted_thinking` 以 opaque assistant content 保持其相对
+text/tool-use 的原始顺序。Context 只在紧接该 assistant 的 tool-result 之后、下一次模型
+继续该工具轨迹前回放；完成轨迹和 compact summary 均剥离旧 opaque 内容。Adapter 还会
+核对来源 protocol 与 model，不匹配时不发送签名。未闭合工具调用在 resume 时补错误结果，
+但其 opaque thinking 保持在 source assistant 中，供修复后的下一次请求使用。
 
 JSONL 还可追加两类上下文记录。`content_replacement` 按 tool ID 冻结模型可见的
 microcompact 占位文本，原始工具结果保持不变；`compact_boundary` 记录压缩前父节点、

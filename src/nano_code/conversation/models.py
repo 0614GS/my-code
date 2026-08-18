@@ -4,7 +4,13 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from nano_code.application.chat.presentation import ToolResultPresentation
-from nano_code.conversation.primitives import JsonObject, TokenUsage, new_id, utc_now
+from nano_code.conversation.primitives import (
+    JsonObject,
+    TokenUsage,
+    new_id,
+    to_json_object,
+    utc_now,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +29,23 @@ class ToolCall:
     def __post_init__(self) -> None:
         if not self.id or not self.name:
             raise ValueError("Tool call id and name must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class OpaqueAssistantContent:
+    """Provider payload retained only to continue a trusted assistant trajectory."""
+
+    protocol: str
+    model: str
+    payload: JsonObject
+    kind: Literal["provider_opaque"] = field(default="provider_opaque", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.protocol.strip() or not self.model.strip():
+            raise ValueError("Opaque assistant source must not be empty")
+        payload = to_json_object(self.payload)
+        _validate_opaque_payload(payload)
+        object.__setattr__(self, "payload", payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +84,7 @@ class HumanMessage:
 
 @dataclass(frozen=True, slots=True)
 class AssistantMessage:
-    content: tuple[TextContent | ToolCall, ...]
+    content: tuple[TextContent | ToolCall | OpaqueAssistantContent, ...]
     usage: TokenUsage
     uuid: str = field(default_factory=new_id)
     parent_uuid: str | None = None
@@ -72,9 +95,17 @@ class AssistantMessage:
         if not self.content:
             raise ValueError("Assistant message content must not be empty")
         if not all(
-            isinstance(block, (TextContent, ToolCall)) for block in self.content
+            isinstance(block, (TextContent, ToolCall, OpaqueAssistantContent))
+            for block in self.content
         ):
             raise TypeError("Assistant messages may contain only text and tool calls")
+        if not any(
+            isinstance(block, ToolCall)
+            or isinstance(block, TextContent)
+            and bool(block.text)
+            for block in self.content
+        ):
+            raise ValueError("Assistant message contained no actionable content")
         if not isinstance(self.usage, TokenUsage):
             raise TypeError("Assistant messages require token usage")
 
@@ -139,7 +170,23 @@ class ConversationSummaryMessage:
 type ConversationMessage = (
     HumanMessage | AssistantMessage | ToolResultsMessage | ConversationSummaryMessage
 )
-type AssistantContent = TextContent | ToolCall
+type AssistantContent = TextContent | ToolCall | OpaqueAssistantContent
+
+
+def _validate_opaque_payload(payload: JsonObject) -> None:
+    kind = payload.get("type")
+    if kind == "thinking":
+        if set(payload) != {"type", "thinking", "signature"} or not all(
+            isinstance(payload.get(key), str) for key in ("thinking", "signature")
+        ):
+            raise ValueError("Invalid Anthropic thinking payload")
+        return
+    if kind == "redacted_thinking":
+        if set(payload) != {"type", "data"} or not isinstance(payload.get("data"), str):
+            raise ValueError("Invalid Anthropic redacted thinking payload")
+        return
+    raise ValueError("Unsupported opaque assistant payload")
+
 
 __all__ = [
     "AssistantContent",
@@ -147,6 +194,7 @@ __all__ = [
     "ConversationMessage",
     "ConversationSummaryMessage",
     "HumanMessage",
+    "OpaqueAssistantContent",
     "TextContent",
     "ToolCall",
     "ToolResult",

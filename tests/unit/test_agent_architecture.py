@@ -256,7 +256,9 @@ def test_file_mentions_are_a_feature_not_a_top_level_or_tui_domain() -> None:
         ), source_path
 
     loader = (feature_root / "loader.py").read_text(encoding="utf-8")
-    assert "ToolExecutor" in loader
+    assert "ToolExecutor" not in loader
+    assert "ToolCall" not in loader
+    assert "ToolInvocation" not in loader
     assert "tool.execute(" not in loader
     assert "policy.decide" not in loader
 
@@ -284,6 +286,17 @@ def test_conversation_and_context_attachment_ownership() -> None:
         name == "nano_code.agent" or name.startswith("nano_code.agent.")
         for name in _imported_modules(attachment_models)
     )
+
+    projection = (
+        _PACKAGE_ROOT / "context" / "attachments" / "projection.py"
+    ).read_text(encoding="utf-8")
+    assert "ModelAssistantMessage" not in projection
+    assert "ModelToolUseBlock" not in projection
+    assert "ModelToolResultBlock" not in projection
+
+    for source_path in (_PACKAGE_ROOT / "providers").glob("*.py"):
+        imports = _imported_modules(source_path)
+        assert "nano_code.context.attachments.models" not in imports, source_path
 
 
 def test_todos_are_a_product_feature_with_a_thin_tool_adapter() -> None:

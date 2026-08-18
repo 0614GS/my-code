@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import ConversationState
+from nano_code.agent import ConversationState, ModelOpaqueAssistantBlock
 from nano_code.agent.contracts.compaction import CompactionOutcome
 from nano_code.agent.contracts.session import (
     AttachmentDelivery,
@@ -12,10 +12,12 @@ from nano_code.agent.contracts.session import (
 )
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.documents import ContextInstruction
+from nano_code.context.normalization import ModelInputNormalizer
 from nano_code.conversation import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,
+    OpaqueAssistantContent,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -68,7 +70,19 @@ def test_resume_repairs_trailing_tool_calls(tmp_path: Path) -> None:
     target = CountingSessionStore(tmp_path, "00000000-0000-0000-0000-000000000003")
     human = HumanMessage("read")
     assistant = AssistantMessage(
-        (TextContent("working"), ToolCall("call", "Read", {"path": "x"})),
+        (
+            OpaqueAssistantContent(
+                "anthropic-messages",
+                "claude-test",
+                {
+                    "type": "thinking",
+                    "thinking": "hidden",
+                    "signature": "signed",
+                },
+            ),
+            TextContent("working"),
+            ToolCall("call", "Read", {"path": "x"}),
+        ),
         TokenUsage(),
         parent_uuid=human.uuid,
     )
@@ -83,6 +97,12 @@ def test_resume_repairs_trailing_tool_calls(tmp_path: Path) -> None:
     assert resumed[-1].source_assistant_uuid == assistant.uuid
     assert resumed[-1].content[0].is_error is True
     assert target.load_calls == 1
+    request_messages = ModelInputNormalizer().normalize((), resumed, ())
+    assert any(
+        isinstance(block, ModelOpaqueAssistantBlock)
+        for message in request_messages
+        for block in message.content
+    )
 
 
 def test_resume_empty_session_keeps_current_repository(tmp_path: Path) -> None:

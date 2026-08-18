@@ -1,33 +1,27 @@
 """不写 Transcript、只在模型上下文中交付的结构化 attachment。"""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
-from uuid import uuid4
 
 from nano_code.context.documents import ContextInstruction
-from nano_code.conversation import JsonObject, TextContent
+from nano_code.conversation import TextContent
 
 type AttachmentRetention = Literal["request", "live_session"]
 
 
 @dataclass(frozen=True, slots=True)
-class AttachmentToolExchange:
-    """由可信内部 source 合成的一对 tool_use/tool_result。"""
+class ContextObservation:
+    """Provider-neutral context observed by an attachment producer."""
 
-    tool_name: str
-    tool_input: JsonObject
-    result_content: str
-    is_error: bool = False
-    tool_use_id: str = field(default_factory=lambda: f"attachment-{uuid4()}")
+    title: str
+    body: str
 
     def __post_init__(self) -> None:
-        if not self.tool_name.strip() or not self.tool_use_id.strip():
-            raise ValueError("Attachment tool name and use ID must not be empty")
-        if not self.result_content:
-            raise ValueError("Attachment tool result must not be empty")
+        if not self.title.strip() or not self.body:
+            raise ValueError("Context observation title and body must not be empty")
 
 
-type AttachmentContent = TextContent | ContextInstruction | AttachmentToolExchange
+type AttachmentContent = TextContent | ContextInstruction | ContextObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +38,7 @@ class ContextAttachment:
         if self.retention not in ("request", "live_session"):
             raise ValueError("Unsupported attachment retention")
         if not all(
-            isinstance(block, (TextContent, ContextInstruction, AttachmentToolExchange))
+            isinstance(block, (TextContent, ContextInstruction, ContextObservation))
             for block in self.content
         ):
             raise TypeError("Context attachment contains an unsupported content block")
@@ -53,6 +47,6 @@ class ContextAttachment:
 __all__ = [
     "AttachmentContent",
     "AttachmentRetention",
-    "AttachmentToolExchange",
     "ContextAttachment",
+    "ContextObservation",
 ]

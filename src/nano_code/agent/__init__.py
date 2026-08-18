@@ -22,6 +22,7 @@ from nano_code.agent.contracts.inbound import (
 from nano_code.agent.contracts.model import (
     ModelAssistantMessage,
     ModelMessage,
+    ModelOpaqueAssistantBlock,
     ModelOutput,
     ModelOutputCompleted,
     ModelRequest,
@@ -109,6 +110,7 @@ __all__ = [
     "ModelMessage",
     "ModelOutput",
     "ModelOutputCompleted",
+    "ModelOpaqueAssistantBlock",
     "ModelRequest",
     "ModelStreamEvent",
     "ModelTextBlock",

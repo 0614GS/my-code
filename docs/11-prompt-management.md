@@ -76,7 +76,7 @@ resolver 返回空 tuple。
 attachment 的入口；这条路径与基于快照的 derived source 分开，为后续 TUI `@`
 文件选择提供语义边界。TUI 在创建 `AgentTurnInput` 前解析 `@path`、
 `@"path with spaces"` 和 `@file#L10-20`，并把成功读取的文件或目录转换为
-`live_session` 的合成 `Read`/`Glob` exchange。原始用户文本保持不变。
+`live_session` 的 `ContextObservation`。原始用户文本保持不变。
 
 显式 `@` mention 是本次读取的用户授权，因此普通 ask 不再弹窗；whole-tool/path
 deny、工作区逃逸和外部符号链接仍不可绕过。文件遵循 Read 的 UTF-8、8 MiB 和
@@ -84,11 +84,12 @@ deny、工作区逃逸和外部符号链接仍不可绕过。文件遵循 Read �
 被拒绝、二进制、超限或读取失败的 mention 静默跳过，不影响同一提示中的其他有效项。
 这些正文和列表不写 Transcript，resume 或切换 session 后不会恢复。
 
-attachment content 支持 `TextContent`、`ContextInstruction` 和受信任的
-`AttachmentToolExchange`。前两者投影为 user text/reminder；后者投影为配对的
-assistant tool-use 与 user tool-result，并与真实会话一起经过全局 tool ID 配对校验。
-这些投影都由 `AttachmentProjector` 集中完成，不会伪装成
-`ConversationMessage`。
+attachment content 支持 `TextContent`、`ContextInstruction` 和
+`ContextObservation`。普通文本保持 user-side text；instruction/observation 由
+`AttachmentProjector` 统一渲染为 `<system-reminder>`，并只产生
+`ModelUserMessage`。文件 loader 使用独立 workspace reader，不调用 ToolExecutor、Read、
+Glob、hook、audit 或工具结果存储。Provider adapter 只消费完成的 `ModelRequest`，不导入
+attachment 类型，也不决定 XML、retention、锚点或预算。
 
 ## 5. XML 上下文块
 

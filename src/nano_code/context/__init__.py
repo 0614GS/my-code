@@ -7,8 +7,8 @@ submodules so importing a context value object does not initialize adapters.
 from nano_code.context.attachments.models import (
     AttachmentContent,
     AttachmentRetention,
-    AttachmentToolExchange,
     ContextAttachment,
+    ContextObservation,
 )
 from nano_code.context.documents import (
     ContextDocumentContent,
@@ -20,8 +20,8 @@ from nano_code.context.documents import (
 __all__ = [
     "AttachmentContent",
     "AttachmentRetention",
-    "AttachmentToolExchange",
     "ContextAttachment",
+    "ContextObservation",
     "ContextDocumentContent",
     "ContextInstruction",
     "ContextInstructionKind",

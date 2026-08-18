@@ -3,30 +3,19 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.context.attachments.models import AttachmentToolExchange
-from nano_code.conversation import JsonObject, ToolCall, ToolResult
+from nano_code.context.attachments.models import ContextObservation
 from nano_code.features.file_mentions import (
     AttachmentLoader,
+    WorkspaceAttachmentReader,
     WorkspacePathSuggester,
     parse_file_mentions,
 )
+from nano_code.features.file_mentions.reader import WorkspaceAttachment
 from nano_code.permissions import (
     PermissionBehavior,
     PermissionPolicy,
     PermissionRule,
 )
-from nano_code.permissions.models import PermissionDecision
-from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.tools import Tool, ToolContext, ToolRegistry
-from nano_code.tools.base import ToolOutput
-from nano_code.tools.builtin import builtin_tools
-from nano_code.tools.executor import ToolExecutor
-from nano_code.tools.invocation import (
-    ToolInvocation,
-    ToolInvocationAudit,
-    ToolInvocationHook,
-)
-from nano_code.tools.result_store import ToolResultStore
 
 
 def test_parse_file_mentions_supports_quotes_ranges_and_deduplication() -> None:
@@ -45,26 +34,10 @@ def test_parse_file_mentions_supports_quotes_ranges_and_deduplication() -> None:
     assert parse_file_mentions("bad @file#L20-10 and @file#L0") == ()
 
 
-def _executor(
-    cwd: Path,
-    policy: PermissionPolicy | None = None,
-    *,
-    hooks: tuple[ToolInvocationHook, ...] = (),
-    audit: ToolInvocationAudit | None = None,
-) -> ToolExecutor:
-    return ToolExecutor(
-        ToolRegistry(builtin_tools()),
-        policy or PermissionPolicy(),
-        HeadlessPrompter(),
-        ToolContext(cwd),
-        ToolResultStore(cwd / ".nano-code" / "test-results"),
-        hooks=hooks,
-        audit=audit,
-    )
-
-
 def _loader(cwd: Path, policy: PermissionPolicy | None = None) -> AttachmentLoader:
-    return AttachmentLoader(_executor(cwd, policy))
+    return AttachmentLoader(
+        WorkspaceAttachmentReader(cwd, policy or PermissionPolicy())
+    )
 
 
 @pytest.mark.asyncio
@@ -80,10 +53,10 @@ async def test_loader_reads_file_range_and_lists_directory(tmp_path: Path) -> No
         "Read sample.txt",
         "Listed directory docs",
     ]
-    exchanges = [item.attachment.content[0] for item in loaded]
-    assert all(isinstance(item, AttachmentToolExchange) for item in exchanges)
-    assert "     2\ttwo" in exchanges[0].result_content
-    assert "docs/a.txt" in exchanges[1].result_content
+    observations = [item.attachment.content[0] for item in loaded]
+    assert all(isinstance(item, ContextObservation) for item in observations)
+    assert "     2\ttwo" in observations[0].body
+    assert "docs/a.txt" in observations[1].body
     assert all(item.attachment.retention == "live_session" for item in loaded)
 
 
@@ -132,87 +105,69 @@ async def test_explicit_mention_never_overrides_whole_tool_deny(
     assert loaded == ()
 
 
-class FailingBeforeHook:
-    def __init__(self) -> None:
-        self.invocation: ToolInvocation | None = None
+@pytest.mark.asyncio
+async def test_loader_uses_latest_permission_rules(tmp_path: Path) -> None:
+    (tmp_path / "dynamic.txt").write_text("safe", encoding="utf-8")
+    policy = PermissionPolicy()
+    loader = _loader(tmp_path, policy)
 
-    async def before_execute(
-        self,
-        invocation: ToolInvocation,
-        call: ToolCall,
-        tool: Tool,
-        approved_input: JsonObject,
-        context: ToolContext,
-    ) -> None:
-        del call, tool, approved_input, context
-        self.invocation = invocation
-        raise RuntimeError("hook failed")
-
-    async def after_execute(
-        self,
-        invocation: ToolInvocation,
-        call: ToolCall,
-        result: ToolResult,
-    ) -> None:
-        del invocation, call, result
-
-
-class FailingAudit:
-    async def record_permission(
-        self,
-        invocation: ToolInvocation,
-        call: ToolCall,
-        decision: PermissionDecision,
-    ) -> None:
-        del invocation, call, decision
-        raise RuntimeError("audit unavailable")
+    assert [item.path for item in await loader.load("@dynamic.txt")] == ["dynamic.txt"]
+    policy.add_rules((PermissionRule("Read", PermissionBehavior.DENY, "dynamic.txt"),))
+    assert await loader.load("@dynamic.txt") == ()
 
 
 @pytest.mark.asyncio
-async def test_loader_fails_closed_when_invocation_hook_fails(tmp_path: Path) -> None:
-    (tmp_path / "safe.txt").write_text("safe", encoding="utf-8")
-    hook = FailingBeforeHook()
+async def test_directory_listing_is_sorted_bounded_and_skips_external_symlinks(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "many"
+    directory.mkdir()
+    for index in range(502):
+        (directory / f"{501 - index:03}.txt").write_text("x", encoding="utf-8")
+    outside = tmp_path.parent / "external-file-mention.txt"
+    outside.write_text("secret", encoding="utf-8")
+    (directory / "escape.txt").symlink_to(outside)
 
-    loaded = await AttachmentLoader(_executor(tmp_path, hooks=(hook,))).load(
-        "@safe.txt"
+    loaded = await _loader(tmp_path).load("@many")
+    observation = loaded[0].attachment.content[0]
+
+    assert isinstance(observation, ContextObservation)
+    lines = observation.body.splitlines()
+    assert lines[:2] == ["many/000.txt", "many/001.txt"]
+    assert len(lines) == 501
+    assert lines[-1] == "<directory listing truncated at 500 entries>"
+    assert "escape" not in observation.body
+
+
+@pytest.mark.asyncio
+async def test_default_file_read_is_truncated_at_2000_lines(tmp_path: Path) -> None:
+    (tmp_path / "long.txt").write_text(
+        "\n".join(str(index) for index in range(2001)), encoding="utf-8"
     )
 
-    assert loaded == ()
-    assert hook.invocation == ToolInvocation.explicit_file_mention()
+    loaded = await _loader(tmp_path).load("@long.txt")
+    observation = loaded[0].attachment.content[0]
+
+    assert isinstance(observation, ContextObservation)
+    assert "  2000\t1999" in observation.body
+    assert "  2001\t2000" not in observation.body
+    assert "truncated at 2000 lines" in observation.body
 
 
 @pytest.mark.asyncio
-async def test_loader_fails_closed_when_audit_fails(tmp_path: Path) -> None:
-    (tmp_path / "safe.txt").write_text("safe", encoding="utf-8")
-
-    loaded = await AttachmentLoader(_executor(tmp_path, audit=FailingAudit())).load(
-        "@safe.txt"
-    )
-
-    assert loaded == ()
-
-
-@pytest.mark.asyncio
-async def test_loader_propagates_cancellation_from_invocation(tmp_path: Path) -> None:
+async def test_loader_propagates_reader_cancellation(tmp_path: Path) -> None:
     (tmp_path / "safe.txt").write_text("safe", encoding="utf-8")
     entered = asyncio.Event()
+    reader = WorkspaceAttachmentReader(tmp_path, PermissionPolicy())
 
-    class BlockingHook(FailingBeforeHook):
-        async def before_execute(
-            self,
-            invocation: ToolInvocation,
-            call: ToolCall,
-            tool: Tool,
-            approved_input: JsonObject,
-            context: ToolContext,
-        ) -> None:
-            del invocation, call, tool, approved_input, context
-            entered.set()
-            await asyncio.Future()
+    async def blocking_read(*args: object, **kwargs: object) -> WorkspaceAttachment:
+        del args, kwargs
+        entered.set()
+        await asyncio.Future()
+        raise AssertionError
 
-    task = asyncio.create_task(
-        AttachmentLoader(_executor(tmp_path, hooks=(BlockingHook(),))).load("@safe.txt")
-    )
+    reader.read = blocking_read  # type: ignore[method-assign]
+    task = asyncio.create_task(AttachmentLoader(reader).load("@safe.txt"))
     await entered.wait()
     task.cancel()
 
@@ -221,24 +176,23 @@ async def test_loader_propagates_cancellation_from_invocation(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_loader_keeps_later_mentions_after_unexpected_tool_error(
+async def test_loader_keeps_later_mentions_after_unexpected_reader_error(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "bad.txt").write_text("bad", encoding="utf-8")
     directory = tmp_path / "docs"
     directory.mkdir()
     (directory / "good.txt").write_text("good", encoding="utf-8")
-    executor = _executor(tmp_path)
-    read = executor.registry.get("Read")
-    assert read is not None
+    reader = WorkspaceAttachmentReader(tmp_path, PermissionPolicy())
+    real_read = reader.read
 
-    async def fail_execute(tool_input: JsonObject, context: ToolContext) -> ToolOutput:
-        del tool_input, context
-        raise RuntimeError("unexpected read failure")
+    async def sometimes_fail(raw_path: str, **kwargs: object) -> WorkspaceAttachment:
+        if raw_path == "bad.txt":
+            raise RuntimeError("unexpected read failure")
+        return await real_read(raw_path, **kwargs)  # type: ignore[arg-type]
 
-    read.execute = fail_execute  # type: ignore[method-assign]
-
-    loaded = await AttachmentLoader(executor).load("@bad.txt @docs")
+    reader.read = sometimes_fail  # type: ignore[method-assign]
+    loaded = await AttachmentLoader(reader).load("@bad.txt @docs")
 
     assert [item.path for item in loaded] == ["docs"]
 

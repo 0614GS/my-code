@@ -7,13 +7,13 @@ an Agent contract does not initialize code that depends on Agent snapshots.
 from nano_code.context.attachments.models import (
     AttachmentContent,
     AttachmentRetention,
-    AttachmentToolExchange,
     ContextAttachment,
+    ContextObservation,
 )
 
 __all__ = [
     "AttachmentContent",
     "AttachmentRetention",
-    "AttachmentToolExchange",
     "ContextAttachment",
+    "ContextObservation",
 ]

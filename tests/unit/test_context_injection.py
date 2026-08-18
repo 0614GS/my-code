@@ -6,16 +6,14 @@ import pytest
 from nano_code.agent import (
     AttachmentDelivery,
     ConversationSnapshot,
-    ModelAssistantMessage,
+    ModelOpaqueAssistantBlock,
     ModelTextBlock,
-    ModelToolResultBlock,
-    ModelToolUseBlock,
     ModelUserMessage,
 )
 from nano_code.agent.errors import ContextOverflow
 from nano_code.context.attachments.models import (
-    AttachmentToolExchange,
     ContextAttachment,
+    ContextObservation,
 )
 from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.documents import ContextInstruction, UserContextDocument
@@ -24,8 +22,14 @@ from nano_code.context.planner import ContextPlanner
 from nano_code.context.window import ContextWindow
 from nano_code.context.xml import render_context_instruction
 from nano_code.conversation import (
+    AssistantMessage,
     HumanMessage,
+    OpaqueAssistantContent,
     TextContent,
+    TokenUsage,
+    ToolCall,
+    ToolResult,
+    ToolResultsMessage,
 )
 from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
 
@@ -58,50 +62,99 @@ def test_request_context_shapes_are_strict() -> None:
         )
 
 
-def test_attachment_tool_exchange_projects_as_closed_protocol_pair() -> None:
+def test_attachment_observation_projects_only_as_user_side_reminder() -> None:
     attachment = ContextAttachment(
         "file",
-        (
-            AttachmentToolExchange(
-                "Read",
-                {"path": "notes.txt"},
-                "1→hello",
-                tool_use_id="attachment-read",
-            ),
-        ),
+        (ContextObservation("File: notes.txt", "     1\thello"),),
     )
 
     result = ModelInputNormalizer().normalize(
         (), (HumanMessage("inspect"),), (attachment,)
     )
 
-    assert result == (
-        ModelUserMessage((ModelTextBlock("inspect"),)),
-        ModelAssistantMessage(
-            (ModelToolUseBlock("attachment-read", "Read", {"path": "notes.txt"}),)
-        ),
-        ModelUserMessage((ModelToolResultBlock("attachment-read", "1→hello", False),)),
+    assert len(result) == 1
+    assert isinstance(result[0], ModelUserMessage)
+    assert result[0].content[0] == ModelTextBlock("inspect")
+    reminder = result[0].content[1]
+    assert isinstance(reminder, ModelTextBlock)
+    assert reminder.text.startswith("<system-reminder>")
+    assert "explicitly attached" in reminder.text
+    assert "notes.txt" in reminder.text
+
+
+def test_attachment_projection_cannot_create_tool_protocol_blocks() -> None:
+    attachment = ContextAttachment(
+        "file", (ContextObservation("File: a.txt", "content"),)
+    )
+    projected = ModelInputNormalizer().attachment_projector.project(attachment)
+    assert isinstance(projected, ModelUserMessage)
+    assert all(isinstance(block, ModelTextBlock) for block in projected.content)
+
+
+def test_opaque_thinking_replays_only_for_active_tool_trajectory() -> None:
+    human = HumanMessage("inspect")
+    opaque = OpaqueAssistantContent(
+        "anthropic-messages",
+        "claude-test",
+        {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+    )
+    assistant = AssistantMessage(
+        (opaque, ToolCall("call", "Read", {"path": "x"})),
+        TokenUsage(),
+        parent_uuid=human.uuid,
+    )
+    results = ToolResultsMessage(
+        (ToolResult("call", "value"),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
+    )
+    normalizer = ModelInputNormalizer()
+
+    active = normalizer.normalize((), (human, assistant, results), ())
+    compact = normalizer.normalize_transcript((human, assistant, results))
+    completed_assistant = AssistantMessage(
+        (TextContent("done"),), TokenUsage(), parent_uuid=results.uuid
+    )
+    completed = normalizer.normalize(
+        (), (human, assistant, results, completed_assistant), ()
+    )
+
+    assert any(
+        isinstance(block, ModelOpaqueAssistantBlock)
+        for message in active
+        for block in message.content
+    )
+    assert not any(
+        isinstance(block, ModelOpaqueAssistantBlock)
+        for messages in (compact, completed)
+        for message in messages
+        for block in message.content
     )
 
 
-def test_attachment_tool_ids_share_global_protocol_validation() -> None:
-    attachments = tuple(
-        ContextAttachment(
-            source,
-            (
-                AttachmentToolExchange(
-                    "Read",
-                    {"path": f"{source}.txt"},
-                    source,
-                    tool_use_id="duplicate",
-                ),
-            ),
-        )
-        for source in ("first", "second")
+def test_reminder_after_real_tool_result_stays_in_same_user_message() -> None:
+    human = HumanMessage("inspect")
+    assistant = AssistantMessage(
+        (ToolCall("call", "Read", {"path": "x"}),),
+        TokenUsage(),
+        parent_uuid=human.uuid,
+    )
+    results = ToolResultsMessage(
+        (ToolResult("call", "value"),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
+    )
+    reminder = ContextAttachment("todo", (ContextInstruction("check todos"),))
+
+    normalized = ModelInputNormalizer().normalize(
+        (), (human, assistant, results), (reminder,)
     )
 
-    with pytest.raises(ValueError, match="Duplicate tool use"):
-        ModelInputNormalizer().normalize((), (HumanMessage("inspect"),), attachments)
+    last = normalized[-1]
+    assert isinstance(last, ModelUserMessage)
+    assert last.content[0].type == "tool_result"
+    assert last.content[1].type == "text"
+    assert "<system-reminder>" in last.content[1].text  # type: ignore[union-attr]
 
 
 def test_normalizer_orders_context_history_and_attachments_then_merges() -> None:

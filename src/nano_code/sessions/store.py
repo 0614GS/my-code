@@ -133,7 +133,11 @@ class SessionStore(SessionRepository):
                     if isinstance(raw, dict)
                     else None
                 )
-                if line_number == 1 and legacy_version in {1, 2}:
+                if (
+                    line_number == 1
+                    and isinstance(legacy_version, int)
+                    and legacy_version != 4
+                ):
                     raise ValueError(
                         f"Transcript schema v{legacy_version} is incompatible: "
                         f"{self.path}. "

@@ -56,6 +56,7 @@ from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
+    OpaqueAssistantContent,
     TextContent,
     TokenUsage,
     ToolCall,
@@ -165,6 +166,10 @@ class AgentEngine(AgentInboundPort):
                     TextContent(block.text)
                     if isinstance(block, ModelTextBlock)
                     else ToolCall(block.id, block.name, block.input)
+                    if isinstance(block, ModelToolUseBlock)
+                    else OpaqueAssistantContent(
+                        block.protocol, block.model, block.payload
+                    )
                     for block in response.content
                 ),
                 parent_uuid=self._last_uuid,
