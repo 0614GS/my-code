@@ -1,12 +1,14 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 from rich.console import Console
 from textual.widgets import Input, OptionList
 
-from nano_code.application.chat.contracts import (
+from nano_code.chat import (
+    ChatService,
     ContextStatus,
     HistoryAssistantMessage,
     HistoryUserMessage,
@@ -31,6 +33,7 @@ from nano_code.application.chat.contracts import (
     TurnOutcome,
     TurnSucceeded,
 )
+from nano_code.config import ProviderProtocol
 from nano_code.features.todos import TodoItem
 from nano_code.model import ReasoningPresentation
 from nano_code.permissions import (
@@ -41,7 +44,6 @@ from nano_code.permissions import (
     PermissionUpdateDestination,
 )
 from nano_code.providers.manager import ProviderUpdate, ProviderView
-from nano_code.providers.profiles import ProviderProtocol
 from nano_code.sessions import SessionSummary
 from nano_code.tools import (
     ToolResultPresentation,
@@ -252,7 +254,7 @@ def test_context_and_compact_commands_request_runtime_actions() -> None:
 @pytest.mark.asyncio
 async def test_tui_dispatches_selected_slash_command_locally() -> None:
     runtime = FakeRuntime()
-    app = NanoCodeApp(runtime)
+    app = _app(runtime)
 
     async with app.run_test(size=(100, 32)) as pilot:
         prompt = app.query_one("#prompt", Input)
@@ -276,7 +278,7 @@ async def test_tui_selects_path_suggestion_without_submitting() -> None:
     runtime.path_suggestions = (
         PathSuggestion("docs/a file.md", False, "docs/a file.md"),
     )
-    app = NanoCodeApp(runtime)
+    app = _app(runtime)
 
     async with app.run_test(size=(100, 32)) as pilot:
         prompt = app.query_one("#prompt", Input)
@@ -299,7 +301,7 @@ async def test_tui_selects_path_suggestion_without_submitting() -> None:
 @pytest.mark.asyncio
 async def test_context_and_compact_render_runtime_diagnostics() -> None:
     runtime = FakeRuntime()
-    app = NanoCodeApp(runtime)
+    app = _app(runtime)
 
     async with app.run_test(size=(100, 32)) as pilot:
         assert app.query_one(StatusBar).context_usage == "0.1k / 200k"
@@ -334,7 +336,7 @@ def test_context_usage_uses_estimated_input_over_effective_input_max() -> None:
 
 @pytest.mark.asyncio
 async def test_provider_slash_command_opens_profile_editor() -> None:
-    app = NanoCodeApp(FakeRuntime())
+    app = _app(FakeRuntime())
 
     async with app.run_test(size=(110, 36)) as pilot:
         app.query_one("#prompt", Input).value = "/provider"
@@ -357,7 +359,7 @@ async def test_resume_picker_selects_session_and_replaces_conversation() -> None
             updated_at=datetime.now(UTC),
         ),
     )
-    app = NanoCodeApp(runtime)
+    app = _app(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         app.query_one("#prompt", Input).value = "/resume"
@@ -378,7 +380,7 @@ async def test_resume_picker_selects_session_and_replaces_conversation() -> None
 @pytest.mark.asyncio
 async def test_provider_editor_submits_password_key_to_runtime() -> None:
     runtime = FakeRuntime()
-    app = NanoCodeApp(runtime)
+    app = _app(runtime)
 
     async with app.run_test(size=(110, 36)) as pilot:
         app.query_one("#prompt", Input).value = "/provider"
@@ -409,7 +411,7 @@ async def test_provider_editor_submits_password_key_to_runtime() -> None:
 async def test_permission_request_uses_inline_panel_and_returns_explicit_choice() -> (
     None
 ):
-    app = NanoCodeApp(FakeRuntime())
+    app = _app(FakeRuntime())
 
     async with app.run_test(size=(100, 32)) as pilot:
         permission = asyncio.create_task(
@@ -440,7 +442,7 @@ async def test_permission_request_uses_inline_panel_and_returns_explicit_choice(
 
 @pytest.mark.asyncio
 async def test_permission_feedback_is_returned_to_runtime() -> None:
-    app = NanoCodeApp(FakeRuntime())
+    app = _app(FakeRuntime())
 
     async with app.run_test(size=(100, 32)) as pilot:
         permission = asyncio.create_task(
@@ -468,7 +470,7 @@ async def test_permission_feedback_is_returned_to_runtime() -> None:
 
 @pytest.mark.asyncio
 async def test_permission_remember_captures_bash_prefix() -> None:
-    app = NanoCodeApp(FakeRuntime())
+    app = _app(FakeRuntime())
 
     async with app.run_test(size=(100, 32)) as pilot:
         permission = asyncio.create_task(
@@ -510,7 +512,7 @@ async def test_permission_remember_captures_bash_prefix() -> None:
 
 @pytest.mark.asyncio
 async def test_permission_remember_uses_whole_tool_rule_for_non_bash() -> None:
-    app = NanoCodeApp(FakeRuntime())
+    app = _app(FakeRuntime())
     suggestion = PermissionUpdate.add_rules(
         (
             PermissionRule(
@@ -547,7 +549,7 @@ async def test_permission_remember_uses_whole_tool_rule_for_non_bash() -> None:
 @pytest.mark.asyncio
 async def test_tui_streams_markdown_and_updates_tool_result_in_place() -> None:
     runtime = FakeRuntime(request_permission=True)
-    app = NanoCodeApp(runtime)
+    app = _app(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         app.query_one("#prompt", Input).value = "write it"
@@ -565,7 +567,7 @@ async def test_tui_streams_markdown_and_updates_tool_result_in_place() -> None:
 
 @pytest.mark.asyncio
 async def test_tui_atomically_completes_multiple_reasoning_and_text_blocks() -> None:
-    app = NanoCodeApp(ReasoningRuntime())
+    app = _app(ReasoningRuntime())
 
     async with app.run_test(size=(100, 36)) as pilot:
         app.query_one("#prompt", Input).value = "think"
@@ -584,7 +586,7 @@ async def test_tui_atomically_completes_multiple_reasoning_and_text_blocks() -> 
 
 @pytest.mark.asyncio
 async def test_tui_marks_only_active_reasoning_interrupted() -> None:
-    app = NanoCodeApp(InterruptedReasoningRuntime())
+    app = _app(InterruptedReasoningRuntime())
 
     async with app.run_test(size=(100, 36)) as pilot:
         app.query_one("#prompt", Input).value = "think"
@@ -599,7 +601,7 @@ async def test_tui_marks_only_active_reasoning_interrupted() -> None:
 
 @pytest.mark.asyncio
 async def test_tui_renders_structured_max_steps_terminal_outcome() -> None:
-    app = NanoCodeApp(MaxStepsRuntime())
+    app = _app(MaxStepsRuntime())
 
     async with app.run_test(size=(100, 32)) as pilot:
         app.query_one("#prompt", Input).value = "keep working"
@@ -618,7 +620,7 @@ async def test_tui_updates_and_toggles_todo_panel_during_turn() -> None:
         TodoItem("Run tests", "in_progress", "Running tests"),
         TodoItem("Write docs", "pending", "Writing docs"),
     )
-    app = NanoCodeApp(runtime)
+    app = _app(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         panel = app.query_one(TodoPanel)
@@ -655,7 +657,7 @@ async def test_tui_hides_panel_when_todos_are_cleared() -> None:
     runtime = FakeRuntime()
     runtime.todos = (TodoItem("Run tests", "in_progress", "Running tests"),)
     runtime.todo_update = ()
-    app = NanoCodeApp(runtime)
+    app = _app(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         panel = app.query_one(TodoPanel)
@@ -667,3 +669,7 @@ async def test_tui_hides_panel_when_todos_are_cleared() -> None:
 
         assert panel.todos == ()
         assert panel.display is False
+
+
+def _app(runtime: object) -> NanoCodeApp:
+    return NanoCodeApp(cast(ChatService, runtime))

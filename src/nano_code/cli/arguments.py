@@ -7,8 +7,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from nano_code import __version__
-from nano_code.core import SettingsOverrides
-from nano_code.permissions import PermissionMode
+from nano_code.config import PermissionMode, SettingsOverrides
 
 
 @dataclass(frozen=True, slots=True)

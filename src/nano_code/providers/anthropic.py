@@ -16,6 +16,7 @@ from anthropic.types import (
     ToolUseBlockParam,
 )
 
+from nano_code.config import ReasoningConfig
 from nano_code.model import (
     ModelClient,
     ModelContextOverflow,
@@ -44,7 +45,6 @@ from nano_code.model import (
     TokenUsage,
     to_json_object,
 )
-from nano_code.providers.profiles import ReasoningConfig
 
 
 class AnthropicProvider(ModelClient):

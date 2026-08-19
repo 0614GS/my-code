@@ -10,6 +10,7 @@ from nano_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
 )
+from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.compaction import (
     CompactionCoordinator,
     CompactionResult,
@@ -33,6 +34,8 @@ from nano_code.context.session import (
     ContextSession,
     ContextSnapshot,
 )
+from nano_code.context.user_context import AgentsUserContextResolver
+from nano_code.context.window import ContextWindow
 
 __all__ = [
     "AttachmentContent",
@@ -50,6 +53,9 @@ __all__ = [
     "ContextPlan",
     "ContextSession",
     "ContextSnapshot",
+    "ContextWindow",
+    "DerivedAttachmentResolver",
+    "AgentsUserContextResolver",
     "ContextDocumentContent",
     "ContextInstruction",
     "ContextInstructionKind",

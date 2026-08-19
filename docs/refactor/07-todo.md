@@ -73,26 +73,26 @@
 
 ## 6. 简化 Agent 与 Chat
 
-- [ ] AgentEngine 直接使用 ModelClient、Context、ToolExecutor 和调用方传入的 Session。
-- [ ] 删除 inbound/outbound、contract/port 和单实现 adapter 转发层。
-- [ ] Agent state 仅表示一次 turn/step 的运行状态，AgentEngine 不持有活动 Session。
-- [ ] 将 `application.chat` 简化为顶层 `chat`。
-- [ ] 建立具体 `ChatService`，不保留单实现 `ChatRuntime` Protocol。
-- [ ] Chat 原子持有并切换 Session、ContextSession 和 session tool-result binding。
-- [ ] 将 session catalog、resume 和恢复历史投影从 Agent 移到 Chat/Sessions。
-- [ ] TUI 和 CLI 只通过 Chat 的公开 API 驱动对话。
-- [ ] AgentEvent 与 ChatEvent 保持不同生命周期并显式投影。
+- [x] AgentEngine 直接使用 ModelClient、Context、ToolExecutor 和调用方传入的 Session。
+- [x] 删除 inbound/outbound、contract/port 和单实现 adapter 转发层。
+- [x] Agent state 仅表示一次 turn/step 的运行状态，AgentEngine 不持有活动 Session。
+- [x] 将 `application.chat` 简化为顶层 `chat`。
+- [x] 建立具体 `ChatService`，不保留单实现 `ChatRuntime` Protocol。
+- [x] Chat 原子持有并切换 Session、ContextSession 和 session tool-result binding。
+- [x] 将 session catalog、resume 和恢复历史投影从 Agent 移到 Chat/Sessions。
+- [x] TUI 和 CLI 只通过 Chat 的公开 API 驱动对话。
+- [x] AgentEvent 与 ChatEvent 保持不同生命周期并显式投影。
 
 验收：Agent 在 turn 之间无可变领域状态且不依赖 UI、具体 Provider 或 JSONL；流式 turn/compact/resume 互斥；TUI/CLI 不越过 Chat 访问内部模块。
 
 ## 7. 收尾
 
-- [ ] 将 `core` 中剩余设置迁入 `config`，组合逻辑迁入 `bootstrap.py`。
-- [ ] 删除所有临时 import 兼容层和 AST 例外。
-- [ ] 删除未使用的 Protocol、DTO 和空包。
-- [ ] 更新现有架构文档，删除或标记被替代的包边界结论。
-- [ ] 运行完整验证命令。
-- [ ] 检查生产模块依赖图无环。
-- [ ] 对照状态表逐项验证创建、更新、恢复、切换、取消和销毁路径。
+- [x] 将 `core` 中剩余设置迁入 `config`，组合逻辑迁入 `bootstrap.py`。
+- [x] 删除所有临时 import 兼容层和 AST 例外。
+- [x] 删除未使用的 Protocol、DTO 和空包。
+- [x] 更新现有架构文档，删除或标记被替代的包边界结论。
+- [x] 运行完整验证命令。
+- [x] 检查生产模块依赖图无环。
+- [x] 对照状态表逐项验证创建、更新、恢复、切换、取消和销毁路径。
 
 验收：AST 允许表不含临时例外，所有检查通过，模块公开 API 与 `02-modules.md` 一致。

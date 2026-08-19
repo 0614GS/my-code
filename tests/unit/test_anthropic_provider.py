@@ -3,6 +3,7 @@ from typing import Any, cast
 
 import pytest
 
+from nano_code.config import ReasoningConfig
 from nano_code.model import (
     ModelAssistantMessage,
     ModelReasoningBlock,
@@ -24,7 +25,6 @@ from nano_code.model import (
     SystemPrompt,
 )
 from nano_code.providers.anthropic import AnthropicProvider, _system_prompt_param
-from nano_code.providers.profiles import ReasoningConfig
 
 
 def prompt() -> SystemPrompt:

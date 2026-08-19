@@ -1,3 +1,5 @@
+"""Composition-root storage and entrypoint tests."""
+
 import json
 import stat
 from pathlib import Path
@@ -5,10 +7,8 @@ from pathlib import Path
 import pytest
 
 from nano_code.auth import CredentialStore
-from nano_code.cli.main import main
-from nano_code.core import NanoCodePaths
-from nano_code.core.bootstrap import initialize_user_storage
-from nano_code.providers.profiles import ProviderProfileStore
+from nano_code.bootstrap import initialize_user_storage, main
+from nano_code.config import NanoCodePaths, ProviderProfileStore
 
 
 def make_paths(tmp_path: Path) -> NanoCodePaths:

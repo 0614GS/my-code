@@ -1,4 +1,4 @@
-"""provider profile 与已解析运行时设置共用的校验逻辑。"""
+"""Provider profile 与已解析运行时设置共用的校验逻辑。"""
 
 from urllib.parse import urlsplit
 

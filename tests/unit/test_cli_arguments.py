@@ -12,7 +12,7 @@ from nano_code.cli.arguments import (
     parse_args,
     parse_cli,
 )
-from nano_code.core import AgentSettings, SettingsResolver
+from nano_code.config import AgentSettings, SettingsResolver
 from nano_code.permissions import PermissionMode
 
 

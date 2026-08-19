@@ -1,6 +1,6 @@
 """Permission prompting bridge for interactive chat frontends."""
 
-from nano_code.application.chat.contracts import PermissionHandler, PermissionRequest
+from nano_code.chat.models import PermissionHandler, PermissionRequest
 from nano_code.permissions import PermissionConfirmation, PermissionPrompt
 from nano_code.tools import ToolUsePresentation
 

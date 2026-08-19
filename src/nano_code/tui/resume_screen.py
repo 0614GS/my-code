@@ -12,7 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, OptionList
 from textual.widgets.option_list import Option
 
-from nano_code.sessions import SessionSummary
+from nano_code.chat import SessionSummary
 
 
 class ResumeScreen(ModalScreen[str | None]):

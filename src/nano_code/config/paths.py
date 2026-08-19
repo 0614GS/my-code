@@ -123,9 +123,6 @@ class NanoCodePaths:
             case SettingsScope.LOCAL:
                 return self.local_settings_path
 
-    def transcript_path(self, session_id: str) -> Path:
-        return self.project_state_dir / f"{session_id}.jsonl"
-
     def session_dir(self, session_id: str) -> Path:
         return self.project_state_dir / session_id
 

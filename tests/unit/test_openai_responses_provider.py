@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from nano_code.config import ReasoningConfig
 from nano_code.model import (
     JsonObject,
     ModelAssistantMessage,
@@ -25,7 +26,6 @@ from nano_code.providers.openai_responses import (
     OpenAIResponsesProvider,
     _OpenAIStreamNormalizer,
 )
-from nano_code.providers.profiles import ReasoningConfig
 
 
 class Item:

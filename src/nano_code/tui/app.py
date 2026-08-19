@@ -8,9 +8,9 @@ from textual.events import Key
 from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
 
-from nano_code.application.chat.contracts import (
+from nano_code.chat import (
     AttachmentLoaded,
-    ChatRuntime,
+    ChatService,
     ContextStatus,
     HistoryAssistantMessage,
     HistoryReasoning,
@@ -18,6 +18,7 @@ from nano_code.application.chat.contracts import (
     HistoryToolCall,
     HistoryUserMessage,
     PathSuggestion,
+    PermissionConfirmation,
     PermissionRequest,
     ReasoningCompleted,
     ReasoningDelta,
@@ -31,7 +32,6 @@ from nano_code.application.chat.contracts import (
     ToolStarted,
     TurnCompleted,
 )
-from nano_code.permissions import PermissionConfirmation
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.completion import format_path_mention, mention_at_cursor
 from nano_code.tui.provider_screen import ProviderScreen
@@ -340,7 +340,7 @@ class NanoCodeApp(App[None]):
 
     def __init__(
         self,
-        runtime: ChatRuntime,
+        runtime: ChatService,
         *,
         commands: SlashCommandRegistry | None = None,
     ) -> None:
@@ -810,7 +810,7 @@ class NanoCodeApp(App[None]):
 class NanoCodeTui:
     """保留精简启动器，使 CLI 不依赖 Textual 的 App API。"""
 
-    def __init__(self, runtime: ChatRuntime) -> None:
+    def __init__(self, runtime: ChatService) -> None:
         self.app = NanoCodeApp(runtime)
 
     async def run(self) -> None:

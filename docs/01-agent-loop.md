@@ -1,5 +1,7 @@
 # Agent 运行循环
 
+> 架构边界说明已由 `docs/refactor/` 取代。本文件保留行为背景；其中 inbound/outbound port、Agent-owned status/resume 与旧包路径不再适用，最终边界见 `refactor/15-phase-6-7-finalization.md`。
+
 ## 1. 两层生命周期
 
 运行时刻意分成两层：

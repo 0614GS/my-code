@@ -1,6 +1,8 @@
+"""Configuration path ownership tests."""
+
 from pathlib import Path
 
-from nano_code.core import NanoCodePaths, SettingsScope, sanitize_path
+from nano_code.config import NanoCodePaths, SettingsScope, sanitize_path
 
 _SESSION_ID = "12345678-1234-1234-1234-123456789abc"
 
@@ -15,9 +17,6 @@ def test_default_layout_matches_claude_code_shape(tmp_path: Path) -> None:
     assert paths.config_home == home / ".nano-code"
     assert paths.project_state_dir == (
         home / ".nano-code" / "projects" / sanitize_path(str(workspace.resolve()))
-    )
-    assert paths.transcript_path(_SESSION_ID) == (
-        paths.project_state_dir / f"{_SESSION_ID}.jsonl"
     )
     assert paths.tool_results_dir(_SESSION_ID) == (
         paths.project_state_dir / _SESSION_ID / "tool-results"

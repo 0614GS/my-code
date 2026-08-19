@@ -7,6 +7,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
+from nano_code.config import ProviderProfile, ProviderProtocol
 from nano_code.model import (
     CapabilitySource,
     ModelCapabilities,
@@ -15,7 +16,6 @@ from nano_code.model import (
     fallback_descriptor,
 )
 from nano_code.providers.model_cache import ModelCatalogCache
-from nano_code.providers.profiles import ProviderProfile, ProviderProtocol
 
 _MAX_MODELS = 1_000
 _OPENAI_CATALOG: dict[str, ModelLimits] = {

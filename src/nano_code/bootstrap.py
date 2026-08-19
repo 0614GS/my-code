@@ -1,25 +1,43 @@
-"""应用存储初始化与 Agent 依赖图的唯一 composition root。"""
+"""Application composition root and process entrypoint."""
 
+import asyncio
+import sys
+from collections.abc import Coroutine
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from nano_code.agent import AgentEngine
-from nano_code.application.chat.permissions import DeferredPermissionPrompter
-from nano_code.application.chat.runtime import DefaultChatRuntime
 from nano_code.auth import CredentialStore
-from nano_code.cli.services import CliProviderController, ProjectSessionSource
+from nano_code.chat import (
+    ChatService,
+    DeferredPermissionPrompter,
+    MaxStepsReached,
+    TurnSucceeded,
+)
+from nano_code.cli import AuthOptions, CliOptions, parse_cli, run_auth_command
+from nano_code.config import (
+    DEFAULT_MODEL,
+    DEFAULT_PROVIDER_ID,
+    AgentSettings,
+    NanoCodePaths,
+    PermissionUpdateApplier,
+    ProviderProfile,
+    ProviderProfileStore,
+    SettingsLayer,
+    SettingsResolver,
+    SettingsScope,
+    SettingsStore,
+)
 from nano_code.context import (
+    AgentsUserContextResolver,
     CompactionCoordinator,
     CompactionService,
     ContextBuilder,
+    ContextWindow,
+    DerivedAttachmentResolver,
 )
-from nano_code.context.attachments.sources import DerivedAttachmentResolver
-from nano_code.context.user_context import AgentsUserContextResolver
-from nano_code.context.window import ContextWindow
-from nano_code.core.paths import NanoCodePaths, SettingsScope
-from nano_code.core.settings import AgentSettings
-from nano_code.core.settings_store import SettingsLayer, SettingsStore
 from nano_code.features.file_mentions import (
     AttachmentLoader,
     WorkspaceAttachmentReader,
@@ -27,29 +45,31 @@ from nano_code.features.file_mentions import (
 )
 from nano_code.features.todos import TodoReminderAttachmentSource, TodoWriteTool
 from nano_code.model import ActiveModelState, resolve_environment
-from nano_code.permissions import PermissionPolicy, PermissionPrompter
-from nano_code.permissions.prompt import (
+from nano_code.permissions import (
     HeadlessPrompter,
+    PermissionPolicy,
+    PermissionPrompter,
     TerminalPrompter,
 )
-from nano_code.permissions.updates import PermissionUpdateApplier
 from nano_code.prompts import build_system_prompt_registry
-from nano_code.providers.discovery import ModelDiscoveryService, resolve_without_network
-from nano_code.providers.manager import ProviderManager
-from nano_code.providers.model_cache import ModelCatalogCache
-from nano_code.providers.profiles import (
-    DEFAULT_MODEL,
-    DEFAULT_PROVIDER_ID,
-    ProviderProfile,
-    ProviderProfileStore,
+from nano_code.providers import (
+    ModelCatalogCache,
+    ModelDiscoveryService,
+    ProviderConnection,
+    ProviderManager,
+    ProviderRouter,
+    resolve_without_network,
 )
-from nano_code.providers.router import ProviderConnection, ProviderRouter
 from nano_code.sessions import Session, SessionStart, SessionStore
-from nano_code.tools import ToolContext, ToolRegistry
-from nano_code.tools.builtin import builtin_tools
-from nano_code.tools.executor import ToolExecutor
-from nano_code.tools.result_store import ToolResultStore
-from nano_code.tools.round_executor import ToolRoundExecutor
+from nano_code.tools import (
+    ToolContext,
+    ToolExecutor,
+    ToolRegistry,
+    ToolResultStore,
+    ToolRoundExecutor,
+    builtin_tools,
+)
+from nano_code.tui import NanoCodeTui
 from nano_code.workspace import Workspace
 
 
@@ -133,6 +153,7 @@ def _assemble_agent(
     ToolContext,
     ToolExecutor,
     ActiveModelState,
+    Session,
 ]:
     actual_session_id = session_id or str(uuid4())
     descriptor = settings.model_descriptor or resolve_without_network(
@@ -217,16 +238,10 @@ def _assemble_agent(
         binding_resolver=lambda: provider.binding,
         active_model_state=active_model_state,
     )
-    tool_round = ToolRoundExecutor(
-        tool_executor,
-        result_store_factory=lambda active_id: ToolResultStore(
-            settings.paths.tool_results_dir(active_id)
-        ),
-    )
+    tool_round = ToolRoundExecutor(tool_executor)
     engine = AgentEngine(
         model_call=provider,
         tool_round=tool_round,
-        session=session,
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(provider)),
         max_steps=settings.max_steps,
@@ -239,50 +254,98 @@ def _assemble_agent(
         tool_context,
         tool_executor,
         active_model_state,
+        session,
     )
 
 
-def bootstrap_agent(
+def bootstrap_chat(
     settings: AgentSettings,
     session_id: str | None = None,
-    *,
-    permission_prompter: PermissionPrompter | None = None,
-) -> AgentEngine:
-    """组装一个可由任意 driving adapter 使用的 Agent。"""
-
-    engine, _, _, _, _, _, _ = _assemble_agent(
-        settings,
-        session_id,
-        permission_prompter=permission_prompter,
-    )
-    return engine
-
-
-def bootstrap_cli_runtime(
-    settings: AgentSettings,
-    session_id: str | None = None,
-) -> DefaultChatRuntime:
-    """组装 TUI 所需的 Agent 与 CLI application adapter。"""
+) -> ChatService:
+    """Assemble the concrete Chat service used by every host."""
 
     prompter = DeferredPermissionPrompter()
-    engine, provider, _, _, _, tool_executor, active_model_state = _assemble_agent(
-        settings,
-        session_id,
-        permission_prompter=prompter,
-    )
-    return DefaultChatRuntime(
+    assembled = _assemble_agent(settings, session_id, permission_prompter=prompter)
+    engine, provider, _, _, _, tool_executor, active_model_state, session = assembled
+    return ChatService(
         agent=engine,
         settings=settings,
         permission_prompter=prompter,
-        provider_control=CliProviderController(
-            ProviderManager(settings.paths),
-            provider,
-            active_model_state,
-            settings.max_output_tokens,
+        provider_manager=ProviderManager(settings.paths),
+        provider_router=provider,
+        active_model_state=active_model_state,
+        session=session,
+        tool_result_store=lambda active_id: ToolResultStore(
+            settings.paths.tool_results_dir(active_id)
         ),
-        session_source=ProjectSessionSource(settings.paths.project_state_dir),
         attachment_loader=AttachmentLoader(
             WorkspaceAttachmentReader(settings.cwd, tool_executor.policy)
         ),
         path_suggester=WorkspacePathSuggester(settings.cwd),
     )
+
+
+async def _submit(options: CliOptions, resolver: SettingsResolver) -> int:
+    settings = resolver.resolve(options.settings_overrides, interactive=False)
+    if settings.paths.providers_path.exists():
+        settings = await discover_active_model(settings)
+    result = await bootstrap_chat(settings, options.session_id).submit(
+        options.prompt or ""
+    )
+    if isinstance(result, TurnSucceeded):
+        print(result.text or "<no text response>")
+        return 0
+    assert isinstance(result, MaxStepsReached)
+    print(f"Error: Reached max steps ({result.max_steps})", file=sys.stderr)
+    return 1
+
+
+async def run(options: CliOptions, resolver: SettingsResolver) -> int:
+    if options.prompt is not None:
+        return await _submit(options, resolver)
+    settings = resolver.resolve(options.settings_overrides, interactive=True)
+    if settings.paths.providers_path.exists():
+        settings = await discover_active_model(settings)
+    await NanoCodeTui(bootstrap_chat(settings, options.session_id)).run()
+    return 0
+
+
+def _run_async(task: Coroutine[Any, Any, int]) -> int:
+    try:
+        return asyncio.run(task)
+    except KeyboardInterrupt:
+        print("Cancelled.", file=sys.stderr)
+        return 130
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+
+
+def main(argv: list[str] | None = None) -> None:
+    try:
+        options = parse_cli(argv)
+        resolver = SettingsResolver.for_workspace(options.cwd)
+        initialize_user_storage(resolver.paths)
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        raise SystemExit(2) from error
+    if isinstance(options, AuthOptions):
+        provider_id = resolver.active_provider_id(options.provider_override)
+        protocol = (
+            ProviderProfileStore(resolver.paths.providers_path)
+            .load()[provider_id]
+            .protocol.value
+        )
+        try:
+            raise SystemExit(
+                run_auth_command(
+                    options, resolver.paths, provider_id, protocol=protocol
+                )
+            )
+        except (EOFError, KeyboardInterrupt):
+            print("Cancelled.", file=sys.stderr)
+            raise SystemExit(130) from None
+        except ValueError as error:
+            print(f"Error: {error}", file=sys.stderr)
+            raise SystemExit(2) from error
+    raise SystemExit(_run_async(run(options, resolver)))

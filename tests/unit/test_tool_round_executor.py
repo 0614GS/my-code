@@ -52,7 +52,12 @@ async def test_round_executor_is_serial_and_returns_one_completed_message(
     )
     calls = tuple(block for block in assistant.content if isinstance(block, ToolCall))
 
-    events = [event async for event in runner.run_round(calls, assistant)]
+    events = [
+        event
+        async for event in runner.run_round(
+            calls, assistant, result_store=runner.executor.result_store
+        )
+    ]
 
     finished = [event for event in events if isinstance(event, ToolCallFinished)]
     completed = [event for event in events if isinstance(event, ToolRoundCompleted)]
@@ -79,13 +84,18 @@ async def test_round_executor_cancellation_closes_every_call(tmp_path: Path) -> 
         usage=TokenUsage(),
     )
 
-    async def cancel(_call: ToolCall) -> ToolExecutionOutcome:
+    async def cancel(
+        _call: ToolCall, *, result_store: ToolResultStore | None = None
+    ) -> ToolExecutionOutcome:
+        del result_store
         raise asyncio.CancelledError
 
     runner.executor.execute = cancel  # type: ignore[assignment]
     events: list[ToolRoundEvent] = []
     with pytest.raises(asyncio.CancelledError):
-        async for event in runner.run_round(calls, assistant):
+        async for event in runner.run_round(
+            calls, assistant, result_store=runner.executor.result_store
+        ):
             events.append(event)
 
     finished = [event for event in events if isinstance(event, ToolCallFinished)]

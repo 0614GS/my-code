@@ -1,20 +1,5 @@
 """智能体核心、边界契约与查询编排。"""
 
-from nano_code.agent.contracts.inbound import (
-    AgentContextStatus,
-    AgentHistoryAssistantMessage,
-    AgentHistoryEntry,
-    AgentHistoryReasoning,
-    AgentHistorySystemMessage,
-    AgentHistoryToolCall,
-    AgentHistoryUserMessage,
-    AgentMaxStepsReached,
-    AgentSessionView,
-    AgentStatus,
-    AgentTurnInput,
-    AgentTurnOutcome,
-    AgentTurnSucceeded,
-)
 from nano_code.agent.engine import AgentEngine
 from nano_code.agent.events import (
     AgentConversationUpdated,
@@ -30,22 +15,17 @@ from nano_code.agent.events import (
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.agent.ports.inbound import AgentInboundPort
+from nano_code.agent.models import (
+    AgentMaxStepsReached,
+    AgentTurnInput,
+    AgentTurnOutcome,
+    AgentTurnSucceeded,
+)
 
 __all__ = [
-    "AgentContextStatus",
     "AgentEngine",
     "AgentEvent",
-    "AgentHistoryAssistantMessage",
-    "AgentHistoryReasoning",
-    "AgentHistoryEntry",
-    "AgentHistorySystemMessage",
-    "AgentHistoryToolCall",
-    "AgentHistoryUserMessage",
-    "AgentInboundPort",
     "AgentMaxStepsReached",
-    "AgentSessionView",
-    "AgentStatus",
     "AgentTextCompleted",
     "AgentTextDelta",
     "AgentTextStarted",

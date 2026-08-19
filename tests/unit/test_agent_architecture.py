@@ -9,9 +9,8 @@ import nano_code.sessions as session_adapter
 import nano_code.tools as tool_adapter
 from nano_code.agent import (
     AgentEngine,
-    AgentInboundPort,
 )
-from nano_code.application.chat.contracts import ChatRuntime, RuntimeStatus
+from nano_code.chat import ChatService, RuntimeStatus
 from nano_code.context import (
     CompactionOutcome,
     ContextPlan,
@@ -67,7 +66,10 @@ def test_model_exposes_the_single_authoritative_client_protocol() -> None:
     assert ToolRoundCompleted.__module__ == "nano_code.tools.round_executor"
     assert not (_AGENT_ROOT / "contracts" / "tool.py").exists()
     assert not (_AGENT_ROOT / "ports" / "tool.py").exists()
-    assert AgentInboundPort in AgentEngine.__mro__
+    assert not hasattr(agent_api, "AgentInboundPort")
+    assert AgentEngine.__bases__ == (object,)
+    assert not (_AGENT_ROOT / "ports").exists()
+    assert not (_AGENT_ROOT / "contracts").exists()
     assert not (_AGENT_ROOT / "ports" / "context.py").exists()
     assert not (_AGENT_ROOT / "ports" / "compaction.py").exists()
     assert not (_AGENT_ROOT / "contracts" / "context.py").exists()
@@ -79,7 +81,6 @@ def test_concrete_adapters_explicitly_inherit_their_real_protocols() -> None:
         (ProviderRouter, (ModelClient,)),
         (AnthropicProvider, (ModelClient,)),
         (OpenAIResponsesProvider, (ModelClient,)),
-        (AgentEngine, (AgentInboundPort,)),
     )
     for adapter, ports in adapters:
         assert all(port in adapter.__bases__ for port in ports), adapter
@@ -182,8 +183,6 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert not hasattr(AgentEngine, "state")
     assert not hasattr(AgentEngine, "context_state")
     assert not hasattr(AgentEngine, "working_messages")
-    assert not hasattr(AgentInboundPort, "session_id")
-    assert not hasattr(AgentInboundPort, "message_count")
     assert not hasattr(agent_api, "AgentState")
     assert not hasattr(agent_api, "AgentContextState")
     assert not hasattr(Conversation, "messages")
@@ -193,10 +192,11 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert TodoWriteTool().definition.name == "TodoWrite"
 
 
-def test_core_bootstrap_is_the_only_full_application_composition_root() -> None:
-    assert not tuple((_PACKAGE_ROOT / "config").glob("*.py"))
+def test_root_bootstrap_is_the_only_full_application_composition_root() -> None:
+    assert tuple((_PACKAGE_ROOT / "config").glob("*.py"))
+    assert not (_PACKAGE_ROOT / "core").exists()
 
-    bootstrap = (_PACKAGE_ROOT / "core" / "bootstrap.py").read_text(encoding="utf-8")
+    bootstrap = (_PACKAGE_ROOT / "bootstrap.py").read_text(encoding="utf-8")
     for dependency in (
         "ContextBuilder",
         "ProviderRouter",
@@ -206,15 +206,10 @@ def test_core_bootstrap_is_the_only_full_application_composition_root() -> None:
     ):
         assert dependency in bootstrap
 
-    chat_runtime = (_PACKAGE_ROOT / "application" / "chat" / "runtime.py").read_text(
-        encoding="utf-8"
-    )
+    chat_runtime = (_PACKAGE_ROOT / "chat" / "service.py").read_text(encoding="utf-8")
     for concrete in (
         "ContextBuilder",
         "ToolExecutor",
-        "SessionStore",
-        "ProviderRouter",
-        "AgentEngine",
     ):
         assert concrete not in chat_runtime
 
@@ -239,12 +234,15 @@ def _imported_modules(source_path: Path) -> tuple[str, ...]:
     return tuple(modules)
 
 
-def test_application_chat_owns_frontend_neutral_contracts() -> None:
-    assert ChatRuntime.__module__ == "nano_code.application.chat.contracts"
-    assert RuntimeStatus.__module__ == "nano_code.application.chat.contracts"
+def test_chat_owns_frontend_neutral_contracts_without_runtime_protocol() -> None:
+    assert ChatService.__module__ == "nano_code.chat.service"
+    assert RuntimeStatus.__module__ == "nano_code.chat.models"
+    assert not hasattr(
+        __import__("nano_code.chat", fromlist=["ChatRuntime"]), "ChatRuntime"
+    )
     assert ToolUsePresentation.__module__ == "nano_code.tools.presentation"
 
-    for source_path in (_PACKAGE_ROOT / "application" / "chat").glob("*.py"):
+    for source_path in (_PACKAGE_ROOT / "chat").glob("*.py"):
         imports = _imported_modules(source_path)
         assert not any(
             name == "nano_code.tui" or name.startswith("nano_code.tui.")
@@ -272,20 +270,16 @@ def test_production_code_does_not_depend_on_legacy_chat_owners() -> None:
         imports = _imported_modules(source_path)
         assert not any(name.startswith(forbidden) for name in imports), source_path
 
-    tui_root_imports = _imported_modules(_PACKAGE_ROOT / "tui" / "__init__.py")
-    assert not any(
-        name == "nano_code.application.chat.contracts"
-        or name.startswith("nano_code.application.chat.contracts.")
-        for name in tui_root_imports
-    )
+    assert not (_PACKAGE_ROOT / "application").exists()
 
 
-def test_core_mechanisms_do_not_import_chat_runtime() -> None:
+def test_core_mechanisms_do_not_import_chat_service() -> None:
     for package_name in ("agent", "context", "conversation", "sessions", "tools"):
         for source_path in (_PACKAGE_ROOT / package_name).rglob("*.py"):
             imports = _imported_modules(source_path)
-            assert "nano_code.application.chat.runtime" not in imports, source_path
-            assert "nano_code.application.chat.permissions" not in imports, source_path
+            assert not any(name.startswith("nano_code.chat") for name in imports), (
+                source_path
+            )
 
 
 def test_file_mentions_are_a_feature_not_a_top_level_or_tui_domain() -> None:

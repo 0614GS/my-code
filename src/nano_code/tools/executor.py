@@ -145,6 +145,7 @@ class ToolExecutor:
         call: ToolCall,
         *,
         invocation: ToolInvocation | None = None,
+        result_store: ToolResultStore | None = None,
     ) -> ToolExecutionOutcome:
         actual_invocation = invocation or ToolInvocation()
         tool = self.registry.get(call.name)
@@ -297,7 +298,9 @@ class ToolExecutor:
             presentation = self._present_result(tool, approved_input, output)
 
             # 构造 API 块前先外置结果，使后续每一层看到相同、有界且可重放的内容。
-            content = self.result_store.externalize(call.id, model_content)
+            content = (result_store or self.result_store).externalize(
+                call.id, model_content
+            )
             result = ToolResult(
                 tool_use_id=call.id,
                 content=content,

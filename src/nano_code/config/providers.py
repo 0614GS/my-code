@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from nano_code.config.validation import validate_base_url
 from nano_code.model import ModelLimits, validate_provider_id
-from nano_code.providers.validation import validate_base_url
 
 DEFAULT_PROVIDER_ID = "anthropic"
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -171,7 +171,7 @@ class ProviderProfileStore:
             providers[provider_id] = entry
         document = dict(existing)
         document.update(version=_SCHEMA_VERSION, providers=providers)
-        _atomic_private_json_write(self.path, document)
+        atomic_private_json_write(self.path, document)
 
 
 def _parse_profile(
@@ -281,7 +281,7 @@ def _optional_positive(raw: dict[object, object], key: str, path: Path) -> int |
     return value
 
 
-def _atomic_private_json_write(path: Path, document: object) -> None:
+def atomic_private_json_write(path: Path, document: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path.parent, 0o700)
     temporary_path: Path | None = None

@@ -2,20 +2,16 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import (
-    AgentMaxStepsReached,
-    AgentTurnInput,
-)
-from nano_code.cli import main as cli_main
+import nano_code.bootstrap as cli_main
+from nano_code.chat import MaxStepsReached
 from nano_code.cli.arguments import parse_args
-from nano_code.core import SettingsResolver
-from nano_code.model import TokenUsage
+from nano_code.config import SettingsResolver
 
 
-class LimitedAgent:
-    async def submit(self, turn_input: AgentTurnInput) -> AgentMaxStepsReached:
-        assert turn_input.prompt == "keep going"
-        return AgentMaxStepsReached(3, 3, TokenUsage(12, 4))
+class LimitedChat:
+    async def submit(self, prompt: str) -> MaxStepsReached:
+        assert prompt == "keep going"
+        return MaxStepsReached(3, 3, 12, 4)
 
 
 @pytest.mark.asyncio
@@ -34,8 +30,8 @@ async def test_print_mode_maps_max_steps_outcome_to_error_exit(
     resolver = SettingsResolver.for_workspace(options.cwd)
     monkeypatch.setattr(
         cli_main,
-        "bootstrap_agent",
-        lambda _settings, _session_id: LimitedAgent(),
+        "bootstrap_chat",
+        lambda _settings, _session_id: LimitedChat(),
     )
 
     exit_code = await cli_main.run(options, resolver)

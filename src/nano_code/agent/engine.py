@@ -3,20 +3,6 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from nano_code.agent.contracts.inbound import (
-    AgentContextStatus,
-    AgentHistoryAssistantMessage,
-    AgentHistoryReasoning,
-    AgentHistorySystemMessage,
-    AgentHistoryToolCall,
-    AgentHistoryUserMessage,
-    AgentMaxStepsReached,
-    AgentSessionView,
-    AgentStatus,
-    AgentTurnInput,
-    AgentTurnOutcome,
-    AgentTurnSucceeded,
-)
 from nano_code.agent.events import (
     AgentConversationUpdated,
     AgentEvent,
@@ -31,10 +17,16 @@ from nano_code.agent.events import (
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.agent.ports.inbound import AgentInboundPort
+from nano_code.agent.models import (
+    AgentMaxStepsReached,
+    AgentTurnInput,
+    AgentTurnOutcome,
+    AgentTurnSucceeded,
+)
 from nano_code.context import (
     AttachmentDelivery,
     CompactionCoordinator,
+    ContextBudget,
     ContextBuilder,
     ContextOverflow,
     ContextPlan,
@@ -45,8 +37,6 @@ from nano_code.conversation import (
     AssistantMessage,
     CompactBoundary,
     CompactTrigger,
-    ConversationMessage,
-    ConversationSummaryMessage,
     HumanMessage,
     ReasoningContent,
     TextContent,
@@ -74,20 +64,21 @@ from nano_code.tools import (
     ToolCallFinished,
     ToolCallStarted,
     ToolResultPresentation,
+    ToolResultStore,
     ToolRoundCompleted,
     ToolRoundExecutor,
+    ToolUsePresentation,
 )
 
 
-class AgentEngine(AgentInboundPort):
-    """只编排用户回合；会话、上下文、模型和工具均通过核心 ports 接入。"""
+class AgentEngine:
+    """只编排一次 turn；活动会话及其临时上下文由调用方传入。"""
 
     def __init__(
         self,
         *,
         model_call: ModelClient,
         tool_round: ToolRoundExecutor,
-        session: Session,
         context: ContextBuilder,
         compactor: CompactionCoordinator,
         max_steps: int | None = None,
@@ -96,18 +87,23 @@ class AgentEngine(AgentInboundPort):
             raise ValueError("max_steps must be positive")
         self._model_call = model_call
         self._tool_round = tool_round
-        self._session = session
-        self._context_session = ContextSession()
         self._context = context
         self._compactor = compactor
         self.max_steps = max_steps
-        self._tool_round.bind_session(self._session.session_id)
 
-    async def submit(self, turn_input: AgentTurnInput) -> AgentTurnOutcome:
+    async def submit(
+        self,
+        session: Session,
+        context_session: ContextSession,
+        result_store: ToolResultStore,
+        turn_input: AgentTurnInput,
+    ) -> AgentTurnOutcome:
         """消费可观察循环并返回终态值。"""
 
         completed: AgentTurnOutcome | None = None
-        async for event in self.stream(turn_input):
+        async for event in self.stream(
+            session, context_session, result_store, turn_input
+        ):
             if isinstance(event, AgentTurnCompleted):
                 completed = event.result
             elif isinstance(event, AgentStepLimitReached):
@@ -116,24 +112,36 @@ class AgentEngine(AgentInboundPort):
             raise RuntimeError("Agent stream ended without a completed turn")
         return completed
 
-    def stream(self, turn_input: AgentTurnInput) -> AsyncIterator[AgentEvent]:
+    def stream(
+        self,
+        session: Session,
+        context_session: ContextSession,
+        result_store: ToolResultStore,
+        turn_input: AgentTurnInput,
+    ) -> AsyncIterator[AgentEvent]:
         """运行一个用户回合，同时暴露文本和工具生命周期事件。"""
 
-        return self._stream(turn_input)
+        return self._stream(session, context_session, result_store, turn_input)
 
-    async def _stream(self, turn_input: AgentTurnInput) -> AsyncIterator[AgentEvent]:
+    async def _stream(
+        self,
+        session: Session,
+        context_session: ContextSession,
+        result_store: ToolResultStore,
+        turn_input: AgentTurnInput,
+    ) -> AsyncIterator[AgentEvent]:
         user_message = HumanMessage(
             content=turn_input.prompt,
-            parent_uuid=self._last_uuid,
+            parent_uuid=_last_uuid(session),
         )
         # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
-        self._session.append(user_message)
-        self._context_session.add(
+        session.append(user_message)
+        context_session.add(
             tuple(
                 AttachmentDelivery(user_message.uuid, attachment)
                 for attachment in turn_input.attachments
             ),
-            self._session.conversation.snapshot(),
+            session.conversation.snapshot(),
         )
 
         input_tokens = 0
@@ -141,7 +149,7 @@ class AgentEngine(AgentInboundPort):
         step_count = 0
         while True:
             step_count += 1
-            request = await self._plan_with_proactive_compact()
+            request = await self._plan_with_proactive_compact(session, context_session)
             reactive_attempted = False
             while True:
                 response: ModelOutput | None = None
@@ -222,8 +230,8 @@ class AgentEngine(AgentInboundPort):
                     if reactive_attempted:
                         raise
                     reactive_attempted = True
-                    await self.compact("reactive")
-                    request = await self._plan_request()
+                    await self.compact(session, context_session, "reactive")
+                    request = await self._plan_request(session, context_session)
                     continue
                 break
 
@@ -243,13 +251,13 @@ class AgentEngine(AgentInboundPort):
                     )
                     for block in response.content
                 ),
-                parent_uuid=self._last_uuid,
+                parent_uuid=_last_uuid(session),
                 usage=response.usage,
                 provider_binding=request.request_binding,
                 request_input_tokens_estimate=request.request_input_tokens_estimate,
             )
             # 先持久化 assistant 的完整 tool_use，再进入执行阶段。
-            self._session.append(assistant_message)
+            session.append(assistant_message)
 
             final_text = "\n".join(
                 block.text
@@ -277,7 +285,9 @@ class AgentEngine(AgentInboundPort):
             round_cancelled = False
             try:
                 async for tool_event in self._tool_round.run_round(
-                    tool_calls, assistant_message
+                    tool_calls,
+                    assistant_message,
+                    result_store=result_store,
                 ):
                     if isinstance(tool_event, ToolCallStarted):
                         yield AgentToolStarted(
@@ -303,13 +313,13 @@ class AgentEngine(AgentInboundPort):
                 if result_message is None:
                     if not results:
                         raise RuntimeError("Tool round ended without results")
-                    self._session.append_tool_results(
+                    session.append_tool_results(
                         results,
                         assistant_message,
                         presentations=tool_presentations.items(),
                     )
                 else:
-                    self._session.append(
+                    session.append(
                         result_message, presentations=tool_presentations.items()
                     )
                 yield AgentConversationUpdated()
@@ -322,13 +332,13 @@ class AgentEngine(AgentInboundPort):
                         self._tool_round,
                         results,
                     )
-                    self._session.append_tool_results(
+                    session.append_tool_results(
                         results,
                         assistant_message,
                         presentations=tool_presentations.items(),
                     )
                 else:
-                    self._session.append(
+                    session.append(
                         result_message, presentations=tool_presentations.items()
                     )
                 yield AgentConversationUpdated()
@@ -345,134 +355,58 @@ class AgentEngine(AgentInboundPort):
                 )
                 return
 
-    def status(self) -> AgentStatus:
-        """返回当前 session 的只读状态。"""
-
-        return AgentStatus(
-            session_id=self._session.session_id,
-            working_message_count=self._session.message_count,
-            history_message_count=self._session.history_message_count,
-            content_replacement_count=self._session.content_replacement_count,
-            compact_count=self._session.compact_count,
-        )
-
-    def context_status(self) -> AgentContextStatus:
-        """返回当前工作集的预算报告。"""
-
-        return AgentContextStatus(
-            budget=self._context.inspect(self._context_snapshot, self._context_session),
-            working_message_count=self._session.message_count,
-            replacement_count=self._session.content_replacement_count,
-            compact_count=self._session.compact_count,
-        )
-
-    async def compact(self, trigger: CompactTrigger = "manual") -> CompactBoundary:
+    async def compact(
+        self,
+        session: Session,
+        context_session: ContextSession,
+        trigger: CompactTrigger = "manual",
+    ) -> CompactBoundary:
         """生成并原子提交一次摘要边界。"""
 
-        outcome = await self._compactor.compact(self._context_snapshot, trigger)
-        return self._session.commit_compaction(
+        outcome = await self._compactor.compact(
+            _context_snapshot(session, context_session), trigger
+        )
+        return session.commit_compaction(
             outcome.replacements, outcome.summary, outcome.boundary
         )
 
-    def resume(self, session: Session) -> AgentSessionView:
-        """校验并恢复另一会话，失败时保持当前状态。"""
-
-        self._session = session
-        self._context_session = ContextSession()
-        self._tool_round.bind_session(session.session_id)
-        return AgentSessionView(
-            status=self.status(),
-            history=self._project_history(session.history),
-        )
-
-    def _project_history(
-        self, messages: tuple[ConversationMessage, ...]
-    ) -> tuple[
-        AgentHistoryUserMessage
-        | AgentHistoryAssistantMessage
-        | AgentHistoryReasoning
-        | AgentHistorySystemMessage
-        | AgentHistoryToolCall,
-        ...,
-    ]:
-        results = {
-            block.tool_use_id: block
-            for message in messages
-            if isinstance(message, ToolResultsMessage)
-            for block in message.content
-            if isinstance(block, ToolResult)
-        }
-        history: list[
-            AgentHistoryUserMessage
-            | AgentHistoryAssistantMessage
-            | AgentHistoryReasoning
-            | AgentHistorySystemMessage
-            | AgentHistoryToolCall
-        ] = []
-        for message in messages:
-            if isinstance(message, HumanMessage):
-                history.append(AgentHistoryUserMessage(message.content))
-                continue
-            if isinstance(message, ConversationSummaryMessage):
-                history.append(AgentHistorySystemMessage("Conversation compacted"))
-                continue
-            if not isinstance(message, AssistantMessage):
-                continue
-            for block in message.content:
-                if isinstance(block, TextContent):
-                    if block.text:
-                        history.append(AgentHistoryAssistantMessage(block.text))
-                elif isinstance(block, ReasoningContent):
-                    history.append(AgentHistoryReasoning(block.presentation))
-                elif isinstance(block, ToolCall):
-                    result = results.get(block.id)
-                    history.append(
-                        AgentHistoryToolCall(
-                            tool_use_id=block.id,
-                            use=self._tool_round.present_use(block),
-                            result=(
-                                self._session.tool_presentation(block.id)
-                                or self._tool_round.present_stored_result(block, result)
-                            ),
-                            is_error=result is None or result.is_error,
-                        )
-                    )
-        return tuple(history)
-
-    async def _plan_with_proactive_compact(self) -> ContextPlan:
+    async def _plan_with_proactive_compact(
+        self, session: Session, context_session: ContextSession
+    ) -> ContextPlan:
         try:
-            return await self._plan_request()
+            return await self._plan_request(session, context_session)
         except ContextOverflow:
-            await self.compact("auto")
-            return await self._plan_request()
+            await self.compact(session, context_session, "auto")
+            return await self._plan_request(session, context_session)
 
-    async def _plan_request(self) -> ContextPlan:
-        request = self._context.plan(self._context_snapshot, self._context_session)
+    async def _plan_request(
+        self, session: Session, context_session: ContextSession
+    ) -> ContextPlan:
+        request = self._context.plan(
+            _context_snapshot(session, context_session), context_session
+        )
         for replacement in request.new_content_replacements:
-            self._session.append_content_replacement(replacement)
-        self._context_session.add(
+            session.append_content_replacement(replacement)
+        context_session.add(
             request.new_attachment_deliveries,
-            self._session.conversation.snapshot(),
+            session.conversation.snapshot(),
         )
         return request
 
-    @property
-    def _last_uuid(self) -> str | None:
-        return (
-            self._session.working_messages[-1].uuid
-            if self._session.working_messages
-            else None
+    def inspect(
+        self, session: Session, context_session: ContextSession
+    ) -> ContextBudget:
+        return self._context.inspect(
+            _context_snapshot(session, context_session), context_session
         )
 
-    @property
-    def history(self) -> tuple[ConversationMessage, ...]:
-        """Read-only canonical facts for application-level feature projections."""
+    def present_use(self, call: ToolCall) -> ToolUsePresentation:
+        return self._tool_round.present_use(call)
 
-        return self._session.history
-
-    @property
-    def _context_snapshot(self) -> ContextSnapshot:
-        return self._context_session.snapshot(self._session.conversation.snapshot())
+    def present_stored_result(
+        self, call: ToolCall, result: ToolResult | None
+    ) -> ToolResultPresentation:
+        return self._tool_round.present_stored_result(call, result)
 
 
 def _cancelled_results(
@@ -494,3 +428,13 @@ def _cancelled_results(
         )
         results.append(result)
     return results
+
+
+def _last_uuid(session: Session) -> str | None:
+    return session.working_messages[-1].uuid if session.working_messages else None
+
+
+def _context_snapshot(
+    session: Session, context_session: ContextSession
+) -> ContextSnapshot:
+    return context_session.snapshot(session.conversation.snapshot())

@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 from nano_code.auth import CredentialSource, CredentialStore, resolve_api_key
 from nano_code.cli.arguments import AuthAction, AuthOptions
-from nano_code.core import NanoCodePaths
+from nano_code.config import NanoCodePaths
 
 
 def run_auth_command(

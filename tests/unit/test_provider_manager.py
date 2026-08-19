@@ -2,10 +2,15 @@ import json
 from pathlib import Path
 
 from nano_code.auth import CredentialSource, CredentialStore
-from nano_code.core import NanoCodePaths, SettingsScope, SettingsStore
-from nano_code.core.bootstrap import initialize_user_storage
+from nano_code.bootstrap import initialize_user_storage
+from nano_code.config import (
+    NanoCodePaths,
+    ProviderProfileStore,
+    ProviderProtocol,
+    SettingsScope,
+    SettingsStore,
+)
 from nano_code.providers.manager import ProviderManager, ProviderUpdate
-from nano_code.providers.profiles import ProviderProfileStore, ProviderProtocol
 
 
 def make_manager(tmp_path: Path) -> tuple[ProviderManager, NanoCodePaths]:

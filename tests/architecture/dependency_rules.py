@@ -17,7 +17,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "permissions": frozenset({"model"}),
     "prompts": frozenset({"model"}),
     "auth": frozenset({"model"}),
-    "config": frozenset({"model"}),
+    "config": frozenset({"auth", "model", "permissions"}),
     "conversation": frozenset({"model"}),
     "context": frozenset({"conversation", "model", "prompts"}),
     "tools": frozenset({"conversation", "model", "permissions", "workspace"}),
@@ -35,7 +35,9 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "chat": frozenset(
         {
             "agent",
+            "config",
             "context",
+            "conversation",
             "features.file_mentions",
             "features.todos",
             "model",
@@ -147,93 +149,13 @@ def _temporary_edges(
 # These are migration debt, not permissions for new architecture. Tests require
 # exact equality with the current scan, so removed debt also makes the guard fail
 # until this list is tightened.
-TEMPORARY_DEPENDENCY_VIOLATIONS: tuple[TemporaryViolation, ...] = (
-    *_temporary_edges(
-        "phase-6",
-        "Hosts and Chat still bypass the final Chat service boundary.",
-        ("cli", "agent"),
-        ("cli", "model"),
-        ("cli", "permissions"),
-        ("cli", "providers"),
-        ("cli", "sessions"),
-        ("cli", "tui"),
-        ("tui", "features.todos"),
-        ("tui", "model"),
-        ("tui", "permissions"),
-        ("tui", "providers"),
-        ("tui", "sessions"),
-        ("tui", "tools"),
-    ),
-    *_temporary_edges(
-        "phase-7",
-        "Legacy Core and Constants mix configuration with composition.",
-        ("bootstrap", "core"),
-        ("chat", "core"),
-        ("cli", "bootstrap"),
-        ("cli", "core"),
-        ("core", "auth"),
-        ("core", "model"),
-        ("core", "permissions"),
-        ("core", "providers"),
-        ("permissions", "core"),
-        ("prompts", "constants"),
-        ("providers", "core"),
-    ),
-)
+TEMPORARY_DEPENDENCY_VIOLATIONS: tuple[TemporaryViolation, ...] = ()
 
-TEMPORARY_DEEP_IMPORTS: tuple[TemporaryViolation, ...] = (
-    *_temporary_edges(
-        "phase-6",
-        "Legacy application.chat and host imports bypass final module roots.",
-        ("chat", "agent"),
-        ("chat", "providers"),
-        ("tui", "chat"),
-        ("tui", "permissions"),
-        ("tui", "providers"),
-    ),
-    *_temporary_edges(
-        "phase-7",
-        "Legacy Core, Constants, and composition imports have no final root API.",
-        ("bootstrap", "chat"),
-        ("bootstrap", "cli"),
-        ("bootstrap", "context"),
-        ("bootstrap", "core"),
-        ("bootstrap", "permissions"),
-        ("bootstrap", "providers"),
-        ("bootstrap", "tools"),
-        ("cli", "bootstrap"),
-        ("cli", "providers"),
-        ("core", "permissions"),
-        ("core", "providers"),
-        ("permissions", "core"),
-        ("prompts", "constants"),
-        ("providers", "core"),
-    ),
-)
+TEMPORARY_DEEP_IMPORTS: tuple[TemporaryViolation, ...] = ()
 
-TEMPORARY_TECHNICAL_LEAKS: tuple[TemporaryTechnicalLeak, ...] = (
-    TemporaryTechnicalLeak(
-        path="src/nano_code/cli/main.py",
-        kind="composition-root",
-        detail="nano_code.core.bootstrap",
-        owner="phase-7",
-        reason="The script entry point still imports the legacy composition root.",
-    ),
-    TemporaryTechnicalLeak(
-        path="src/nano_code/core/paths.py",
-        kind="jsonl-path",
-        detail=".jsonl",
-        owner="phase-7",
-        reason="Session transcript path construction still lives in Core.",
-    ),
-)
+TEMPORARY_TECHNICAL_LEAKS: tuple[TemporaryTechnicalLeak, ...] = ()
 
-TEMPORARY_CYCLIC_COMPONENTS: frozenset[frozenset[str]] = frozenset(
-    {
-        frozenset({"core", "permissions", "providers"}),
-        frozenset({"bootstrap", "cli"}),
-    }
-)
+TEMPORARY_CYCLIC_COMPONENTS: frozenset[frozenset[str]] = frozenset()
 
 
 def iter_python_files() -> tuple[Path, ...]:
@@ -319,7 +241,6 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
                     imported_module
                     in {
                         "nano_code.bootstrap",
-                        "nano_code.core.bootstrap",
                     }
                     and source != "bootstrap"
                 ):
@@ -483,12 +404,8 @@ def architecture_module(module_name: str) -> str:
         return parts[0]
     if len(parts) == 1:
         return PACKAGE_NAME
-    if parts[1:3] == ["core", "bootstrap"]:
-        return "bootstrap"
     if parts[1] == "features" and len(parts) >= 3:
         return ".".join(parts[1:3])
-    if parts[1:3] == ["application", "chat"]:
-        return "chat"
     return parts[1]
 
 

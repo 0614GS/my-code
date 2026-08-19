@@ -5,15 +5,16 @@ from pathlib import Path
 import pytest
 
 from nano_code.auth import CredentialStore, CredentialStoreError
-from nano_code.conversation import HumanMessage
-from nano_code.core import (
+from nano_code.config import (
     NanoCodePaths,
+    ProviderProfile,
+    ProviderProfileStore,
     SettingsFileError,
     SettingsLayer,
     SettingsScope,
     SettingsStore,
 )
-from nano_code.providers.profiles import ProviderProfile, ProviderProfileStore
+from nano_code.conversation import HumanMessage
 from nano_code.sessions import (
     SessionCatalog,
     SessionStore,

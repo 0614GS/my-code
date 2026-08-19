@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from nano_code.auth import CredentialSource
+from nano_code.config import ProviderProtocol
 from nano_code.model import (
     ModelOutput,
     ModelOutputCompleted,
@@ -18,7 +19,6 @@ from nano_code.model import (
     collect_model_output,
     completed_output_payloads,
 )
-from nano_code.providers.profiles import ProviderProtocol
 from nano_code.providers.router import ProviderConnection, ProviderRouter
 
 

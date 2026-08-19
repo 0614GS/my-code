@@ -20,12 +20,14 @@ from nano_code.permissions.models import (
 )
 from nano_code.permissions.path_rules import matching_path_rule, read_denied
 from nano_code.permissions.policy import PermissionPolicy
+from nano_code.permissions.prompt import HeadlessPrompter, TerminalPrompter
 from nano_code.permissions.rules import (
     parse_permission_rule,
     permission_rule_to_string,
     validate_bash_rule_content,
     validate_permission_rule,
 )
+from nano_code.permissions.updates import permission_rule_for_destination
 
 __all__ = [
     "PermissionBehavior",
@@ -37,6 +39,8 @@ __all__ = [
     "PermissionPolicy",
     "PermissionPrompt",
     "PermissionPrompter",
+    "HeadlessPrompter",
+    "TerminalPrompter",
     "PermissionRequest",
     "PermissionRule",
     "PermissionUpdate",
@@ -47,6 +51,7 @@ __all__ = [
     "ToolPermissionResult",
     "parse_permission_rule",
     "permission_rule_to_string",
+    "permission_rule_for_destination",
     "validate_bash_rule_content",
     "validate_permission_rule",
     "matching_path_rule",

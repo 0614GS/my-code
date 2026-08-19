@@ -5,7 +5,8 @@ import platform
 import sys
 from pathlib import Path
 
-from nano_code.constants.prompts import (
+from nano_code.model import PromptStability
+from nano_code.prompts.defaults import (
     IDENTITY_PROMPT,
     RESPONSE_STYLE_PROMPT,
     SAFETY_PROMPT,
@@ -13,7 +14,6 @@ from nano_code.constants.prompts import (
     TASK_GUIDANCE_PROMPT,
     TOOLS_PROMPT,
 )
-from nano_code.model import PromptStability
 from nano_code.prompts.models import PromptSection
 from nano_code.prompts.registry import PromptRegistry
 

@@ -20,7 +20,7 @@ tests/architecture/
 
 - 普通顶层包以第一段识别，例如 `nano_code.context.budget` 属于 `context`。
 - Feature 以两段识别，例如 `nano_code.features.todos.models` 属于 `features.todos`。
-- 迁移期间将旧路径 `nano_code.application.chat` 和 `nano_code.core.bootstrap` 分别识别为目标节点 `chat` 和 `bootstrap`，但仍将旧路径报告为深层 import。
+- 根 `nano_code.bootstrap` 单独识别为组合根；旧 `application`、`core` 与 `constants` 路径已删除，不再特殊映射。
 - 相对 import 先解析为绝对模块，再进行判定。
 - `TYPE_CHECKING` 内的 import 同样是依赖，不忽略。
 - 标准库和第三方包不进入内部模块依赖图，但单独检查 SDK 泄漏规则。
@@ -77,6 +77,8 @@ TemporaryViolation(
 - 不允许永久 wildcard 例外。
 
 扫描结果必须与例外集合相等，而非仅判断为子集。因此新增违规和已经消失但未清理的例外都会使测试失败。循环债务按强连通分量登记，失败信息同时给出一条完整循环路径。
+
+阶段 7 完成后，依赖、深层 import、技术泄漏与循环四类临时例外集合均为空。后续边界变化应修改正式允许表和设计文档，不得重新引入无截止阶段的例外。
 
 ## 测试边界
 

@@ -5,18 +5,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from nano_code.auth import CredentialStore, resolve_api_key
-from nano_code.core.paths import NanoCodePaths
-from nano_code.core.settings_store import SettingsStore
-from nano_code.model import ModelLimits
-from nano_code.providers.discovery import ModelDiscoveryService
-from nano_code.providers.model_cache import ModelCatalogCache
-from nano_code.providers.profiles import (
+from nano_code.config import (
     CompactConfig,
+    NanoCodePaths,
     ProviderProfile,
     ProviderProfileStore,
     ProviderProtocol,
     ReasoningConfig,
+    SettingsStore,
 )
+from nano_code.model import ModelLimits
+from nano_code.providers.discovery import ModelDiscoveryService
+from nano_code.providers.model_cache import ModelCatalogCache
 from nano_code.providers.router import ProviderConnection
 
 

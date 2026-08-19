@@ -1,7 +1,7 @@
 """一次 ToolRound 的事件与串行执行。"""
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from nano_code.conversation import (
@@ -49,27 +49,8 @@ class ToolRoundExecutor:
     def __init__(
         self,
         executor: ToolExecutor,
-        result_store_factory: Callable[[str], ToolResultStore] | None = None,
     ) -> None:
         self.executor = executor
-        self._result_store_factory = result_store_factory
-
-    @property
-    def result_store(self) -> ToolResultStore:
-        """兼容旧 composition/test helper 的只读结果存储访问。"""
-
-        return self.executor.result_store
-
-    def bind_result_store(self, result_store: ToolResultStore) -> None:
-        """兼容旧调用方；新的 Agent-facing API 使用 ``bind_session``。"""
-
-        self.executor.result_store = result_store
-
-    def bind_session(self, session_id: str) -> None:
-        """根据 session ID 切换工具结果存储。"""
-
-        if self._result_store_factory is not None:
-            self.executor.result_store = self._result_store_factory(session_id)
 
     def present_use(self, call: ToolCall) -> ToolUsePresentation:
         return self.executor.present_use(call)
@@ -85,6 +66,8 @@ class ToolRoundExecutor:
         self,
         calls: tuple[ToolCall, ...],
         assistant_message: AssistantMessage,
+        *,
+        result_store: ToolResultStore,
     ) -> AsyncIterator[ToolRoundEvent]:
         results: list[ToolResult] = []
         try:
@@ -92,7 +75,9 @@ class ToolRoundExecutor:
             for call in calls:
                 yield ToolCallStarted(call, self.present_use(call))
                 try:
-                    outcome = await self.executor.execute(call)
+                    outcome = await self.executor.execute(
+                        call, result_store=result_store
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:

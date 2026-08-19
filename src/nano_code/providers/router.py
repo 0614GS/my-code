@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from nano_code.auth import CredentialSource
+from nano_code.config import (
+    CompactConfig,
+    ProviderProtocol,
+    ReasoningConfig,
+)
 from nano_code.model import (
     ModelClient,
     ModelLimits,
@@ -16,11 +21,6 @@ from nano_code.model import (
 )
 from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.openai_responses import OpenAIResponsesProvider
-from nano_code.providers.profiles import (
-    CompactConfig,
-    ProviderProtocol,
-    ReasoningConfig,
-)
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,7 +6,6 @@ from pathlib import Path
 
 from nano_code.model import JsonObject, ModelToolDefinition
 from nano_code.permissions import ToolPermissionContext, ToolPermissionResult
-from nano_code.tools import ToolResultPresentation, compact_text
 from nano_code.tools.base import (
     Tool,
     ToolContext,
@@ -15,6 +14,7 @@ from nano_code.tools.base import (
 )
 from nano_code.tools.builtin.file_permissions import check_read_permission
 from nano_code.tools.paths import relative_display_path, resolve_workspace_path
+from nano_code.tools.presentation import ToolResultPresentation, compact_text
 from nano_code.tools.validation import (
     optional_bool,
     optional_int,

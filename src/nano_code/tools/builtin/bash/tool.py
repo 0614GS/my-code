@@ -10,7 +10,6 @@ from nano_code.permissions import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from nano_code.tools import ToolResultPresentation, compact_text
 from nano_code.tools.base import (
     Tool,
     ToolContext,
@@ -22,6 +21,7 @@ from nano_code.tools.builtin.bash.permissions import (
     matching_rule,
 )
 from nano_code.tools.builtin.bash.process import execute_bash
+from nano_code.tools.presentation import ToolResultPresentation, compact_text
 from nano_code.tools.validation import optional_int, required_string
 
 

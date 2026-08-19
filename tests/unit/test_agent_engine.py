@@ -17,7 +17,12 @@ from nano_code.agent import (
     AgentTurnInput,
     AgentTurnSucceeded,
 )
-from nano_code.context import CompactionCoordinator, CompactionService, ContextBuilder
+from nano_code.context import (
+    CompactionCoordinator,
+    CompactionService,
+    ContextBuilder,
+    ContextSession,
+)
 from nano_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
@@ -119,21 +124,55 @@ class NativeLifecycleModel(FakeModel):
             yield sequencer.emit(payload)
 
 
+class BoundEngine:
+    """Test fixture binding explicit per-session resources to a stateless engine."""
+
+    def __init__(
+        self,
+        engine: AgentEngine,
+        session: Session,
+        result_store: ToolResultStore,
+    ) -> None:
+        self.engine = engine
+        self.session = session
+        self.context = ContextSession()
+        self.result_store = result_store
+
+    async def submit(self, turn_input: AgentTurnInput):
+        return await self.engine.submit(
+            self.session, self.context, self.result_store, turn_input
+        )
+
+    def stream(self, turn_input: AgentTurnInput):
+        return self.engine.stream(
+            self.session, self.context, self.result_store, turn_input
+        )
+
+    @property
+    def history(self):
+        return self.session.history
+
+    @property
+    def context_snapshot(self):
+        return self.context.snapshot(self.session.conversation.snapshot())
+
+
 def _engine(
     tmp_path: Path,
     outputs: list[ModelOutput],
     *,
     max_steps: int | None = None,
     model_type: type[FakeModel] = FakeModel,
-) -> tuple[AgentEngine, FakeModel, Session, ToolRoundExecutor]:
+) -> tuple[BoundEngine, FakeModel, Session, ToolRoundExecutor]:
     store = SessionStore(tmp_path / "sessions", "11111111-1111-1111-1111-111111111111")
     registry = ToolRegistry((*builtin_tools(), TodoWriteTool()))
+    result_store = ToolResultStore(tmp_path / "results")
     executor = ToolExecutor(
         registry,
         PermissionPolicy(PermissionMode.BYPASS),
         HeadlessPrompter(),
         Workspace(tmp_path),
-        ToolResultStore(tmp_path / "results"),
+        result_store,
     )
     model = model_type(outputs)
     context = ContextBuilder(
@@ -149,12 +188,11 @@ def _engine(
     engine = AgentEngine(
         model_call=model,
         tool_round=tool_round,
-        session=session,
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(model)),
         max_steps=max_steps,
     )
-    return engine, model, session, tool_round
+    return BoundEngine(engine, session, result_store), model, session, tool_round
 
 
 @pytest.mark.asyncio
@@ -225,7 +263,7 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
             for message in request.messages
             for block in message.content
         )
-    delivery = engine._context_snapshot.attachment_deliveries[0]
+    delivery = engine.context_snapshot.attachment_deliveries[0]
     assert delivery.anchor_uuid == conversation.history[0].uuid
     assert conversation.store.load().history == conversation.history
 
@@ -242,7 +280,7 @@ async def test_resume_discards_live_context_session_delivery(tmp_path: Path) -> 
         retention="live_session",
     )
     await engine.submit(AgentTurnInput("inspect", (attachment,)))
-    assert engine._context_snapshot.attachment_deliveries
+    assert engine.context_snapshot.attachment_deliveries
 
     replacement = Session(
         SessionStore(
@@ -250,9 +288,10 @@ async def test_resume_discards_live_context_session_delivery(tmp_path: Path) -> 
             "22222222-2222-2222-2222-222222222222",
         )
     )
-    engine.resume(replacement)
+    engine.session = replacement
+    engine.context = ContextSession()
 
-    assert engine._context_snapshot.attachment_deliveries == ()
+    assert engine.context_snapshot.attachment_deliveries == ()
 
 
 def test_agent_turn_input_rejects_request_only_attachments() -> None:
@@ -521,10 +560,12 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
     )
     execute = tool_round.executor.execute
 
-    async def cancel_second(call: ToolCall) -> ToolExecutionOutcome:
+    async def cancel_second(
+        call: ToolCall, *, result_store: ToolResultStore | None = None
+    ) -> ToolExecutionOutcome:
         if call.id == "read-1":
             raise asyncio.CancelledError
-        return await execute(call)
+        return await execute(call, result_store=result_store)
 
     tool_round.executor.execute = cancel_second  # type: ignore[assignment]
     events = []

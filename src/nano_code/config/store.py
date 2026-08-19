@@ -6,10 +6,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from nano_code.core.paths import NanoCodePaths, SettingsScope
+from nano_code.config.paths import NanoCodePaths, SettingsScope
 from nano_code.model import validate_provider_id
-from nano_code.permissions.models import PermissionMode
-from nano_code.permissions.rules import (
+from nano_code.permissions import (
+    PermissionMode,
     permission_rule_to_string,
     validate_permission_rule,
 )

@@ -1,18 +1,32 @@
+"""Concrete ChatService orchestration and session-bundle tests."""
+
+import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 
 from nano_code.agent import (
+    AgentEvent,
+    AgentTurnCompleted,
     AgentTurnInput,
     AgentTurnSucceeded,
 )
-from nano_code.application.chat.contracts import (
+from nano_code.auth import CredentialSource
+from nano_code.bootstrap import bootstrap_chat
+from nano_code.chat import (
+    ChatService,
     HistoryAssistantMessage,
     HistoryToolCall,
     HistoryUserMessage,
 )
-from nano_code.application.chat.runtime import DefaultChatRuntime
-from nano_code.auth import CredentialSource
+from nano_code.config import AgentSettings, NanoCodePaths
+from nano_code.context import (
+    AttachmentDelivery,
+    ContextAttachment,
+    ContextObservation,
+    ContextSession,
+)
 from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
@@ -21,13 +35,12 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.core import AgentSettings, NanoCodePaths
-from nano_code.core.bootstrap import bootstrap_cli_runtime
 from nano_code.model import TokenUsage
 from nano_code.permissions import PermissionMode
-from nano_code.sessions import SessionStore
+from nano_code.sessions import Session, SessionStore
 from nano_code.tools import (
     ToolResultPresentation,
+    ToolResultStore,
     ToolUsePresentation,
 )
 
@@ -39,12 +52,19 @@ class CapturingAgent:
     def __init__(self) -> None:
         self.turn_input: AgentTurnInput | None = None
 
-    async def submit(self, turn_input: AgentTurnInput) -> AgentTurnSucceeded:
+    async def submit(
+        self,
+        session: Session,
+        context: ContextSession,
+        result_store: ToolResultStore,
+        turn_input: AgentTurnInput,
+    ) -> AgentTurnSucceeded:
+        del session, context, result_store
         self.turn_input = turn_input
         return AgentTurnSucceeded("done", 1, TokenUsage())
 
 
-def _bootstrap_runtime(tmp_path: Path) -> DefaultChatRuntime:
+def _bootstrap_runtime(tmp_path: Path) -> ChatService:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     paths = NanoCodePaths.discover(
@@ -63,7 +83,7 @@ def _bootstrap_runtime(tmp_path: Path) -> DefaultChatRuntime:
         interactive=True,
         credential_source=CredentialSource.NONE,
     )
-    return bootstrap_cli_runtime(settings, _CURRENT_SESSION_ID)
+    return bootstrap_chat(settings, _CURRENT_SESSION_ID)
 
 
 @pytest.mark.asyncio
@@ -88,6 +108,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
+    previous = runtime._active
     store = SessionStore(
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
@@ -112,6 +133,11 @@ async def test_runtime_lists_and_atomically_switches_project_session(
         HistoryAssistantMessage("historical answer"),
     )
     assert runtime.status().session_id == _TARGET_SESSION_ID
+    assert runtime._active is not previous
+    assert runtime._active.context is not previous.context
+    assert runtime._active.tool_results.root == runtime.settings.paths.tool_results_dir(
+        _TARGET_SESSION_ID
+    )
 
 
 @pytest.mark.asyncio
@@ -201,3 +227,79 @@ async def test_resume_projects_todos_into_runtime_status(tmp_path: Path) -> None
 
     assert len(resumed.status.todos) == 1
     assert resumed.status.todos[0].active_form == "Running tests"
+
+
+@pytest.mark.asyncio
+async def test_failed_resume_keeps_the_complete_active_session_bundle(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    active = runtime._active
+    anchor = HumanMessage(content="keep this session")
+    active.session.append(anchor)
+    active.context.add(
+        (
+            AttachmentDelivery(
+                anchor.uuid,
+                ContextAttachment(
+                    "file",
+                    (ContextObservation("File: keep.txt", "keep"),),
+                    retention="live_session",
+                ),
+            ),
+        ),
+        active.session.conversation.snapshot(),
+    )
+    empty_id = "33333333-3333-3333-3333-333333333333"
+    SessionStore(runtime.settings.paths.project_state_dir, empty_id).load()
+
+    with pytest.raises(ValueError, match="contains no messages"):
+        await runtime.resume_session(empty_id)
+
+    assert runtime._active is active
+    assert runtime.status().session_id == _CURRENT_SESSION_ID
+    assert runtime._active.tool_results is active.tool_results
+    assert runtime._active.context.snapshot(
+        active.session.conversation.snapshot()
+    ).attachment_deliveries
+
+
+@pytest.mark.asyncio
+async def test_stream_prevents_session_switch_until_turn_finishes(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    target = SessionStore(runtime.settings.paths.project_state_dir, _TARGET_SESSION_ID)
+    target.append(HumanMessage(content="target"))
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingAgent:
+        async def stream(
+            self,
+            session: Session,
+            context: ContextSession,
+            result_store: ToolResultStore,
+            turn_input: AgentTurnInput,
+        ) -> AsyncIterator[AgentEvent]:
+            del session, context, result_store, turn_input
+            started.set()
+            await release.wait()
+            yield AgentTurnCompleted(AgentTurnSucceeded("done", 1, TokenUsage()))
+
+    runtime.agent = BlockingAgent()  # type: ignore[assignment]
+
+    async def consume() -> None:
+        async for _ in runtime.stream("wait"):
+            pass
+
+    turn = asyncio.create_task(consume())
+    await started.wait()
+    resume = asyncio.create_task(runtime.resume_session(_TARGET_SESSION_ID))
+    await asyncio.sleep(0)
+    assert not resume.done()
+
+    release.set()
+    await turn
+    await resume
+    assert runtime.status().session_id == _TARGET_SESSION_ID

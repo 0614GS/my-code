@@ -1,10 +1,8 @@
 """Frontend-neutral contracts for interactive chat applications."""
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol
 
-from nano_code.features.file_mentions import PathSuggestion
 from nano_code.features.todos import TodoItem
 from nano_code.model import (
     JsonObject,
@@ -12,8 +10,6 @@ from nano_code.model import (
     ReasoningPresentation,
 )
 from nano_code.permissions import PermissionConfirmation, PermissionUpdate
-from nano_code.providers.manager import ProviderUpdate, ProviderView
-from nano_code.sessions import SessionSummary
 from nano_code.tools import (
     ToolResultPresentation,
     ToolUsePresentation,
@@ -216,29 +212,32 @@ type PermissionHandler = Callable[
 ]
 
 
-class ChatRuntime(Protocol):
-    """Capabilities required by an interactive chat frontend."""
-
-    async def submit(self, prompt: str) -> TurnOutcome: ...
-
-    def stream(self, prompt: str) -> AsyncIterator[TurnEvent]: ...
-
-    async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]: ...
-
-    def status(self) -> RuntimeStatus: ...
-
-    def context_status(self) -> ContextStatus: ...
-
-    async def compact(self) -> ContextStatus: ...
-
-    def set_permission_handler(self, handler: PermissionHandler) -> None: ...
-
-    def providers(self) -> tuple[ProviderView, ...]: ...
-
-    async def refresh_provider_models(self, provider_id: str) -> ProviderView: ...
-
-    async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus: ...
-
-    async def list_sessions(self) -> tuple[SessionSummary, ...]: ...
-
-    async def resume_session(self, session_id: str) -> ResumedSession: ...
+__all__ = [
+    "AttachmentLoaded",
+    "ContextStatus",
+    "HistoryAssistantMessage",
+    "HistoryEntry",
+    "HistoryReasoning",
+    "HistorySystemMessage",
+    "HistoryToolCall",
+    "HistoryUserMessage",
+    "MaxStepsReached",
+    "PermissionHandler",
+    "PermissionRequest",
+    "ReasoningCompleted",
+    "ReasoningDelta",
+    "ReasoningStarted",
+    "ResumedSession",
+    "RuntimeStatus",
+    "StepLimitReached",
+    "TextCompleted",
+    "TextDelta",
+    "TextStarted",
+    "TodoListUpdated",
+    "ToolFinished",
+    "ToolStarted",
+    "TurnCompleted",
+    "TurnEvent",
+    "TurnOutcome",
+    "TurnSucceeded",
+]

@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.core import (
+from nano_code.config import (
     NanoCodePaths,
+    PermissionUpdateApplier,
     SettingsFileError,
     SettingsScope,
     SettingsStore,
@@ -17,7 +18,6 @@ from nano_code.permissions import (
     PermissionUpdateDestination,
     PermissionUpdateType,
 )
-from nano_code.permissions.updates import PermissionUpdateApplier
 
 
 class FailingSettingsStore(SettingsStore):

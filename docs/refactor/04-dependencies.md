@@ -5,10 +5,10 @@
 下文统一使用 `A -> B` 表示“A 可以 import B”。生产代码按以下顺序组合，后面的层可以依赖前面的层：
 
 ```text
-L0  model  workspace  permissions  prompts  auth
-L1  conversation  config
-L2  context  tools  providers
-L3  sessions  features.todos  features.file_mentions
+L0  model  workspace
+L1  conversation  permissions  prompts  auth
+L2  config  context  tools
+L3  providers  sessions  features.todos  features.file_mentions
 L4  agent
 L5  features.subagents  features.plan_mode
 L6  chat
@@ -18,7 +18,7 @@ L8  bootstrap
 
 层级只帮助阅读，不自动授权同层或所有低层依赖。AST 守卫以下面的允许表为唯一机器标准。
 
-## 初始允许表
+## 最终允许表
 
 ```python
 ALLOWED_DEPENDENCIES = {
@@ -27,7 +27,7 @@ ALLOWED_DEPENDENCIES = {
     "permissions": {"model"},
     "prompts": {"model"},
     "auth": {"model"},
-    "config": {"model"},
+    "config": {"auth", "model", "permissions"},
     "conversation": {"model"},
     "context": {"conversation", "model", "prompts"},
     "tools": {"conversation", "model", "permissions", "workspace"},
@@ -40,7 +40,9 @@ ALLOWED_DEPENDENCIES = {
     "features.plan_mode": {"agent", "prompts", "tools"},
     "chat": {
         "agent",
+        "config",
         "context",
+        "conversation",
         "features.file_mentions",
         "features.todos",
         "model",
@@ -54,7 +56,7 @@ ALLOWED_DEPENDENCIES = {
 }
 ```
 
-该表是起始设计。实现阶段如果发现真实职责不符，应先修改模块设计文档，再调整允许表；不能只为让测试通过而增加依赖。
+该表是最终机器规则。实现阶段如果发现真实职责不符，应先修改模块设计文档，再调整允许表；不能只为让测试通过而增加依赖。
 
 `bootstrap` 是组合根，可以依赖所有生产模块，但任何模块不得依赖 `bootstrap`。
 
@@ -90,4 +92,4 @@ from nano_code.model.request import ModelRequest
 from nano_code.model import ModelRequest
 ```
 
-模块内部可以直接导入自己的子模块。确有必要的深层公开入口必须加入显式例外，并说明原因；不能依靠 re-export 链兼容旧结构。
+模块内部可以直接导入自己的子模块。最终生产代码没有深层 import 例外；公开 re-export 只声明当前能力，不兼容旧路径。

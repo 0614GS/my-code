@@ -5,7 +5,7 @@ import pytest
 from nano_code.auth import CredentialStore
 from nano_code.cli.arguments import AuthAction, AuthOptions
 from nano_code.cli.auth import run_auth_command
-from nano_code.core import NanoCodePaths
+from nano_code.config import NanoCodePaths
 
 
 def _options(tmp_path: Path, action: AuthAction) -> tuple[AuthOptions, NanoCodePaths]:

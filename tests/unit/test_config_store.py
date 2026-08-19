@@ -1,10 +1,12 @@
+"""Layered configuration store tests."""
+
 import json
 import stat
 from pathlib import Path
 
 import pytest
 
-from nano_code.core import (
+from nano_code.config import (
     NanoCodePaths,
     SettingsFileError,
     SettingsLayer,

@@ -44,11 +44,13 @@ Session --先写 JSONL，后更新内存--> Conversation
 
 恢复由 `sessions` 完成解析、schema 校验、父链重建、compact working set 重建和未闭合工具轮修复。`chat` 只有在目标 session 完整恢复成功后，才原子替换当前活动状态；失败时继续使用原 session。
 
-一次切换需要同时替换：
+`ChatService` 使用一个不可变 session bundle 引用完成切换。一次切换同时替换：
 
 - `Session` 及其 `Conversation`；
 - `ContextSession`；
 - session 对应的工具结果目录和展示索引。
+
+工具结果目录不再通过 `ToolExecutor` 的隐藏 mutable binding 切换。Chat 将当前 bundle 的 `ToolResultStore` 随每次 turn 显式传给 Agent，再传到工具轮；候选 Session hydration 或历史投影失败时，旧 bundle 的三个引用均不改变。
 
 当前 provider/profile、runtime permission policy 和工作区不从 Transcript 恢复。`session_started` 中的对应字段只用于历史诊断；继续对话使用当前运行时配置，provider continuation 仅在 binding 匹配时回放。
 
@@ -87,7 +89,7 @@ Todo 等 feature 状态从完整 Conversation history 投影，不维护第二�
 
 ## Agent 与 Chat 的边界
 
-`AgentEngine` 是无状态执行内核。`run/stream` 接收当前 `Session` 和对应的 context 状态，局部维护一次 turn 的 step、token usage、流式序列和工具轮。取消时必须闭合并提交已经持久化的 tool calls，随后丢弃 turn 状态。
+`AgentEngine` 是无状态执行内核。`submit/stream` 接收当前 `Session`、`ContextSession` 和 `ToolResultStore`，局部维护一次 turn 的 step、token usage、流式序列和工具轮。取消时必须闭合并提交已经持久化的 tool calls，随后丢弃 turn 状态。Engine 对象本身只持有模型、ContextBuilder、CompactionCoordinator、ToolRoundExecutor 和不可变配置，不保存活动 session 引用。
 
 `chat` 是长生命周期协调者，负责：
 

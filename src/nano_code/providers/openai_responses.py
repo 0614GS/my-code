@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from openai import AsyncOpenAI, BadRequestError
 
+from nano_code.config import ReasoningConfig
 from nano_code.model import (
     JsonObject,
     ModelClient,
@@ -35,7 +36,6 @@ from nano_code.model import (
     TokenUsage,
     to_json_object,
 )
-from nano_code.providers.profiles import ReasoningConfig
 
 type _DisplayKey = tuple[str, int]
 

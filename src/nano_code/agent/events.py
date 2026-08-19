@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.agent.contracts.inbound import AgentMaxStepsReached, AgentTurnSucceeded
+from nano_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
 from nano_code.model import (
     JsonObject,
     ReasoningDisclosure,

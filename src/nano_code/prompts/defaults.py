@@ -1,4 +1,4 @@
-"""Stable English prompt sections for the default coding agent."""
+"""Stable English sections for the default coding-agent prompt."""
 
 IDENTITY_PROMPT = """You are nano-code, a coding agent for software engineering tasks.
 Base decisions on facts observed in the workspace and the conversation."""

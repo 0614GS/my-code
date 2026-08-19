@@ -1,5 +1,7 @@
 # 工具系统
 
+> 架构边界说明已由 `docs/refactor/` 取代。Todo 状态现由 Chat 从 Conversation 投影，Agent 不再提供 `AgentStatus.todos`；最终所有权见 `refactor/15-phase-6-7-finalization.md`。
+
 ## 1. Tool 是协议对象
 
 `Tool` 不只是可调用函数。参考实现的接口同时描述五类信息，定义在 `claude-code/src/Tool.ts:362`：

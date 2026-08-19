@@ -6,16 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nano_code.auth import CredentialSource, CredentialStore, resolve_api_key
-from nano_code.core.paths import NanoCodePaths, SettingsScope
-from nano_code.core.settings_store import SettingsLayer, SettingsStore
-from nano_code.model import ModelDescriptor, ModelLimits, validate_provider_id
-from nano_code.permissions import (
-    PermissionBehavior,
-    PermissionMode,
-    PermissionRule,
-    validate_permission_rule,
-)
-from nano_code.providers.profiles import (
+from nano_code.config.paths import NanoCodePaths, SettingsScope
+from nano_code.config.providers import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_ID,
     CompactConfig,
@@ -24,7 +16,15 @@ from nano_code.providers.profiles import (
     ProviderProtocol,
     ReasoningConfig,
 )
-from nano_code.providers.validation import validate_base_url
+from nano_code.config.store import SettingsLayer, SettingsStore
+from nano_code.config.validation import validate_base_url
+from nano_code.model import ModelDescriptor, ModelLimits, validate_provider_id
+from nano_code.permissions import (
+    PermissionBehavior,
+    PermissionMode,
+    PermissionRule,
+    validate_permission_rule,
+)
 
 DEFAULT_MAX_OUTPUT_TOKENS = 8192
 DEFAULT_CONTEXT_CHARS = 160_000

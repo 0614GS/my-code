@@ -83,9 +83,9 @@ Agent 不在 turn 之间保存活动 Session，也不负责 resume。它不拥�
 
 ## 支撑模块
 
-- `providers`：OpenAI、Anthropic 适配及 provider profile/catalog/router；只实现 `model` 定义的能力。
+- `providers`：OpenAI、Anthropic 适配及运行时 catalog/manager/router；实现 `model` 定义的能力，并读取 `config` 的 profile 配置。
 - `prompts`：未解析 prompt section、生命周期和解析；解析结果使用 `model.SystemPrompt`，不拼接 provider payload。
-- `config`：设置模型、路径和配置存储；不负责运行时组装。
+- `config`：路径、分层 settings、provider profile schema/store 和权限更新持久化协调；不负责运行时组装。
 - `auth`：凭据读取、保存和遮蔽。
 - `tui`、`cli`：host，只调用 `chat` 的公开能力。
 - `bootstrap.py`：创建具体对象并连接模块，不包含业务判断。

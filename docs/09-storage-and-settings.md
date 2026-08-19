@@ -111,16 +111,11 @@ Turn 内成功产生 AssistantMessage 的 Step，overflow/fallback 恢复中失�
 重试不额外计数。CLI 对应 `--max-steps`。settings version 3 不接受旧
 `maxTurns`。Provider profile 和 credential 是独立 schema，仍使用 version 2。
 
-## Core 与启动边界
+## Config 与启动边界
 
-`nano_code.core` 是 settings 与应用启动的唯一归属。`SettingsLayer` 表示单个持久化
-来源，`SettingsResolver` 统一合并文件、环境、provider、凭据和入口 overrides，最终
-生成一次 Agent 生命周期使用的 `AgentSettings` 快照。`core.bootstrap` 是唯一完整
-composition root，负责创建 Agent、context、provider、session 和 tool 适配器。
+`nano_code.config` 是路径、分层 settings、provider profile 配置与存储的唯一归属。`SettingsLayer` 表示单个持久化来源，`SettingsResolver` 统一合并文件、环境、profile、凭据和入口 overrides，最终生成运行时使用的 `AgentSettings` 快照。
 
-CLI 参数解析只产生 `SettingsOverrides`，不读取磁盘或凭据；`cli.runtime` 只把
-`AgentInboundPort` 的事件和状态投影为 TUI contract。这样未来增加非 CLI 入口时，
-不需要复制 settings 优先级或 Agent 依赖装配。
+根 `nano_code.bootstrap` 是唯一 composition root 和进程入口，负责创建 Agent、Chat、Context、Provider、Session 与 Tool 对象图。CLI 参数解析只产生 `SettingsOverrides`，不读取磁盘或凭据；TUI 只依赖 `chat` 的公开 API。`ChatService` 负责前端事件投影、活动 Session bundle、provider 切换与权限确认，不存在 Agent inbound port 或 CLI runtime adapter。
 
 Provider 的默认模型和 endpoint 归入 `providers.json`；项目配置仍可用 `agent.model` 覆盖模型，但不能定义或选择 Provider。settings 不再接受 `baseUrl` 作为连接配置入口。
 

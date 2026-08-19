@@ -1,5 +1,7 @@
 # 终端 UI
 
+> 本文件的 UI 行为仍有效；旧 `application.chat.ChatRuntime`、`DefaultChatRuntime`、Agent inbound port 与 `core.bootstrap` 结构已被顶层具体 `ChatService` 和根 `bootstrap.py` 取代，见 `refactor/15-phase-6-7-finalization.md`。
+
 ## 参考实现
 
 Claude Code 的界面不是字符串拼接。参考源码使用 React 和 `react-reconciler`，并在 `src/ink/` 中维护定制的 Ink 风格渲染器：Box/Text 组件、Yoga/Flex 布局、焦点和输入事件、ScrollBox、静态消息冻结及 alternate screen。上层再组合 `REPL`、`PromptInput`、`Markdown`、`Spinner`、`Dialog` 和 design system。

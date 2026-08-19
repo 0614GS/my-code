@@ -4,8 +4,13 @@ from pathlib import Path
 
 import pytest
 
+from nano_code.config import (
+    NanoCodePaths,
+    PermissionUpdateApplier,
+    SettingsScope,
+    SettingsStore,
+)
 from nano_code.conversation import ToolCall
-from nano_code.core import NanoCodePaths, SettingsScope, SettingsStore
 from nano_code.model import JsonObject, ModelToolDefinition
 from nano_code.permissions import (
     PermissionBehavior,
@@ -23,7 +28,6 @@ from nano_code.permissions import (
 )
 from nano_code.permissions.models import PermissionDecision
 from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.permissions.updates import PermissionUpdateApplier
 from nano_code.tools import Tool, ToolContext, ToolRegistry, ToolResultPresentation
 from nano_code.tools.base import ToolOutput
 from nano_code.tools.builtin import builtin_tools

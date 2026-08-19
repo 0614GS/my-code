@@ -1,6 +1,6 @@
 # 包边界与依赖方向
 
-> 状态：Accepted，迁移已完成。第 1 至第 7 步均已落地并通过验收。
+> 状态：Superseded。本文件记录重构前的边界分析与历史迁移方案；当前权威规范位于 `docs/refactor/`，最终实现见 `refactor/15-phase-6-7-finalization.md`。旧 `core`、`application.chat`、ports/adapters 与兼容层均已删除。
 
 Provider availability、model capabilities、actual usage、local estimate 与 compact policy
 是五个独立维度：Provider adapter 只处理 wire payload，`providers` 的目录端口与缓存解析

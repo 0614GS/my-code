@@ -5,13 +5,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from nano_code.config import atomic_private_json_write
 from nano_code.model import (
     CapabilitySource,
     ModelCapabilities,
     ModelDescriptor,
     ModelLimits,
 )
-from nano_code.providers.profiles import _atomic_private_json_write
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +71,7 @@ class ModelCatalogCache:
             "fetchedAt": fetched_at,
             "models": [_model_json(model) for model in models],
         }
-        _atomic_private_json_write(self.path, root)
+        atomic_private_json_write(self.path, root)
         return fetched_at
 
 
