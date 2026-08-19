@@ -1,9 +1,7 @@
 """在工作区内写入完整文本文件。"""
 
-from pathlib import Path
-
 from nano_code.model import JsonObject, ModelToolDefinition
-from nano_code.permissions.models import ToolPermissionContext, ToolPermissionResult
+from nano_code.permissions import ToolPermissionContext, ToolPermissionResult
 from nano_code.tools import ToolResultPresentation
 from nano_code.tools.base import Tool, ToolContext, ToolOutput
 from nano_code.tools.builtin.file_permissions import check_write_permission
@@ -64,17 +62,12 @@ class WriteFileTool(Tool):
             context.cwd, required_string(tool_input, "path"), writable=True
         )
         content = required_string(tool_input, "content", allow_empty=True)
-        self._write(path, content)
+        if path.exists() and not path.is_file():
+            raise IsADirectoryError(path)
+        context.workspace.write_text(path, content, create_parents=True)
         display_path = relative_display_path(context.cwd, path)
         byte_count = len(content.encode("utf-8"))
         return ToolOutput(
             content=f"Wrote {byte_count} bytes to {display_path}",
             metadata={"path": display_path, "byte_count": byte_count},
         )
-
-    @staticmethod
-    def _write(path: Path, content: str) -> None:
-        if path.exists() and not path.is_file():
-            raise IsADirectoryError(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")

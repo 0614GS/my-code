@@ -1,10 +1,8 @@
 """Permission prompting bridge for interactive chat frontends."""
 
 from nano_code.application.chat.contracts import PermissionHandler, PermissionRequest
-from nano_code.model import JsonObject
-from nano_code.permissions import PermissionConfirmation
-from nano_code.permissions.models import PermissionDecision
-from nano_code.tools import Tool, generic_tool_use_presentation
+from nano_code.permissions import PermissionConfirmation, PermissionPrompt
+from nano_code.tools import ToolUsePresentation
 
 
 class DeferredPermissionPrompter:
@@ -16,23 +14,20 @@ class DeferredPermissionPrompter:
     def set_handler(self, handler: PermissionHandler) -> None:
         self._handler = handler
 
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
         if self._handler is None:
             return PermissionConfirmation(False)
-        try:
-            presentation = tool.present_use(tool_input)
-        except Exception:
-            presentation = generic_tool_use_presentation(
-                tool.definition.name, tool_input
-            )
+        presentation = ToolUsePresentation(
+            display_name=request.display_name,
+            summary=request.summary,
+            activity=request.activity,
+        )
         return await self._handler(
             PermissionRequest(
-                tool_name=tool.definition.name,
-                tool_input=tool_input,
-                message=decision.message,
+                tool_name=request.tool_name,
+                tool_input=request.tool_input,
+                message=request.decision.message,
                 presentation=presentation,
-                suggestions=decision.suggestions,
+                suggestions=request.decision.suggestions,
             )
         )

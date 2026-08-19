@@ -9,13 +9,12 @@ from nano_code.permissions.models import (
     PermissionDecisionKind,
     PermissionDecisionReason,
     PermissionMode,
+    PermissionRequest,
     PermissionRule,
     PermissionUpdate,
     PermissionUpdateType,
     ToolPermissionBehavior,
-    ToolPermissionContext,
 )
-from nano_code.tools.base import Tool, ToolContext
 
 
 class PermissionPolicy:
@@ -87,40 +86,28 @@ class PermissionPolicy:
         else:
             raise ValueError("Additional working directories are not supported yet")
 
-    async def decide(
-        self,
-        tool: Tool,
-        tool_input: JsonObject,
-        context: ToolContext,
-    ) -> PermissionDecision:
-        """组合全局策略与基于具体输入的工具局部判断。"""
+    def decide(self, request: PermissionRequest) -> PermissionDecision:
+        """组合全局策略与工具提供的结构化局部判断。"""
 
         # 所有宽松模式之前都要检查显式 deny 和 ask 规则。
         # 尤其是 bypassPermissions 不能静默抹除用户策略。
-        deny_rule = self._whole_tool_rule(tool, PermissionBehavior.DENY)
+        deny_rule = self._whole_tool_rule(request.tool_name, PermissionBehavior.DENY)
         if deny_rule is not None:
             return PermissionDecision(
                 behavior=PermissionBehavior.DENY,
-                message=f"{tool.definition.name} is denied by an explicit rule.",
+                message=f"{request.tool_name} is denied by an explicit rule.",
                 decision_reason=_rule_reason(deny_rule),
             )
 
-        ask_rule = self._whole_tool_rule(tool, PermissionBehavior.ASK)
+        ask_rule = self._whole_tool_rule(request.tool_name, PermissionBehavior.ASK)
         if ask_rule is not None:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
-                message=f"{tool.definition.name} requires confirmation by rule.",
+                message=f"{request.tool_name} requires confirmation by rule.",
                 decision_reason=_rule_reason(ask_rule),
             )
 
-        tool_result = await tool.check_permissions(
-            tool_input,
-            ToolPermissionContext(
-                mode=self.mode,
-                rules=self.rules,
-                tool_context=context,
-            ),
-        )
+        tool_result = request.tool_result
 
         # 工具拥有输入语义，因此它的拒绝具有权威性。显式内容询问和受保护路径检查
         # 同样可以声明不受 bypass 影响。
@@ -153,17 +140,21 @@ class PermissionPolicy:
                 decision_reason=PermissionDecisionReason(
                     PermissionDecisionKind.MODE, PermissionMode.BYPASS.value
                 ),
-                updated_input=_updated_input(tool_result.updated_input, tool_input),
+                updated_input=_updated_input(
+                    tool_result.updated_input, request.tool_input
+                ),
             )
 
         # 只有处理完更高优先级的反对项后，才考虑显式 allow。
-        allow_rule = self._whole_tool_rule(tool, PermissionBehavior.ALLOW)
+        allow_rule = self._whole_tool_rule(request.tool_name, PermissionBehavior.ALLOW)
         if allow_rule is not None:
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
-                message=f"{tool.definition.name} is allowed by an explicit rule.",
+                message=f"{request.tool_name} is allowed by an explicit rule.",
                 decision_reason=_rule_reason(allow_rule),
-                updated_input=_updated_input(tool_result.updated_input, tool_input),
+                updated_input=_updated_input(
+                    tool_result.updated_input, request.tool_input
+                ),
             )
 
         if tool_result.behavior is ToolPermissionBehavior.ALLOW:
@@ -171,7 +162,9 @@ class PermissionPolicy:
                 behavior=PermissionBehavior.ALLOW,
                 message=tool_result.message,
                 decision_reason=tool_result.decision_reason,
-                updated_input=_updated_input(tool_result.updated_input, tool_input),
+                updated_input=_updated_input(
+                    tool_result.updated_input, request.tool_input
+                ),
                 suggestions=tool_result.suggestions,
             )
 
@@ -180,8 +173,7 @@ class PermissionPolicy:
             return PermissionDecision(
                 behavior=PermissionBehavior.DENY,
                 message=(
-                    f"{tool.definition.name} needs confirmation, "
-                    "but prompts are disabled."
+                    f"{request.tool_name} needs confirmation, but prompts are disabled."
                 ),
                 decision_reason=PermissionDecisionReason(
                     PermissionDecisionKind.MODE, PermissionMode.DONT_ASK.value
@@ -199,11 +191,11 @@ class PermissionPolicy:
         )
 
     def _whole_tool_rule(
-        self, tool: Tool, behavior: PermissionBehavior
+        self, tool_name: str, behavior: PermissionBehavior
     ) -> PermissionRule | None:
         for rule in self.rules:
             if (
-                rule.tool_name == tool.definition.name
+                rule.tool_name == tool_name
                 and rule.behavior is behavior
                 and rule.applies_to_entire_tool
             ):

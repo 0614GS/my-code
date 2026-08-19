@@ -1,7 +1,7 @@
 """统一的校验 → 权限 → 执行与双重结果投影管线。"""
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from nano_code.conversation import ToolCall, ToolResult
@@ -12,9 +12,12 @@ from nano_code.permissions import (
     PermissionDecisionKind,
     PermissionDecisionReason,
     PermissionPolicy,
+    PermissionPrompt,
+    PermissionPrompter,
+    PermissionRequest,
+    PermissionUpdate,
+    ToolPermissionContext,
 )
-from nano_code.permissions.prompt import PermissionPrompter
-from nano_code.permissions.updates import PermissionUpdateApplier
 from nano_code.tools.base import (
     Tool,
     ToolContext,
@@ -35,6 +38,7 @@ from nano_code.tools.presentation import (
 )
 from nano_code.tools.registry import ToolRegistry
 from nano_code.tools.result_store import ToolResultStore
+from nano_code.workspace import Workspace
 
 logger = logging.getLogger("nano_code.permissions")
 
@@ -77,18 +81,19 @@ class ToolExecutor:
         registry: ToolRegistry,
         policy: PermissionPolicy,
         prompter: PermissionPrompter,
-        context: ToolContext,
+        workspace: Workspace,
         result_store: ToolResultStore,
-        update_applier: PermissionUpdateApplier | None = None,
+        update_applier: Callable[[tuple[PermissionUpdate, ...]], None] | None = None,
         hooks: Iterable[ToolInvocationHook] = (),
         audit: ToolInvocationAudit | None = None,
     ) -> None:
         self.registry = registry
         self.policy = policy
         self.prompter = prompter
-        self.context = context
+        self.workspace = workspace
+        self.context = ToolContext(workspace)
         self.result_store = result_store
-        self.update_applier = update_applier or PermissionUpdateApplier(policy)
+        self.update_applier = update_applier or _apply_updates(policy)
         self.hooks = tuple(hooks)
         self.audit = audit or LoggingToolInvocationAudit()
 
@@ -155,10 +160,20 @@ class ToolExecutor:
 
         # 权限是独立策略层；只有静态策略及所需用户确认均通过后，才调用 Tool.execute。
         try:
-            decision = await self.policy.decide(
-                tool,
+            tool_result = await tool.check_permissions(
                 call.input,
-                self.context,
+                ToolPermissionContext(
+                    mode=self.policy.mode,
+                    rules=self.policy.rules,
+                    workspace_root=self.workspace.root,
+                ),
+            )
+            decision = self.policy.decide(
+                PermissionRequest(
+                    tool_name=tool.definition.name,
+                    tool_input=call.input,
+                    tool_result=tool_result,
+                )
             )
         except Exception as error:
             return self._error(
@@ -184,8 +199,16 @@ class ToolExecutor:
                 call.input if decision.updated_input is None else decision.updated_input
             )
             try:
+                presentation = self.present_use(call)
                 confirmation = await self.prompter.confirm(
-                    tool, permission_input, decision
+                    PermissionPrompt(
+                        tool_name=tool.definition.name,
+                        tool_input=permission_input,
+                        decision=decision,
+                        display_name=presentation.display_name,
+                        summary=presentation.summary,
+                        activity=presentation.activity,
+                    )
                 )
             except Exception as error:
                 return self._error(
@@ -226,7 +249,7 @@ class ToolExecutor:
                 )
             if confirmation.updates:
                 try:
-                    self.update_applier.apply(confirmation.updates)
+                    self.update_applier(confirmation.updates)
                 except Exception as error:
                     logger.warning(
                         "Permission update failed: tool=%s error=%s",
@@ -337,3 +360,13 @@ class ToolExecutor:
             is_error=True,
         )
         return ToolExecutionOutcome(result, presentation)
+
+
+def _apply_updates(
+    policy: PermissionPolicy,
+) -> Callable[[tuple[PermissionUpdate, ...]], None]:
+    def apply(updates: tuple[PermissionUpdate, ...]) -> None:
+        for update in updates:
+            policy.apply_update(update)
+
+    return apply

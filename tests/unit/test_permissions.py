@@ -10,13 +10,16 @@ from nano_code.permissions import (
     PermissionDecisionReason,
     PermissionMode,
     PermissionPolicy,
+    PermissionPrompt,
+    PermissionRequest,
     PermissionRule,
     PermissionUpdate,
     PermissionUpdateDestination,
+    ToolPermissionContext,
 )
 from nano_code.permissions.models import PermissionDecision
 from nano_code.permissions.prompt import TerminalPrompter
-from nano_code.tools import ToolContext
+from nano_code.tools import Tool, ToolContext
 from nano_code.tools.builtin.bash import BashTool
 from nano_code.tools.builtin.read_file import ReadFileTool
 from nano_code.tools.builtin.write_file import WriteFileTool
@@ -26,6 +29,38 @@ def tool_reason(detail: str = "test") -> PermissionDecisionReason:
     return PermissionDecisionReason(PermissionDecisionKind.TOOL, detail)
 
 
+async def decide(
+    policy: PermissionPolicy,
+    tool: Tool,
+    tool_input: JsonObject,
+    context: ToolContext,
+) -> PermissionDecision:
+    local = await tool.check_permissions(
+        tool_input,
+        ToolPermissionContext(policy.mode, policy.rules, context.cwd),
+    )
+    return policy.decide(PermissionRequest(tool.definition.name, tool_input, local))
+
+
+async def confirm(
+    prompter: TerminalPrompter,
+    tool: Tool,
+    tool_input: JsonObject,
+    decision: PermissionDecision,
+) -> PermissionConfirmation:
+    presentation = tool.present_use(tool_input)
+    return await prompter.confirm(
+        PermissionPrompt(
+            tool.definition.name,
+            tool_input,
+            decision,
+            presentation.display_name,
+            presentation.summary,
+            presentation.activity,
+        )
+    )
+
+
 @pytest.mark.asyncio
 async def test_explicit_deny_precedes_bypass_mode(tmp_path: Path) -> None:
     policy = PermissionPolicy(
@@ -33,8 +68,8 @@ async def test_explicit_deny_precedes_bypass_mode(tmp_path: Path) -> None:
         [PermissionRule("Bash", PermissionBehavior.DENY)],
     )
 
-    decision = await policy.decide(
-        BashTool(), {"command": "pwd"}, ToolContext(tmp_path)
+    decision = await decide(
+        policy, BashTool(), {"command": "pwd"}, ToolContext(tmp_path)
     )
 
     assert decision.behavior is PermissionBehavior.DENY
@@ -47,8 +82,8 @@ async def test_explicit_ask_precedes_bypass_mode(tmp_path: Path) -> None:
         [PermissionRule("Bash", PermissionBehavior.ASK)],
     )
 
-    decision = await policy.decide(
-        BashTool(), {"command": "pwd"}, ToolContext(tmp_path)
+    decision = await decide(
+        policy, BashTool(), {"command": "pwd"}, ToolContext(tmp_path)
     )
 
     assert decision.behavior is PermissionBehavior.ASK
@@ -61,8 +96,8 @@ async def test_default_allows_reads_and_asks_for_writes(tmp_path: Path) -> None:
 
     read_input: JsonObject = {"path": "README.md"}
     write_input: JsonObject = {"path": "README.md", "content": "replacement"}
-    read = await policy.decide(ReadFileTool(), read_input, ToolContext(tmp_path))
-    write = await policy.decide(WriteFileTool(), write_input, ToolContext(tmp_path))
+    read = await decide(policy, ReadFileTool(), read_input, ToolContext(tmp_path))
+    write = await decide(policy, WriteFileTool(), write_input, ToolContext(tmp_path))
 
     assert read.behavior is PermissionBehavior.ALLOW
     assert write.behavior is PermissionBehavior.ASK
@@ -88,10 +123,11 @@ async def test_file_content_rules_are_interpreted_by_the_tool(tmp_path: Path) ->
     ]
     policy = PermissionPolicy(rules=rules)
 
-    read = await policy.decide(
-        ReadFileTool(), {"path": "src/readme.txt"}, ToolContext(tmp_path)
+    read = await decide(
+        policy, ReadFileTool(), {"path": "src/readme.txt"}, ToolContext(tmp_path)
     )
-    write = await policy.decide(
+    write = await decide(
+        policy,
         WriteFileTool(),
         {"path": "src/generated.txt", "content": "ok"},
         ToolContext(tmp_path),
@@ -117,12 +153,14 @@ async def test_file_ask_and_safety_checks_precede_bypass(tmp_path: Path) -> None
         ],
     )
 
-    explicit_ask = await policy.decide(
+    explicit_ask = await decide(
+        policy,
         WriteFileTool(),
         {"path": "release/build.txt", "content": "x"},
         ToolContext(tmp_path),
     )
-    sensitive = await policy.decide(
+    sensitive = await decide(
+        policy,
         WriteFileTool(),
         {"path": ".git/config", "content": "x"},
         ToolContext(tmp_path),
@@ -140,11 +178,17 @@ async def test_write_tool_interprets_accept_edits_and_plan_modes(
 ) -> None:
     tool_input: JsonObject = {"path": "notes.txt", "content": "x"}
 
-    accepted = await PermissionPolicy(PermissionMode.ACCEPT_EDITS).decide(
-        WriteFileTool(), tool_input, ToolContext(tmp_path)
+    accepted = await decide(
+        PermissionPolicy(PermissionMode.ACCEPT_EDITS),
+        WriteFileTool(),
+        tool_input,
+        ToolContext(tmp_path),
     )
-    planned = await PermissionPolicy(PermissionMode.PLAN).decide(
-        WriteFileTool(), tool_input, ToolContext(tmp_path)
+    planned = await decide(
+        PermissionPolicy(PermissionMode.PLAN),
+        WriteFileTool(),
+        tool_input,
+        ToolContext(tmp_path),
     )
 
     assert accepted.behavior is PermissionBehavior.ALLOW
@@ -159,11 +203,11 @@ async def test_plan_mode_allows_read_only_bash_and_denies_mutation(
 ) -> None:
     policy = PermissionPolicy(PermissionMode.PLAN)
 
-    read = await policy.decide(
-        BashTool(), {"command": "git status"}, ToolContext(tmp_path)
+    read = await decide(
+        policy, BashTool(), {"command": "git status"}, ToolContext(tmp_path)
     )
-    mutation = await policy.decide(
-        BashTool(), {"command": "git add ."}, ToolContext(tmp_path)
+    mutation = await decide(
+        policy, BashTool(), {"command": "git add ."}, ToolContext(tmp_path)
     )
 
     assert read.behavior is PermissionBehavior.ALLOW
@@ -183,8 +227,8 @@ async def test_content_deny_rule_precedes_read_only_auto_allow(tmp_path: Path) -
         ]
     )
 
-    decision = await policy.decide(
-        BashTool(), {"command": "git status"}, ToolContext(tmp_path)
+    decision = await decide(
+        policy, BashTool(), {"command": "git status"}, ToolContext(tmp_path)
     )
 
     assert decision.behavior is PermissionBehavior.DENY
@@ -207,7 +251,7 @@ async def test_content_allow_rule_can_approve_one_mutating_command(
         ]
     )
 
-    decision = await policy.decide(BashTool(), tool_input, ToolContext(tmp_path))
+    decision = await decide(policy, BashTool(), tool_input, ToolContext(tmp_path))
 
     assert decision.behavior is PermissionBehavior.ALLOW
     assert decision.updated_input == tool_input
@@ -227,7 +271,8 @@ async def test_prefix_allow_must_cover_every_compound_subcommand(
         ]
     )
 
-    decision = await policy.decide(
+    decision = await decide(
+        policy,
         BashTool(),
         {"command": "git status && rm README.md"},
         ToolContext(tmp_path),
@@ -250,7 +295,8 @@ async def test_wildcard_allow_must_cover_every_compound_subcommand(
         ]
     )
 
-    decision = await policy.decide(
+    decision = await decide(
+        policy,
         BashTool(),
         {"command": "git status && rm README.md"},
         ToolContext(tmp_path),
@@ -269,7 +315,9 @@ async def test_terminal_option_four_creates_bash_session_rule() -> None:
         tool_reason("bash-approval-required"),
     )
 
-    confirmation = await prompter.confirm(BashTool(), {"command": "git diff"}, decision)
+    confirmation = await confirm(
+        prompter, BashTool(), {"command": "git diff"}, decision
+    )
 
     assert confirmation == PermissionConfirmation(
         True,
@@ -299,7 +347,9 @@ async def test_terminal_option_four_retries_invalid_prefixes() -> None:
         tool_reason("bash-approval-required"),
     )
 
-    confirmation = await prompter.confirm(BashTool(), {"command": "git diff"}, decision)
+    confirmation = await confirm(
+        prompter, BashTool(), {"command": "git diff"}, decision
+    )
 
     assert confirmation.allowed is True
     assert confirmation.updates[0].rules[0].rule_content == "git diff:*"
@@ -328,8 +378,8 @@ async def test_terminal_option_four_creates_whole_tool_rule_for_other_tools() ->
         ),
     )
 
-    confirmation = await prompter.confirm(
-        WriteFileTool(), {"path": "a.txt", "content": "x"}, decision
+    confirmation = await confirm(
+        prompter, WriteFileTool(), {"path": "a.txt", "content": "x"}, decision
     )
 
     assert confirmation == PermissionConfirmation(
@@ -351,8 +401,8 @@ async def test_terminal_prompter_fails_closed_on_eof() -> None:
         tool_reason("passthrough"),
     )
 
-    confirmation = await prompter.confirm(
-        WriteFileTool(), {"path": "a.txt", "content": "x"}, decision
+    confirmation = await confirm(
+        prompter, WriteFileTool(), {"path": "a.txt", "content": "x"}, decision
     )
 
     assert confirmation == PermissionConfirmation(False)

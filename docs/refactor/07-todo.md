@@ -48,13 +48,13 @@
 
 ## 4. 简化 Workspace、Permission 与 Tool
 
-- [ ] Workspace 只负责路径规范化、边界和具体 I/O。
-- [ ] PermissionPolicy 改为接收结构化 PermissionRequest。
-- [ ] 从 Permissions 移除对 Tool 具体类型的依赖。
-- [ ] 从 Workspace 移除 PermissionRule 匹配。
-- [ ] ToolExecutor 直接组合 Tool、PermissionPolicy 和 Workspace。
+- [x] Workspace 只负责路径规范化、边界和具体 I/O。
+- [x] PermissionPolicy 改为接收结构化 PermissionRequest。
+- [x] 从 Permissions 移除对 Tool 具体类型的依赖。
+- [x] 从 Workspace 移除 PermissionRule 匹配。
+- [x] ToolExecutor 直接组合 Tool、PermissionPolicy 和 Workspace。
 - [x] 将通用 Tool presentation 迁入 `tools`。（阶段 3 为解除 Conversation/Chat 反向依赖提前完成）
-- [ ] 保持拒绝、取消、审计失败和工具异常测试通过。
+- [x] 保持拒绝、取消、审计失败和工具异常测试通过。
 
 验收：`tools -> permissions/workspace`，不存在反向依赖和执行旁路。
 

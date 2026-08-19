@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from nano_code.model import JsonObject, ModelToolDefinition
-from nano_code.permissions.models import ToolPermissionContext, ToolPermissionResult
+from nano_code.permissions import ToolPermissionContext, ToolPermissionResult
 from nano_code.tools import ToolResultPresentation, compact_text
 from nano_code.tools.base import (
     Tool,

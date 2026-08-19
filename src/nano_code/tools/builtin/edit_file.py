@@ -1,9 +1,7 @@
 """在工作区文件中执行精确字符串替换。"""
 
-from pathlib import Path
-
 from nano_code.model import JsonObject, ModelToolDefinition
-from nano_code.permissions.models import ToolPermissionContext, ToolPermissionResult
+from nano_code.permissions import ToolPermissionContext, ToolPermissionResult
 from nano_code.tools import ToolResultPresentation
 from nano_code.tools.base import (
     Tool,
@@ -80,18 +78,9 @@ class EditFileTool(Tool):
         old = required_string(tool_input, "old_string")
         new = required_string(tool_input, "new_string", allow_empty=True)
         replace_all = optional_bool(tool_input, "replace_all", False)
-        replacements = self._edit(path, old, new, replace_all)
-        display_path = relative_display_path(context.cwd, path)
-        return ToolOutput(
-            content=f"Replaced {replacements} occurrence(s) in {display_path}",
-            metadata={"path": display_path, "replacements": replacements},
-        )
-
-    @staticmethod
-    def _edit(path: Path, old: str, new: str, replace_all: bool) -> int:
         if not path.is_file():
             raise ToolExecutionError(f"Not a file: {path}")
-        content = path.read_text(encoding="utf-8")
+        content = context.workspace.read_text(path)
         count = content.count(old)
         if count == 0:
             raise ToolExecutionError("old_string was not found")
@@ -101,5 +90,10 @@ class EditFileTool(Tool):
                 "or provide more context"
             )
         limit = -1 if replace_all else 1
-        path.write_text(content.replace(old, new, limit), encoding="utf-8")
-        return count if replace_all else 1
+        context.workspace.write_text(path, content.replace(old, new, limit))
+        replacements = count if replace_all else 1
+        display_path = relative_display_path(context.cwd, path)
+        return ToolOutput(
+            content=f"Replaced {replacements} occurrence(s) in {display_path}",
+            metadata={"path": display_path, "replacements": replacements},
+        )

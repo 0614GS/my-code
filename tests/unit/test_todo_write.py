@@ -30,10 +30,11 @@ from nano_code.prompts import (
     PromptRegistry,
     PromptSection,
 )
-from nano_code.tools import ToolContext, ToolRegistry
+from nano_code.tools import ToolRegistry
 from nano_code.tools.builtin.todo_write import TodoWriteTool
 from nano_code.tools.executor import ToolExecutor
 from nano_code.tools.result_store import ToolResultStore
+from nano_code.workspace import Workspace
 
 
 def _todo_input(status: str = "in_progress") -> dict:
@@ -106,7 +107,7 @@ async def test_todo_write_executes_without_permission_prompt(tmp_path: Path) -> 
         ToolRegistry((tool,)),
         PermissionPolicy(PermissionMode.DEFAULT),
         HeadlessPrompter(),
-        ToolContext(tmp_path),
+        Workspace(tmp_path),
         ToolResultStore(tmp_path / "results"),
     )
 
@@ -123,7 +124,7 @@ async def test_invalid_todo_write_becomes_protocol_error(tmp_path: Path) -> None
         ToolRegistry((TodoWriteTool(),)),
         PermissionPolicy(PermissionMode.BYPASS),
         HeadlessPrompter(),
-        ToolContext(tmp_path),
+        Workspace(tmp_path),
         ToolResultStore(tmp_path / "results"),
     )
 

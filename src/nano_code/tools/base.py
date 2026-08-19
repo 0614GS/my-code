@@ -13,21 +13,40 @@ from nano_code.tools.presentation import (
     ToolUsePresentation,
     compact_text,
 )
+from nano_code.workspace import Workspace
 
 if TYPE_CHECKING:
-    from nano_code.permissions.models import (
+    from nano_code.permissions import (
         ToolPermissionContext,
         ToolPermissionResult,
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ToolContext:
     """内置工具可用的运行时依赖。"""
 
-    cwd: Path
-    command_timeout_seconds: float = 120.0
-    max_command_output_bytes: int = 4 * 1024 * 1024
+    workspace: Workspace
+    command_timeout_seconds: float
+    max_command_output_bytes: int
+
+    def __init__(
+        self,
+        workspace: Workspace | Path,
+        command_timeout_seconds: float = 120.0,
+        max_command_output_bytes: int = 4 * 1024 * 1024,
+    ) -> None:
+        object.__setattr__(
+            self,
+            "workspace",
+            workspace if isinstance(workspace, Workspace) else Workspace(workspace),
+        )
+        object.__setattr__(self, "command_timeout_seconds", command_timeout_seconds)
+        object.__setattr__(self, "max_command_output_bytes", max_command_output_bytes)
+
+    @property
+    def cwd(self) -> Path:
+        return self.workspace.root
 
 
 @dataclass(frozen=True, slots=True)

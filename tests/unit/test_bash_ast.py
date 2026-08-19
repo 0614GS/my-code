@@ -2,13 +2,15 @@ from pathlib import Path
 
 import pytest
 
+from nano_code.model import JsonObject
 from nano_code.permissions import (
     PermissionBehavior,
     PermissionMode,
     PermissionPolicy,
+    PermissionRequest,
     PermissionRule,
+    ToolPermissionContext,
 )
-from nano_code.tools import ToolContext
 from nano_code.tools.builtin.bash import BashTool
 from nano_code.tools.builtin.bash.ast import parse_bash
 from nano_code.tools.builtin.bash.permissions import analyze_bash_command
@@ -129,9 +131,13 @@ def test_only_safe_environment_prefixes_inherit_read_only_semantics(
 async def _decide(
     tmp_path: Path, command: str, *rules: PermissionRule
 ) -> PermissionBehavior:
-    decision = await PermissionPolicy(PermissionMode.DEFAULT, rules=rules).decide(
-        BashTool(), {"command": command}, ToolContext(tmp_path)
+    policy = PermissionPolicy(PermissionMode.DEFAULT, rules=rules)
+    tool = BashTool()
+    tool_input: JsonObject = {"command": command}
+    local = await tool.check_permissions(
+        tool_input, ToolPermissionContext(policy.mode, policy.rules, tmp_path)
     )
+    decision = policy.decide(PermissionRequest(tool.definition.name, tool_input, local))
     return decision.behavior
 
 

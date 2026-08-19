@@ -2,7 +2,7 @@
 
 from nano_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
 from nano_code.model import JsonObject, ModelToolDefinition
-from nano_code.permissions.models import (
+from nano_code.permissions import (
     PermissionDecisionKind,
     PermissionDecisionReason,
     ToolPermissionContext,

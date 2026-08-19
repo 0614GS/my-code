@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from nano_code.permissions import (
     PermissionDecisionReason,
     PermissionMode,
     PermissionPolicy,
+    PermissionPrompt,
     PermissionRule,
     PermissionUpdate,
     PermissionUpdateDestination,
@@ -26,8 +28,10 @@ from nano_code.tools import Tool, ToolContext, ToolRegistry, ToolResultPresentat
 from nano_code.tools.base import ToolOutput
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
+from nano_code.tools.invocation import ToolInvocation
 from nano_code.tools.paths import resolve_workspace_path
 from nano_code.tools.result_store import ToolResultStore
+from nano_code.workspace import Workspace
 
 
 def build_executor(tmp_path: Path, mode: PermissionMode) -> ToolExecutor:
@@ -35,33 +39,49 @@ def build_executor(tmp_path: Path, mode: PermissionMode) -> ToolExecutor:
         registry=ToolRegistry(builtin_tools()),
         policy=PermissionPolicy(mode),
         prompter=HeadlessPrompter(),
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
     )
 
 
 class FeedbackPrompter:
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
-        del tool, tool_input, decision
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
+        del request
         return PermissionConfirmation(False, "Only explain the proposed change.")
 
 
 class FailingPrompter:
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
-        del tool, tool_input, decision
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
+        del request
         raise AssertionError("read-only Bash must not request user confirmation")
 
 
 class ExplodingPrompter:
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
-        del tool, tool_input, decision
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
+        del request
         raise RuntimeError("prompt transport failed")
+
+
+class BlockingPrompter:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
+        del request
+        self.started.set()
+        await asyncio.Future[None]()
+        raise AssertionError("unreachable")
+
+
+class ExplodingAudit:
+    async def record_permission(
+        self,
+        invocation: ToolInvocation,
+        call: ToolCall,
+        decision: PermissionDecision,
+    ) -> None:
+        del invocation, call, decision
+        raise RuntimeError("audit unavailable")
 
 
 class ApprovingPrompter:
@@ -69,14 +89,11 @@ class ApprovingPrompter:
         self.remember = remember
         self.calls = 0
 
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
-        del tool, tool_input
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
         self.calls += 1
         return PermissionConfirmation(
             True,
-            updates=decision.suggestions if self.remember else (),
+            updates=request.decision.suggestions if self.remember else (),
         )
 
 
@@ -85,10 +102,8 @@ class SessionApprovingPrompter:
         self.rule = rule
         self.calls = 0
 
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
-        del tool, tool_input, decision
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
+        del request
         self.calls += 1
         return PermissionConfirmation(
             True,
@@ -150,6 +165,12 @@ class BrokenPresentationTool(NormalizingTool):
         raise RuntimeError("broken UI projection")
 
 
+class ExplodingExecutionTool(NormalizingTool):
+    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+        del tool_input, context
+        raise RuntimeError("secret implementation detail")
+
+
 def test_workspace_path_rejects_traversal_but_resolves_sensitive_paths(
     tmp_path: Path,
 ) -> None:
@@ -185,7 +206,7 @@ async def test_sensitive_path_can_run_after_one_time_approval(tmp_path: Path) ->
         registry=ToolRegistry(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.BYPASS),
         prompter=prompter,
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / "results"),
     )
 
@@ -215,9 +236,9 @@ async def test_remembered_write_rule_persists_to_local_settings(
         registry=ToolRegistry(builtin_tools()),
         policy=policy,
         prompter=prompter,
-        context=ToolContext(cwd=workspace),
+        workspace=Workspace(workspace),
         result_store=ToolResultStore(tmp_path / "results"),
-        update_applier=PermissionUpdateApplier(policy, SettingsStore(paths)),
+        update_applier=PermissionUpdateApplier(policy, SettingsStore(paths)).apply,
     )
 
     first = await executor.execute(
@@ -260,7 +281,7 @@ async def test_permission_denial_feedback_is_returned_to_model(tmp_path: Path) -
         registry=ToolRegistry(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=FeedbackPrompter(),
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=store,
     )
 
@@ -283,7 +304,7 @@ async def test_permission_prompt_failure_fails_closed(tmp_path: Path) -> None:
         registry=ToolRegistry(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=ExplodingPrompter(),
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / "results"),
     )
 
@@ -293,6 +314,53 @@ async def test_permission_prompt_failure_fails_closed(tmp_path: Path) -> None:
 
     assert outcome.result.is_error is True
     assert "Permission prompt failed (RuntimeError)" in outcome.result.content
+    assert not (tmp_path / "a.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_permission_prompt_cancellation_destroys_pending_request(
+    tmp_path: Path,
+) -> None:
+    prompter = BlockingPrompter()
+    executor = ToolExecutor(
+        ToolRegistry(builtin_tools()),
+        PermissionPolicy(),
+        prompter,
+        Workspace(tmp_path),
+        ToolResultStore(tmp_path / "results"),
+    )
+    task = asyncio.create_task(
+        executor.execute(
+            ToolCall("cancel-prompt", "Write", {"path": "a.txt", "content": "no"})
+        )
+    )
+    await prompter.started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert task.done()
+    assert not (tmp_path / "a.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_audit_failure_prevents_tool_execution(tmp_path: Path) -> None:
+    executor = ToolExecutor(
+        ToolRegistry(builtin_tools()),
+        PermissionPolicy(PermissionMode.ACCEPT_EDITS),
+        HeadlessPrompter(),
+        Workspace(tmp_path),
+        ToolResultStore(tmp_path / "results"),
+        audit=ExplodingAudit(),
+    )
+
+    outcome = await executor.execute(
+        ToolCall("audit-failure", "Write", {"path": "a.txt", "content": "no"})
+    )
+
+    assert outcome.result.is_error
+    assert "audit failed" in outcome.result.content
     assert not (tmp_path / "a.txt").exists()
 
 
@@ -331,7 +399,7 @@ async def test_read_only_bash_executes_without_permission_prompt(
         registry=ToolRegistry(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=FailingPrompter(),
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
     )
 
@@ -373,7 +441,7 @@ async def test_session_allow_rule_removes_later_prompts(tmp_path: Path) -> None:
         registry=ToolRegistry(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=prompter,
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
     )
 
@@ -418,7 +486,7 @@ async def test_explicit_deny_precedes_session_allow(tmp_path: Path) -> None:
         registry=ToolRegistry(builtin_tools()),
         policy=policy,
         prompter=prompter,
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
     )
 
@@ -453,7 +521,7 @@ async def test_explicit_ask_precedes_session_allow(tmp_path: Path) -> None:
         registry=ToolRegistry(builtin_tools()),
         policy=policy,
         prompter=FeedbackPrompter(),
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
     )
 
@@ -483,7 +551,7 @@ async def test_new_executor_does_not_inherit_session_rules(
                 registry=ToolRegistry(builtin_tools()),
                 policy=PermissionPolicy(PermissionMode.DEFAULT),
                 prompter=prompter,
-                context=ToolContext(cwd=tmp_path),
+                workspace=Workspace(tmp_path),
                 result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
             ),
             prompter,
@@ -541,7 +609,7 @@ async def test_executor_runs_the_exact_input_approved_by_tool_policy(
         registry=ToolRegistry([NormalizingTool()]),
         policy=PermissionPolicy(),
         prompter=FailingPrompter(),
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
     )
 
@@ -569,7 +637,7 @@ async def test_presentation_failure_does_not_change_successful_tool_result(
         registry=ToolRegistry([BrokenPresentationTool()]),
         policy=PermissionPolicy(),
         prompter=FailingPrompter(),
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
     )
 
@@ -580,3 +648,23 @@ async def test_presentation_failure_does_not_change_successful_tool_result(
     assert outcome.result.is_error is False
     assert outcome.result.content == "model:approved"
     assert outcome.presentation.summary == "approved"
+
+
+@pytest.mark.asyncio
+async def test_unexpected_tool_exception_is_closed_as_protocol_result(
+    tmp_path: Path,
+) -> None:
+    executor = ToolExecutor(
+        ToolRegistry([ExplodingExecutionTool()]),
+        PermissionPolicy(),
+        HeadlessPrompter(),
+        Workspace(tmp_path),
+        ToolResultStore(tmp_path / "results"),
+    )
+
+    outcome = await executor.execute(ToolCall("explode", "Normalize", {}))
+
+    assert outcome.result.is_error
+    assert outcome.result.tool_use_id == "explode"
+    assert outcome.result.content == "Unexpected RuntimeError while executing Normalize"
+    assert "secret implementation detail" not in outcome.result.content

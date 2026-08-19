@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import Protocol
 
 from nano_code.model import JsonObject
-
-if TYPE_CHECKING:
-    from nano_code.tools.base import ToolContext
 
 
 class PermissionMode(StrEnum):
@@ -176,7 +174,7 @@ class ToolPermissionContext:
 
     mode: PermissionMode
     rules: tuple[PermissionRule, ...]
-    tool_context: ToolContext
+    workspace_root: Path
     additional_working_directories: tuple[str, ...] = ()
 
     def rules_for(
@@ -262,6 +260,19 @@ class ToolPermissionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PermissionRequest:
+    """Policy input assembled by the controlled tool execution boundary."""
+
+    tool_name: str
+    tool_input: JsonObject
+    tool_result: ToolPermissionResult
+
+    def __post_init__(self) -> None:
+        if not self.tool_name.strip():
+            raise ValueError("Permission request tool_name cannot be blank")
+
+
+@dataclass(frozen=True, slots=True)
 class PermissionDecision:
     """可选用户确认前的可审计决策。"""
 
@@ -291,3 +302,27 @@ class PermissionConfirmation:
             raise ValueError("Permission feedback cannot be blank")
         if not self.allowed and self.updates:
             raise ValueError("Denial cannot include permission updates")
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionPrompt:
+    """A pending user decision without Tool or frontend-specific types."""
+
+    tool_name: str
+    tool_input: JsonObject
+    decision: PermissionDecision
+    display_name: str
+    summary: str
+    activity: str
+
+    def __post_init__(self) -> None:
+        if not self.tool_name.strip():
+            raise ValueError("Permission prompt tool_name cannot be blank")
+        if not self.display_name.strip():
+            raise ValueError("Permission prompt display_name cannot be blank")
+
+
+class PermissionPrompter(Protocol):
+    """Host capability for resolving a pending interactive decision."""
+
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation: ...

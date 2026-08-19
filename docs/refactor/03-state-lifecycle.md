@@ -73,8 +73,8 @@ Todo 等 feature 状态优先从完整 Conversation history 投影，不再维�
 | `sessions` | 有状态且可持久化 | Transcript 跨进程；`Session` 与 store 索引随打开的 session 存活 |
 | `context` | 部分有状态 | request 数据用完即弃；`ContextSession` 随活动 session；稳定缓存按声明失效 |
 | `agent` | turn 内有状态 | step、usage、流式块和取消清理只活到一次 turn 结束；turn 之间不保存会话 |
-| `tools` | 运行时配置为主 | Registry 在 bootstrap 后只读；执行状态属于单次调用；外置结果跟随 session 持久化 |
-| `permissions` | 有状态 | 当前 runtime 的 mode/rules 可变；持久规则由 `config` 落盘；pending approval 属于单次调用 |
+| `tools` | 运行时配置为主 | Registry 在 bootstrap 后只读；ToolExecutor 持有 Workspace 与 runtime policy；执行状态属于单次调用；外置结果跟随 session 持久化 |
+| `permissions` | 有状态 | 当前 runtime 的 mode/rules 可变；持久规则由 `config` 落盘；结构化 request/decision 属于单次调用，pending approval 完成或取消即销毁 |
 | `providers` | 有状态 | 活动连接、SDK client、model capabilities 和切换锁活到 runtime 关闭或 provider 切换 |
 | `prompts` | 部分有状态 | static/runtime、session、request 三种缓存必须分别失效 |
 | `features` | 默认无独立状态 | Todos 等从 Conversation 投影；确需状态时必须在 feature 内声明生命周期 |

@@ -27,10 +27,9 @@ from nano_code.features.file_mentions import (
 )
 from nano_code.features.todos.reminder import TodoReminderAttachmentSource
 from nano_code.model import ActiveModelState, resolve_environment
-from nano_code.permissions import PermissionPolicy
+from nano_code.permissions import PermissionPolicy, PermissionPrompter
 from nano_code.permissions.prompt import (
     HeadlessPrompter,
-    PermissionPrompter,
     TerminalPrompter,
 )
 from nano_code.permissions.updates import PermissionUpdateApplier
@@ -51,6 +50,7 @@ from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
 from nano_code.tools.result_store import ToolResultStore
 from nano_code.tools.round_executor import ToolRoundExecutor
+from nano_code.workspace import Workspace
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,18 +178,19 @@ def _assemble_agent(
         mode=settings.permission_mode,
         rules=settings.permission_rules,
     )
-    tool_context = ToolContext(cwd=settings.cwd)
+    workspace = Workspace(settings.cwd)
+    tool_context = ToolContext(workspace)
     tool_executor = ToolExecutor(
         registry=registry,
         policy=permission_policy,
         prompter=prompter,
-        context=tool_context,
+        workspace=workspace,
         result_store=ToolResultStore(
             settings.paths.tool_results_dir(actual_session_id)
         ),
         update_applier=PermissionUpdateApplier(
             permission_policy, SettingsStore(settings.paths)
-        ),
+        ).apply,
     )
     provider = ProviderRouter(
         ProviderConnection(

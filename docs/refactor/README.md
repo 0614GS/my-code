@@ -22,6 +22,7 @@
 | [10-phase-1-pyright.md](10-phase-1-pyright.md) | 阶段 1 类型检查迁移结果 |
 | [11-phase-2-model.md](11-phase-2-model.md) | 阶段 2 Model 边界与依赖收缩结果 |
 | [12-phase-3-conversation-session.md](12-phase-3-conversation-session.md) | 阶段 3 Conversation、Session 与状态生命周期结果 |
+| [13-phase-4-tools-permissions-workspace.md](13-phase-4-tools-permissions-workspace.md) | 阶段 4 Tool、Permission 与 Workspace 边界结果 |
 
 ## 最终判定标准
 

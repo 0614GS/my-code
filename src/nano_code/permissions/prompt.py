@@ -2,27 +2,16 @@
 
 import json
 from collections.abc import Callable
-from typing import Protocol
 
-from nano_code.model import JsonObject
 from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,
-    PermissionDecision,
+    PermissionPrompt,
     PermissionUpdate,
     PermissionUpdateDestination,
 )
 from nano_code.permissions.rules import validate_bash_rule_content
 from nano_code.permissions.updates import permission_rule_for_destination
-from nano_code.tools.base import Tool
-
-
-class PermissionPrompter(Protocol):
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
-        """仅在获得用户显式输入后返回结构化响应。"""
-        ...
 
 
 class TerminalPrompter:
@@ -31,15 +20,13 @@ class TerminalPrompter:
     def __init__(self, input_fn: Callable[[str], str] = input) -> None:
         self._input = input_fn
 
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
-        rendered = json.dumps(tool_input, ensure_ascii=False, indent=2)
-        can_remember = tool.definition.name == "Bash" or bool(decision.suggestions)
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
+        rendered = json.dumps(request.tool_input, ensure_ascii=False, indent=2)
+        can_remember = request.tool_name == "Bash" or bool(request.decision.suggestions)
         remember = "4. Yes, and don't ask again\n" if can_remember else ""
         prompt = (
-            f"\nPermission required: {tool.definition.name}\n"
-            f"{rendered}\n{decision.message}\n"
+            f"\nPermission required: {request.tool_name}\n"
+            f"{rendered}\n{request.decision.message}\n"
             "1. Yes\n2. No\n3. No, and tell nano-code why\n"
             f"{remember}Choice: "
         )
@@ -52,7 +39,7 @@ class TerminalPrompter:
             return PermissionConfirmation(True)
         if normalized == "4" and can_remember:
             try:
-                updates = self._remember_updates(tool, decision)
+                updates = self._remember_updates(request)
             except (EOFError, KeyboardInterrupt):
                 return PermissionConfirmation(False)
             return PermissionConfirmation(True, updates=updates)
@@ -66,11 +53,11 @@ class TerminalPrompter:
         return PermissionConfirmation(False)
 
     def _remember_updates(
-        self, tool: Tool, decision: PermissionDecision
+        self, request: PermissionPrompt
     ) -> tuple[PermissionUpdate, ...]:
         """构造由当前确认框明确提供的长期授权更新。"""
 
-        if tool.definition.name == "Bash":
+        if request.tool_name == "Bash":
             while True:
                 raw = self._input(
                     "Command prefix to allow (e.g., git diff:*): "
@@ -91,14 +78,12 @@ class TerminalPrompter:
                         (rule,), destination=PermissionUpdateDestination.LOCAL
                     ),
                 )
-        return decision.suggestions
+        return request.decision.suggestions
 
 
 class HeadlessPrompter:
     """不存在交互式权限 UI 时按拒绝处理。"""
 
-    async def confirm(
-        self, tool: Tool, tool_input: JsonObject, decision: PermissionDecision
-    ) -> PermissionConfirmation:
-        del tool, tool_input, decision
+    async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
+        del request
         return PermissionConfirmation(False)

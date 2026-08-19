@@ -7,6 +7,9 @@ from nano_code.permissions.models import (
     PermissionDecisionKind,
     PermissionDecisionReason,
     PermissionMode,
+    PermissionPrompt,
+    PermissionPrompter,
+    PermissionRequest,
     PermissionRule,
     PermissionUpdate,
     PermissionUpdateDestination,
@@ -15,6 +18,7 @@ from nano_code.permissions.models import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
+from nano_code.permissions.path_rules import matching_path_rule, read_denied
 from nano_code.permissions.policy import PermissionPolicy
 from nano_code.permissions.rules import (
     parse_permission_rule,
@@ -31,6 +35,9 @@ __all__ = [
     "PermissionDecisionReason",
     "PermissionMode",
     "PermissionPolicy",
+    "PermissionPrompt",
+    "PermissionPrompter",
+    "PermissionRequest",
     "PermissionRule",
     "PermissionUpdate",
     "PermissionUpdateDestination",
@@ -42,4 +49,6 @@ __all__ = [
     "permission_rule_to_string",
     "validate_bash_rule_content",
     "validate_permission_rule",
+    "matching_path_rule",
+    "read_denied",
 ]

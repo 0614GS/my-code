@@ -18,11 +18,6 @@ from nano_code.agent.contracts.inbound import (
     AgentTurnOutcome,
     AgentTurnSucceeded,
 )
-from nano_code.agent.contracts.tool import (
-    ToolCallFinished,
-    ToolCallStarted,
-    ToolRoundCompleted,
-)
 from nano_code.agent.errors import ContextOverflow
 from nano_code.agent.events import (
     AgentEvent,
@@ -41,7 +36,6 @@ from nano_code.agent.events import (
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
 from nano_code.agent.ports.inbound import AgentInboundPort
-from nano_code.agent.ports.tool import ToolRoundPort
 from nano_code.context import AttachmentDelivery, ContextSession, ContextSnapshot
 from nano_code.conversation import (
     AssistantMessage,
@@ -74,7 +68,13 @@ from nano_code.model import (
     TokenUsage,
 )
 from nano_code.sessions import Session
-from nano_code.tools import ToolResultPresentation
+from nano_code.tools import (
+    ToolCallFinished,
+    ToolCallStarted,
+    ToolResultPresentation,
+    ToolRoundCompleted,
+    ToolRoundExecutor,
+)
 
 
 class AgentEngine(AgentInboundPort):
@@ -84,7 +84,7 @@ class AgentEngine(AgentInboundPort):
         self,
         *,
         model_call: ModelClient,
-        tool_round: ToolRoundPort,
+        tool_round: ToolRoundExecutor,
         session: Session,
         context: ContextPort,
         compactor: CompactorPort,
@@ -315,8 +315,8 @@ class AgentEngine(AgentInboundPort):
                 if todos_after != todos_before:
                     yield AgentTodoListUpdated(todos_after)
             except asyncio.CancelledError:
-                # 自定义 ToolRoundPort 也必须满足协议闭合；适配器通常
-                # 已经发出了所有取消结果，这里只负责兜底并持久化一次。
+                # ToolRoundExecutor 通常已经发出所有取消结果；Agent 只保留
+                # 最终协议兜底并持久化一次。
                 if result_message is None:
                     results = _cancelled_results(
                         tool_calls,
@@ -479,7 +479,7 @@ class AgentEngine(AgentInboundPort):
 
 def _cancelled_results(
     calls: tuple[ToolCall, ...],
-    tool_round: ToolRoundPort,
+    tool_round: ToolRoundExecutor,
     existing: list[ToolResult],
 ) -> list[ToolResult]:
     message = "Tool execution was cancelled."

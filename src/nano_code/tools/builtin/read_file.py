@@ -1,9 +1,10 @@
 """读取工作区文件中有界的行范围。"""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from nano_code.model import JsonObject, ModelToolDefinition
-from nano_code.permissions.models import ToolPermissionContext, ToolPermissionResult
+from nano_code.permissions import ToolPermissionContext, ToolPermissionResult
 from nano_code.tools import ToolResultPresentation
 from nano_code.tools.base import (
     Tool,
@@ -86,7 +87,9 @@ class ReadFileTool(Tool):
         )
         offset = optional_int(tool_input, "offset", 1, minimum=1, maximum=10_000_000)
         limit = optional_int(tool_input, "limit", 2000, minimum=1, maximum=5000)
-        content, truncated = self._read_details(path, offset, limit)
+        content, truncated = self._read_details(
+            path, offset, limit, read_bytes=context.workspace.read_bytes
+        )
         display_path = relative_display_path(context.cwd, path)
         line_count = sum(1 for line in content.splitlines() if "\t" in line)
         return ToolOutput(
@@ -103,14 +106,20 @@ class ReadFileTool(Tool):
         return ReadFileTool._read_details(path, offset, limit)[0]
 
     @staticmethod
-    def _read_details(path: Path, offset: int, limit: int) -> tuple[str, bool]:
+    def _read_details(
+        path: Path,
+        offset: int,
+        limit: int,
+        *,
+        read_bytes: Callable[[Path], bytes] = Path.read_bytes,
+    ) -> tuple[str, bool]:
         if not path.is_file():
             raise ToolExecutionError(f"Not a file: {path}")
         if path.stat().st_size > _MAX_READ_BYTES:
             raise ToolExecutionError(
                 f"File exceeds {_MAX_READ_BYTES // (1024 * 1024)} MiB read limit"
             )
-        raw = path.read_bytes()
+        raw = read_bytes(path)
         if b"\x00" in raw:
             raise ToolExecutionError("Binary files are not supported by Read")
         try:

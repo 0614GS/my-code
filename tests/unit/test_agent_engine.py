@@ -62,11 +62,12 @@ from nano_code.prompts import (
     PromptSection,
 )
 from nano_code.sessions import Session, SessionStore
-from nano_code.tools import ToolContext, ToolRegistry
+from nano_code.tools import ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from nano_code.tools.result_store import ToolResultStore
 from nano_code.tools.round_executor import ToolRoundExecutor
+from nano_code.workspace import Workspace
 
 
 class FakeModel:
@@ -131,7 +132,7 @@ def _engine(
         registry,
         PermissionPolicy(PermissionMode.BYPASS),
         HeadlessPrompter(),
-        ToolContext(tmp_path),
+        Workspace(tmp_path),
         ToolResultStore(tmp_path / "results"),
     )
     model = model_type(outputs)

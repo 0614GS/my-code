@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from nano_code.model import JsonObject
-from nano_code.permissions.models import (
+from nano_code.permissions import (
     PermissionBehavior,
     PermissionDecisionKind,
     PermissionDecisionReason,
@@ -15,13 +15,13 @@ from nano_code.permissions.models import (
     PermissionUpdateDestination,
     ToolPermissionContext,
     ToolPermissionResult,
+    matching_path_rule,
 )
 from nano_code.tools.base import ToolInputError
 from nano_code.tools.paths import (
     is_sensitive_write_path,
     resolve_workspace_path,
 )
-from nano_code.workspace import matching_path_rule
 
 
 def check_read_permission(
@@ -84,7 +84,7 @@ def check_write_permission(
             updated_input,
         )
 
-    if is_sensitive_write_path(context.tool_context.cwd, path):
+    if is_sensitive_write_path(context.workspace_root, path):
         return ToolPermissionResult.ask(
             message=f"Writing sensitive path {rule_path} requires explicit approval.",
             reason=PermissionDecisionReason(
@@ -146,7 +146,7 @@ def _prepare_path_input(
         )
     try:
         path = resolve_workspace_path(
-            context.tool_context.cwd,
+            context.workspace_root,
             raw_path,
             must_exist=must_exist,
         )
@@ -157,7 +157,7 @@ def _prepare_path_input(
                 PermissionDecisionKind.SAFETY, "workspace-boundary"
             ),
         )
-    rule_path = path.relative_to(context.tool_context.cwd.resolve()).as_posix()
+    rule_path = path.relative_to(context.workspace_root.resolve()).as_posix()
     updated_input = dict(tool_input)
     updated_input[path_key] = rule_path or "."
     return updated_input, path, rule_path or "."

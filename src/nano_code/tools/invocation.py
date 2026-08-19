@@ -10,7 +10,7 @@ from nano_code.conversation import ToolCall, ToolResult
 from nano_code.model import JsonObject
 
 if TYPE_CHECKING:
-    from nano_code.permissions.models import PermissionDecision
+    from nano_code.permissions import PermissionDecision
     from nano_code.tools.base import Tool, ToolContext
 
 

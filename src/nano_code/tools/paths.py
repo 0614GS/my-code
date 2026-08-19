@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from nano_code.tools.base import ToolInputError
-from nano_code.workspace import WorkspaceBoundaryError, WorkspaceSecurity
+from nano_code.workspace import Workspace, WorkspaceBoundaryError
 
 _SENSITIVE_WRITE_ROOTS = frozenset({".git", ".nano-code"})
 
@@ -18,7 +18,7 @@ def resolve_workspace_path(
     """解析路径，并拒绝通过遍历或符号链接逃逸 ``cwd``。"""
 
     try:
-        resolved = WorkspaceSecurity(cwd).resolve(raw_path, must_exist=must_exist)
+        resolved = Workspace(cwd).resolve(raw_path, must_exist=must_exist)
     except WorkspaceBoundaryError as error:
         raise ToolInputError(str(error)) from error
 
@@ -36,4 +36,4 @@ def is_sensitive_write_path(cwd: Path, path: Path) -> bool:
 def relative_display_path(cwd: Path, path: Path) -> str:
     """返回稳定的工作区相对展示路径。"""
 
-    return WorkspaceSecurity(cwd).display(path)
+    return Workspace(cwd).display(path)

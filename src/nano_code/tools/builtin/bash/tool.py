@@ -87,7 +87,7 @@ class BashTool(Tool):
         """为权限策略解释 Bash 专属规则和命令语义。"""
 
         command = required_string(tool_input, "command")
-        analysis = analyze_bash_command(command, context.tool_context.cwd)
+        analysis = analyze_bash_command(command, context.workspace_root)
 
         deny_rule = matching_rule(
             analysis,
@@ -122,7 +122,7 @@ class BashTool(Tool):
 
         allow_rules = context.rules_for(self.definition.name, PermissionBehavior.ALLOW)
         matched_allow_rules = allowing_rules(
-            analysis, command, allow_rules, context.tool_context.cwd
+            analysis, command, allow_rules, context.workspace_root
         )
         if matched_allow_rules:
             sources = ", ".join(

@@ -147,13 +147,6 @@ def _temporary_edges(
 # until this list is tightened.
 TEMPORARY_DEPENDENCY_VIOLATIONS: tuple[TemporaryViolation, ...] = (
     *_temporary_edges(
-        "phase-4",
-        "Tool presentation and permission requests use legacy concrete owners.",
-        ("permissions", "tools"),
-        ("tools", "agent"),
-        ("workspace", "permissions"),
-    ),
-    *_temporary_edges(
         "phase-5",
         "Feature state and adapters have not moved behind feature boundaries.",
         ("agent", "features.todos"),
@@ -196,15 +189,6 @@ TEMPORARY_DEPENDENCY_VIOLATIONS: tuple[TemporaryViolation, ...] = (
 
 TEMPORARY_DEEP_IMPORTS: tuple[TemporaryViolation, ...] = (
     *_temporary_edges(
-        "phase-4",
-        "Permission and Tool public APIs are not final.",
-        ("chat", "permissions"),
-        ("permissions", "tools"),
-        ("tools", "permissions"),
-        ("tools", "agent"),
-        ("workspace", "permissions"),
-    ),
-    *_temporary_edges(
         "phase-5",
         "Context and feature callers still reach into implementation modules.",
         ("agent", "context"),
@@ -213,7 +197,6 @@ TEMPORARY_DEEP_IMPORTS: tuple[TemporaryViolation, ...] = (
         ("chat", "features.todos"),
         ("features.file_mentions", "context"),
         ("context", "agent"),
-        ("features.file_mentions", "permissions"),
         ("features.todos", "context"),
         ("tools", "features.todos"),
         ("tui", "features.todos"),
@@ -272,15 +255,12 @@ TEMPORARY_CYCLIC_COMPONENTS: frozenset[frozenset[str]] = frozenset(
             {
                 "agent",
                 "context",
-                "core",
                 "features.todos",
-                "permissions",
-                "providers",
                 "sessions",
                 "tools",
-                "workspace",
             }
         ),
+        frozenset({"core", "permissions", "providers"}),
         frozenset({"chat", "features.file_mentions"}),
         frozenset({"bootstrap", "cli"}),
     }

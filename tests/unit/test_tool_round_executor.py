@@ -3,11 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import (
-    ToolCallFinished,
-    ToolRoundCompleted,
-    ToolRoundEvent,
-)
 from nano_code.conversation import (
     AssistantMessage,
     TextContent,
@@ -17,11 +12,17 @@ from nano_code.conversation import (
 from nano_code.model import TokenUsage
 from nano_code.permissions import PermissionMode, PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.tools import ToolContext, ToolRegistry
+from nano_code.tools import (
+    ToolCallFinished,
+    ToolRegistry,
+    ToolRoundCompleted,
+    ToolRoundEvent,
+)
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from nano_code.tools.result_store import ToolResultStore
 from nano_code.tools.round_executor import ToolRoundExecutor
+from nano_code.workspace import Workspace
 
 
 def build_round_executor(tmp_path: Path) -> ToolRoundExecutor:
@@ -29,7 +30,7 @@ def build_round_executor(tmp_path: Path) -> ToolRoundExecutor:
         registry=ToolRegistry(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=HeadlessPrompter(),
-        context=ToolContext(cwd=tmp_path),
+        workspace=Workspace(tmp_path),
         result_store=ToolResultStore(tmp_path / "results"),
     )
     return ToolRoundExecutor(executor)

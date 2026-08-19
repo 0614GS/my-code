@@ -4,6 +4,7 @@ import pytest
 
 from nano_code.context.documents import ContextInstruction, UserContextDocument
 from nano_code.context.user_context import AgentsUserContextResolver
+from nano_code.workspace import Workspace, WorkspaceBoundaryError
 
 
 def test_agents_resolver_loads_and_wraps_workspace_instructions(
@@ -90,3 +91,32 @@ def test_agents_resolver_propagates_invalid_file_errors(tmp_path: Path) -> None:
     path.write_bytes(b"valid prefix\xff")
     with pytest.raises(UnicodeDecodeError):
         resolver.resolve()
+
+
+def test_workspace_rechecks_symlink_boundary_at_io_time(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    directory = root / "safe"
+    directory.mkdir()
+    workspace = Workspace(root)
+    resolved = workspace.resolve("safe/result.txt")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    directory.rmdir()
+    directory.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(WorkspaceBoundaryError, match="escapes the workspace"):
+        workspace.write_text(resolved, "must not escape", create_parents=True)
+    assert not (outside / "result.txt").exists()
+
+
+def test_workspace_owns_bounded_utf8_io(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    path = workspace.resolve("nested/note.txt")
+
+    workspace.write_text(path, "hello", create_parents=True)
+
+    assert workspace.read_text(path) == "hello"
+    assert workspace.read_bytes(path) == b"hello"
+    assert workspace.display(path) == "nested/note.txt"

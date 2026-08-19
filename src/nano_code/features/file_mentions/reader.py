@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from nano_code.permissions.policy import PermissionPolicy
-from nano_code.workspace import WorkspaceBoundaryError, WorkspaceSecurity
+from nano_code.permissions import PermissionPolicy, read_denied
+from nano_code.workspace import Workspace, WorkspaceBoundaryError
 
 _MAX_READ_BYTES = 8 * 1024 * 1024
 _DEFAULT_LINE_LIMIT = 2000
@@ -28,7 +28,7 @@ class WorkspaceAttachmentReader:
     """Read mentions without invoking model tools or their execution pipeline."""
 
     def __init__(self, root: Path, policy: PermissionPolicy) -> None:
-        self.security = WorkspaceSecurity(root)
+        self.workspace = Workspace(root)
         # PermissionPolicy is mutable; retaining it makes settings updates visible
         # to the next mention without rebuilding this reader.
         self.policy = policy
@@ -50,19 +50,19 @@ class WorkspaceAttachmentReader:
         line_end: int | None,
     ) -> WorkspaceAttachment:
         try:
-            path = self.security.resolve(raw_path, must_exist=True)
+            path = self.workspace.resolve(raw_path, must_exist=True)
         except (OSError, WorkspaceBoundaryError) as error:
             raise AttachmentReadError(str(error)) from error
-        display = self.security.display(path)
+        display = self.workspace.display(path)
         if path.is_dir():
             if line_start is not None or line_end is not None:
                 raise AttachmentReadError("Directories do not support line ranges")
-            if self.security.read_denied(self.policy.rules, "Glob", path):
+            if read_denied(self.policy.rules, "Glob", display or "."):
                 raise AttachmentReadError(f"Reading {display} is denied by rule")
             return WorkspaceAttachment(display, True, self._list_directory(path))
         if not path.is_file():
             raise AttachmentReadError(f"Not a file: {display}")
-        if self.security.read_denied(self.policy.rules, "Read", path):
+        if read_denied(self.policy.rules, "Read", display or "."):
             raise AttachmentReadError(f"Reading {display} is denied by rule")
         return WorkspaceAttachment(
             display,
@@ -79,7 +79,7 @@ class WorkspaceAttachmentReader:
     ) -> str:
         if path.stat().st_size > _MAX_READ_BYTES:
             raise AttachmentReadError("File exceeds 8 MiB read limit")
-        raw = path.read_bytes()
+        raw = self.workspace.read_bytes(path)
         if len(raw) > _MAX_READ_BYTES:
             raise AttachmentReadError("File exceeds 8 MiB read limit")
         if b"\x00" in raw:
@@ -109,10 +109,10 @@ class WorkspaceAttachmentReader:
         entries: list[str] = []
         for child in path.iterdir():
             try:
-                resolved = self.security.resolve(str(child), must_exist=True)
+                resolved = self.workspace.resolve(str(child), must_exist=True)
             except (OSError, WorkspaceBoundaryError):
                 continue
-            display = self.security.display(resolved)
+            display = self.workspace.display(resolved)
             entries.append(f"{display}/" if resolved.is_dir() else display)
         entries.sort()
         truncated = len(entries) > _DIRECTORY_LIMIT

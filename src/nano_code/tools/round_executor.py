@@ -1,21 +1,9 @@
-"""一次 ToolRound 的编排协议与现有执行器适配器。"""
+"""一次 ToolRound 的事件与串行执行。"""
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 
-from nano_code.agent.contracts.tool import (
-    ToolCallFinished as _ToolCallFinished,
-)
-from nano_code.agent.contracts.tool import (
-    ToolCallStarted as _ToolCallStarted,
-)
-from nano_code.agent.contracts.tool import (
-    ToolRoundCompleted as _ToolRoundCompleted,
-)
-from nano_code.agent.contracts.tool import (
-    ToolRoundEvent as _ToolRoundEvent,
-)
-from nano_code.agent.ports.tool import ToolRoundPort
 from nano_code.conversation import (
     AssistantMessage,
     ToolCall,
@@ -30,11 +18,32 @@ from nano_code.tools.presentation import (
 from nano_code.tools.result_store import ToolResultStore
 
 
-class ToolRoundExecutor(ToolRoundPort):
-    """把现有 ToolExecutor 包装成 Agent-owned ToolRound port。
+@dataclass(frozen=True, slots=True)
+class ToolCallStarted:
+    call: ToolCall
+    presentation: ToolUsePresentation
 
-    调度策略刻意保留当前 MVP 的串行语义。以后增加并行调度时，只需要替换
-    这个适配器，不必把取消补齐和展示投影逻辑重新放回 AgentEngine。
+
+@dataclass(frozen=True, slots=True)
+class ToolCallFinished:
+    call: ToolCall
+    result: ToolResult
+    presentation: ToolResultPresentation
+
+
+@dataclass(frozen=True, slots=True)
+class ToolRoundCompleted:
+    message: ToolResultsMessage
+    cancelled: bool = False
+
+
+type ToolRoundEvent = ToolCallStarted | ToolCallFinished | ToolRoundCompleted
+
+
+class ToolRoundExecutor:
+    """串行执行一组 ToolCall 并保证每个调用都有闭合结果。
+
+    调度策略刻意保留当前 MVP 的串行语义；取消补齐和展示投影不泄漏到 Agent。
     """
 
     def __init__(
@@ -76,12 +85,12 @@ class ToolRoundExecutor(ToolRoundPort):
         self,
         calls: tuple[ToolCall, ...],
         assistant_message: AssistantMessage,
-    ) -> AsyncIterator[_ToolRoundEvent]:
+    ) -> AsyncIterator[ToolRoundEvent]:
         results: list[ToolResult] = []
         try:
             # MVP 明确串行执行。每次调用完成后才开始下一个调用。
             for call in calls:
-                yield _ToolCallStarted(call, self.present_use(call))
+                yield ToolCallStarted(call, self.present_use(call))
                 try:
                     outcome = await self.executor.execute(call)
                 except asyncio.CancelledError:
@@ -103,7 +112,7 @@ class ToolRoundExecutor(ToolRoundPort):
                         presentation=presentation,
                     )
                 results.append(outcome.result)
-                yield _ToolCallFinished(
+                yield ToolCallFinished(
                     call=call,
                     result=outcome.result,
                     presentation=outcome.presentation,
@@ -123,18 +132,18 @@ class ToolRoundExecutor(ToolRoundPort):
                 )
                 presentation = self.executor.present_error(call, message)
                 results.append(result)
-                yield _ToolCallFinished(
+                yield ToolCallFinished(
                     call=call,
                     result=result,
                     presentation=presentation,
                 )
-            yield _ToolRoundCompleted(
+            yield ToolRoundCompleted(
                 message=_tool_result_message(assistant_message, tuple(results)),
                 cancelled=True,
             )
             raise
 
-        yield _ToolRoundCompleted(
+        yield ToolRoundCompleted(
             message=_tool_result_message(assistant_message, tuple(results)),
         )
 
@@ -153,5 +162,9 @@ def _tool_result_message(
 
 
 __all__ = [
+    "ToolCallFinished",
+    "ToolCallStarted",
+    "ToolRoundCompleted",
+    "ToolRoundEvent",
     "ToolRoundExecutor",
 ]

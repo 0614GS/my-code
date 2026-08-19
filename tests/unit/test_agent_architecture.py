@@ -1,4 +1,5 @@
 import ast
+import inspect
 from pathlib import Path
 
 import nano_code.agent as agent_api
@@ -9,13 +10,10 @@ import nano_code.tools as tool_adapter
 from nano_code.agent import (
     AgentEngine,
     AgentInboundPort,
-    ToolRoundPort,
 )
 from nano_code.agent.contracts.compaction import CompactionOutcome
-from nano_code.agent.contracts.tool import ToolRoundCompleted
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
-from nano_code.agent.ports.tool import ToolRoundPort as DeclaredToolRoundPort
 from nano_code.application.chat.contracts import ChatRuntime, RuntimeStatus
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.compaction import CompactionCoordinator
@@ -24,13 +22,15 @@ from nano_code.conversation import Conversation, ConversationMessage, ToolResult
 from nano_code.features.file_mentions import FileMention
 from nano_code.features.todos.models import TodoItem
 from nano_code.model import ModelClient, ModelToolDefinition
+from nano_code.permissions import PermissionPolicy, PermissionRequest
 from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.openai_responses import OpenAIResponsesProvider
 from nano_code.providers.router import ProviderRouter
 from nano_code.sessions import Session, SessionSnapshot
-from nano_code.tools import ToolUsePresentation
+from nano_code.tools import ToolRoundCompleted, ToolUsePresentation
 from nano_code.tools.builtin.todo_write import TodoWriteTool
 from nano_code.tools.round_executor import ToolRoundExecutor
+from nano_code.workspace import Workspace
 
 _AGENT_ROOT = Path(__file__).parents[2] / "src" / "nano_code" / "agent"
 _PACKAGE_ROOT = _AGENT_ROOT.parent
@@ -64,10 +64,11 @@ def test_model_exposes_the_single_authoritative_client_protocol() -> None:
     assert [node.name for node in protocol_declarations] == ["ModelClient"]
     assert not hasattr(session_adapter, "SessionRepository")
     assert not hasattr(agent_api, "ConversationState")
-    assert not hasattr(tool_adapter, "ToolRoundPort")
-    assert not hasattr(tool_adapter, "ToolRoundExecutor")
-    assert ToolRoundPort is DeclaredToolRoundPort
-    assert hasattr(ToolRoundPort, "run_round")
+    assert not hasattr(agent_api, "ToolRoundPort")
+    assert tool_adapter.ToolRoundExecutor is ToolRoundExecutor
+    assert ToolRoundCompleted.__module__ == "nano_code.tools.round_executor"
+    assert not (_AGENT_ROOT / "contracts" / "tool.py").exists()
+    assert not (_AGENT_ROOT / "ports" / "tool.py").exists()
     assert AgentInboundPort in AgentEngine.__mro__
     assert CompactorPort.__module__ == "nano_code.agent.ports.compaction"
 
@@ -79,7 +80,6 @@ def test_concrete_adapters_explicitly_inherit_their_real_protocols() -> None:
         (ProviderRouter, (ModelClient,)),
         (AnthropicProvider, (ModelClient,)),
         (OpenAIResponsesProvider, (ModelClient,)),
-        (ToolRoundExecutor, (ToolRoundPort,)),
         (AgentEngine, (AgentInboundPort,)),
     )
     for adapter, ports in adapters:
@@ -137,6 +137,28 @@ def test_conversation_layer_dependency_boundaries() -> None:
             )
             for name in imports
         ), source_path
+
+
+def test_tool_permission_and_workspace_ownership() -> None:
+    parameters = tuple(inspect.signature(PermissionPolicy.decide).parameters)
+    assert parameters == ("self", "request")
+    assert PermissionRequest.__module__ == "nano_code.permissions.models"
+    assert Workspace.__module__ == "nano_code.workspace.local"
+
+    for package_name, forbidden in (
+        ("permissions", "nano_code.tools"),
+        ("workspace", "nano_code.permissions"),
+    ):
+        for source_path in (_PACKAGE_ROOT / package_name).rglob("*.py"):
+            assert not any(
+                name == forbidden or name.startswith(f"{forbidden}.")
+                for name in _imported_modules(source_path)
+            ), source_path
+
+    executor = (_PACKAGE_ROOT / "tools" / "executor.py").read_text(encoding="utf-8")
+    assert "tool.check_permissions(" in executor
+    assert "self.policy.decide(" in executor
+    assert "await tool.execute(" in executor
 
 
 def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> None:

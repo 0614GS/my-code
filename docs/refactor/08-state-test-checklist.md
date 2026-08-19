@@ -37,8 +37,8 @@
 | I5 | resume、switch 或销毁 ContextSession 时清空 live-session delivery 和 session cache | resume 清空已有；阶段 5/6 补 switch 与 cache |
 | I6 | user context/prompt cache 按 runtime、session、request 生命周期分别失效 | user context 复用已有；阶段 5 补三种失效边界 |
 | I7 | full compact 摘要失败不改变 Session；成功后重新计算 working set 与派生状态 | 失败服务测试已有；阶段 3/5 补跨模块断言 |
-| I8 | 工具取消、异常和进程恢复都闭合已提交 ToolCall，不留下非法模型协议 | 取消/异常部分已有；阶段 3/6 补恢复组合 |
-| I9 | pending approval 与 turn 状态在完成或取消后销毁；runtime permission policy 继续存活 | 待阶段 4/6 |
+| I8 | 工具取消、异常和进程恢复都闭合已提交 ToolCall，不留下非法模型协议 | 阶段 4 已覆盖取消补齐、工具异常与稳定错误结果；恢复组合留阶段 6 |
+| I9 | pending approval 与 turn 状态在完成或取消后销毁；runtime permission policy 继续存活 | 阶段 4 已覆盖 permission prompt 取消且工具不执行；turn 生命周期留阶段 6 |
 | I10 | Todo reminder delivery 不写 Transcript，失败 TodoWrite 不覆盖最后成功状态 | 已有直接测试 |
 
 ## 执行规则
