@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.auth.credentials import CredentialStore
-from nano_code.bootstrap import initialize_user_storage, main
-from nano_code.config.paths import NanoCodePaths
-from nano_code.config.providers import ProviderProfileStore
+from my_code.auth.credentials import CredentialStore
+from my_code.bootstrap import initialize_user_storage, main
+from my_code.config.paths import MyCodePaths
+from my_code.config.providers import ProviderProfileStore
 
 
-def make_paths(tmp_path: Path) -> NanoCodePaths:
+def make_paths(tmp_path: Path) -> MyCodePaths:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    return NanoCodePaths.discover(workspace, environ={}, home=tmp_path / "home")
+    return MyCodePaths.discover(workspace, environ={}, home=tmp_path / "home")
 
 
 def test_bootstrap_creates_required_user_layout_only(tmp_path: Path) -> None:
@@ -85,7 +85,7 @@ def test_cli_startup_bootstraps_before_auth_status(
     workspace.mkdir()
     config_home = tmp_path / "config"
     monkeypatch.chdir(workspace)
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     with pytest.raises(SystemExit) as exit_info:

@@ -2,18 +2,18 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.model.primitives import JsonObject
-from nano_code.permissions.models import (
+from my_code.model.primitives import JsonObject
+from my_code.permissions.models import (
     PermissionBehavior,
     PermissionMode,
     PermissionRequest,
     PermissionRule,
     ToolPermissionContext,
 )
-from nano_code.permissions.policy import PermissionPolicy
-from nano_code.tools.builtin.bash import BashTool
-from nano_code.tools.builtin.bash.ast import parse_bash
-from nano_code.tools.builtin.bash.permissions import analyze_bash_command
+from my_code.permissions.policy import PermissionPolicy
+from my_code.tools.builtin.bash import BashTool
+from my_code.tools.builtin.bash.ast import parse_bash
+from my_code.tools.builtin.bash.permissions import analyze_bash_command
 
 
 def test_ast_decodes_static_quotes_concatenation_and_unicode_spans() -> None:
@@ -89,7 +89,7 @@ def test_ast_character_and_node_budgets_fail_closed(
 ) -> None:
     assert parse_bash("x" * 10_001).is_complete is False
 
-    monkeypatch.setattr("nano_code.tools.builtin.bash.ast.MAX_AST_NODES", 2)
+    monkeypatch.setattr("my_code.tools.builtin.bash.ast.MAX_AST_NODES", 2)
     result = parse_bash("git status")
     assert result.is_complete is False
     assert "node limit" in result.reason

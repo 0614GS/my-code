@@ -3,27 +3,27 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.conversation.models import (
+from my_code.conversation.models import (
     AssistantMessage,
     TextContent,
     ToolCall,
     ToolResult,
 )
-from nano_code.model.primitives import TokenUsage
-from nano_code.permissions.models import PermissionMode
-from nano_code.permissions.policy import PermissionPolicy
-from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.tools.builtin import builtin_tools
-from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
-from nano_code.tools.registry import ToolRegistry
-from nano_code.tools.result_store import ToolResultStore
-from nano_code.tools.round_executor import (
+from my_code.model.primitives import TokenUsage
+from my_code.permissions.models import PermissionMode
+from my_code.permissions.policy import PermissionPolicy
+from my_code.permissions.prompt import HeadlessPrompter
+from my_code.tools.builtin import builtin_tools
+from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
+from my_code.tools.registry import ToolRegistry
+from my_code.tools.result_store import ToolResultStore
+from my_code.tools.round_executor import (
     ToolCallFinished,
     ToolRoundCompleted,
     ToolRoundEvent,
     ToolRoundExecutor,
 )
-from nano_code.workspace.local import Workspace
+from my_code.workspace.local import Workspace
 
 
 def build_round_executor(tmp_path: Path) -> ToolRoundExecutor:

@@ -2,52 +2,52 @@ import ast
 import inspect
 from pathlib import Path
 
-import nano_code.agent as agent_api
-import nano_code.context as context_adapter
-import nano_code.providers as provider_adapter
-import nano_code.sessions as session_adapter
-import nano_code.tools as tool_adapter
-from nano_code.agent.engine import AgentEngine
-from nano_code.chat.service import ChatService
-from nano_code.chat.status import RuntimeStatus
-from nano_code.context.attachments.models import ContextAttachment
-from nano_code.context.models import CompactionOutcome, ContextPlan
-from nano_code.conversation.models import ConversationMessage, ToolResult
-from nano_code.conversation.state import Conversation
-from nano_code.features.file_mentions.models import FileMention, PathSuggestion
-from nano_code.features.todos.models import TodoItem
-from nano_code.features.todos.tool import TodoWriteTool
-from nano_code.model.client import ModelClient
-from nano_code.model.request import ModelToolDefinition
-from nano_code.permissions.models import PermissionRequest
-from nano_code.permissions.policy import PermissionPolicy
-from nano_code.providers.anthropic import AnthropicProvider
-from nano_code.providers.openai_responses import OpenAIResponsesProvider
-from nano_code.providers.router import ProviderRouter
-from nano_code.sessions.models import SessionSnapshot
-from nano_code.sessions.session import Session
-from nano_code.tools.presentation import ToolUsePresentation
-from nano_code.tools.round_executor import ToolRoundCompleted, ToolRoundExecutor
-from nano_code.workspace.local import Workspace
+import my_code.agent as agent_api
+import my_code.context as context_adapter
+import my_code.providers as provider_adapter
+import my_code.sessions as session_adapter
+import my_code.tools as tool_adapter
+from my_code.agent.engine import AgentEngine
+from my_code.chat.service import ChatService
+from my_code.chat.status import RuntimeStatus
+from my_code.context.attachments.models import ContextAttachment
+from my_code.context.models import CompactionOutcome, ContextPlan
+from my_code.conversation.models import ConversationMessage, ToolResult
+from my_code.conversation.state import Conversation
+from my_code.features.file_mentions.models import FileMention, PathSuggestion
+from my_code.features.todos.models import TodoItem
+from my_code.features.todos.tool import TodoWriteTool
+from my_code.model.client import ModelClient
+from my_code.model.request import ModelToolDefinition
+from my_code.permissions.models import PermissionRequest
+from my_code.permissions.policy import PermissionPolicy
+from my_code.providers.anthropic import AnthropicProvider
+from my_code.providers.openai_responses import OpenAIResponsesProvider
+from my_code.providers.router import ProviderRouter
+from my_code.sessions.models import SessionSnapshot
+from my_code.sessions.session import Session
+from my_code.tools.presentation import ToolUsePresentation
+from my_code.tools.round_executor import ToolRoundCompleted, ToolRoundExecutor
+from my_code.workspace.local import Workspace
 
-_AGENT_ROOT = Path(__file__).parents[2] / "src" / "nano_code" / "agent"
+_AGENT_ROOT = Path(__file__).parents[2] / "src" / "my_code" / "agent"
 _PACKAGE_ROOT = _AGENT_ROOT.parent
 _ADAPTER_PREFIXES = (
-    "nano_code.providers",
-    "nano_code.chat",
-    "nano_code.cli",
-    "nano_code.tui",
-    "nano_code.bootstrap",
+    "my_code.providers",
+    "my_code.chat",
+    "my_code.cli",
+    "my_code.tui",
+    "my_code.bootstrap",
 )
 
 
 def test_model_exposes_the_single_authoritative_client_protocol() -> None:
     assert not hasattr(context_adapter, "ContextPort")
-    assert ContextPlan.__module__ == "nano_code.context.models"
+    assert ContextPlan.__module__ == "my_code.context.models"
     assert not hasattr(agent_api, "ModelCallPort")
     assert not hasattr(agent_api, "ModelCompletionPort")
     assert not hasattr(provider_adapter, "ModelClient")
-    assert ModelClient.__module__ == "nano_code.model.client"
+    assert ModelClient.__module__ == "my_code.model.client"
     model_sources = tuple((_PACKAGE_ROOT / "model").glob("*.py"))
     protocol_declarations = [
         node
@@ -63,8 +63,8 @@ def test_model_exposes_the_single_authoritative_client_protocol() -> None:
     assert not hasattr(agent_api, "ConversationState")
     assert not hasattr(agent_api, "ToolRoundPort")
     assert not hasattr(tool_adapter, "ToolRoundExecutor")
-    assert ToolRoundExecutor.__module__ == "nano_code.tools.round_executor"
-    assert ToolRoundCompleted.__module__ == "nano_code.tools.round_executor"
+    assert ToolRoundExecutor.__module__ == "my_code.tools.round_executor"
+    assert ToolRoundCompleted.__module__ == "my_code.tools.round_executor"
     assert not (_AGENT_ROOT / "contracts" / "tool.py").exists()
     assert not (_AGENT_ROOT / "ports" / "tool.py").exists()
     assert not hasattr(agent_api, "AgentInboundPort")
@@ -123,17 +123,17 @@ def test_conversation_layer_dependency_boundaries() -> None:
     assert set(simultaneous) == {"codec.py", "store.py"}
 
     assert "presentation" not in ToolResult.__dataclass_fields__
-    assert Conversation.__module__ == "nano_code.conversation.state"
+    assert Conversation.__module__ == "my_code.conversation.state"
     for source_path in (_PACKAGE_ROOT / "conversation").glob("*.py"):
         imports = _imported_modules(source_path)
         assert not any(
             name.startswith(
                 (
-                    "nano_code.agent",
-                    "nano_code.application",
-                    "nano_code.context",
-                    "nano_code.sessions",
-                    "nano_code.tui",
+                    "my_code.agent",
+                    "my_code.application",
+                    "my_code.context",
+                    "my_code.sessions",
+                    "my_code.tui",
                 )
             )
             for name in imports
@@ -143,12 +143,12 @@ def test_conversation_layer_dependency_boundaries() -> None:
 def test_tool_permission_and_workspace_ownership() -> None:
     parameters = tuple(inspect.signature(PermissionPolicy.decide).parameters)
     assert parameters == ("self", "request")
-    assert PermissionRequest.__module__ == "nano_code.permissions.models"
-    assert Workspace.__module__ == "nano_code.workspace.local"
+    assert PermissionRequest.__module__ == "my_code.permissions.models"
+    assert Workspace.__module__ == "my_code.workspace.local"
 
     for package_name, forbidden in (
-        ("permissions", "nano_code.tools"),
-        ("workspace", "nano_code.permissions"),
+        ("permissions", "my_code.tools"),
+        ("workspace", "my_code.permissions"),
     ):
         for source_path in (_PACKAGE_ROOT / package_name).rglob("*.py"):
             assert not any(
@@ -163,7 +163,7 @@ def test_tool_permission_and_workspace_ownership() -> None:
 
 
 def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> None:
-    assert ModelToolDefinition.__module__ == "nano_code.model.request"
+    assert ModelToolDefinition.__module__ == "my_code.model.request"
     assert not (_AGENT_ROOT / "contracts" / "model.py").exists()
     assert not (_AGENT_ROOT / "ports" / "model.py").exists()
     assert not (_AGENT_ROOT / "contracts" / "tool_definition.py").exists()
@@ -189,7 +189,7 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert not hasattr(Conversation, "messages")
     assert not (_AGENT_ROOT / "contracts" / "session.py").exists()
     assert not (_AGENT_ROOT / "ports" / "session.py").exists()
-    assert Session.__module__ == "nano_code.sessions.session"
+    assert Session.__module__ == "my_code.sessions.session"
     assert TodoWriteTool().definition.name == "TodoWrite"
 
 
@@ -236,22 +236,20 @@ def _imported_modules(source_path: Path) -> tuple[str, ...]:
 
 
 def test_chat_owns_frontend_neutral_contracts_without_runtime_protocol() -> None:
-    assert ChatService.__module__ == "nano_code.chat.service"
-    assert RuntimeStatus.__module__ == "nano_code.chat.status"
+    assert ChatService.__module__ == "my_code.chat.service"
+    assert RuntimeStatus.__module__ == "my_code.chat.status"
     assert not hasattr(
-        __import__("nano_code.chat", fromlist=["ChatRuntime"]), "ChatRuntime"
+        __import__("my_code.chat", fromlist=["ChatRuntime"]), "ChatRuntime"
     )
-    assert ToolUsePresentation.__module__ == "nano_code.tools.presentation"
+    assert ToolUsePresentation.__module__ == "my_code.tools.presentation"
 
     for source_path in (_PACKAGE_ROOT / "chat").glob("*.py"):
         imports = _imported_modules(source_path)
         assert not any(
-            name == "nano_code.tui" or name.startswith("nano_code.tui.")
-            for name in imports
+            name == "my_code.tui" or name.startswith("my_code.tui.") for name in imports
         ), source_path
         assert not any(
-            name == "nano_code.cli" or name.startswith("nano_code.cli.")
-            for name in imports
+            name == "my_code.cli" or name.startswith("my_code.cli.") for name in imports
         ), source_path
 
 
@@ -263,9 +261,9 @@ def test_production_code_does_not_depend_on_legacy_chat_owners() -> None:
     }
     assert not any(path.exists() for path in legacy_modules)
     forbidden = (
-        "nano_code.cli.runtime",
-        "nano_code.presentation",
-        "nano_code.tui.contracts",
+        "my_code.cli.runtime",
+        "my_code.presentation",
+        "my_code.tui.contracts",
     )
     for source_path in _PACKAGE_ROOT.rglob("*.py"):
         imports = _imported_modules(source_path)
@@ -278,26 +276,24 @@ def test_core_mechanisms_do_not_import_chat_service() -> None:
     for package_name in ("agent", "context", "conversation", "sessions", "tools"):
         for source_path in (_PACKAGE_ROOT / package_name).rglob("*.py"):
             imports = _imported_modules(source_path)
-            assert not any(name.startswith("nano_code.chat") for name in imports), (
+            assert not any(name.startswith("my_code.chat") for name in imports), (
                 source_path
             )
 
 
 def test_file_mentions_are_a_feature_not_a_top_level_or_tui_domain() -> None:
-    assert FileMention.__module__ == "nano_code.features.file_mentions.models"
-    assert PathSuggestion.__module__ == "nano_code.features.file_mentions.models"
+    assert FileMention.__module__ == "my_code.features.file_mentions.models"
+    assert PathSuggestion.__module__ == "my_code.features.file_mentions.models"
     assert not (_PACKAGE_ROOT / "attachments.py").exists()
 
     feature_root = _PACKAGE_ROOT / "features" / "file_mentions"
     for source_path in feature_root.glob("*.py"):
         imports = _imported_modules(source_path)
         assert not any(
-            name == "nano_code.tui" or name.startswith("nano_code.tui.")
-            for name in imports
+            name == "my_code.tui" or name.startswith("my_code.tui.") for name in imports
         ), source_path
         assert not any(
-            name == "nano_code.cli" or name.startswith("nano_code.cli.")
-            for name in imports
+            name == "my_code.cli" or name.startswith("my_code.cli.") for name in imports
         ), source_path
 
     loader = (feature_root / "loader.py").read_text(encoding="utf-8")
@@ -312,8 +308,8 @@ def test_file_mentions_are_a_feature_not_a_top_level_or_tui_domain() -> None:
 
 
 def test_conversation_and_context_attachment_ownership() -> None:
-    assert ConversationMessage.__module__ == "nano_code.conversation.models"
-    assert ContextAttachment.__module__ == "nano_code.context.attachments.models"
+    assert ConversationMessage.__module__ == "my_code.conversation.models"
+    assert ContextAttachment.__module__ == "my_code.context.attachments.models"
     assert not tuple((_PACKAGE_ROOT / "messages").glob("*.py"))
     assert not (_PACKAGE_ROOT / "context" / "attachment_projection.py").exists()
     assert not (_PACKAGE_ROOT / "context" / "attachments.py").exists()
@@ -322,13 +318,13 @@ def test_conversation_and_context_attachment_ownership() -> None:
     for source_path in conversation_root.glob("*.py"):
         imports = _imported_modules(source_path)
         assert not any(
-            name == "nano_code.context" or name.startswith("nano_code.context.")
+            name == "my_code.context" or name.startswith("my_code.context.")
             for name in imports
         ), source_path
 
     attachment_models = _PACKAGE_ROOT / "context" / "attachments" / "models.py"
     assert not any(
-        name == "nano_code.agent" or name.startswith("nano_code.agent.")
+        name == "my_code.agent" or name.startswith("my_code.agent.")
         for name in _imported_modules(attachment_models)
     )
 
@@ -341,11 +337,11 @@ def test_conversation_and_context_attachment_ownership() -> None:
 
     for source_path in (_PACKAGE_ROOT / "providers").glob("*.py"):
         imports = _imported_modules(source_path)
-        assert "nano_code.context.attachments.models" not in imports, source_path
+        assert "my_code.context.attachments.models" not in imports, source_path
 
 
 def test_todos_are_a_self_contained_product_feature() -> None:
-    assert TodoItem.__module__ == "nano_code.features.todos.models"
+    assert TodoItem.__module__ == "my_code.features.todos.models"
     assert not tuple((_PACKAGE_ROOT / "todos").glob("*.py"))
 
     feature_root = _PACKAGE_ROOT / "features" / "todos"
@@ -360,19 +356,17 @@ def test_todos_are_a_self_contained_product_feature() -> None:
     for source_path in feature_root.glob("*.py"):
         imports = _imported_modules(source_path)
         assert not any(
-            name == "nano_code.tui" or name.startswith("nano_code.tui.")
-            for name in imports
+            name == "my_code.tui" or name.startswith("my_code.tui.") for name in imports
         ), source_path
         assert not any(
-            name == "nano_code.cli" or name.startswith("nano_code.cli.")
-            for name in imports
+            name == "my_code.cli" or name.startswith("my_code.cli.") for name in imports
         ), source_path
 
     assert not (_PACKAGE_ROOT / "tools" / "builtin" / "todo_write.py").exists()
     for source_path in (_PACKAGE_ROOT / "tools").rglob("*.py"):
         assert not any(
-            name == "nano_code.features.todos"
-            or name.startswith("nano_code.features.todos.")
+            name == "my_code.features.todos"
+            or name.startswith("my_code.features.todos.")
             for name in _imported_modules(source_path)
         ), source_path
 
@@ -380,7 +374,7 @@ def test_todos_are_a_self_contained_product_feature() -> None:
 def test_context_and_base_modules_do_not_import_concrete_features() -> None:
     for source_path in (_PACKAGE_ROOT / "context").rglob("*.py"):
         assert not any(
-            name == "nano_code.agent" or name.startswith("nano_code.agent.")
+            name == "my_code.agent" or name.startswith("my_code.agent.")
             for name in _imported_modules(source_path)
         ), source_path
 
@@ -396,6 +390,6 @@ def test_context_and_base_modules_do_not_import_concrete_features() -> None:
     ):
         for source_path in (_PACKAGE_ROOT / package_name).rglob("*.py"):
             assert not any(
-                name == "nano_code.features" or name.startswith("nano_code.features.")
+                name == "my_code.features" or name.startswith("my_code.features.")
                 for name in _imported_modules(source_path)
             ), source_path

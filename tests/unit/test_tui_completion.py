@@ -1,4 +1,4 @@
-from nano_code.tui.completion import format_path_mention, mention_at_cursor
+from my_code.tui.completion import format_path_mention, mention_at_cursor
 
 
 def test_cursor_mention_and_quoted_insertion() -> None:

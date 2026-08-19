@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.auth.credentials import CredentialSource, CredentialStore
-from nano_code.cli.arguments import (
+from my_code.auth.credentials import CredentialSource, CredentialStore
+from my_code.cli.arguments import (
     AuthAction,
     AuthOptions,
     CliOptions,
@@ -12,8 +12,8 @@ from nano_code.cli.arguments import (
     parse_args,
     parse_cli,
 )
-from nano_code.config.settings import AgentSettings, SettingsResolver
-from nano_code.permissions.models import PermissionMode
+from my_code.config.settings import AgentSettings, SettingsResolver
+from my_code.permissions.models import PermissionMode
 
 
 def clear_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -21,8 +21,8 @@ def clear_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_MODEL",
-        "NANO_CODE_API_KEY",
-        "NANO_CODE_PROVIDER",
+        "MY_CODE_API_KEY",
+        "MY_CODE_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -36,7 +36,7 @@ def resolve_options(options: CliOptions) -> AgentSettings:
 
 
 def test_parser_uses_installed_command_name() -> None:
-    assert build_parser().prog == "nanocode"
+    assert build_parser().prog == "mycode"
 
 
 def test_parser_rejects_removed_max_turns_flag() -> None:
@@ -62,7 +62,7 @@ def test_cli_resolves_file_environment_and_flag_precedence(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("ANTHROPIC_MODEL", "env-model")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://env.example/api")
 
@@ -101,7 +101,7 @@ def test_environment_model_overrides_settings(
         json.dumps({"version": 3, "agent": {"model": "file-model"}}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("ANTHROPIC_MODEL", "env-model")
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
@@ -120,7 +120,7 @@ def test_environment_base_url_overrides_user_settings(
     (config_home / "settings.json").write_text(
         json.dumps({"version": 3}), encoding="utf-8"
     )
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://env.example/api")
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
@@ -157,7 +157,7 @@ def test_named_provider_resolves_profile_and_scoped_credential(
     CredentialStore(config_home / ".credentials.json").save_api_key(
         "gateway-key", "gateway"
     )
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 
@@ -194,7 +194,7 @@ def test_cli_provider_override_selects_named_profile(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
 
     options = parse_args(
         ["--cwd", str(workspace), "--provider", "gateway", "-p", "hello"]
@@ -212,7 +212,7 @@ def test_environment_api_key_overrides_stored_credential(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config_home = tmp_path / "config"
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     CredentialStore(config_home / ".credentials.json").save_api_key("stored-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "environment-key")
 
@@ -230,7 +230,7 @@ def test_cli_uses_stored_credential_without_environment_override(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config_home = tmp_path / "config"
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     CredentialStore(config_home / ".credentials.json").save_api_key("stored-key")
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
@@ -244,7 +244,7 @@ def test_parse_cli_returns_auth_management_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(tmp_path / "config"))
 
     options = parse_cli(["auth", "login"])
 
@@ -261,13 +261,13 @@ def test_parsing_does_not_materialize_storage(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config_home = tmp_path / "missing-config"
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 
     assert options.cwd == workspace
     assert not config_home.exists()
-    assert not (workspace / ".nano-code").exists()
+    assert not (workspace / ".my-code").exists()
 
 
 def test_non_positive_cli_limit_is_rejected(
@@ -276,7 +276,7 @@ def test_non_positive_cli_limit_is_rejected(
     clear_provider_environment(monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(tmp_path / "config"))
 
     options = parse_args(["--cwd", str(workspace), "--max-steps", "0", "-p", "hello"])
     with pytest.raises(ValueError, match="max_steps must be a positive integer"):
@@ -289,7 +289,7 @@ def test_max_steps_is_unlimited_by_default(
     clear_provider_environment(monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(tmp_path / "config"))
 
     options = parse_args(["--cwd", str(workspace), "-p", "hello"])
 

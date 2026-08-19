@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.auth.credentials import (
+from my_code.auth.credentials import (
     CredentialSource,
     CredentialStore,
     CredentialStoreError,

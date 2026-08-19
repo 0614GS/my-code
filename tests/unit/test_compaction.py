@@ -2,16 +2,16 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from nano_code.context.compaction import (
+from my_code.context.compaction import (
     CompactionCoordinator,
     CompactionResult,
     CompactionService,
 )
-from nano_code.context.session import ContextSnapshot as ConversationSnapshot
-from nano_code.conversation.models import AssistantMessage, HumanMessage, TextContent
-from nano_code.model.events import ModelOutputCompleted, ModelStreamEvent
-from nano_code.model.primitives import TokenUsage
-from nano_code.model.request import (
+from my_code.context.session import ContextSnapshot as ConversationSnapshot
+from my_code.conversation.models import AssistantMessage, HumanMessage, TextContent
+from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
+from my_code.model.primitives import TokenUsage
+from my_code.model.request import (
     ModelOutput,
     ModelRequest,
     ModelTextBlock,

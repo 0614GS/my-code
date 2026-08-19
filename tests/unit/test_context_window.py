@@ -1,11 +1,11 @@
 import pytest
 
-from nano_code.context.microcompact import MicrocompactPolicy
-from nano_code.context.models import ContextOverflow
-from nano_code.context.planner import ContextBuilder
-from nano_code.context.session import ContextSnapshot as ConversationSnapshot
-from nano_code.context.window import ContextWindow
-from nano_code.conversation.models import (
+from my_code.context.microcompact import MicrocompactPolicy
+from my_code.context.models import ContextOverflow
+from my_code.context.planner import ContextBuilder
+from my_code.context.session import ContextSnapshot as ConversationSnapshot
+from my_code.context.window import ContextWindow
+from my_code.conversation.models import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,
@@ -14,8 +14,8 @@ from nano_code.conversation.models import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model.primitives import TokenUsage
-from nano_code.model.request import (
+from my_code.model.primitives import TokenUsage
+from my_code.model.request import (
     ModelAssistantMessage,
     ModelTextBlock,
     ModelToolResultBlock,
@@ -23,8 +23,8 @@ from nano_code.model.request import (
     ModelUserMessage,
     PromptStability,
 )
-from nano_code.prompts.models import PromptSection
-from nano_code.prompts.registry import PromptRegistry
+from my_code.prompts.models import PromptSection
+from my_code.prompts.registry import PromptRegistry
 
 
 def _planner(max_chars: int = 1_000, microcompact=None) -> ContextBuilder:

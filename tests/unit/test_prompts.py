@@ -2,15 +2,15 @@ from pathlib import Path
 
 import pytest
 
-import nano_code.prompts.system as system
-from nano_code.context.documents import ContextInstruction
-from nano_code.context.normalization import ModelInputNormalizer
-from nano_code.context.xml import render_context_instruction, wrap_xml
-from nano_code.conversation.models import ConversationSummaryMessage
-from nano_code.model.request import ModelTextBlock, PromptStability, SystemPrompt
-from nano_code.prompts.models import PromptSection
-from nano_code.prompts.registry import PromptRegistry
-from nano_code.prompts.system import build_system_prompt_registry
+import my_code.prompts.system as system
+from my_code.context.documents import ContextInstruction
+from my_code.context.normalization import ModelInputNormalizer
+from my_code.context.xml import render_context_instruction, wrap_xml
+from my_code.conversation.models import ConversationSummaryMessage
+from my_code.model.request import ModelTextBlock, PromptStability, SystemPrompt
+from my_code.prompts.models import PromptSection
+from my_code.prompts.registry import PromptRegistry
+from my_code.prompts.system import build_system_prompt_registry
 
 
 def test_registry_caches_stable_sections_and_recomputes_request_sections() -> None:
@@ -74,7 +74,7 @@ def test_default_prompt_keeps_workspace_out_of_static_prefix(tmp_path: Path) -> 
     assert prompt.text == "\n\n".join(item.content for item in prompt.sections)
 
 
-def test_default_static_prompt_has_nano_code_guidance_only(tmp_path: Path) -> None:
+def test_default_static_prompt_has_my_code_guidance_only(tmp_path: Path) -> None:
     prompt = build_system_prompt_registry(tmp_path).resolve()
 
     static_sections = tuple(
@@ -83,12 +83,12 @@ def test_default_static_prompt_has_nano_code_guidance_only(tmp_path: Path) -> No
         if section.stability is PromptStability.STATIC
     )
     assert tuple(section.key for section in static_sections) == (
-        "nano-code.identity",
-        "nano-code.system",
-        "nano-code.task-guidance",
-        "nano-code.safety",
-        "nano-code.tools",
-        "nano-code.response-style",
+        "my-code.identity",
+        "my-code.system",
+        "my-code.task-guidance",
+        "my-code.safety",
+        "my-code.tools",
+        "my-code.response-style",
     )
     static_text = "\n".join(section.content for section in static_sections)
     assert all(

@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from nano_code.config.providers import ReasoningConfig
-from nano_code.model.events import (
+from my_code.config.providers import ReasoningConfig
+from my_code.model.events import (
     ModelReasoningCompleted,
     ModelReasoningDelta,
     ModelReasoningStarted,
@@ -11,12 +11,12 @@ from nano_code.model.events import (
     ModelTextDelta,
     ModelTextStarted,
 )
-from nano_code.model.primitives import (
+from my_code.model.primitives import (
     JsonObject,
     ProviderBinding,
     ProviderContinuationState,
 )
-from nano_code.model.request import (
+from my_code.model.request import (
     ModelAssistantMessage,
     ModelReasoningBlock,
     ModelRequest,
@@ -26,7 +26,7 @@ from nano_code.model.request import (
     ModelUserMessage,
     SystemPrompt,
 )
-from nano_code.providers.openai_responses import (
+from my_code.providers.openai_responses import (
     OpenAIResponsesProvider,
     _OpenAIStreamNormalizer,
 )

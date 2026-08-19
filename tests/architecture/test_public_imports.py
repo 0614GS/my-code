@@ -36,13 +36,13 @@ def test_public_modules_do_not_reexport_foreign_capabilities() -> None:
 
 def test_public_import_guard_rejects_private_unlisted_and_wildcard_imports() -> None:
     edges = (
-        ImportEdge("example.py", 1, "chat", "model", "nano_code.model._wire"),
+        ImportEdge("example.py", 1, "chat", "model", "my_code.model._wire"),
         ImportEdge(
             "example.py",
             2,
             "chat",
             "model",
-            "nano_code.model.request",
+            "my_code.model.request",
             ("NotPublic",),
         ),
         ImportEdge(
@@ -50,7 +50,7 @@ def test_public_import_guard_rejects_private_unlisted_and_wildcard_imports() -> 
             3,
             "chat",
             "model",
-            "nano_code.model.request",
+            "my_code.model.request",
             ("*",),
         ),
     )
@@ -60,11 +60,11 @@ def test_public_import_guard_rejects_private_unlisted_and_wildcard_imports() -> 
 def test_foreign_reexport_guard_reports_the_exporting_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source_root = tmp_path / "src" / "nano_code"
+    source_root = tmp_path / "src" / "my_code"
     source = source_root / "chat" / "api.py"
     source.parent.mkdir(parents=True)
     source.write_text(
-        "from nano_code.permissions.models import PermissionMode as Mode\n"
+        "from my_code.permissions.models import PermissionMode as Mode\n"
         "__all__ = ['Mode']\n",
         encoding="utf-8",
     )

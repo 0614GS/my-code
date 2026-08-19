@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-nano-code 当前没有 Hooks 运行时、配置 schema 或生产 `hooks` 包。权限、工具执行、compact 和 stop 行为均由具体模块直接实现。
+my-code 当前没有 Hooks 运行时、配置 schema 或生产 `hooks` 包。权限、工具执行、compact 和 stop 行为均由具体模块直接实现。
 
 不为潜在扩展预先建立 Hook port、manager 或空事件目录。
 

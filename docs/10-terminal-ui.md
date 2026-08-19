@@ -17,7 +17,7 @@ Chat 不再把这些外部类型二次导出给 TUI。依赖增加是显式所�
 
 ## 事件流
 
-`NanoCodeTui` 接收已组装的 `ChatService`。一次 prompt 使用 `ChatService.stream()`，按事件更新：
+`MyCodeTui` 接收已组装的 `ChatService`。一次 prompt 使用 `ChatService.stream()`，按事件更新：
 
 - text 与 reasoning 的 started/delta/completed。
 - attachment loaded。

@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.model.primitives import JsonObject
-from nano_code.permissions.models import (
+from my_code.model.primitives import JsonObject
+from my_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,
     PermissionDecision,
@@ -17,12 +17,12 @@ from nano_code.permissions.models import (
     PermissionUpdateDestination,
     ToolPermissionContext,
 )
-from nano_code.permissions.policy import PermissionPolicy
-from nano_code.permissions.prompt import TerminalPrompter
-from nano_code.tools.base import Tool, ToolContext
-from nano_code.tools.builtin.bash import BashTool
-from nano_code.tools.builtin.read_file import ReadFileTool
-from nano_code.tools.builtin.write_file import WriteFileTool
+from my_code.permissions.policy import PermissionPolicy
+from my_code.permissions.prompt import TerminalPrompter
+from my_code.tools.base import Tool, ToolContext
+from my_code.tools.builtin.bash import BashTool
+from my_code.tools.builtin.read_file import ReadFileTool
+from my_code.tools.builtin.write_file import WriteFileTool
 
 
 def tool_reason(detail: str = "test") -> PermissionDecisionReason:

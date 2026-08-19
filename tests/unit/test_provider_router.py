@@ -2,11 +2,11 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from nano_code.auth.credentials import CredentialSource
-from nano_code.config.providers import ProviderProtocol
-from nano_code.model.capabilities import ProviderCapabilities
-from nano_code.model.client import collect_model_output
-from nano_code.model.events import (
+from my_code.auth.credentials import CredentialSource
+from my_code.config.providers import ProviderProtocol
+from my_code.model.capabilities import ProviderCapabilities
+from my_code.model.client import collect_model_output
+from my_code.model.events import (
     ModelOutputCompleted,
     ModelStreamEvent,
     ModelStreamSequencer,
@@ -14,14 +14,14 @@ from nano_code.model.events import (
     ModelTextStarted,
     completed_output_payloads,
 )
-from nano_code.model.primitives import TokenUsage
-from nano_code.model.request import (
+from my_code.model.primitives import TokenUsage
+from my_code.model.request import (
     ModelOutput,
     ModelRequest,
     ModelTextBlock,
     SystemPrompt,
 )
-from nano_code.providers.router import ProviderConnection, ProviderRouter
+from my_code.providers.router import ProviderConnection, ProviderRouter
 
 
 class FakeProvider:

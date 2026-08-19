@@ -2,9 +2,9 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from nano_code.model.client import collect_model_output
-from nano_code.model.events import ModelOutputCompleted, ModelStreamEvent
-from nano_code.model.request import (
+from my_code.model.client import collect_model_output
+from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
+from my_code.model.request import (
     ModelOutput,
     ModelRequest,
     ModelTextBlock,

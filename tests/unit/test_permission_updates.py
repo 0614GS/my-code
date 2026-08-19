@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.config.paths import NanoCodePaths, SettingsScope
-from nano_code.config.permission_updates import PermissionUpdateApplier
-from nano_code.config.store import SettingsFileError, SettingsStore
-from nano_code.permissions.models import (
+from my_code.config.paths import MyCodePaths, SettingsScope
+from my_code.config.permission_updates import PermissionUpdateApplier
+from my_code.config.store import SettingsFileError, SettingsStore
+from my_code.permissions.models import (
     PermissionBehavior,
     PermissionMode,
     PermissionRule,
@@ -13,7 +13,7 @@ from nano_code.permissions.models import (
     PermissionUpdateDestination,
     PermissionUpdateType,
 )
-from nano_code.permissions.policy import PermissionPolicy
+from my_code.permissions.policy import PermissionPolicy
 
 
 class FailingSettingsStore(SettingsStore):
@@ -29,7 +29,7 @@ class FailingSettingsStore(SettingsStore):
 
 def test_persistence_failure_does_not_update_in_memory_policy(tmp_path: Path) -> None:
     policy = PermissionPolicy()
-    store = FailingSettingsStore(NanoCodePaths(tmp_path, tmp_path / "config"))
+    store = FailingSettingsStore(MyCodePaths(tmp_path, tmp_path / "config"))
     rule = PermissionRule(
         "Write",
         PermissionBehavior.ALLOW,

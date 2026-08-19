@@ -2,18 +2,18 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.auth.credentials import CredentialStore
-from nano_code.cli.arguments import AuthAction, AuthOptions
-from nano_code.cli.auth import run_auth_command
-from nano_code.config.paths import NanoCodePaths
+from my_code.auth.credentials import CredentialStore
+from my_code.cli.arguments import AuthAction, AuthOptions
+from my_code.cli.auth import run_auth_command
+from my_code.config.paths import MyCodePaths
 
 
-def _options(tmp_path: Path, action: AuthAction) -> tuple[AuthOptions, NanoCodePaths]:
+def _options(tmp_path: Path, action: AuthAction) -> tuple[AuthOptions, MyCodePaths]:
     workspace = tmp_path / "workspace"
     workspace.mkdir(exist_ok=True)
-    paths = NanoCodePaths.discover(
+    paths = MyCodePaths.discover(
         workspace,
-        environ={"NANO_CODE_CONFIG_DIR": str(tmp_path / "config")},
+        environ={"MY_CODE_CONFIG_DIR": str(tmp_path / "config")},
     )
     return (
         AuthOptions(action=action, cwd=workspace, provider_override=None),
@@ -27,7 +27,7 @@ def test_login_status_and_logout_lifecycle(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("NANO_CODE_API_KEY", raising=False)
+    monkeypatch.delenv("MY_CODE_API_KEY", raising=False)
     login, paths = _options(tmp_path, AuthAction.LOGIN)
 
     assert (

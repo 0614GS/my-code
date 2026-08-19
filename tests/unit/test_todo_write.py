@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.context.attachments.sources import DerivedAttachmentResolver
-from nano_code.context.documents import ContextInstruction
-from nano_code.context.planner import ContextBuilder
-from nano_code.context.session import AttachmentDelivery
-from nano_code.context.session import ContextSnapshot as ConversationSnapshot
-from nano_code.context.window import ContextWindow
-from nano_code.conversation.models import (
+from my_code.context.attachments.sources import DerivedAttachmentResolver
+from my_code.context.documents import ContextInstruction
+from my_code.context.planner import ContextBuilder
+from my_code.context.session import AttachmentDelivery
+from my_code.context.session import ContextSnapshot as ConversationSnapshot
+from my_code.context.window import ContextWindow
+from my_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     TextContent,
@@ -16,21 +16,21 @@ from nano_code.conversation.models import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.features.todos.codec import parse_todo_input
-from nano_code.features.todos.projection import project_todos
-from nano_code.features.todos.reminder import TodoReminderAttachmentSource
-from nano_code.features.todos.tool import TodoWriteTool
-from nano_code.model.primitives import TokenUsage
-from nano_code.model.request import ModelTextBlock, PromptStability
-from nano_code.permissions.models import PermissionMode
-from nano_code.permissions.policy import PermissionPolicy
-from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.prompts.models import PromptSection
-from nano_code.prompts.registry import PromptRegistry
-from nano_code.tools.executor import ToolExecutor
-from nano_code.tools.registry import ToolRegistry
-from nano_code.tools.result_store import ToolResultStore
-from nano_code.workspace.local import Workspace
+from my_code.features.todos.codec import parse_todo_input
+from my_code.features.todos.projection import project_todos
+from my_code.features.todos.reminder import TodoReminderAttachmentSource
+from my_code.features.todos.tool import TodoWriteTool
+from my_code.model.primitives import TokenUsage
+from my_code.model.request import ModelTextBlock, PromptStability
+from my_code.permissions.models import PermissionMode
+from my_code.permissions.policy import PermissionPolicy
+from my_code.permissions.prompt import HeadlessPrompter
+from my_code.prompts.models import PromptSection
+from my_code.prompts.registry import PromptRegistry
+from my_code.tools.executor import ToolExecutor
+from my_code.tools.registry import ToolRegistry
+from my_code.tools.result_store import ToolResultStore
+from my_code.workspace.local import Workspace
 
 
 def _todo_input(status: str = "in_progress") -> dict:

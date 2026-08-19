@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-nano-code 当前没有 MCP client、transport、server 配置或 deferred tool discovery。生产包中不预建空 `mcp` 目录，也不把未来能力塞进现有 ToolRegistry。
+my-code 当前没有 MCP client、transport、server 配置或 deferred tool discovery。生产包中不预建空 `mcp` 目录，也不把未来能力塞进现有 ToolRegistry。
 
 当前工具来源只有：
 

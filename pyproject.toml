@@ -1,7 +1,7 @@
 [project]
-name = "nano-code"
+name = "my-code"
 version = "0.1.0"
-description = "A small, educational coding agent inspired by Claude Code"
+description = "A modular, glass-box coding agent—inspect exactly what your agent sends to the model."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-nanocode = "nano_code.bootstrap:main"
+mycode = "my_code.bootstrap:main"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

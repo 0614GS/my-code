@@ -5,9 +5,9 @@ from typing import Any, cast
 
 import pytest
 
-from nano_code.model.capabilities import CapabilitySource, ModelDescriptor, ModelLimits
-from nano_code.providers.discovery import OpenAIModelCatalog
-from nano_code.providers.model_cache import ModelCatalogCache
+from my_code.model.capabilities import CapabilitySource, ModelDescriptor, ModelLimits
+from my_code.providers.discovery import OpenAIModelCatalog
+from my_code.providers.model_cache import ModelCatalogCache
 
 
 class _Page:

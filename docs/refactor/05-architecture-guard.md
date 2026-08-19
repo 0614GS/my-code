@@ -16,11 +16,11 @@ tests/architecture/
 
 ## 模块识别
 
-扫描 `src/nano_code/**/*.py` 中的 `import` 和 `from ... import ...`。
+扫描 `src/my_code/**/*.py` 中的 `import` 和 `from ... import ...`。
 
-- 普通顶层包以第一段识别，例如 `nano_code.context.budget` 属于 `context`。
-- Feature 以两段识别，例如 `nano_code.features.todos.models` 属于 `features.todos`。
-- 根 `nano_code.bootstrap` 单独识别为组合根；旧 `application`、`core` 与 `constants` 路径已删除，不再特殊映射。
+- 普通顶层包以第一段识别，例如 `my_code.context.budget` 属于 `context`。
+- Feature 以两段识别，例如 `my_code.features.todos.models` 属于 `features.todos`。
+- 根 `my_code.bootstrap` 单独识别为组合根；旧 `application`、`core` 与 `constants` 路径已删除，不再特殊映射。
 - 相对 import 先解析为绝对模块，再进行判定。
 - `TYPE_CHECKING` 内的 import 同样是依赖，不忽略。
 - 标准库和第三方包不进入内部模块依赖图，但单独检查 SDK 泄漏规则。

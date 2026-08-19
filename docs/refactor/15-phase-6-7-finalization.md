@@ -7,7 +7,7 @@
 - `AgentEngine` 只拥有模型/工具循环算法与不可变依赖。每次 `submit/stream` 显式接收 `Session`、`ContextSession` 和 `ToolResultStore`，不提供 status、resume 或 session catalog。
 - `ChatService` 是唯一活动会话协调者。它持有一个 `Session + ContextSession + ToolResultStore` bundle，并用同一把锁串行化 submit、stream、compact、resume 和 provider switch。
 - `sessions` 完成目标 Session 的严格 hydration、尾部工具轮修复与 catalog；Chat 只在候选 bundle 完整构造和历史投影成功后替换活动引用。
-- `chat` 拥有 host DTO 和 AgentEvent → ChatEvent 投影。阶段完成时 TUI 通过 `nano_code.chat` 聚合入口导入；该入口随后改为语义子模块 API。
+- `chat` 拥有 host DTO 和 AgentEvent → ChatEvent 投影。阶段完成时 TUI 通过 `my_code.chat` 聚合入口导入；该入口随后改为语义子模块 API。
 - `config` 拥有路径、settings、provider profile schema/store 和权限更新的持久化协调；根 `bootstrap.py` 是唯一完整对象图与进程入口。
 
 `AgentInboundPort`、Agent contracts/ports、`ChatRuntime` Protocol、`DefaultChatRuntime`、CLI application adapters、`core`、`constants`、`application` 以及未实现的空 `hooks`/`mcp` 包均已删除，没有旧路径 re-export。

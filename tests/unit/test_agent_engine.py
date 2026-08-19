@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent.engine import AgentEngine
-from nano_code.agent.events import (
+from my_code.agent.engine import AgentEngine
+from my_code.agent.events import (
     AgentConversationUpdated,
     AgentReasoningCompleted,
     AgentReasoningDelta,
@@ -14,20 +14,20 @@ from nano_code.agent.events import (
     AgentTextDelta,
     AgentTextStarted,
 )
-from nano_code.agent.models import (
+from my_code.agent.models import (
     AgentMaxStepsReached,
     AgentTurnInput,
     AgentTurnSucceeded,
 )
-from nano_code.context.attachments.models import (
+from my_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
 )
-from nano_code.context.compaction import CompactionCoordinator, CompactionService
-from nano_code.context.planner import ContextBuilder
-from nano_code.context.session import ContextSession
-from nano_code.context.window import ContextWindow
-from nano_code.conversation.models import (
+from my_code.context.compaction import CompactionCoordinator, CompactionService
+from my_code.context.planner import ContextBuilder
+from my_code.context.session import ContextSession
+from my_code.context.window import ContextWindow
+from my_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     ReasoningContent,
@@ -35,10 +35,10 @@ from nano_code.conversation.models import (
     ToolCall,
     ToolResultsMessage,
 )
-from nano_code.features.todos.projection import project_todos
-from nano_code.features.todos.tool import TodoWriteTool
-from nano_code.model.errors import ModelContextOverflow
-from nano_code.model.events import (
+from my_code.features.todos.projection import project_todos
+from my_code.features.todos.tool import TodoWriteTool
+from my_code.model.errors import ModelContextOverflow
+from my_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
     ModelReasoningDelta,
@@ -50,13 +50,13 @@ from nano_code.model.events import (
     ModelTextStarted,
     completed_output_payloads,
 )
-from nano_code.model.primitives import (
+from my_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
 )
-from nano_code.model.request import (
+from my_code.model.request import (
     ModelOutput,
     ModelReasoningBlock,
     ModelRequest,
@@ -64,19 +64,19 @@ from nano_code.model.request import (
     ModelToolUseBlock,
     PromptStability,
 )
-from nano_code.permissions.models import PermissionMode
-from nano_code.permissions.policy import PermissionPolicy
-from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.prompts.models import PromptSection
-from nano_code.prompts.registry import PromptRegistry
-from nano_code.sessions.session import Session
-from nano_code.sessions.store import SessionStore
-from nano_code.tools.builtin import builtin_tools
-from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
-from nano_code.tools.registry import ToolRegistry
-from nano_code.tools.result_store import ToolResultStore
-from nano_code.tools.round_executor import ToolRoundExecutor
-from nano_code.workspace.local import Workspace
+from my_code.permissions.models import PermissionMode
+from my_code.permissions.policy import PermissionPolicy
+from my_code.permissions.prompt import HeadlessPrompter
+from my_code.prompts.models import PromptSection
+from my_code.prompts.registry import PromptRegistry
+from my_code.sessions.session import Session
+from my_code.sessions.store import SessionStore
+from my_code.tools.builtin import builtin_tools
+from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
+from my_code.tools.registry import ToolRegistry
+from my_code.tools.result_store import ToolResultStore
+from my_code.tools.round_executor import ToolRoundExecutor
+from my_code.workspace.local import Workspace
 
 
 class FakeModel:

@@ -4,7 +4,7 @@
 
 ## 最终所有权
 
-`nano_code.model` 是 provider-neutral 模型语言的唯一所有者：
+`my_code.model` 是 provider-neutral 模型语言的唯一所有者：
 
 - 请求、消息、内容块、输出和有序流事件；
 - resolved system prompt、token usage、模型 limits/capabilities；
@@ -23,7 +23,7 @@ Prompts 仍拥有未解析 section、resolver 和生命周期缓存；Conversati
 - Providers 中重复拥有模型边界的 `base.py`、`catalog.py`、`call.py`、`streaming.py`
 - Providers 中仅承载共享 ID 校验的 `ids.py`
 
-Anthropic、OpenAI、ProviderRouter、Agent 和 Context 均从 `nano_code.model` 模块根导入能力。Providers 不再反向导入 Agent、Conversation 或 Prompts。
+Anthropic、OpenAI、ProviderRouter、Agent 和 Context 均从 `my_code.model` 模块根导入能力。Providers 不再反向导入 Agent、Conversation 或 Prompts。
 
 ## 架构守卫变化
 

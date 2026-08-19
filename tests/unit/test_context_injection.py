@@ -3,20 +3,20 @@ from collections.abc import Iterable
 
 import pytest
 
-from nano_code.context.attachments.models import (
+from my_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
 )
-from nano_code.context.attachments.sources import DerivedAttachmentResolver
-from nano_code.context.documents import ContextInstruction, UserContextDocument
-from nano_code.context.models import ContextOverflow
-from nano_code.context.normalization import ModelInputNormalizer
-from nano_code.context.planner import ContextBuilder
-from nano_code.context.session import AttachmentDelivery, ContextSession
-from nano_code.context.session import ContextSnapshot as ConversationSnapshot
-from nano_code.context.window import ContextWindow
-from nano_code.context.xml import render_context_instruction
-from nano_code.conversation.models import (
+from my_code.context.attachments.sources import DerivedAttachmentResolver
+from my_code.context.documents import ContextInstruction, UserContextDocument
+from my_code.context.models import ContextOverflow
+from my_code.context.normalization import ModelInputNormalizer
+from my_code.context.planner import ContextBuilder
+from my_code.context.session import AttachmentDelivery, ContextSession
+from my_code.context.session import ContextSnapshot as ConversationSnapshot
+from my_code.context.window import ContextWindow
+from my_code.context.xml import render_context_instruction
+from my_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     ReasoningContent,
@@ -25,20 +25,20 @@ from nano_code.conversation.models import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model.primitives import (
+from my_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
 )
-from nano_code.model.request import (
+from my_code.model.request import (
     ModelReasoningBlock,
     ModelTextBlock,
     ModelUserMessage,
     PromptStability,
 )
-from nano_code.prompts.models import PromptSection
-from nano_code.prompts.registry import PromptRegistry
+from my_code.prompts.models import PromptSection
+from my_code.prompts.registry import PromptRegistry
 
 
 def _planner(*, user_resolver=None, attachment_resolver=None) -> ContextBuilder:
@@ -219,7 +219,7 @@ def test_attachment_resolver_skips_failed_source_atomically(
     def good(_: ConversationSnapshot) -> Iterable[ContextAttachment]:
         return (healthy,)
 
-    with caplog.at_level(logging.ERROR, logger="nano_code.context.attachments"):
+    with caplog.at_level(logging.ERROR, logger="my_code.context.attachments"):
         result = DerivedAttachmentResolver((broken, good)).resolve(
             ConversationSnapshot(())
         )

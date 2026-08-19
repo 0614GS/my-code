@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.tools.base import ToolContext, ToolExecutionError
-from nano_code.tools.builtin.bash.process import execute_bash, subprocess_environment
+from my_code.tools.base import ToolContext, ToolExecutionError
+from my_code.tools.builtin.bash.process import execute_bash, subprocess_environment
 
 
 class _FakeProcess:
@@ -60,7 +60,7 @@ def test_subprocess_environment_removes_secrets_and_bash_injection_variables(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     removed = [
-        "NANO_CODE_API_KEY",
+        "MY_CODE_API_KEY",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "BASH_ENV",
@@ -72,12 +72,12 @@ def test_subprocess_environment_removes_secrets_and_bash_injection_variables(
     ]
     for name in removed:
         monkeypatch.setenv(name, "unsafe")
-    monkeypatch.setenv("NANO_CODE_TEST_SAFE", "kept")
+    monkeypatch.setenv("MY_CODE_TEST_SAFE", "kept")
 
     environment = subprocess_environment()
 
     assert all(name not in environment for name in removed)
-    assert environment["NANO_CODE_TEST_SAFE"] == "kept"
+    assert environment["MY_CODE_TEST_SAFE"] == "kept"
 
 
 @pytest.mark.asyncio

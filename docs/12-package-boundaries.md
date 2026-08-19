@@ -5,9 +5,9 @@
 跨模块代码从语义子模块导入，例如：
 
 ```python
-from nano_code.chat.service import ChatService
-from nano_code.model.request import ModelRequest
-from nano_code.permissions.models import PermissionDecision
+from my_code.chat.service import ChatService
+from my_code.model.request import ModelRequest
+from my_code.permissions.models import PermissionDecision
 ```
 
 顶层领域包的 `__init__.py` 不聚合 API。每个公开语义模块用静态 `__all__` 声明自己的能力；以下划线开头的模块或路径段视为私有。公开模块不能通过 `__all__` 转发其他所有者的符号。

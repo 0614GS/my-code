@@ -37,4 +37,4 @@ AST 守卫删除了“只能从包根导入”的 deep-import 检查，替换为
 
 ## 文档
 
-`docs/README.md` 和 01–12 已改为 nano-code 当前实现手册。MCP 与 Hooks 明确记录为未实现能力；Claude Code 只作为设计对照，不再主导正文结构。
+`docs/README.md` 和 01–12 已改为 my-code 当前实现手册。MCP 与 Hooks 明确记录为未实现能力；Claude Code 只作为设计对照，不再主导正文结构。

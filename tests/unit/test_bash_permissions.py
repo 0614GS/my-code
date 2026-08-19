@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.tools.builtin.bash.permissions import (
+from my_code.tools.builtin.bash.permissions import (
     analyze_bash_command,
     bash_rule_matches,
 )
@@ -14,7 +14,7 @@ from nano_code.tools.builtin.bash.permissions import (
         "pwd",
         "ls -la",
         "cat README.md",
-        "head -n 20 src/nano_code/tools/base.py",
+        "head -n 20 src/my_code/tools/base.py",
         "rg 'PermissionPolicy' src tests",
         "find src -name '*.py' -type f -print",
         "git status --short",

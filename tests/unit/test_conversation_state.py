@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.context.attachments.models import ContextAttachment
-from nano_code.context.documents import ContextInstruction
-from nano_code.context.normalization import ModelInputNormalizer
-from nano_code.context.session import AttachmentDelivery, ContextSession
-from nano_code.conversation.models import (
+from my_code.context.attachments.models import ContextAttachment
+from my_code.context.documents import ContextInstruction
+from my_code.context.normalization import ModelInputNormalizer
+from my_code.context.session import AttachmentDelivery, ContextSession
+from my_code.conversation.models import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,
@@ -15,17 +15,17 @@ from nano_code.conversation.models import (
     ToolCall,
     ToolResultsMessage,
 )
-from nano_code.conversation.state import CompactBoundary, ContentReplacement
-from nano_code.model.primitives import (
+from my_code.conversation.state import CompactBoundary, ContentReplacement
+from my_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
 )
-from nano_code.model.request import ModelReasoningBlock
-from nano_code.sessions.models import SessionSnapshot
-from nano_code.sessions.session import Session
-from nano_code.sessions.store import SessionStore
+from my_code.model.request import ModelReasoningBlock
+from my_code.sessions.models import SessionSnapshot
+from my_code.sessions.session import Session
+from my_code.sessions.store import SessionStore
 
 
 class CountingSessionStore(SessionStore):

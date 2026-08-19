@@ -3,21 +3,21 @@ from typing import Any, cast
 
 import pytest
 
-from nano_code.config.providers import ReasoningConfig
-from nano_code.model.capabilities import ProviderCapabilities
-from nano_code.model.events import (
+from my_code.config.providers import ReasoningConfig
+from my_code.model.capabilities import ProviderCapabilities
+from my_code.model.events import (
     ModelReasoningCompleted,
     ModelReasoningStarted,
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
 )
-from nano_code.model.primitives import (
+from my_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
 )
-from nano_code.model.request import (
+from my_code.model.request import (
     ModelAssistantMessage,
     ModelReasoningBlock,
     ModelRequest,
@@ -28,7 +28,7 @@ from nano_code.model.request import (
     ResolvedPromptSection,
     SystemPrompt,
 )
-from nano_code.providers.anthropic import AnthropicProvider, _system_prompt_param
+from my_code.providers.anthropic import AnthropicProvider, _system_prompt_param
 
 
 def prompt() -> SystemPrompt:

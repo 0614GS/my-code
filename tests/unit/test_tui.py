@@ -7,7 +7,7 @@ import pytest
 from rich.console import Console
 from textual.widgets import Input, OptionList
 
-from nano_code.chat.events import (
+from my_code.chat.events import (
     MaxStepsReached,
     ReasoningCompleted,
     ReasoningDelta,
@@ -22,29 +22,29 @@ from nano_code.chat.events import (
     TurnOutcome,
     TurnSucceeded,
 )
-from nano_code.chat.history import HistoryText, ResumedSession
-from nano_code.chat.permissions import PermissionHandler, PermissionRequest
-from nano_code.chat.service import ChatService
-from nano_code.chat.status import ContextStatus, RuntimeStatus
-from nano_code.config.providers import ProviderProtocol
-from nano_code.features.file_mentions.models import PathSuggestion
-from nano_code.features.todos.models import TodoItem
-from nano_code.model.primitives import ReasoningPresentation
-from nano_code.permissions.models import (
+from my_code.chat.history import HistoryText, ResumedSession
+from my_code.chat.permissions import PermissionHandler, PermissionRequest
+from my_code.chat.service import ChatService
+from my_code.chat.status import ContextStatus, RuntimeStatus
+from my_code.config.providers import ProviderProtocol
+from my_code.features.file_mentions.models import PathSuggestion
+from my_code.features.todos.models import TodoItem
+from my_code.model.primitives import ReasoningPresentation
+from my_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,
     PermissionRule,
     PermissionUpdate,
     PermissionUpdateDestination,
 )
-from nano_code.providers.manager import ProviderUpdate, ProviderView
-from nano_code.sessions.catalog import SessionSummary
-from nano_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
-from nano_code.tui.app import NanoCodeApp, _format_context_usage, _render_context_status
-from nano_code.tui.commands import SlashCommandRegistry
-from nano_code.tui.provider_screen import ProviderScreen
-from nano_code.tui.resume_screen import ResumeScreen
-from nano_code.tui.widgets import (
+from my_code.providers.manager import ProviderUpdate, ProviderView
+from my_code.sessions.catalog import SessionSummary
+from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from my_code.tui.app import MyCodeApp, _format_context_usage, _render_context_status
+from my_code.tui.commands import SlashCommandRegistry
+from my_code.tui.provider_screen import ProviderScreen
+from my_code.tui.resume_screen import ResumeScreen
+from my_code.tui.widgets import (
     ActivityBar,
     AssistantMessage,
     PermissionPanel,
@@ -659,5 +659,5 @@ async def test_tui_hides_panel_when_todos_are_cleared() -> None:
         assert panel.display is False
 
 
-def _app(runtime: object) -> NanoCodeApp:
-    return NanoCodeApp(cast(ChatService, runtime))
+def _app(runtime: object) -> MyCodeApp:
+    return MyCodeApp(cast(ChatService, runtime))

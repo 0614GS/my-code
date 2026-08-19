@@ -2,15 +2,15 @@
 
 ## 项目结构与模块组织
 
-生产代码位于 `src/nano_code/`。核心领域包包括 `agent/`、`config/`、`context/`、`messages/`、`sessions/`、`tools/`、`permissions/` 和 `providers/`；`cli/` 负责终端交互。内置工具放在 `tools/builtin/`。单元测试按领域镜像到 `tests/unit/`，跨组件流程放在 `tests/integration/`。架构文档位于 `docs/`，`claude-code/` 仅作为参考源码。
+生产代码位于 `src/my_code/`。核心领域包包括 `agent/`、`config/`、`context/`、`messages/`、`sessions/`、`tools/`、`permissions/` 和 `providers/`；`cli/` 负责终端交互。内置工具放在 `tools/builtin/`。单元测试按领域镜像到 `tests/unit/`，跨组件流程放在 `tests/integration/`。架构文档位于 `docs/`，`claude-code/` 仅作为参考源码。
 
 ## 构建、测试与开发命令
 
 使用 uv 和 Python 3.12 或更高版本：
 
 - `uv sync`：创建或更新项目的 `.venv`。
-- `uv run nanocode --help`：检查 CLI 入口。
-- `uv run nanocode -p "prompt"`：执行一次非交互式对话。
+- `uv run mycode --help`：检查 CLI 入口。
+- `uv run mycode -p "prompt"`：执行一次非交互式对话。
 - `uv run ruff format .`：格式化 Python 文件。
 - `uv run ruff check .`：执行代码规范检查。
 - `uv run pyright`：以 standard 模式执行静态类型检查。
@@ -32,7 +32,7 @@
 
 ## 安全与配置
 
-禁止提交 API key、本地会话记录、生成的工具输出、`.nano-code/settings.local.json` 或 `.venv`。共享的 `.nano-code/settings.json` 可以提交。权限和沙箱改动属于安全敏感变更，必须显式测试拒绝与绕过场景。
+禁止提交 API key、本地会话记录、生成的工具输出、`.my-code/settings.local.json` 或 `.venv`。共享的 `.my-code/settings.json` 可以提交。权限和沙箱改动属于安全敏感变更，必须显式测试拒绝与绕过场景。
 
 ## 参考源码工作流
 

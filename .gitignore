@@ -19,8 +19,8 @@ htmlcov/
 .env
 .env.*
 !.env.example
-/.nano-code/settings.local.json
-/.nano-code/*.tmp
+/.my-code/settings.local.json
+/.my-code/*.tmp
 **/.credentials.json
 *.log
 
@@ -29,5 +29,5 @@ htmlcov/
 .vscode/
 .DS_Store
 
-# 只读上游源码快照；禁止随 nano-code 一同发布
+# 只读上游源码快照；禁止随 my-code 一同发布
 /claude-code/

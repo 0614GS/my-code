@@ -6,20 +6,20 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.config.paths import NanoCodePaths, SettingsScope
-from nano_code.config.settings import SettingsResolver
-from nano_code.config.store import SettingsFileError, SettingsLayer, SettingsStore
-from nano_code.permissions.models import (
+from my_code.config.paths import MyCodePaths, SettingsScope
+from my_code.config.settings import SettingsResolver
+from my_code.config.store import SettingsFileError, SettingsLayer, SettingsStore
+from my_code.permissions.models import (
     PermissionBehavior,
     PermissionMode,
     PermissionRule,
 )
 
 
-def make_paths(tmp_path: Path) -> NanoCodePaths:
+def make_paths(tmp_path: Path) -> MyCodePaths:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    return NanoCodePaths(cwd=workspace.resolve(), config_home=tmp_path / "state")
+    return MyCodePaths(cwd=workspace.resolve(), config_home=tmp_path / "state")
 
 
 def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
@@ -69,7 +69,7 @@ def test_project_layers_are_skipped_when_started_from_user_home(
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
-    paths = NanoCodePaths(cwd=home, config_home=home / ".nano-code")
+    paths = MyCodePaths(cwd=home, config_home=home / ".my-code")
     store = SettingsStore(paths)
     store.write(
         SettingsScope.USER,
@@ -91,7 +91,7 @@ def test_project_writes_cannot_overwrite_colliding_user_storage(
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
-    paths = NanoCodePaths(cwd=home, config_home=home / ".nano-code")
+    paths = MyCodePaths(cwd=home, config_home=home / ".my-code")
 
     with pytest.raises(SettingsFileError, match="project config directory"):
         SettingsStore(paths).write(scope, SettingsLayer(model="project-model"))

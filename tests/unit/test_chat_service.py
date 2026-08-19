@@ -6,17 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent.events import AgentEvent
-from nano_code.agent.models import AgentTurnInput, AgentTurnSucceeded
-from nano_code.auth.credentials import CredentialSource
-from nano_code.bootstrap import bootstrap_chat
-from nano_code.chat.history import HistoryText, HistoryToolCall
-from nano_code.chat.service import ChatService
-from nano_code.config.paths import NanoCodePaths
-from nano_code.config.settings import AgentSettings
-from nano_code.context.attachments.models import ContextAttachment, ContextObservation
-from nano_code.context.session import AttachmentDelivery, ContextSession
-from nano_code.conversation.models import (
+from my_code.agent.events import AgentEvent
+from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.auth.credentials import CredentialSource
+from my_code.bootstrap import bootstrap_chat
+from my_code.chat.history import HistoryText, HistoryToolCall
+from my_code.chat.service import ChatService
+from my_code.config.paths import MyCodePaths
+from my_code.config.settings import AgentSettings
+from my_code.context.attachments.models import ContextAttachment, ContextObservation
+from my_code.context.session import AttachmentDelivery, ContextSession
+from my_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     TextContent,
@@ -24,12 +24,12 @@ from nano_code.conversation.models import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model.primitives import TokenUsage
-from nano_code.permissions.models import PermissionMode
-from nano_code.sessions.session import Session
-from nano_code.sessions.store import SessionStore
-from nano_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
-from nano_code.tools.result_store import ToolResultStore
+from my_code.model.primitives import TokenUsage
+from my_code.permissions.models import PermissionMode
+from my_code.sessions.session import Session
+from my_code.sessions.store import SessionStore
+from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from my_code.tools.result_store import ToolResultStore
 
 _CURRENT_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 _TARGET_SESSION_ID = "22222222-2222-2222-2222-222222222222"
@@ -54,7 +54,7 @@ class CapturingAgent:
 def _bootstrap_runtime(tmp_path: Path) -> ChatService:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    paths = NanoCodePaths.discover(
+    paths = MyCodePaths.discover(
         workspace,
         environ={},
         home=tmp_path / "home",

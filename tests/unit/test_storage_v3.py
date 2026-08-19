@@ -4,21 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.auth.credentials import CredentialStore, CredentialStoreError
-from nano_code.config.paths import NanoCodePaths, SettingsScope
-from nano_code.config.providers import ProviderProfile, ProviderProfileStore
-from nano_code.config.store import SettingsFileError, SettingsLayer, SettingsStore
-from nano_code.conversation.models import HumanMessage
-from nano_code.sessions.catalog import SessionCatalog
-from nano_code.sessions.store import SessionStore
+from my_code.auth.credentials import CredentialStore, CredentialStoreError
+from my_code.config.paths import MyCodePaths, SettingsScope
+from my_code.config.providers import ProviderProfile, ProviderProfileStore
+from my_code.config.store import SettingsFileError, SettingsLayer, SettingsStore
+from my_code.conversation.models import HumanMessage
+from my_code.sessions.catalog import SessionCatalog
+from my_code.sessions.store import SessionStore
 
 SESSION_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 
-def _paths(tmp_path: Path) -> NanoCodePaths:
+def _paths(tmp_path: Path) -> MyCodePaths:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    return NanoCodePaths(workspace.resolve(), tmp_path / "config")
+    return MyCodePaths(workspace.resolve(), tmp_path / "config")
 
 
 def test_settings_v3_preserves_unknown_nested_fields_and_rejects_v2(

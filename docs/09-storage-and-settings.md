@@ -4,12 +4,12 @@
 
 `config` 拥有路径、分层 settings、provider profile 和配置持久化。`auth` 拥有 API key 存储与解析。`sessions` 拥有 Conversation JSONL，`tools.result_store` 拥有大型工具输出文件。
 
-根 `nano_code.bootstrap` 是唯一 composition root，负责初始化存储并组装运行时对象；其他模块不能导入 bootstrap。
+根 `my_code.bootstrap` 是唯一 composition root，负责初始化存储并组装运行时对象；其他模块不能导入 bootstrap。
 
 ## 本地目录
 
 ```text
-~/.nano-code/
+~/.my-code/
 ├── settings.json
 ├── providers.json
 ├── .credentials.json
@@ -18,7 +18,7 @@
     ├── sessions/<session-id>.jsonl
     └── tool-results/<session-id>/...
 
-<workspace>/.nano-code/
+<workspace>/.my-code/
 ├── settings.json
 └── settings.local.json
 ```
@@ -44,4 +44,4 @@ Provider endpoint、protocol、默认 model、reasoning、limits 和 compact 配
 
 ## 版本控制
 
-可以共享项目 `.nano-code/settings.json`。不得提交 `settings.local.json`、凭据、Session JSONL、工具输出、`.venv` 或 API key。
+可以共享项目 `.my-code/settings.json`。不得提交 `settings.local.json`、凭据、Session JSONL、工具输出、`.venv` 或 API key。

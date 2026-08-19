@@ -1,12 +1,12 @@
 import pytest
 
-from nano_code.permissions.rules import (
+from my_code.permissions.rules import (
     parse_permission_rule,
     permission_rule_to_string,
     validate_bash_rule_content,
     validate_permission_rule,
 )
-from nano_code.tools.builtin.bash.permissions import (
+from my_code.tools.builtin.bash.permissions import (
     bash_rule_has_wildcard,
     bash_rule_matches,
 )

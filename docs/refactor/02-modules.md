@@ -5,7 +5,7 @@
 以下是目标边界，不要求一次性创建所有文件。文件应随实际职责增减。
 
 ```text
-src/nano_code/
+src/my_code/
 ├── model/              # provider-neutral 模型调用
 ├── conversation/       # canonical 对话事实和内存聚合
 ├── context/            # Conversation + 临时上下文 -> ModelRequest

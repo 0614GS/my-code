@@ -1,18 +1,18 @@
 import json
 from pathlib import Path
 
-from nano_code.auth.credentials import CredentialSource, CredentialStore
-from nano_code.bootstrap import initialize_user_storage
-from nano_code.config.paths import NanoCodePaths, SettingsScope
-from nano_code.config.providers import ProviderProfileStore, ProviderProtocol
-from nano_code.config.store import SettingsStore
-from nano_code.providers.manager import ProviderManager, ProviderUpdate
+from my_code.auth.credentials import CredentialSource, CredentialStore
+from my_code.bootstrap import initialize_user_storage
+from my_code.config.paths import MyCodePaths, SettingsScope
+from my_code.config.providers import ProviderProfileStore, ProviderProtocol
+from my_code.config.store import SettingsStore
+from my_code.providers.manager import ProviderManager, ProviderUpdate
 
 
-def make_manager(tmp_path: Path) -> tuple[ProviderManager, NanoCodePaths]:
+def make_manager(tmp_path: Path) -> tuple[ProviderManager, MyCodePaths]:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    paths = NanoCodePaths.discover(workspace, environ={}, home=tmp_path / "home")
+    paths = MyCodePaths.discover(workspace, environ={}, home=tmp_path / "home")
     initialize_user_storage(paths)
     return ProviderManager(paths, environ={}), paths
 

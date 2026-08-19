@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-import nano_code.bootstrap as cli_main
-from nano_code.chat.events import MaxStepsReached
-from nano_code.cli.arguments import parse_args
-from nano_code.config.settings import SettingsResolver
+import my_code.bootstrap as cli_main
+from my_code.chat.events import MaxStepsReached
+from my_code.cli.arguments import parse_args
+from my_code.config.settings import SettingsResolver
 
 
 class LimitedChat:
@@ -23,7 +23,7 @@ async def test_print_mode_maps_max_steps_outcome_to_error_exit(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config_home = tmp_path / "config"
-    monkeypatch.setenv("NANO_CODE_CONFIG_DIR", str(config_home))
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     options = parse_args(
         ["--cwd", str(workspace), "--max-steps", "3", "-p", "keep going"]
     )

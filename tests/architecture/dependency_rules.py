@@ -7,7 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-PACKAGE_NAME = "nano_code"
+PACKAGE_NAME = "my_code"
 REPOSITORY_ROOT = Path(__file__).parents[2]
 SOURCE_ROOT = REPOSITORY_ROOT / "src" / PACKAGE_NAME
 
@@ -305,7 +305,7 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
                 if (
                     imported_module
                     in {
-                        "nano_code.bootstrap",
+                        "my_code.bootstrap",
                     }
                     and source != "bootstrap"
                 ):
@@ -318,7 +318,7 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
                         )
                     )
                 if (
-                    imported_module == "nano_code.sessions.records"
+                    imported_module == "my_code.sessions.records"
                     and source != "sessions"
                 ):
                     leaks.append(

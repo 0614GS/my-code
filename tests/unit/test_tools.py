@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.config.paths import NanoCodePaths, SettingsScope
-from nano_code.config.permission_updates import PermissionUpdateApplier
-from nano_code.config.store import SettingsStore
-from nano_code.conversation.models import ToolCall
-from nano_code.model.primitives import JsonObject
-from nano_code.model.request import ModelToolDefinition
-from nano_code.permissions.models import (
+from my_code.config.paths import MyCodePaths, SettingsScope
+from my_code.config.permission_updates import PermissionUpdateApplier
+from my_code.config.store import SettingsStore
+from my_code.conversation.models import ToolCall
+from my_code.model.primitives import JsonObject
+from my_code.model.request import ModelToolDefinition
+from my_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,
     PermissionDecision,
@@ -24,17 +24,17 @@ from nano_code.permissions.models import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from nano_code.permissions.policy import PermissionPolicy
-from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.tools.base import Tool, ToolContext, ToolOutput
-from nano_code.tools.builtin import builtin_tools
-from nano_code.tools.executor import ToolExecutor
-from nano_code.tools.invocation import ToolInvocation
-from nano_code.tools.paths import resolve_workspace_path
-from nano_code.tools.presentation import ToolResultPresentation
-from nano_code.tools.registry import ToolRegistry
-from nano_code.tools.result_store import ToolResultStore
-from nano_code.workspace.local import Workspace
+from my_code.permissions.policy import PermissionPolicy
+from my_code.permissions.prompt import HeadlessPrompter
+from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.builtin import builtin_tools
+from my_code.tools.executor import ToolExecutor
+from my_code.tools.invocation import ToolInvocation
+from my_code.tools.paths import resolve_workspace_path
+from my_code.tools.presentation import ToolResultPresentation
+from my_code.tools.registry import ToolRegistry
+from my_code.tools.result_store import ToolResultStore
+from my_code.workspace.local import Workspace
 
 
 def build_executor(tmp_path: Path, mode: PermissionMode) -> ToolExecutor:
@@ -43,7 +43,7 @@ def build_executor(tmp_path: Path, mode: PermissionMode) -> ToolExecutor:
         policy=PermissionPolicy(mode),
         prompter=HeadlessPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
+        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
 
@@ -232,7 +232,7 @@ async def test_remembered_write_rule_persists_to_local_settings(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    paths = NanoCodePaths(workspace, tmp_path / "config")
+    paths = MyCodePaths(workspace, tmp_path / "config")
     policy = PermissionPolicy()
     prompter = ApprovingPrompter(remember=True)
     executor = ToolExecutor(
@@ -279,7 +279,7 @@ async def test_unknown_tool_produces_matching_error_result(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_permission_denial_feedback_is_returned_to_model(tmp_path: Path) -> None:
-    store = ToolResultStore(tmp_path / ".nano-code" / "results")
+    store = ToolResultStore(tmp_path / ".my-code" / "results")
     executor = ToolExecutor(
         registry=ToolRegistry(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
@@ -372,7 +372,7 @@ async def test_bash_subprocess_cannot_inherit_provider_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-leak")
-    monkeypatch.setenv("NANO_CODE_API_KEY", "generic-must-not-leak")
+    monkeypatch.setenv("MY_CODE_API_KEY", "generic-must-not-leak")
     executor = build_executor(tmp_path, PermissionMode.BYPASS)
 
     outcome = await executor.execute(
@@ -382,7 +382,7 @@ async def test_bash_subprocess_cannot_inherit_provider_api_key(
             input={
                 "command": (
                     "printf '%s %s' \"${ANTHROPIC_API_KEY-unset}\" "
-                    '"${NANO_CODE_API_KEY-unset}"'
+                    '"${MY_CODE_API_KEY-unset}"'
                 )
             },
         )
@@ -403,7 +403,7 @@ async def test_read_only_bash_executes_without_permission_prompt(
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=FailingPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
+        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(
@@ -445,7 +445,7 @@ async def test_session_allow_rule_removes_later_prompts(tmp_path: Path) -> None:
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=prompter,
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
+        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     first = await executor.execute(
@@ -490,7 +490,7 @@ async def test_explicit_deny_precedes_session_allow(tmp_path: Path) -> None:
         policy=policy,
         prompter=prompter,
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
+        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(
@@ -525,7 +525,7 @@ async def test_explicit_ask_precedes_session_allow(tmp_path: Path) -> None:
         policy=policy,
         prompter=FeedbackPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
+        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(
@@ -555,7 +555,7 @@ async def test_new_executor_does_not_inherit_session_rules(
                 policy=PermissionPolicy(PermissionMode.DEFAULT),
                 prompter=prompter,
                 workspace=Workspace(tmp_path),
-                result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
+                result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
             ),
             prompter,
         )
@@ -581,7 +581,7 @@ async def test_audit_logs_allow_and_denied_ask(
 ) -> None:
     executor = build_executor(tmp_path, PermissionMode.DEFAULT)
 
-    with caplog.at_level(logging.INFO, logger="nano_code.permissions"):
+    with caplog.at_level(logging.INFO, logger="my_code.permissions"):
         await executor.execute(
             ToolCall(id="bash-audit", name="Bash", input={"command": "pwd"})
         )
@@ -613,7 +613,7 @@ async def test_executor_runs_the_exact_input_approved_by_tool_policy(
         policy=PermissionPolicy(),
         prompter=FailingPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
+        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(
@@ -641,7 +641,7 @@ async def test_presentation_failure_does_not_change_successful_tool_result(
         policy=PermissionPolicy(),
         prompter=FailingPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".nano-code" / "results"),
+        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(

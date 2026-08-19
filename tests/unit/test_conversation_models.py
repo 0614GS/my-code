@@ -2,7 +2,7 @@
 
 import pytest
 
-from nano_code.conversation.models import (
+from my_code.conversation.models import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,
@@ -11,8 +11,8 @@ from nano_code.conversation.models import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model.primitives import TokenUsage
-from nano_code.model.request import (
+from my_code.model.primitives import TokenUsage
+from my_code.model.request import (
     ModelAssistantMessage,
     ModelTextBlock,
     ModelToolResultBlock,

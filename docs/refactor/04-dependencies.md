@@ -88,24 +88,24 @@ ALLOWED_DEPENDENCIES = {
 顶层领域包的 `__init__.py` 不聚合 API。每个语义子模块使用静态 `__all__` 声明自己的稳定能力：
 
 ```python
-from nano_code.model.client import ModelClient
-from nano_code.model.request import ModelRequest
-from nano_code.conversation.models import ToolCall
-from nano_code.conversation.state import Conversation
+from my_code.model.client import ModelClient
+from my_code.model.request import ModelRequest
+from my_code.conversation.models import ToolCall
+from my_code.conversation.state import Conversation
 ```
 
 跨模块必须直接指向符号所有者：
 
 ```python
 # 禁止：包根聚合
-from nano_code.model import ModelRequest
+from my_code.model import ModelRequest
 
 # 禁止：Chat 转发其他所有者
-from nano_code.chat import PermissionConfirmation
+from my_code.chat import PermissionConfirmation
 
 # 允许：语义子模块声明自身能力
-from nano_code.model.request import ModelRequest
-from nano_code.permissions.models import PermissionConfirmation
+from my_code.model.request import ModelRequest
+from my_code.permissions.models import PermissionConfirmation
 ```
 
 模块内部可以直接导入自己的实现文件。跨模块不能导入以下划线开头的私有路径、使用 wildcard，或引用未列入目标模块 `__all__` 的符号。公开模块不得 re-export 其他架构模块拥有的能力。

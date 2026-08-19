@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.context.documents import ContextInstruction, UserContextDocument
-from nano_code.context.user_context import AgentsUserContextResolver
-from nano_code.workspace.local import Workspace, WorkspaceBoundaryError
+from my_code.context.documents import ContextInstruction, UserContextDocument
+from my_code.context.user_context import AgentsUserContextResolver
+from my_code.workspace.local import Workspace, WorkspaceBoundaryError
 
 
 def test_agents_resolver_loads_and_wraps_workspace_instructions(
