@@ -9,7 +9,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.model.capabilities import (
     ActiveModelState,
@@ -123,7 +123,7 @@ def test_token_trigger_microcompacts_and_retokenizes() -> None:
         TokenUsage(),
         parent_uuid=human.uuid,
     )
-    results = ToolResultsMessage(
+    results = ToolResultBatch(
         (ToolResult("call", "中" * 500),), assistant.uuid, parent_uuid=assistant.uuid
     )
     policy = MicrocompactPolicy(

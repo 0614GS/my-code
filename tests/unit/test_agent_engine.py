@@ -34,7 +34,7 @@ from my_code.conversation.models import (
     ReasoningContent,
     TextContent,
     ToolCall,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.features.todos.projection import project_todos
 from my_code.features.todos.tool import TodoWriteTool
@@ -73,7 +73,6 @@ from my_code.permissions.prompt import HeadlessPrompter
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.sessions.session import Session
-from my_code.sessions.store import SessionStore
 from my_code.tools.builtin import builtin_tools
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from my_code.tools.registry import ToolRegistry
@@ -157,11 +156,11 @@ class BoundEngine:
 
     @property
     def history(self):
-        return self.session.history
+        return self.session.snapshot().history
 
     @property
     def context_snapshot(self):
-        return self.context.snapshot(self.session.conversation.snapshot())
+        return self.context.snapshot(self.session.snapshot())
 
 
 def _engine(
@@ -171,7 +170,7 @@ def _engine(
     max_steps: int | None = None,
     model_type: type[FakeModel] = FakeModel,
 ) -> tuple[BoundEngine, FakeModel, Session, ToolRoundExecutor]:
-    store = SessionStore(tmp_path / "sessions", "11111111-1111-1111-1111-111111111111")
+    session_id = "11111111-1111-1111-1111-111111111111"
     registry = ToolRegistry((*builtin_tools(), TodoWriteTool()))
     result_store = ToolResultStore(tmp_path / "results")
     executor = ToolExecutor(
@@ -191,7 +190,7 @@ def _engine(
         max_output_tokens=100,
     )
     context = ContextEngine(planner, ContextCompactor(model))
-    session = Session(store)
+    session = Session(tmp_path / "sessions", session_id)
     tool_round = ToolRoundExecutor(executor)
     engine = AgentEngine(
         model_call=model,
@@ -224,7 +223,7 @@ async def test_native_stream_lifecycle_is_not_replayed_from_final_output(
     assert sum(isinstance(event, AgentTextStarted) for event in events) == 1
     assert sum(isinstance(event, AgentTextDelta) for event in events) == 1
     assert sum(isinstance(event, AgentTextCompleted) for event in events) == 1
-    assistant = conversation.history[-1]
+    assistant = conversation.snapshot().history[-1]
     assert isinstance(assistant, AssistantMessage)
     assert sum(isinstance(block, ReasoningContent) for block in assistant.content) == 1
 
@@ -239,8 +238,8 @@ async def test_engine_persists_human_and_assistant_messages(tmp_path: Path) -> N
 
     assert isinstance(result, AgentTurnSucceeded)
     assert result.text == "done"
-    assert isinstance(conversation.working_messages[0], HumanMessage)
-    assert isinstance(conversation.working_messages[1], AssistantMessage)
+    assert isinstance(conversation.snapshot().working_set[0], HumanMessage)
+    assert isinstance(conversation.snapshot().working_set[1], AssistantMessage)
     first_input = model.requests[0].input[0]
     assert first_input.content[0] == InputText("hello")  # type: ignore[union-attr]
 
@@ -273,8 +272,11 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
             for block in item.content  # type: ignore[union-attr]
         )
     delivery = engine.context_snapshot.attachment_deliveries[0]
-    assert delivery.anchor_uuid == conversation.history[0].uuid
-    assert conversation.store.load().history == conversation.history
+    assert delivery.anchor_uuid == conversation.snapshot().history[0].uuid
+    assert (
+        Session(tmp_path / "sessions", conversation.session_id).snapshot().history
+        == conversation.snapshot().history
+    )
 
 
 @pytest.mark.asyncio
@@ -292,10 +294,8 @@ async def test_resume_discards_live_context_session_delivery(tmp_path: Path) -> 
     assert engine.context_snapshot.attachment_deliveries
 
     replacement = Session(
-        SessionStore(
-            tmp_path / "sessions",
-            "22222222-2222-2222-2222-222222222222",
-        )
+        tmp_path / "sessions",
+        "22222222-2222-2222-2222-222222222222",
     )
     engine.session = replacement
     engine.context = ContextSession()
@@ -336,24 +336,25 @@ async def test_one_human_turn_can_contain_multiple_steps_and_one_tool_round(
     assert result.text == "finished"
     tool_messages = [
         message
-        for message in conversation.working_messages
-        if isinstance(message, ToolResultsMessage)
+        for message in conversation.snapshot().working_set
+        if isinstance(message, ToolResultBatch)
     ]
     assert len(tool_messages) == 1
     assert "hello" in tool_messages[0].content[0].content
     assert len(model.requests) == 2
     assert result.completed_steps == 2
-    assert [message.kind for message in conversation.history] == [
+    history = conversation.snapshot().history
+    assert [message.kind for message in history] == [
         "human",
         "assistant",
-        "tool_results",
+        "tool_result_batch",
         "assistant",
     ]
-    first_assistant = conversation.history[1]
-    tool_round = conversation.history[2]
+    first_assistant = history[1]
+    tool_round = history[2]
     assert isinstance(first_assistant, AssistantMessage)
-    assert isinstance(tool_round, ToolResultsMessage)
-    assert tool_round.source_assistant_uuid == first_assistant.uuid
+    assert isinstance(tool_round, ToolResultBatch)
+    assert tool_round.source_assistant_id == first_assistant.uuid
 
 
 @pytest.mark.asyncio
@@ -391,7 +392,9 @@ async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
         if isinstance(item, AssistantOutput)
         for block in item.content
     )
-    persisted = conversation.store.load().history[1]
+    persisted = (
+        Session(tmp_path / "sessions", conversation.session_id).snapshot().history[1]
+    )
     assert isinstance(persisted, AssistantMessage)
     assert persisted.content[0].kind == "reasoning"
 
@@ -452,7 +455,7 @@ async def test_explicit_max_steps_returns_structured_terminal_outcome(
         usage=TokenUsage(5, 2),
     )
     assert len(model.requests) == 2
-    assert isinstance(conversation.history[-1], ToolResultsMessage)
+    assert isinstance(conversation.snapshot().history[-1], ToolResultBatch)
 
     continued = await engine.submit(AgentTurnInput("continue"))
 
@@ -522,7 +525,7 @@ async def test_engine_announces_conversation_only_after_tool_results_are_committ
     updates: list[AgentConversationUpdated] = []
     async for event in engine.stream(AgentTurnInput("test it")):
         if isinstance(event, AgentConversationUpdated):
-            assert isinstance(conversation.history[-1], ToolResultsMessage)
+            assert isinstance(conversation.snapshot().history[-1], ToolResultBatch)
             updates.append(event)
 
     assert len(updates) == 1
@@ -602,4 +605,4 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
     updates = [event for event in events if isinstance(event, AgentConversationUpdated)]
     assert len(updates) == 1
     assert project_todos(engine.history).todos[0].content == "Run tests"
-    assert isinstance(conversation.history[-1], ToolResultsMessage)
+    assert isinstance(conversation.snapshot().history[-1], ToolResultBatch)

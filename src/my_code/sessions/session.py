@@ -1,20 +1,20 @@
-"""Concrete persisted Session built around a pure Conversation aggregate."""
+"""Public Session boundary over private conversation and JSONL persistence."""
 
 from collections.abc import Iterable
+from pathlib import Path
 
 from my_code.conversation.models import (
     AssistantMessage,
-    ConversationMessage,
+    ConversationEntry,
     ConversationSummaryMessage,
+    HumanMessage,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
-from my_code.conversation.state import (
-    CompactBoundary,
-    ContentReplacement,
-    Conversation,
-)
+from my_code.conversation.state import CompactBoundary, ContentReplacement
+from my_code.sessions._aggregate import ConversationAggregate
+from my_code.sessions.models import SessionSnapshot, SessionStart
 from my_code.sessions.store import SessionStore
 from my_code.tools.presentation import ToolResultPresentation
 
@@ -22,10 +22,16 @@ from my_code.tools.presentation import ToolResultPresentation
 class Session:
     """Own one Conversation and commit recoverable changes persistence-first."""
 
-    def __init__(self, store: SessionStore) -> None:
-        self.store = store
-        loaded = store.load()
-        self.conversation = Conversation(
+    def __init__(
+        self,
+        project_state_dir: Path,
+        session_id: str,
+        *,
+        start: SessionStart | None = None,
+    ) -> None:
+        self._store = SessionStore(project_state_dir, session_id, start=start)
+        loaded = self._store.load()
+        self._conversation = ConversationAggregate(
             loaded.history,
             content_replacements=loaded.content_replacements,
             compact_boundaries=loaded.compact_boundaries,
@@ -34,65 +40,78 @@ class Session:
         self._repair_trailing_tool_calls()
 
     @classmethod
-    def restore(cls, store: SessionStore) -> "Session":
-        candidate = cls(store)
-        if not candidate.history:
-            raise ValueError(f"Session contains no messages: {store.session_id}")
+    def restore(cls, project_state_dir: Path, session_id: str) -> "Session":
+        candidate = cls(project_state_dir, session_id)
+        if not candidate.snapshot().history:
+            raise ValueError(f"Session contains no messages: {session_id}")
         return candidate
 
     @property
     def session_id(self) -> str:
-        return self.store.session_id
+        return self._store.session_id
 
-    @property
-    def history(self) -> tuple[ConversationMessage, ...]:
-        return self.conversation.history
-
-    @property
-    def working_messages(self) -> tuple[ConversationMessage, ...]:
-        return self.conversation.working_set
-
-    @property
-    def content_replacements(self) -> tuple[ContentReplacement, ...]:
-        return self.conversation.content_replacements
-
-    @property
-    def compact_boundaries(self) -> tuple[CompactBoundary, ...]:
-        return self.conversation.compact_boundaries
+    def snapshot(self) -> SessionSnapshot:
+        return SessionSnapshot(
+            history=self._conversation.history,
+            working_set=self._conversation.working_set,
+            content_replacements=self._conversation.content_replacements,
+            compact_boundaries=self._conversation.compact_boundaries,
+            tool_presentations=tuple(self._tool_presentations.items()),
+        )
 
     @property
     def message_count(self) -> int:
-        return len(self.working_messages)
+        return len(self._conversation.working_set)
 
     @property
     def history_message_count(self) -> int:
-        return len(self.history)
+        return len(self._conversation.history)
 
     @property
     def content_replacement_count(self) -> int:
-        return len(self.content_replacements)
+        return len(self._conversation.content_replacements)
 
     @property
     def compact_count(self) -> int:
-        return len(self.compact_boundaries)
+        return len(self._conversation.compact_boundaries)
 
-    def append(
+    def append_human_message(self, message: HumanMessage) -> None:
+        if not isinstance(message, HumanMessage):
+            raise TypeError("append_human_message requires HumanMessage")
+        self._commit_entry(message)
+
+    def append_assistant_message(self, message: AssistantMessage) -> None:
+        if not isinstance(message, AssistantMessage):
+            raise TypeError("append_assistant_message requires AssistantMessage")
+        self._commit_entry(message)
+
+    def append_tool_result_batch(
         self,
-        message: ConversationMessage,
+        batch: ToolResultBatch,
         *,
         presentations: Iterable[tuple[str, ToolResultPresentation]] = (),
     ) -> None:
-        candidate = self.conversation.clone()
-        changed = candidate.append(message)
+        if not isinstance(batch, ToolResultBatch):
+            raise TypeError("append_tool_result_batch requires ToolResultBatch")
+        self._commit_entry(batch, presentations=presentations)
+
+    def _commit_entry(
+        self,
+        entry: ConversationEntry,
+        *,
+        presentations: Iterable[tuple[str, ToolResultPresentation]] = (),
+    ) -> None:
+        candidate = self._conversation.clone()
+        changed = candidate.append(entry)
         if not changed:
             return
         presentation_items = tuple(presentations)
-        if not self.store.append_message(message, presentation_items):
+        if not self._store.append_message(entry, presentation_items):
             raise ValueError(
-                f"Message UUID already exists outside the active conversation: "
-                f"{message.uuid}"
+                f"Entry UUID already exists outside the active conversation: "
+                f"{entry.uuid}"
             )
-        self.conversation = candidate
+        self._conversation = candidate
         self._tool_presentations.update(presentation_items)
 
     def append_tool_results(
@@ -101,24 +120,24 @@ class Session:
         assistant_message: AssistantMessage,
         *,
         presentations: Iterable[tuple[str, ToolResultPresentation]] = (),
-    ) -> ToolResultsMessage:
+    ) -> ToolResultBatch:
         result_blocks = tuple(results)
         if not result_blocks:
             raise ValueError("A tool result message must contain at least one result")
-        message = ToolResultsMessage(
+        message = ToolResultBatch(
             content=result_blocks,
             parent_uuid=assistant_message.uuid,
-            source_assistant_uuid=assistant_message.uuid,
+            source_assistant_id=assistant_message.uuid,
         )
-        self.append(message, presentations=presentations)
+        self.append_tool_result_batch(message, presentations=presentations)
         return message
 
-    def append_content_replacement(self, replacement: ContentReplacement) -> None:
-        candidate = self.conversation.clone()
+    def commit_content_replacement(self, replacement: ContentReplacement) -> None:
+        candidate = self._conversation.clone()
         if not candidate.add_content_replacement(replacement):
             return
-        self.store.append_content_replacement(replacement)
-        self.conversation = candidate
+        self._store.append_content_replacement(replacement)
+        self._conversation = candidate
 
     def commit_compaction(
         self,
@@ -126,29 +145,30 @@ class Session:
         summary: ConversationSummaryMessage,
         boundary: CompactBoundary,
     ) -> CompactBoundary:
-        candidate = self.conversation.clone()
+        candidate = self._conversation.clone()
         for replacement in replacements:
             candidate.add_content_replacement(replacement)
         candidate.add_compact_boundary(boundary)
         candidate.append(summary)
-        self.store.append_compaction(replacements, boundary, summary)
-        self.conversation = candidate
+        self._store.append_compaction(replacements, boundary, summary)
+        self._conversation = candidate
         return boundary
 
     def tool_presentation(self, tool_use_id: str) -> ToolResultPresentation | None:
         return self._tool_presentations.get(tool_use_id)
 
     def _repair_trailing_tool_calls(self) -> None:
-        repairs = _trailing_tool_repairs(self.history)
+        history = self._conversation.history
+        repairs = _trailing_tool_repairs(history)
         if repairs is None:
             return
-        source = self.history[-1]
+        source = history[-1]
         assert isinstance(source, AssistantMessage)
         self.append_tool_results(repairs, source)
 
 
 def _trailing_tool_repairs(
-    messages: tuple[ConversationMessage, ...],
+    messages: tuple[ConversationEntry, ...],
 ) -> tuple[ToolResult, ...] | None:
     if not messages or not isinstance(messages[-1], AssistantMessage):
         return None

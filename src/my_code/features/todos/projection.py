@@ -4,9 +4,9 @@ from dataclasses import dataclass
 
 from my_code.conversation.models import (
     AssistantMessage,
-    ConversationMessage,
+    ConversationEntry,
     ToolCall,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
 from my_code.features.todos.models import TodoItem
@@ -20,14 +20,14 @@ class TodoProjection:
     completed_model_calls_since_write: int
 
 
-def project_todos(messages: tuple[ConversationMessage, ...]) -> TodoProjection:
+def project_todos(messages: tuple[ConversationEntry, ...]) -> TodoProjection:
     """Project the latest successful TodoWrite from active session history."""
 
     completed_model_calls = _completed_model_calls_since_write(messages)
     successful_ids = {
         result.tool_use_id
         for message in messages
-        if isinstance(message, ToolResultsMessage)
+        if isinstance(message, ToolResultBatch)
         for result in message.content
         if not result.is_error
     }
@@ -52,7 +52,7 @@ def project_todos(messages: tuple[ConversationMessage, ...]) -> TodoProjection:
 
 
 def _completed_model_calls_since_write(
-    messages: tuple[ConversationMessage, ...],
+    messages: tuple[ConversationEntry, ...],
 ) -> int:
     completed_calls = 0
     for message in reversed(messages):

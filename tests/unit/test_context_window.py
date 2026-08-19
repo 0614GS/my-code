@@ -12,7 +12,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
@@ -55,7 +55,7 @@ def test_four_conversation_variants_project_exactly() -> None:
         TokenUsage(input_tokens=3),
         parent_uuid=human.uuid,
     )
-    results = ToolResultsMessage(
+    results = ToolResultBatch(
         (ToolResult("call", "value"),),
         assistant.uuid,
         parent_uuid=assistant.uuid,
@@ -81,7 +81,7 @@ def test_four_conversation_variants_project_exactly() -> None:
 def test_projection_rejects_orphan_and_unresolved_tool_protocol() -> None:
     with pytest.raises(ValueError, match="Orphan"):
         _planner().normalizer.normalize_transcript(
-            (ToolResultsMessage((ToolResult("missing", "x"),), "assistant"),)
+            (ToolResultBatch((ToolResult("missing", "x"),), "assistant"),)
         )
     with pytest.raises(ValueError, match="Unresolved"):
         _planner().normalizer.normalize_transcript(
@@ -96,7 +96,7 @@ def test_microcompact_replaces_model_view_without_mutating_history() -> None:
         TokenUsage(),
         parent_uuid=human.uuid,
     )
-    results = ToolResultsMessage(
+    results = ToolResultBatch(
         (ToolResult("call", "x" * 100),), assistant.uuid, parent_uuid=assistant.uuid
     )
     policy = MicrocompactPolicy(

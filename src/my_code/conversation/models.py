@@ -115,6 +115,9 @@ class AssistantMessage:
             and self.request_input_tokens_estimate < 1
         ):
             raise ValueError("Assistant request token estimate must be positive")
+        call_ids = [block.id for block in self.content if isinstance(block, ToolCall)]
+        if len(call_ids) != len(set(call_ids)):
+            raise ValueError("Assistant message contains duplicate tool call IDs")
 
     @property
     def starts_human_turn(self) -> bool:
@@ -126,21 +129,24 @@ class AssistantMessage:
 
 
 @dataclass(frozen=True, slots=True)
-class ToolResultsMessage:
+class ToolResultBatch:
     content: tuple[ToolResult, ...]
-    source_assistant_uuid: str
+    source_assistant_id: str
     uuid: str = field(default_factory=new_id)
     parent_uuid: str | None = None
     timestamp: str = field(default_factory=utc_now)
-    kind: Literal["tool_results"] = field(default="tool_results", init=False)
+    kind: Literal["tool_result_batch"] = field(default="tool_result_batch", init=False)
 
     def __post_init__(self) -> None:
         if not self.content:
-            raise ValueError("Tool results message content must not be empty")
+            raise ValueError("Tool result batch content must not be empty")
         if not all(isinstance(result, ToolResult) for result in self.content):
-            raise TypeError("Tool results messages may contain only tool results")
-        if not self.source_assistant_uuid:
-            raise ValueError("Tool results source assistant UUID must not be empty")
+            raise TypeError("Tool result batches may contain only tool results")
+        if not self.source_assistant_id:
+            raise ValueError("Tool result source assistant ID must not be empty")
+        result_ids = [result.tool_use_id for result in self.content]
+        if len(result_ids) != len(set(result_ids)):
+            raise ValueError("Tool result batch contains duplicate result IDs")
 
     @property
     def starts_human_turn(self) -> bool:
@@ -174,20 +180,20 @@ class ConversationSummaryMessage:
         return True
 
 
-type ConversationMessage = (
-    HumanMessage | AssistantMessage | ToolResultsMessage | ConversationSummaryMessage
+type ConversationEntry = (
+    HumanMessage | AssistantMessage | ToolResultBatch | ConversationSummaryMessage
 )
 type AssistantContent = TextContent | ToolCall | ReasoningContent
 
 __all__ = [
     "AssistantContent",
     "AssistantMessage",
-    "ConversationMessage",
+    "ConversationEntry",
     "ConversationSummaryMessage",
     "HumanMessage",
     "ReasoningContent",
     "TextContent",
     "ToolCall",
     "ToolResult",
-    "ToolResultsMessage",
+    "ToolResultBatch",
 ]

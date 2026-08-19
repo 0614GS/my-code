@@ -9,7 +9,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
@@ -28,13 +28,13 @@ from my_code.model.request import (
 def test_conversation_union_has_four_semantic_variants() -> None:
     human = HumanMessage("hello")
     assistant = AssistantMessage((TextContent("answer"),), TokenUsage())
-    results = ToolResultsMessage((ToolResult("call", "value"),), assistant.uuid)
+    results = ToolResultBatch((ToolResult("call", "value"),), assistant.uuid)
     summary = ConversationSummaryMessage("state")
 
     assert (human.kind, assistant.kind, results.kind, summary.kind) == (
         "human",
         "assistant",
-        "tool_results",
+        "tool_result_batch",
         "conversation_summary",
     )
     assert not hasattr(summary, "role")
@@ -45,7 +45,23 @@ def test_conversation_variants_reject_cross_layer_content() -> None:
     with pytest.raises(TypeError, match="only text and tool calls"):
         AssistantMessage((ToolResult("call", "bad"),), TokenUsage())  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="only tool results"):
-        ToolResultsMessage((ToolCall("call", "Read", {}),), "source")  # type: ignore[arg-type]
+        ToolResultBatch((ToolCall("call", "Read", {}),), "source")  # type: ignore[arg-type]
+
+
+def test_conversation_rejects_duplicate_tool_protocol_ids() -> None:
+    with pytest.raises(ValueError, match="duplicate tool call"):
+        AssistantMessage(
+            (
+                ToolCall("call", "Read", {}),
+                ToolCall("call", "Read", {}),
+            ),
+            TokenUsage(),
+        )
+    with pytest.raises(ValueError, match="duplicate result"):
+        ToolResultBatch(
+            (ToolResult("call", "first"), ToolResult("call", "second")),
+            "assistant",
+        )
 
 
 def test_model_input_variants_reject_cross_semantic_content() -> None:

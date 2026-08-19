@@ -11,7 +11,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.primitives import (
@@ -21,7 +21,12 @@ from my_code.model.primitives import (
     TokenUsage,
 )
 from my_code.sessions.catalog import SessionCatalog
-from my_code.sessions.codec import entry_from_json, entry_to_json, message_to_record
+from my_code.sessions.codec import (
+    decode_entry,
+    entry_from_json,
+    entry_to_json,
+    message_to_record,
+)
 from my_code.sessions.store import SessionStore
 from my_code.tools.presentation import ToolResultPresentation
 
@@ -39,7 +44,7 @@ def _chain():
         TokenUsage(10, 2),
         parent_uuid=human.uuid,
     )
-    results = ToolResultsMessage(
+    results = ToolResultBatch(
         (ToolResult("call", "value"),), assistant.uuid, parent_uuid=assistant.uuid
     )
     summary = ConversationSummaryMessage("state", parent_uuid=results.uuid)
@@ -60,7 +65,7 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
         "session_metadata",
         "assistant_message",
         "session_metadata",
-        "tool_results_message",
+        "tool_result_batch",
         "session_metadata",
         "conversation_summary_message",
         "session_metadata",
@@ -75,6 +80,17 @@ def test_codec_round_trip_each_message_variant() -> None:
     for message in _chain():
         record = message_to_record(message)
         assert entry_from_json(entry_to_json(record)) == record
+
+
+def test_legacy_tool_results_message_decodes_as_tool_result_batch() -> None:
+    _, _, batch, _ = _chain()
+    document = entry_to_json(message_to_record(batch))
+    document["type"] = "tool_results_message"
+    document["source_assistant_uuid"] = document.pop("source_assistant_id")
+
+    restored = decode_entry(document)
+
+    assert restored == batch
 
 
 def test_reasoning_assistant_content_round_trips_v5(tmp_path: Path) -> None:
@@ -119,7 +135,7 @@ def test_tool_presentation_is_a_session_add_on_not_a_conversation_fact(
 
     loaded = store.load()
     restored_result = loaded.history[-1]
-    assert isinstance(restored_result, ToolResultsMessage)
+    assert isinstance(restored_result, ToolResultBatch)
     assert not hasattr(restored_result.content[0], "presentation")
     assert dict(loaded.tool_presentations) == {"call": presentation}
     document = [json.loads(line) for line in store.path.read_text().splitlines()]
@@ -127,7 +143,7 @@ def test_tool_presentation_is_a_session_add_on_not_a_conversation_fact(
         entry for entry in document if entry["type"] == "tool_presentation"
     )
     result_record = next(
-        entry for entry in document if entry["type"] == "tool_results_message"
+        entry for entry in document if entry["type"] == "tool_result_batch"
     )
     assert presentation_record["tool_use_id"] == "call"
     assert "presentation" not in result_record["content"][0]

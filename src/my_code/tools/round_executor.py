@@ -8,7 +8,7 @@ from my_code.conversation.models import (
     AssistantMessage,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from my_code.tools.presentation import (
@@ -33,7 +33,7 @@ class ToolCallFinished:
 
 @dataclass(frozen=True, slots=True)
 class ToolRoundCompleted:
-    message: ToolResultsMessage
+    message: ToolResultBatch
     cancelled: bool = False
 
 
@@ -126,13 +126,13 @@ class ToolRoundExecutor:
 def _tool_result_message(
     assistant_message: AssistantMessage,
     results: tuple[ToolResult, ...],
-) -> ToolResultsMessage:
+) -> ToolResultBatch:
     if not results:
         raise ValueError("A tool round must contain at least one result")
-    return ToolResultsMessage(
+    return ToolResultBatch(
         content=results,
         parent_uuid=assistant_message.uuid,
-        source_assistant_uuid=assistant_message.uuid,
+        source_assistant_id=assistant_message.uuid,
     )
 
 

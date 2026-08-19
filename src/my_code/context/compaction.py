@@ -6,7 +6,7 @@ from my_code.context.models import CompactionOutcome
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextSnapshot
 from my_code.conversation.models import (
-    ConversationMessage,
+    ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
 )
@@ -160,7 +160,7 @@ def _extract_summary(response_text: str) -> str:
 
 def _build_continuation_context(
     summary: str,
-    messages: tuple[ConversationMessage, ...],
+    messages: tuple[ConversationEntry, ...],
 ) -> str:
     """构造后续 Agent 看到的 compact 语义信封和用户原文事实。"""
 

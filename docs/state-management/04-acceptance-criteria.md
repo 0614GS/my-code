@@ -8,12 +8,12 @@
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| T1 | 待实现 | 只有真实 `HumanMessage` 开始新 turn，attachment、reminder 和 tool output 不开始 turn。 |
-| T2 | 待实现 | 一次模型调用计为一个 step；一个 turn 可包含多个 step。 |
-| T3 | 待实现 | 每个成功完成的 step 恰好提交一个完整 `AssistantMessage`。 |
-| T4 | 待实现 | 失败或取消的 Provider 流不会提交部分 AssistantMessage，但运行期 step 状态会被清理。 |
-| T5 | 待实现 | `max_steps` 限制的是一个 turn 内的模型调用次数，不限制 turn 数或 ToolCall 数。 |
-| T6 | 待实现 | 一个包含工具调用的 step 完成工具闭合后，可以在同一 turn 继续下一个 step。 |
+| T1 | 已验收 | 只有真实 `HumanMessage` 开始新 turn，attachment、reminder 和 tool output 不开始 turn。 |
+| T2 | 已验收 | 一次模型调用计为一个 step；一个 turn 可包含多个 step。 |
+| T3 | 已验收 | 每个成功完成的 step 恰好提交一个完整 `AssistantMessage`。 |
+| T4 | 已验收 | 失败或取消的 Provider 流不会提交部分 AssistantMessage，但运行期 step 状态会被清理。 |
+| T5 | 已验收 | `max_steps` 限制的是一个 turn 内的模型调用次数，不限制 turn 数或 ToolCall 数。 |
+| T6 | 已验收 | 一个包含工具调用的 step 完成工具闭合后，可以在同一 turn 继续下一个 step。 |
 
 ## 状态所有权
 
@@ -23,48 +23,48 @@
 | O2 | 待实现 | Session 是 canonical conversation、working set、session context state、工具结果绑定和 replay sidecar 的唯一所有者。 |
 | O3 | 待实现 | ChatService 不持有与 AppState 重复的 session/provider/permission 可变状态。 |
 | O4 | 待实现 | AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 均不持有 AppState。 |
-| O5 | 待实现 | Context、Agent、Chat 和 TUI 不保存第二份可写 conversation entries。 |
-| O6 | 待实现 | request、turn、step、tool round 和 streaming 状态不会提升到 AppState 或 Session。 |
-| O7 | 待实现 | 派生 Todo 状态通过完整 Session history 投影，不维护第二份可变 Todo list。 |
+| O5 | 已验收 | Context、Agent、Chat 和 TUI 不保存第二份可写 conversation entries。 |
+| O6 | 已验收 | request、turn、step、tool round 和 streaming 状态不会提升到 AppState 或 Session。 |
+| O7 | 已验收 | 派生 Todo 状态通过完整 Session history 投影，不维护第二份可变 Todo list。 |
 
 ## Session 与持久化
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| S1 | 待实现 | Session 调用方只使用 snapshot 和语义提交方法，不接触 JSONL record、codec、store 或路径。 |
-| S2 | 待实现 | 进程内读取只使用已打开 Session 的内存状态，不把磁盘当 refresh API。 |
-| S3 | 待实现 | 所有提交先验证候选、再持久化、最后替换内存状态。 |
+| S1 | 已验收 | Session 调用方只使用 snapshot 和语义提交方法，不接触 JSONL record、codec、store 或路径。 |
+| S2 | 已验收 | 进程内读取只使用已打开 Session 的内存状态，不把磁盘当 refresh API。 |
+| S3 | 已验收 | 所有提交先验证候选、再持久化、最后替换内存状态。 |
 | S4 | 待实现 | message、tool result、presentation、externalized result、replay 和 compaction 任一写入失败时，内存状态不部分推进。 |
-| S5 | 待实现 | 恢复严格校验 schema、父链、重复 ID、tool pairing、compact boundary 和 replay 关联。 |
-| S6 | 待实现 | 尾部未闭合 ToolCall 在恢复时得到稳定错误结果，并且修复可再次恢复。 |
-| S7 | 待实现 | 旧 transcript 可读取；格式升级不会静默丢失 message、tool result、usage、presentation 或 continuation。 |
-| S8 | 待实现 | 目标 Session 恢复失败时，AppState 仍完整引用旧 Session。 |
+| S5 | 进行中 | 恢复严格校验 schema、父链、重复 ID、tool pairing、compact boundary 和 replay 关联。 |
+| S6 | 已验收 | 尾部未闭合 ToolCall 在恢复时得到稳定错误结果，并且修复可再次恢复。 |
+| S7 | 已验收 | 旧 transcript 可读取；格式升级不会静默丢失 message、tool result、usage、presentation 或 continuation。 |
+| S8 | 已验收 | 目标 Session 恢复失败时，当前 runtime 仍完整引用旧 Session。 |
 | S9 | 待实现 | 切换 Session 会同时切换 conversation、context delivery/cache、工具结果和 replay sidecar。 |
 
 ## Conversation 与工具协议
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| C1 | 待实现 | `ToolResultBatch` 是独立 ConversationEntry，不属于 HumanMessage 或 AssistantMessage。 |
-| C2 | 待实现 | 工具执行前，包含 ToolCall 的完整 AssistantMessage 已经提交。 |
-| C3 | 待实现 | 一个 ToolResultBatch 恰好闭合 source AssistantMessage 中的全部 ToolCall。 |
-| C4 | 待实现 | 重复 call ID、重复 result、孤立 result、缺失 result 和错误 source assistant 都被拒绝。 |
-| C5 | 待实现 | 工具取消和异常为所有未完成调用生成错误结果，不留下无法继续请求的轨迹。 |
-| C6 | 待实现 | full/micro compact 不产生孤立 ToolCall 或 ToolOutput，也不跨非法边界裁剪。 |
-| C7 | 待实现 | 多工具 batch 在 Session 中保持确定顺序，并在两个 Provider 中保持正确配对。 |
+| C1 | 已验收 | `ToolResultBatch` 是独立 ConversationEntry，不属于 HumanMessage 或 AssistantMessage。 |
+| C2 | 已验收 | 工具执行前，包含 ToolCall 的完整 AssistantMessage 已经提交。 |
+| C3 | 已验收 | 一个 ToolResultBatch 恰好闭合 source AssistantMessage 中的全部 ToolCall。 |
+| C4 | 已验收 | 重复 call ID、重复 result、孤立 result、缺失 result 和错误 source assistant 都被拒绝。 |
+| C5 | 已验收 | 工具取消和异常为所有未完成调用生成错误结果，不留下无法继续请求的轨迹。 |
+| C6 | 已验收 | full/micro compact 不产生孤立 ToolCall 或 ToolOutput，也不跨非法边界裁剪。 |
+| C7 | 已验收 | 多工具 batch 在 Session 中保持确定顺序，并在两个 Provider 中保持正确配对。 |
 
 ## Context 与投影
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
 | X1 | 待实现 | ContextEngine 对相同 SessionSnapshot、RequestContext 和 ModelEnvironment 产生确定性 ContextPlan。 |
-| X2 | 待实现 | ContextEngine 不修改 Session，也不缓存 conversation history。 |
+| X2 | 已验收 | ContextEngine 不修改 Session，也不缓存 conversation history。 |
 | X3 | 已实现 | attachment、Todo reminder 和 user context 以 provider-neutral input item 注入。 |
 | X4 | 待实现 | Todo reminder 不写 canonical transcript；失败 TodoWrite 不覆盖最后成功的 Todo 状态。 |
 | X5 | 待实现 | live-session attachment delivery 在同一 Session 可重放，resume/switch 后按声明清空或重建。 |
 | X6 | 已实现 | Context 注入不会插入到 ToolCall 与对应 ToolOutput 的非法协议位置。 |
 | X7 | 已实现 | budget、trim 和 compaction 基于公共 ModelInputItem，不依赖 OpenAI/Anthropic SDK 类型。 |
-| X8 | 待实现 | full compact proposal 失败不改变 Session；成功必须通过 Session 原子提交。 |
+| X8 | 已验收 | full compact proposal 失败不改变 Session；成功必须通过 Session 原子提交。 |
 
 ## Provider-neutral ModelRequest
 

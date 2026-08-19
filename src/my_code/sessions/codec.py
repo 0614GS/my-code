@@ -1,4 +1,4 @@
-"""TranscriptEntry 的严格 JSON codec 及领域消息映射。"""
+"""Session 私有 TranscriptEntry JSON codec。"""
 
 from collections.abc import Mapping
 from datetime import datetime
@@ -7,14 +7,14 @@ from typing import Literal
 
 from my_code.conversation.models import (
     AssistantMessage,
-    ConversationMessage,
+    ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
     ReasoningContent,
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.capabilities import ModelLimits
@@ -34,6 +34,7 @@ from my_code.sessions.records import (
     ContentReplacementRecord,
     ConversationSummaryMessageRecord,
     HumanMessageRecord,
+    LegacyToolResultsMessageRecord,
     MessageRecord,
     ReasoningContentRecord,
     SessionMetadataRecord,
@@ -41,8 +42,8 @@ from my_code.sessions.records import (
     TextContentRecord,
     ToolCallRecord,
     ToolPresentationRecord,
+    ToolResultBatchRecord,
     ToolResultRecord,
-    ToolResultsMessageRecord,
     TranscriptEntry,
 )
 from my_code.tools.presentation import ToolResultPresentation
@@ -53,7 +54,7 @@ class TranscriptDecodeError(ValueError):
 
 
 type DecodedEntry = (
-    ConversationMessage
+    ConversationEntry
     | ContentReplacement
     | CompactBoundary
     | SessionStart
@@ -105,7 +106,7 @@ def decode_entry(value: object) -> DecodedEntry:
     return record_to_message(entry)
 
 
-def encode_message(message: ConversationMessage) -> JsonObject:
+def encode_message(message: ConversationEntry) -> JsonObject:
     return entry_to_json(message_to_record(message))
 
 
@@ -174,7 +175,7 @@ def presentations_from_json(
     """Read legacy embedded snapshots without returning them as conversation facts."""
 
     entry = entry_from_json(value)
-    if not isinstance(entry, ToolResultsMessageRecord):
+    if not isinstance(entry, (LegacyToolResultsMessageRecord, ToolResultBatchRecord)):
         return ()
     return tuple(
         (item.tool_use_id, item.presentation)
@@ -183,7 +184,7 @@ def presentations_from_json(
     )
 
 
-def message_to_record(message: ConversationMessage) -> MessageRecord:
+def message_to_record(message: ConversationEntry) -> MessageRecord:
     if isinstance(message, HumanMessage):
         return HumanMessageRecord(
             message.uuid, message.parent_uuid, message.timestamp, message.content
@@ -208,24 +209,24 @@ def message_to_record(message: ConversationMessage) -> MessageRecord:
             message.provider_binding,
             message.request_input_tokens_estimate,
         )
-    if isinstance(message, ToolResultsMessage):
+    if isinstance(message, ToolResultBatch):
         result_content: tuple[ToolResultRecord, ...] = tuple(
             ToolResultRecord(b.tool_use_id, b.content, b.is_error)
             for b in message.content
         )
-        return ToolResultsMessageRecord(
+        return ToolResultBatchRecord(
             message.uuid,
             message.parent_uuid,
             message.timestamp,
             result_content,
-            message.source_assistant_uuid,
+            message.source_assistant_id,
         )
     return ConversationSummaryMessageRecord(
         message.uuid, message.parent_uuid, message.timestamp, message.content
     )
 
 
-def record_to_message(record: MessageRecord) -> ConversationMessage:
+def record_to_message(record: MessageRecord) -> ConversationEntry:
     if isinstance(record, HumanMessageRecord):
         return HumanMessage(
             record.content, record.uuid, record.parent_uuid, record.timestamp
@@ -250,13 +251,17 @@ def record_to_message(record: MessageRecord) -> ConversationMessage:
             record.provider_binding,
             record.request_input_tokens_estimate,
         )
-    if isinstance(record, ToolResultsMessageRecord):
+    if isinstance(record, (LegacyToolResultsMessageRecord, ToolResultBatchRecord)):
         result_content: tuple[ToolResult, ...] = tuple(
             ToolResult(b.tool_use_id, b.content, b.is_error) for b in record.content
         )
-        return ToolResultsMessage(
+        return ToolResultBatch(
             result_content,
-            record.source_assistant_uuid,
+            (
+                record.source_assistant_uuid
+                if isinstance(record, LegacyToolResultsMessageRecord)
+                else record.source_assistant_id
+            ),
             record.uuid,
             record.parent_uuid,
             record.timestamp,
@@ -301,7 +306,8 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
         (
             HumanMessageRecord,
             AssistantMessageRecord,
-            ToolResultsMessageRecord,
+            LegacyToolResultsMessageRecord,
+            ToolResultBatchRecord,
             ConversationSummaryMessageRecord,
         ),
     ):
@@ -317,9 +323,17 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             base["provider_binding"] = _binding_json(entry.provider_binding)
         if entry.request_input_tokens_estimate is not None:
             base["request_input_tokens_estimate"] = entry.request_input_tokens_estimate
-    elif isinstance(entry, ToolResultsMessageRecord):
+    elif isinstance(entry, LegacyToolResultsMessageRecord):
         base["content"] = [_result_json(b) for b in entry.content]
         base["source_assistant_uuid"] = entry.source_assistant_uuid
+    elif isinstance(entry, ToolResultBatchRecord):
+        base.update(
+            uuid=entry.uuid,
+            parent_uuid=entry.parent_uuid,
+            timestamp=entry.timestamp,
+            content=[_result_json(item) for item in entry.content],
+            source_assistant_id=entry.source_assistant_id,
+        )
     elif isinstance(entry, ContentReplacementRecord):
         base.update(
             tool_use_id=entry.tool_use_id,
@@ -479,12 +493,24 @@ def entry_from_json(value: object) -> TranscriptEntry:
         result_content = tuple(_result(item) for item in raw)
         if not result_content:
             raise TranscriptDecodeError("Tool results must not be empty")
-        return ToolResultsMessageRecord(
+        return LegacyToolResultsMessageRecord(
             uuid,
             parent_uuid,
             timestamp,
             result_content,
             _string(data, "source_assistant_uuid"),
+        )
+    if kind == "tool_result_batch":
+        raw = _list(data, "content")
+        result_content = tuple(_result(item) for item in raw)
+        if not result_content:
+            raise TranscriptDecodeError("Tool result batch must not be empty")
+        return ToolResultBatchRecord(
+            uuid,
+            parent_uuid,
+            timestamp,
+            result_content,
+            _string(data, "source_assistant_id"),
         )
     raise AssertionError("Validated transcript discriminator was not handled")
 
@@ -846,6 +872,7 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
     "human_message": _MESSAGE_COMMON,
     "assistant_message": _MESSAGE_COMMON | {"usage"},
     "tool_results_message": _MESSAGE_COMMON | {"source_assistant_uuid"},
+    "tool_result_batch": _MESSAGE_COMMON | {"source_assistant_id"},
     "conversation_summary_message": _MESSAGE_COMMON,
     "content_replacement": frozenset(
         {

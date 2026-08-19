@@ -23,7 +23,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.model.primitives import (
     ProviderBinding,
@@ -116,7 +116,7 @@ def test_opaque_thinking_replays_only_for_active_tool_trajectory() -> None:
         TokenUsage(),
         parent_uuid=human.uuid,
     )
-    results = ToolResultsMessage(
+    results = ToolResultBatch(
         (ToolResult("call", "value"),),
         assistant.uuid,
         parent_uuid=assistant.uuid,
@@ -154,7 +154,7 @@ def test_reminder_after_real_tool_result_keeps_semantic_item_boundary() -> None:
         TokenUsage(),
         parent_uuid=human.uuid,
     )
-    results = ToolResultsMessage(
+    results = ToolResultBatch(
         (ToolResult("call", "value"),),
         assistant.uuid,
         parent_uuid=assistant.uuid,

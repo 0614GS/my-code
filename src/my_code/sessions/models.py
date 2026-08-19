@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-from my_code.conversation.models import ConversationMessage
+from my_code.conversation.models import ConversationEntry
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.capabilities import ModelLimits
 from my_code.tools.presentation import ToolResultPresentation
@@ -65,8 +65,8 @@ class SessionMetadata:
 
 @dataclass(frozen=True, slots=True)
 class SessionSnapshot:
-    history: tuple[ConversationMessage, ...]
-    working_set: tuple[ConversationMessage, ...]
+    history: tuple[ConversationEntry, ...]
+    working_set: tuple[ConversationEntry, ...]
     content_replacements: tuple[ContentReplacement, ...] = field(default_factory=tuple)
     compact_boundaries: tuple[CompactBoundary, ...] = field(default_factory=tuple)
     tool_presentations: tuple[tuple[str, ToolResultPresentation], ...] = field(

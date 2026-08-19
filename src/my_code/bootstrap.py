@@ -47,7 +47,6 @@ from my_code.providers.model_cache import ModelCatalogCache
 from my_code.providers.router import ProviderConnection, ProviderRouter
 from my_code.sessions.models import SessionStart
 from my_code.sessions.session import Session
-from my_code.sessions.store import SessionStore
 from my_code.tools.base import ToolContext
 from my_code.tools.builtin import builtin_tools
 from my_code.tools.executor import ToolExecutor
@@ -158,7 +157,7 @@ def _assemble_agent(
         )
     )
     model_environment = active_model_state.get()
-    repository = SessionStore(
+    session = Session(
         settings.paths.project_state_dir,
         actual_session_id,
         start=SessionStart(
@@ -176,7 +175,6 @@ def _assemble_agent(
             compact_trigger_tokens=model_environment.compact_trigger_tokens,
         ),
     )
-    session = Session(repository)
     registry = ToolRegistry((*builtin_tools(), TodoWriteTool()))
     prompter = permission_prompter or (
         TerminalPrompter() if settings.interactive else HeadlessPrompter()

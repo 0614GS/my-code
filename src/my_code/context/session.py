@@ -2,14 +2,26 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 from uuid import uuid4
 
 from my_code.context.attachments.models import ContextAttachment
 from my_code.context.documents import UserContextDocument
-from my_code.conversation.models import ConversationMessage
-from my_code.conversation.state import ContentReplacement, ConversationSnapshot
+from my_code.conversation.models import ConversationEntry
+from my_code.conversation.state import ContentReplacement
 from my_code.model.request import ResolvedPromptSection, SystemPrompt
 from my_code.prompts.registry import PromptRegistry
+
+
+class ConversationView(Protocol):
+    @property
+    def history(self) -> tuple[ConversationEntry, ...]: ...
+
+    @property
+    def working_set(self) -> tuple[ConversationEntry, ...]: ...
+
+    @property
+    def content_replacements(self) -> tuple[ContentReplacement, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,9 +39,9 @@ class AttachmentDelivery:
 
 @dataclass(frozen=True, slots=True)
 class ContextSnapshot:
-    messages: tuple[ConversationMessage, ...]
+    messages: tuple[ConversationEntry, ...]
     content_replacements: tuple[ContentReplacement, ...] = ()
-    session_history: tuple[ConversationMessage, ...] = ()
+    session_history: tuple[ConversationEntry, ...] = ()
     attachment_deliveries: tuple[AttachmentDelivery, ...] = ()
 
 
@@ -56,24 +68,24 @@ class ContextSession:
             self._user_context = tuple(resolve())
         return self._user_context
 
-    def snapshot(self, conversation: ConversationSnapshot) -> ContextSnapshot:
-        working_ids = {message.uuid for message in conversation.messages}
+    def snapshot(self, session: ConversationView) -> ContextSnapshot:
+        working_ids = {entry.uuid for entry in session.working_set}
         deliveries = tuple(
             item for item in self._deliveries if item.anchor_uuid in working_ids
         )
         return ContextSnapshot(
-            conversation.messages,
-            conversation.content_replacements,
-            conversation.session_history,
+            session.working_set,
+            session.content_replacements,
+            session.history,
             deliveries,
         )
 
     def add(
         self,
         deliveries: tuple[AttachmentDelivery, ...],
-        conversation: ConversationSnapshot,
+        session: ConversationView,
     ) -> None:
-        working_ids = {message.uuid for message in conversation.messages}
+        working_ids = {entry.uuid for entry in session.working_set}
         existing = {item.delivery_id: item for item in self._deliveries}
         pending: list[AttachmentDelivery] = []
         for delivery in deliveries:

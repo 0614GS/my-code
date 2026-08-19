@@ -13,8 +13,7 @@ from my_code.chat.status import RuntimeStatus
 from my_code.context.attachments.models import ContextAttachment
 from my_code.context.engine import ContextEngine
 from my_code.context.models import CompactionOutcome, ContextPlan
-from my_code.conversation.models import ConversationMessage, ToolResult
-from my_code.conversation.state import Conversation
+from my_code.conversation.models import ConversationEntry, ToolResult
 from my_code.features.file_mentions.models import FileMention, PathSuggestion
 from my_code.features.todos.models import TodoItem
 from my_code.features.todos.tool import TodoWriteTool
@@ -119,12 +118,11 @@ def test_conversation_layer_dependency_boundaries() -> None:
     simultaneous = []
     for source_path in (_PACKAGE_ROOT / "sessions").glob("*.py"):
         source = source_path.read_text(encoding="utf-8")
-        if "sessions.records" in source and "ConversationMessage" in source:
+        if "sessions.records" in source and "ConversationEntry" in source:
             simultaneous.append(source_path.name)
     assert set(simultaneous) == {"codec.py", "store.py"}
 
     assert "presentation" not in ToolResult.__dataclass_fields__
-    assert Conversation.__module__ == "my_code.conversation.state"
     for source_path in (_PACKAGE_ROOT / "conversation").glob("*.py"):
         imports = _imported_modules(source_path)
         assert not any(
@@ -191,7 +189,6 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert not hasattr(AgentEngine, "present_stored_result")
     assert not hasattr(agent_api, "AgentState")
     assert not hasattr(agent_api, "AgentContextState")
-    assert not hasattr(Conversation, "messages")
     assert not (_AGENT_ROOT / "contracts" / "session.py").exists()
     assert not (_AGENT_ROOT / "ports" / "session.py").exists()
     assert Session.__module__ == "my_code.sessions.session"
@@ -208,7 +205,7 @@ def test_root_bootstrap_is_the_only_full_application_composition_root() -> None:
         "ContextPlanner",
         "ContextCompactor",
         "ProviderRouter",
-        "SessionStore",
+        "Session",
         "ToolExecutor",
         "AgentEngine",
     ):
@@ -315,7 +312,7 @@ def test_file_mentions_are_a_feature_not_a_top_level_or_tui_domain() -> None:
 
 
 def test_conversation_and_context_attachment_ownership() -> None:
-    assert ConversationMessage.__module__ == "my_code.conversation.models"
+    assert "HumanMessage" in str(ConversationEntry.__value__)
     assert ContextAttachment.__module__ == "my_code.context.attachments.models"
     assert not tuple((_PACKAGE_ROOT / "messages").glob("*.py"))
     assert not (_PACKAGE_ROOT / "context" / "attachment_projection.py").exists()
@@ -345,6 +342,19 @@ def test_conversation_and_context_attachment_ownership() -> None:
     for source_path in (_PACKAGE_ROOT / "providers").glob("*.py"):
         imports = _imported_modules(source_path)
         assert "my_code.context.attachments.models" not in imports, source_path
+
+
+def test_session_is_the_only_public_conversation_and_persistence_boundary() -> None:
+    assert not hasattr(Session, "conversation")
+    assert not hasattr(Session, "store")
+    assert not hasattr(Session, "append")
+    for source_path in _PACKAGE_ROOT.rglob("*.py"):
+        if "sessions" in source_path.relative_to(_PACKAGE_ROOT).parts:
+            continue
+        imports = _imported_modules(source_path)
+        assert "my_code.sessions.store" not in imports, source_path
+        assert "my_code.sessions.codec" not in imports, source_path
+        assert "my_code.sessions.records" not in imports, source_path
 
 
 def test_todos_are_a_self_contained_product_feature() -> None:

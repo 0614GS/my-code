@@ -5,14 +5,14 @@ from dataclasses import replace
 
 from my_code.conversation.models import (
     AssistantMessage,
-    ConversationMessage,
+    ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
     ReasoningContent,
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.conversation.state import ContentReplacement
 
@@ -48,7 +48,7 @@ class MicrocompactPolicy:
 
     def propose(
         self,
-        messages: tuple[ConversationMessage, ...],
+        messages: tuple[ConversationEntry, ...],
         existing: tuple[ContentReplacement, ...],
     ) -> tuple[ContentReplacement, ...]:
         """按消息顺序返回达到目标预算所需的新决策。"""
@@ -68,7 +68,7 @@ class MicrocompactPolicy:
         candidates = [
             block
             for message in messages
-            if isinstance(message, ToolResultsMessage)
+            if isinstance(message, ToolResultBatch)
             for block in message.content
             if isinstance(block, ToolResult)
             and block.tool_use_id not in replacements
@@ -94,12 +94,12 @@ class MicrocompactPolicy:
 
     def propose_tokens(
         self,
-        messages: tuple[ConversationMessage, ...],
+        messages: tuple[ConversationEntry, ...],
         existing: tuple[ContentReplacement, ...],
         *,
         current_tokens: int,
         trigger_tokens: int,
-        estimate: Callable[[tuple[ConversationMessage, ...]], int],
+        estimate: Callable[[tuple[ConversationEntry, ...]], int],
     ) -> tuple[ContentReplacement, ...]:
         """Replace oldest eligible results until the retokenized request is safe."""
 
@@ -117,7 +117,7 @@ class MicrocompactPolicy:
         candidates = [
             block
             for message in messages
-            if isinstance(message, ToolResultsMessage)
+            if isinstance(message, ToolResultBatch)
             for block in message.content
             if block.tool_use_id not in replacements
             and tool_names.get(block.tool_use_id) in _ELIGIBLE_TOOLS
@@ -140,15 +140,15 @@ class MicrocompactPolicy:
 
 
 def apply_content_replacements(
-    messages: tuple[ConversationMessage, ...],
+    messages: tuple[ConversationEntry, ...],
     replacements: tuple[ContentReplacement, ...],
-) -> tuple[ConversationMessage, ...]:
+) -> tuple[ConversationEntry, ...]:
     """创建模型工作视图，不修改 Transcript 中的原始消息。"""
 
     by_id = {item.tool_use_id: item for item in replacements}
-    updated: list[ConversationMessage] = []
+    updated: list[ConversationEntry] = []
     for message in messages:
-        if not isinstance(message, ToolResultsMessage):
+        if not isinstance(message, ToolResultBatch):
             updated.append(message)
             continue
         content = tuple(
@@ -162,7 +162,7 @@ def apply_content_replacements(
 
 
 def _effective_message_chars(
-    messages: tuple[ConversationMessage, ...],
+    messages: tuple[ConversationEntry, ...],
     replacements: dict[str, ContentReplacement],
 ) -> int:
     size = 0

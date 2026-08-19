@@ -2,7 +2,7 @@
 
 from my_code.context.models import ContextOverflow as _ContextOverflow
 from my_code.conversation.models import (
-    ConversationMessage,
+    ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
     ReasoningContent,
@@ -22,10 +22,10 @@ class ContextWindow:
 
     def ensure_fits(
         self,
-        messages: tuple[ConversationMessage, ...],
+        messages: tuple[ConversationEntry, ...],
         *,
         additional_chars: int = 0,
-    ) -> tuple[ConversationMessage, ...]:
+    ) -> tuple[ConversationEntry, ...]:
         if additional_chars < 0:
             raise ValueError("additional_chars must not be negative")
         if not messages:
@@ -41,7 +41,7 @@ class ContextWindow:
         return messages
 
     @staticmethod
-    def size(messages: tuple[ConversationMessage, ...]) -> int:
+    def size(messages: tuple[ConversationEntry, ...]) -> int:
         """返回工作集的保守字符估算。"""
 
         size = 0

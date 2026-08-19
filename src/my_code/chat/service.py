@@ -58,7 +58,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.features.file_mentions.loader import AttachmentLoader
 from my_code.features.file_mentions.models import PathSuggestion
@@ -75,7 +75,6 @@ from my_code.providers.manager import ProviderManager, ProviderUpdate, ProviderV
 from my_code.providers.router import ProviderRouter
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
 from my_code.sessions.session import Session
-from my_code.sessions.store import SessionStore
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.result_store import ToolResultStore
 
@@ -148,7 +147,7 @@ class ChatService:
             for item in loaded:
                 yield AttachmentLoaded(item.path, item.is_directory, item.display)
             active = self._active
-            previous_todos = project_todos(active.session.history).todos
+            previous_todos = project_todos(active.session.snapshot().history).todos
             async for event in self.agent.stream(
                 active.session,
                 active.context,
@@ -174,7 +173,9 @@ class ChatService:
                         event.tool_use_id, event.is_error, event.presentation
                     )
                 elif isinstance(event, AgentConversationUpdated):
-                    current_todos = project_todos(active.session.history).todos
+                    current_todos = project_todos(
+                        active.session.snapshot().history
+                    ).todos
                     if current_todos != previous_todos:
                         previous_todos = current_todos
                         yield TodoListUpdated(current_todos)
@@ -207,13 +208,13 @@ class ChatService:
             permission_mode=self.settings.permission_mode.value,
             credential_source=self.settings.credential_source.value,
             working_message_count=session.message_count,
-            todos=project_todos(session.history).todos,
+            todos=project_todos(session.snapshot().history).todos,
         )
 
     def context_status(self) -> ContextStatus:
         active = self._active
         budget = self.context.inspect(
-            active.context.snapshot(active.session.conversation.snapshot()),
+            active.context.snapshot(active.session.snapshot()),
             active.context,
         )
         session = active.session
@@ -244,7 +245,7 @@ class ChatService:
         async with self._lock:
             active = self._active
             outcome = await self.context.compact(
-                active.context.snapshot(active.session.conversation.snapshot()),
+                active.context.snapshot(active.session.snapshot()),
                 "manual",
             )
             active.session.commit_compaction(
@@ -326,7 +327,7 @@ class ChatService:
             if session_id == self._active.session.session_id:
                 raise ValueError("Session is already active")
             # Fully hydrate and repair every candidate component before publishing it.
-            session = Session.restore(SessionStore(self._project_state_dir, session_id))
+            session = Session.restore(self._project_state_dir, session_id)
             candidate = _SessionBundle(
                 session,
                 ContextSession(),
@@ -345,13 +346,13 @@ class ChatService:
     def _project_history(self, session: Session) -> tuple[HistoryEntry, ...]:
         results = {
             block.tool_use_id: block
-            for message in session.history
-            if isinstance(message, ToolResultsMessage)
+            for message in session.snapshot().history
+            if isinstance(message, ToolResultBatch)
             for block in message.content
             if isinstance(block, ToolResult)
         }
         history: list[HistoryEntry] = []
-        for message in session.history:
+        for message in session.snapshot().history:
             if isinstance(message, HumanMessage):
                 history.append(HistoryText("user", message.content))
             elif isinstance(message, ConversationSummaryMessage):

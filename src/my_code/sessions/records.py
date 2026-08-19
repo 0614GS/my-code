@@ -1,4 +1,4 @@
-"""仅供 sessions adapter 使用的 JSONL 持久化类型。"""
+"""仅供 Session 私有持久化实现使用的 JSONL 类型。"""
 
 from dataclasses import dataclass
 from typing import Literal
@@ -107,13 +107,24 @@ class AssistantMessageRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class ToolResultsMessageRecord:
+class LegacyToolResultsMessageRecord:
     uuid: str
     parent_uuid: str | None
     timestamp: str
     content: tuple[ToolResultRecord, ...]
     source_assistant_uuid: str
     type: Literal["tool_results_message"] = "tool_results_message"
+    schema_version: Literal[5] = 5
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResultBatchRecord:
+    uuid: str
+    parent_uuid: str | None
+    timestamp: str
+    content: tuple[ToolResultRecord, ...]
+    source_assistant_id: str
+    type: Literal["tool_result_batch"] = "tool_result_batch"
     schema_version: Literal[5] = 5
 
 
@@ -151,7 +162,8 @@ class CompactBoundaryRecord:
 type MessageRecord = (
     HumanMessageRecord
     | AssistantMessageRecord
-    | ToolResultsMessageRecord
+    | LegacyToolResultsMessageRecord
+    | ToolResultBatchRecord
     | ConversationSummaryMessageRecord
 )
 type TranscriptEntry = (
@@ -162,3 +174,6 @@ type TranscriptEntry = (
     | CompactBoundaryRecord
     | ToolPresentationRecord
 )
+
+
+__all__: list[str] = []

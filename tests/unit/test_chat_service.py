@@ -25,7 +25,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.conversation.state import CompactBoundary
 from my_code.model.primitives import TokenUsage
@@ -99,7 +99,7 @@ async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> 
     runtime = _bootstrap_runtime(tmp_path)
     active = runtime._active
     user = HumanMessage(content="compact this conversation")
-    active.session.append(user)
+    active.session.append_human_message(user)
     summary = ConversationSummaryMessage(
         content="continuation state",
         parent_uuid=user.uuid,
@@ -123,7 +123,7 @@ async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> 
     assert snapshot.messages == (user,)
     assert trigger == "manual"
     assert active.session.compact_count == 1
-    assert active.session.working_messages == (summary,)
+    assert active.session.snapshot().working_set == (summary,)
     assert status.compact_count == 1
 
 
@@ -181,7 +181,7 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
         summary="Historical read summary",
         detail="Stored at execution time",
     )
-    result = ToolResultsMessage(
+    result = ToolResultBatch(
         content=(
             ToolResult(
                 "read-1",
@@ -189,7 +189,7 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
             ),
         ),
         parent_uuid=assistant.uuid,
-        source_assistant_uuid=assistant.uuid,
+        source_assistant_id=assistant.uuid,
     )
     store.append(user)
     store.append(assistant)
@@ -239,10 +239,10 @@ async def test_resume_projects_todos_into_runtime_status(tmp_path: Path) -> None
         usage=TokenUsage(),
         parent_uuid=user.uuid,
     )
-    result = ToolResultsMessage(
+    result = ToolResultBatch(
         content=(ToolResult("todo-1", "updated"),),
         parent_uuid=assistant.uuid,
-        source_assistant_uuid=assistant.uuid,
+        source_assistant_id=assistant.uuid,
     )
     for message in (user, assistant, result):
         store.append(message)
@@ -260,7 +260,7 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
     runtime = _bootstrap_runtime(tmp_path)
     active = runtime._active
     anchor = HumanMessage(content="keep this session")
-    active.session.append(anchor)
+    active.session.append_human_message(anchor)
     active.context.add(
         (
             AttachmentDelivery(
@@ -272,7 +272,7 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
                 ),
             ),
         ),
-        active.session.conversation.snapshot(),
+        active.session.snapshot(),
     )
     empty_id = "33333333-3333-3333-3333-333333333333"
     SessionStore(runtime.settings.paths.project_state_dir, empty_id).load()
@@ -284,7 +284,7 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
     assert runtime.status().session_id == _CURRENT_SESSION_ID
     assert runtime._active.tool_results is active.tool_results
     assert runtime._active.context.snapshot(
-        active.session.conversation.snapshot()
+        active.session.snapshot()
     ).attachment_deliveries
 
 

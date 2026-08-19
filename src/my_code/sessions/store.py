@@ -9,11 +9,11 @@ from pathlib import Path
 
 from my_code.conversation.models import (
     AssistantMessage,
-    ConversationMessage,
+    ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
     ToolCall,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.sessions.codec import (
@@ -35,10 +35,7 @@ _UUID_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-__all__ = [
-    "SessionStore",
-    "is_session_id",
-]
+__all__: list[str] = []
 
 
 def is_session_id(value: str) -> bool:
@@ -86,7 +83,7 @@ class SessionStore:
         # 这些索引只在显式 load 时从磁盘 hydration，之后随追加增量维护。
         # Session 只在打开时 hydration；之后这些索引随成功追加增量维护。
         self._known_ids: set[str] | None = None
-        self._messages_by_id: dict[str, ConversationMessage] | None = None
+        self._messages_by_id: dict[str, ConversationEntry] | None = None
         self._content_replacements: dict[str, ContentReplacement] | None = None
         self._boundaries: dict[str, CompactBoundary] | None = None
         self._tool_presentations: dict[str, ToolResultPresentation] | None = None
@@ -109,8 +106,8 @@ class SessionStore:
             self._tool_presentations = {}
             return SessionSnapshot(history=(), working_set=())
 
-        messages: list[ConversationMessage] = []
-        by_id: dict[str, ConversationMessage] = {}
+        messages: list[ConversationEntry] = []
+        by_id: dict[str, ConversationEntry] = {}
         seen: set[str] = set()
         replacements: dict[str, ContentReplacement] = {}
         boundaries: dict[str, CompactBoundary] = {}
@@ -223,11 +220,10 @@ class SessionStore:
                 raise ValueError(
                     f"Missing parent {message.parent_uuid} for {message.uuid}"
                 )
-            if isinstance(message, ToolResultsMessage):
-                source = by_id.get(message.source_assistant_uuid)
-                if (
-                    message.parent_uuid != message.source_assistant_uuid
-                    or not isinstance(source, AssistantMessage)
+            if isinstance(message, ToolResultBatch):
+                source = by_id.get(message.source_assistant_id)
+                if message.parent_uuid != message.source_assistant_id or not isinstance(
+                    source, AssistantMessage
                 ):
                     raise ValueError(
                         "Tool results must directly follow their source assistant"
@@ -260,14 +256,14 @@ class SessionStore:
             metadata=metadata,
         )
 
-    def append(self, message: ConversationMessage) -> bool:
+    def append(self, message: ConversationEntry) -> bool:
         """校验幂等性和父节点顺序后追加一条消息。"""
 
         return self.append_message(message)
 
     def append_message(
         self,
-        message: ConversationMessage,
+        message: ConversationEntry,
         presentations: tuple[tuple[str, ToolResultPresentation], ...] = (),
     ) -> bool:
         """Append a message and its optional presentation add-on records together."""
@@ -288,9 +284,9 @@ class SessionStore:
             message.parent_uuid is not None and not is_session_id(message.parent_uuid)
         ):
             raise ValueError("Message and parent UUIDs must be UUIDs")
-        if isinstance(message, ToolResultsMessage):
-            source = self._messages_by_id.get(message.source_assistant_uuid)
-            if message.parent_uuid != message.source_assistant_uuid or not isinstance(
+        if isinstance(message, ToolResultBatch):
+            source = self._messages_by_id.get(message.source_assistant_id)
+            if message.parent_uuid != message.source_assistant_id or not isinstance(
                 source, AssistantMessage
             ):
                 raise ValueError(
@@ -303,11 +299,11 @@ class SessionStore:
             if actual != expected:
                 raise ValueError("Tool results do not match source tool calls")
 
-        if presentations and not isinstance(message, ToolResultsMessage):
+        if presentations and not isinstance(message, ToolResultBatch):
             raise ValueError("Tool presentations require a tool-results message")
         result_ids = (
             {item.tool_use_id for item in message.content}
-            if isinstance(message, ToolResultsMessage)
+            if isinstance(message, ToolResultBatch)
             else set()
         )
         if any(tool_use_id not in result_ids for tool_use_id, _ in presentations):
@@ -497,14 +493,14 @@ class SessionStore:
 
 
 def _active_parent_chain(
-    messages: list[ConversationMessage], by_id: dict[str, ConversationMessage]
-) -> tuple[ConversationMessage, ...]:
+    messages: list[ConversationEntry], by_id: dict[str, ConversationEntry]
+) -> tuple[ConversationEntry, ...]:
     """从最后一条记录沿父指针恢复当前活动分支。"""
 
     if not messages:
         return ()
-    chain: list[ConversationMessage] = []
-    current: ConversationMessage | None = messages[-1]
+    chain: list[ConversationEntry] = []
+    current: ConversationEntry | None = messages[-1]
     while current is not None:
         chain.append(current)
         current = (
@@ -516,7 +512,7 @@ def _active_parent_chain(
 
 def _active_boundaries(
     boundaries: dict[str, CompactBoundary],
-    history: tuple[ConversationMessage, ...],
+    history: tuple[ConversationEntry, ...],
 ) -> tuple[CompactBoundary, ...]:
     """返回父节点和 summary 都位于活动链上的完整边界。"""
 
@@ -529,9 +525,9 @@ def _active_boundaries(
 
 
 def _working_set(
-    history: tuple[ConversationMessage, ...],
+    history: tuple[ConversationEntry, ...],
     boundaries: tuple[CompactBoundary, ...],
-) -> tuple[ConversationMessage, ...]:
+) -> tuple[ConversationEntry, ...]:
     """从最后一个有效 compact summary 开始构造模型工作集。"""
 
     if not boundaries:

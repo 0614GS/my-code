@@ -8,7 +8,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.model.primitives import (
     ProviderBinding,
@@ -81,7 +81,7 @@ def test_scoped_continuations_are_selected_and_compaction_strips_them() -> None:
         TokenUsage(),
         parent_uuid=human.uuid,
     )
-    results = ToolResultsMessage(
+    results = ToolResultBatch(
         (ToolResult("call", "ok"),), assistant.uuid, parent_uuid=assistant.uuid
     )
     normalizer = ModelInputNormalizer()

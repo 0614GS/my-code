@@ -14,7 +14,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.features.todos.codec import parse_todo_input
 from my_code.features.todos.projection import project_todos
@@ -79,9 +79,9 @@ def _history_after_todo(
     messages = [
         HumanMessage("work"),
         assistant,
-        ToolResultsMessage(
+        ToolResultBatch(
             content=(ToolResult("todo-1", "updated"),),
-            source_assistant_uuid=assistant.uuid,
+            source_assistant_id=assistant.uuid,
         ),
     ]
     messages.extend(
@@ -172,9 +172,9 @@ def test_failed_todo_write_does_not_replace_last_successful_state() -> None:
     history.extend(
         (
             failed,
-            ToolResultsMessage(
+            ToolResultBatch(
                 content=(ToolResult("todo-failed", "invalid", is_error=True),),
-                source_assistant_uuid=failed.uuid,
+                source_assistant_id=failed.uuid,
             ),
         )
     )

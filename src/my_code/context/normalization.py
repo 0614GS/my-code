@@ -1,4 +1,4 @@
-"""ConversationMessage 到 ModelInputItem 的纯投影与协议校验。"""
+"""ConversationEntry 到 ModelInputItem 的纯投影与协议校验。"""
 
 from my_code.context.attachments.models import ContextAttachment
 from my_code.context.attachments.projection import AttachmentProjector
@@ -7,12 +7,12 @@ from my_code.context.session import AttachmentDelivery
 from my_code.context.xml import render_context_instruction, wrap_xml
 from my_code.conversation.models import (
     AssistantMessage,
-    ConversationMessage,
+    ConversationEntry,
     HumanMessage,
     ReasoningContent,
     TextContent,
     ToolCall,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.model.primitives import ProviderBinding, ProviderContinuationState
 from my_code.model.request import (
@@ -39,7 +39,7 @@ class ModelInputNormalizer:
     def normalize(
         self,
         user_context: tuple[UserContextDocument, ...],
-        history: tuple[ConversationMessage, ...],
+        history: tuple[ConversationEntry, ...],
         attachments: tuple[ContextAttachment, ...],
         attachment_deliveries: tuple[AttachmentDelivery, ...] = (),
         active_binding: ProviderBinding | None = None,
@@ -61,7 +61,7 @@ class ModelInputNormalizer:
 
     def normalize_transcript(
         self,
-        messages: tuple[ConversationMessage, ...],
+        messages: tuple[ConversationEntry, ...],
         attachment_deliveries: tuple[AttachmentDelivery, ...] = (),
     ) -> tuple[ModelInputItem, ...]:
         """Compact 使用的 history-only 视图。"""
@@ -79,7 +79,7 @@ class ModelInputNormalizer:
 
 
 def _conversation_message(
-    message: ConversationMessage,
+    message: ConversationEntry,
     *,
     active_trajectory: bool = False,
     replay_continuation: bool = True,
@@ -133,7 +133,7 @@ def _conversation_message(
                 is not None
             )
         )
-    if isinstance(message, ToolResultsMessage):
+    if isinstance(message, ToolResultBatch):
         return ToolOutputs(
             tuple(
                 ToolOutput(
@@ -161,7 +161,7 @@ def _context_message(message: UserContextDocument) -> UserInput:
 
 
 def _conversation_history(
-    messages: tuple[ConversationMessage, ...],
+    messages: tuple[ConversationEntry, ...],
     attachment_deliveries: tuple[AttachmentDelivery, ...],
     attachment_projector: AttachmentProjector,
     *,
@@ -172,10 +172,10 @@ def _conversation_history(
     for delivery in attachment_deliveries:
         by_anchor.setdefault(delivery.anchor_uuid, []).append(delivery.attachment)
     active_trajectory_uuid = (
-        messages[-1].source_assistant_uuid
+        messages[-1].source_assistant_id
         if replay_continuation
         and messages
-        and isinstance(messages[-1], ToolResultsMessage)
+        and isinstance(messages[-1], ToolResultBatch)
         else None
     )
     projected: list[ModelInputItem] = []

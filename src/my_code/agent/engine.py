@@ -35,7 +35,7 @@ from my_code.conversation.models import (
     TextContent,
     ToolCall,
     ToolResult,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.conversation.state import CompactTrigger
 from my_code.model.client import ModelClient
@@ -122,13 +122,13 @@ class AgentEngine:
             parent_uuid=_last_uuid(session),
         )
         # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
-        session.append(user_message)
+        session.append_human_message(user_message)
         context_session.add(
             tuple(
                 AttachmentDelivery(user_message.uuid, attachment)
                 for attachment in turn_input.attachments
             ),
-            session.conversation.snapshot(),
+            session.snapshot(),
         )
 
         input_tokens = 0
@@ -244,7 +244,7 @@ class AgentEngine:
                 request_input_tokens_estimate=request.request_input_tokens_estimate,
             )
             # 先持久化 assistant 的完整 tool_use，再进入执行阶段。
-            session.append(assistant_message)
+            session.append_assistant_message(assistant_message)
 
             final_text = "\n".join(
                 block.text
@@ -264,7 +264,7 @@ class AgentEngine:
                 )
                 return
 
-            result_message: ToolResultsMessage | None = None
+            result_message: ToolResultBatch | None = None
             results: list[ToolResult] = []
             tool_presentations: dict[str, ToolResultPresentation] = {}
             round_cancelled = False
@@ -304,7 +304,7 @@ class AgentEngine:
                         presentations=tool_presentations.items(),
                     )
                 else:
-                    session.append(
+                    session.append_tool_result_batch(
                         result_message, presentations=tool_presentations.items()
                     )
                 yield AgentConversationUpdated()
@@ -322,7 +322,7 @@ class AgentEngine:
                         presentations=tool_presentations.items(),
                     )
                 else:
-                    session.append(
+                    session.append_tool_result_batch(
                         result_message, presentations=tool_presentations.items()
                     )
                 yield AgentConversationUpdated()
@@ -368,10 +368,10 @@ class AgentEngine:
             _context_snapshot(session, context_session), context_session
         )
         for replacement in request.new_content_replacements:
-            session.append_content_replacement(replacement)
+            session.commit_content_replacement(replacement)
         context_session.add(
             request.new_attachment_deliveries,
-            session.conversation.snapshot(),
+            session.snapshot(),
         )
         return request
 
@@ -397,13 +397,14 @@ def _cancelled_results(
 
 
 def _last_uuid(session: Session) -> str | None:
-    return session.working_messages[-1].uuid if session.working_messages else None
+    working_set = session.snapshot().working_set
+    return working_set[-1].uuid if working_set else None
 
 
 def _context_snapshot(
     session: Session, context_session: ContextSession
 ) -> ContextSnapshot:
-    return context_session.snapshot(session.conversation.snapshot())
+    return context_session.snapshot(session.snapshot())
 
 
 __all__ = [

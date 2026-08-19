@@ -24,13 +24,13 @@ from my_code.context.window import ContextWindow
 from my_code.context.xml import render_context_instruction
 from my_code.conversation.models import (
     AssistantMessage,
-    ConversationMessage,
+    ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
     ReasoningContent,
     TextContent,
     ToolCall,
-    ToolResultsMessage,
+    ToolResultBatch,
 )
 from my_code.conversation.state import ContentReplacement
 from my_code.model.capabilities import (
@@ -57,7 +57,7 @@ from my_code.prompts.registry import PromptRegistry
 
 
 class ContextPlanner:
-    """集中拥有 ConversationMessage → ModelInputItem 投影边界。"""
+    """集中拥有 ConversationEntry → ModelInputItem 投影边界。"""
 
     def __init__(
         self,
@@ -231,7 +231,7 @@ class ContextPlanner:
             proposed,
         )
 
-    def measure(self, messages: tuple[ConversationMessage, ...]) -> int:
+    def measure(self, messages: tuple[ConversationEntry, ...]) -> int:
         return self.window.size(messages)
 
     def _get_user_context(
@@ -265,7 +265,7 @@ class ContextPlanner:
 
     def _effective_messages(
         self, snapshot: ContextSnapshot, *, propose: bool = True
-    ) -> tuple[tuple[ConversationMessage, ...], tuple[ContentReplacement, ...]]:
+    ) -> tuple[tuple[ConversationEntry, ...], tuple[ContentReplacement, ...]]:
         proposed = (
             self.microcompact.propose(snapshot.messages, snapshot.content_replacements)
             if propose
@@ -277,7 +277,7 @@ class ContextPlanner:
 
     def _budget(
         self,
-        conversation: tuple[ConversationMessage, ...],
+        conversation: tuple[ConversationEntry, ...],
         request: ModelRequest,
         user_context: tuple[UserContextDocument, ...],
         attachments: tuple[ContextAttachment, ...],
@@ -336,7 +336,7 @@ class ContextPlanner:
 
     def _projected_tokens_for(
         self,
-        conversation: tuple[ConversationMessage, ...],
+        conversation: tuple[ConversationEntry, ...],
         user_context: tuple[UserContextDocument, ...],
         attachments: tuple[ContextAttachment, ...],
         deliveries: tuple[AttachmentDelivery, ...],
@@ -402,7 +402,7 @@ def _context_chars(items: tuple[UserContextDocument, ...]) -> int:
 
 
 def _deliveries_after_last_assistant(
-    conversation: tuple[ConversationMessage, ...],
+    conversation: tuple[ConversationEntry, ...],
     deliveries: tuple[AttachmentDelivery, ...],
 ) -> tuple[ContextAttachment, ...]:
     last_assistant = next(
@@ -422,12 +422,12 @@ def _deliveries_after_last_assistant(
 
 
 def _replayed_continuation_chars(
-    conversation: tuple[ConversationMessage, ...],
+    conversation: tuple[ConversationEntry, ...],
     binding: ProviderBinding | None,
 ) -> int:
     source_uuid = (
-        conversation[-1].source_assistant_uuid
-        if conversation and isinstance(conversation[-1], ToolResultsMessage)
+        conversation[-1].source_assistant_id
+        if conversation and isinstance(conversation[-1], ToolResultBatch)
         else None
     )
     return sum(
@@ -474,7 +474,7 @@ def _tool_schema_chars(tools: tuple[ModelToolDefinition, ...]) -> int:
     )
 
 
-def _conversation_chars(messages: tuple[ConversationMessage, ...]) -> int:
+def _conversation_chars(messages: tuple[ConversationEntry, ...]) -> int:
     size = 0
     for message in messages:
         if isinstance(message, (HumanMessage, ConversationSummaryMessage)):
@@ -494,7 +494,7 @@ def _conversation_chars(messages: tuple[ConversationMessage, ...]) -> int:
 
 
 def _estimate(
-    conversation: tuple[ConversationMessage, ...],
+    conversation: tuple[ConversationEntry, ...],
     model: tuple[ModelInputItem, ...],
     system: str,
     tools: tuple[ModelToolDefinition, ...],
@@ -516,7 +516,7 @@ def _estimate(
 
 
 def _usage_anchor(
-    conversation: tuple[ConversationMessage, ...],
+    conversation: tuple[ConversationEntry, ...],
     binding: ProviderBinding | None,
 ) -> AssistantMessage | None:
     if binding is None:

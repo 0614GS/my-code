@@ -81,17 +81,17 @@
 
 ## 3. Session 收拢对话事实与持久化
 
-- [ ] 将 `ConversationMessage` 重命名或扩展为 `ConversationEntry`。
-- [ ] 将 `ToolResultsMessage` 迁移为非角色化 `ToolResultBatch`。
-- [ ] 保持 `HumanMessage` 是唯一 turn 起点。
-- [ ] 保持每个完整模型响应生成一个 `AssistantMessage`，即一个已完成 step 的事实。
-- [ ] 将 `Conversation` 变为 `Session` 私有聚合实现。
-- [ ] 让所有读取通过不可变 `SessionSnapshot`。
-- [ ] 让所有写入通过 Session 语义提交方法。
-- [ ] 隐藏 `SessionStore`、records、codec 和 JSONL 路径。
-- [ ] 保持 persistence-first、memory-after-success 原子性。
-- [ ] 为旧 JSONL `tool_results_message` record 提供向后读取兼容；是否升级写格式由阶段 0 决策决定。
-- [ ] 迁移 session catalog，使其只返回 summary DTO。
+- [x] 将 `ConversationMessage` 重命名或扩展为 `ConversationEntry`。
+- [x] 将 `ToolResultsMessage` 迁移为非角色化 `ToolResultBatch`。
+- [x] 保持 `HumanMessage` 是唯一 turn 起点。
+- [x] 保持每个完整模型响应生成一个 `AssistantMessage`，即一个已完成 step 的事实。
+- [x] 将 `Conversation` 变为 `Session` 私有聚合实现。
+- [x] 让所有读取通过不可变 `SessionSnapshot`。
+- [x] 让所有写入通过 Session 语义提交方法。
+- [x] 隐藏 `SessionStore`、records、codec 和 JSONL 路径。
+- [x] 保持 persistence-first、memory-after-success 原子性。
+- [x] 为旧 JSONL `tool_results_message` record 提供向后读取兼容；新写入使用 `tool_result_batch`。
+- [x] 迁移 session catalog，使其只返回 summary DTO。
 
 退出条件：生产代码中只有 Session 能修改 conversation entries；不存在平级的可写 Conversation 入口。
 
