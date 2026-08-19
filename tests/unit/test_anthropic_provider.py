@@ -6,6 +6,7 @@ import pytest
 from my_code.config.providers import ReasoningConfig
 from my_code.model.capabilities import ProviderCapabilities
 from my_code.model.events import (
+    ModelOutputCompleted,
     ModelReasoningCompleted,
     ModelReasoningStarted,
     ModelTextCompleted,
@@ -30,6 +31,8 @@ from my_code.model.request import (
     ResolvedPromptSection,
     SystemPrompt,
     ToolOutput,
+    ToolOutputDocument,
+    ToolOutputImage,
     ToolOutputs,
     ToolOutputText,
     UserInput,
@@ -203,6 +206,50 @@ def test_anthropic_maps_image_and_document_inside_adapter() -> None:
                 },
             ],
         }
+    ]
+
+
+def test_anthropic_maps_multimodal_tool_result_content() -> None:
+    items = (
+        AssistantOutput((ModelToolUseBlock("call", "Read", {}),)),
+        ToolOutputs(
+            (
+                ToolOutput(
+                    "call",
+                    (
+                        ToolOutputText("caption"),
+                        ToolOutputImage("image/png", "aW1hZ2U="),
+                        ToolOutputDocument("application/pdf", "ZG9j", "notes.pdf"),
+                    ),
+                    is_error=True,
+                ),
+            )
+        ),
+    )
+
+    actual = cast(list[dict[str, Any]], AnthropicProvider._messages(items))
+    result = actual[1]["content"][0]
+
+    assert result["is_error"] is True
+    assert result["content"] == [
+        {"type": "text", "text": "caption"},
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "aW1hZ2U=",
+            },
+        },
+        {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "ZG9j",
+            },
+            "title": "notes.pdf",
+        },
     ]
 
 
@@ -407,5 +454,7 @@ async def test_anthropic_stream_empty_thinking_completes_hidden_without_replay()
         ModelTextDelta,
         ModelTextCompleted,
     ]
+    assert isinstance(payloads[-1], ModelOutputCompleted)
+    assert payloads[-1].output.content[-1] == ModelTextBlock("done")
     completed = cast(ModelReasoningCompleted, payloads[1])
     assert completed.presentation == ReasoningPresentation("hidden")

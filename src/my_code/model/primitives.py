@@ -122,11 +122,34 @@ class ProviderContinuationState:
         object.__setattr__(self, "payload", to_json_object(self.payload))
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderReplayRecord:
+    """Opaque provider replay data linked to canonical entry/content positions."""
+
+    entry_id: str
+    content_id: str
+    state: ProviderContinuationState
+
+    def __post_init__(self) -> None:
+        if not self.entry_id.strip() or not self.content_id.strip():
+            raise ValueError("Provider replay entry and content IDs must not be empty")
+        if not isinstance(self.state, ProviderContinuationState):
+            raise TypeError("Provider replay state is required")
+
+
+def replay_content_id(index: int) -> str:
+    if index < 0:
+        raise ValueError("Replay content index must not be negative")
+    return f"content:{index}"
+
+
 __all__ = [
     "JsonObject",
     "JsonValue",
     "ProviderBinding",
     "ProviderContinuationState",
+    "ProviderReplayRecord",
+    "replay_content_id",
     "ReasoningDisclosure",
     "ReasoningPresentation",
     "ReplayScope",

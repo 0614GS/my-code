@@ -11,6 +11,7 @@ from my_code.model.request import (
     ModelTextBlock,
     ModelToolUseBlock,
     ToolOutputs,
+    ToolOutputText,
     UserInput,
 )
 
@@ -64,7 +65,12 @@ class UnicodeTokenEstimator:
             if isinstance(item, ToolOutputs):
                 for output in item.results:
                     count += 3 + sum(
-                        self.count_text(block.text) for block in output.content
+                        self.count_text(
+                            block.text
+                            if isinstance(block, ToolOutputText)
+                            else block.data
+                        )
+                        for block in output.content
                     )
                 continue
             if isinstance(item, UserInput):

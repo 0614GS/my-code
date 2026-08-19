@@ -17,7 +17,7 @@ from my_code.config.paths import MyCodePaths
 from my_code.config.settings import AgentSettings
 from my_code.context.attachments.models import ContextAttachment, ContextObservation
 from my_code.context.models import CompactionOutcome
-from my_code.context.session import AttachmentDelivery, ContextSession
+from my_code.context.session import AttachmentDelivery
 from my_code.conversation.models import (
     AssistantMessage,
     ConversationSummaryMessage,
@@ -30,10 +30,10 @@ from my_code.conversation.models import (
 from my_code.conversation.state import CompactBoundary
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
+from my_code.providers.manager import ProviderUpdate
+from my_code.sessions._store import SessionStore
 from my_code.sessions.session import Session
-from my_code.sessions.store import SessionStore
 from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
-from my_code.tools.result_store import ToolResultStore
 
 _CURRENT_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 _TARGET_SESSION_ID = "22222222-2222-2222-2222-222222222222"
@@ -46,11 +46,9 @@ class CapturingAgent:
     async def submit(
         self,
         session: Session,
-        context: ContextSession,
-        result_store: ToolResultStore,
         turn_input: AgentTurnInput,
     ) -> AgentTurnSucceeded:
-        del session, context, result_store
+        del session
         self.turn_input = turn_input
         return AgentTurnSucceeded("done", 1, TokenUsage())
 
@@ -77,6 +75,17 @@ def _bootstrap_runtime(tmp_path: Path) -> ChatService:
     return bootstrap_chat(settings, _CURRENT_SESSION_ID)
 
 
+def test_app_state_is_the_single_runtime_owner(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+
+    assert not hasattr(runtime, "_active")
+    assert not hasattr(runtime, "active_model_state")
+    assert not hasattr(runtime, "provider_router")
+    assert runtime.state.workspace.workspace is runtime.tool_executor.workspace
+    assert runtime.state.permissions.policy is runtime.tool_executor.policy
+    assert runtime.state.session.session_id == _CURRENT_SESSION_ID
+
+
 @pytest.mark.asyncio
 async def test_runtime_loads_mentions_before_creating_turn_input(
     tmp_path: Path,
@@ -97,9 +106,9 @@ async def test_runtime_loads_mentions_before_creating_turn_input(
 @pytest.mark.asyncio
 async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    active = runtime._active
+    active = runtime.state.session
     user = HumanMessage(content="compact this conversation")
-    active.session.append_human_message(user)
+    active.append_human_message(user)
     summary = ConversationSummaryMessage(
         content="continuation state",
         parent_uuid=user.uuid,
@@ -122,8 +131,8 @@ async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> 
     snapshot, trigger = compact.await_args.args
     assert snapshot.messages == (user,)
     assert trigger == "manual"
-    assert active.session.compact_count == 1
-    assert active.session.snapshot().working_set == (summary,)
+    assert active.compact_count == 1
+    assert active.snapshot().working_set == (summary,)
     assert status.compact_count == 1
 
 
@@ -132,7 +141,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    previous = runtime._active
+    previous = runtime.state.session
     store = SessionStore(
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
@@ -157,11 +166,27 @@ async def test_runtime_lists_and_atomically_switches_project_session(
         HistoryText("assistant", "historical answer"),
     )
     assert runtime.status().session_id == _TARGET_SESSION_ID
-    assert runtime._active is not previous
-    assert runtime._active.context is not previous.context
-    assert runtime._active.tool_results.root == runtime.settings.paths.tool_results_dir(
-        _TARGET_SESSION_ID
+    assert runtime.state.session is not previous
+    assert runtime.state.session.context_snapshot().attachment_deliveries == ()
+    assert runtime.state.session.session_id == _TARGET_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_provider_switch_does_not_modify_session_facts(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    session = runtime.state.session
+    session.append_human_message(HumanMessage("keep canonical facts"))
+    before = session.snapshot()
+
+    status = await runtime.configure_provider(
+        ProviderUpdate("other", "other-model", None)
     )
+
+    assert runtime.state.session is session
+    assert session.snapshot() == before
+    assert status.provider_id == "other"
+    assert status.model == "other-model"
+    assert runtime.state.provider.environment().descriptor.id == "other-model"
 
 
 @pytest.mark.asyncio
@@ -258,10 +283,10 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    active = runtime._active
+    active = runtime.state.session
     anchor = HumanMessage(content="keep this session")
-    active.session.append_human_message(anchor)
-    active.context.add(
+    active.append_human_message(anchor)
+    active.add_context_deliveries(
         (
             AttachmentDelivery(
                 anchor.uuid,
@@ -272,7 +297,6 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
                 ),
             ),
         ),
-        active.session.snapshot(),
     )
     empty_id = "33333333-3333-3333-3333-333333333333"
     SessionStore(runtime.settings.paths.project_state_dir, empty_id).load()
@@ -280,12 +304,9 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
     with pytest.raises(ValueError, match="contains no messages"):
         await runtime.resume_session(empty_id)
 
-    assert runtime._active is active
+    assert runtime.state.session is active
     assert runtime.status().session_id == _CURRENT_SESSION_ID
-    assert runtime._active.tool_results is active.tool_results
-    assert runtime._active.context.snapshot(
-        active.session.snapshot()
-    ).attachment_deliveries
+    assert runtime.state.session.context_snapshot().attachment_deliveries
 
 
 @pytest.mark.asyncio
@@ -302,11 +323,9 @@ async def test_stream_prevents_session_switch_until_turn_finishes(
         async def stream(
             self,
             session: Session,
-            context: ContextSession,
-            result_store: ToolResultStore,
             turn_input: AgentTurnInput,
         ) -> AsyncIterator[AgentEvent]:
-            del session, context, result_store, turn_input
+            del session, turn_input
             started.set()
             await release.wait()
             yield AgentTurnSucceeded("done", 1, TokenUsage())

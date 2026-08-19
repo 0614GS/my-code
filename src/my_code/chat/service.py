@@ -1,8 +1,6 @@
 """Stateful user-level chat orchestration."""
 
-import asyncio
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, replace
+from collections.abc import AsyncIterator
 
 from my_code.agent.engine import AgentEngine
 from my_code.agent.events import (
@@ -21,6 +19,7 @@ from my_code.agent.models import (
     AgentTurnInput,
     AgentTurnSucceeded,
 )
+from my_code.application.state import AppState
 from my_code.chat.events import (
     AttachmentLoaded,
     MaxStepsReached,
@@ -49,7 +48,6 @@ from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.config.settings import AgentSettings
 from my_code.context.attachments.models import ContextAttachment
 from my_code.context.engine import ContextEngine
-from my_code.context.session import ContextSession
 from my_code.conversation.models import (
     AssistantMessage,
     ConversationSummaryMessage,
@@ -65,31 +63,19 @@ from my_code.features.file_mentions.models import PathSuggestion
 from my_code.features.file_mentions.suggestions import WorkspacePathSuggester
 from my_code.features.todos.projection import project_todos
 from my_code.model.capabilities import (
-    ActiveModelState,
     CapabilitySource,
     ModelDescriptor,
     resolve_environment,
 )
 from my_code.providers.discovery import resolve_without_network
 from my_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
-from my_code.providers.router import ProviderRouter
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
 from my_code.sessions.session import Session
 from my_code.tools.executor import ToolExecutor
-from my_code.tools.result_store import ToolResultStore
-
-
-@dataclass(frozen=True, slots=True)
-class _SessionBundle:
-    """All mutable state whose lifetime is exactly one active session."""
-
-    session: Session
-    context: ContextSession
-    tool_results: ToolResultStore
 
 
 class ChatService:
-    """Own the active session bundle and project Agent events for hosts."""
+    """Coordinate chat use cases over the explicit AppState graph."""
 
     def __init__(
         self,
@@ -100,10 +86,7 @@ class ChatService:
         settings: AgentSettings,
         permission_prompter: DeferredPermissionPrompter,
         provider_manager: ProviderManager,
-        provider_router: ProviderRouter,
-        active_model_state: ActiveModelState,
-        session: Session,
-        tool_result_store: Callable[[str], ToolResultStore],
+        state: AppState,
         attachment_loader: AttachmentLoader | None = None,
         path_suggester: WorkspacePathSuggester | None = None,
     ) -> None:
@@ -113,32 +96,22 @@ class ChatService:
         self.settings = settings
         self.permission_prompter = permission_prompter
         self.provider_manager = provider_manager
-        self.provider_router = provider_router
-        self.active_model_state = active_model_state
+        self.state = state
         self._project_state_dir = settings.paths.project_state_dir
-        self._tool_result_store = tool_result_store
         self.attachment_loader = attachment_loader
         self.path_suggester = path_suggester or WorkspacePathSuggester(settings.cwd)
-        self._active = _SessionBundle(
-            session, ContextSession(), tool_result_store(session.session_id)
-        )
-        # submit, stream, compact, resume and provider switching share one boundary.
-        self._lock = asyncio.Lock()
 
     async def submit(self, prompt: str) -> TurnOutcome:
-        async with self._lock:
+        async with self.state.operation_lock():
             attachments = await self._load_attachments(prompt)
-            active = self._active
             result = await self.agent.submit(
-                active.session,
-                active.context,
-                active.tool_results,
+                self.state.session,
                 AgentTurnInput(prompt, attachments),
             )
         return _project_turn_outcome(result)
 
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
-        async with self._lock:
+        async with self.state.operation_lock():
             loaded = (
                 await self.attachment_loader.load(prompt)
                 if self.attachment_loader is not None
@@ -146,12 +119,10 @@ class ChatService:
             )
             for item in loaded:
                 yield AttachmentLoaded(item.path, item.is_directory, item.display)
-            active = self._active
-            previous_todos = project_todos(active.session.snapshot().history).todos
+            session = self.state.session
+            previous_todos = project_todos(session.snapshot().history).todos
             async for event in self.agent.stream(
-                active.session,
-                active.context,
-                active.tool_results,
+                session,
                 AgentTurnInput(prompt, tuple(item.attachment for item in loaded)),
             ):
                 if isinstance(event, AgentTextStarted):
@@ -173,9 +144,7 @@ class ChatService:
                         event.tool_use_id, event.is_error, event.presentation
                     )
                 elif isinstance(event, AgentConversationUpdated):
-                    current_todos = project_todos(
-                        active.session.snapshot().history
-                    ).todos
+                    current_todos = project_todos(session.snapshot().history).todos
                     if current_todos != previous_todos:
                         previous_todos = current_todos
                         yield TodoListUpdated(current_todos)
@@ -198,26 +167,26 @@ class ChatService:
         return await self.path_suggester.suggest(query)
 
     def status(self) -> RuntimeStatus:
-        session = self._active.session
+        session = self.state.session
+        connection = self.state.provider.router.connection
         return RuntimeStatus(
             session_id=session.session_id,
             cwd=str(self.settings.cwd),
-            provider_id=self.settings.provider_id,
-            base_url=self.settings.base_url,
-            model=self.settings.model,
-            permission_mode=self.settings.permission_mode.value,
-            credential_source=self.settings.credential_source.value,
+            provider_id=connection.id,
+            base_url=connection.base_url,
+            model=connection.model,
+            permission_mode=self.state.permissions.policy.mode.value,
+            credential_source=connection.credential_source.value,
             working_message_count=session.message_count,
             todos=project_todos(session.snapshot().history).todos,
         )
 
     def context_status(self) -> ContextStatus:
-        active = self._active
+        session = self.state.session
         budget = self.context.inspect(
-            active.context.snapshot(active.session.snapshot()),
-            active.context,
+            session.context_snapshot(),
+            session,
         )
-        session = active.session
         return ContextStatus(
             estimated_input_tokens=budget.estimated_input_tokens,
             reserved_output_tokens=budget.reserved_output_tokens,
@@ -242,13 +211,13 @@ class ChatService:
         )
 
     async def compact(self) -> ContextStatus:
-        async with self._lock:
-            active = self._active
+        async with self.state.operation_lock():
+            session = self.state.session
             outcome = await self.context.compact(
-                active.context.snapshot(active.session.snapshot()),
+                session.context_snapshot(),
                 "manual",
             )
-            active.session.commit_compaction(
+            session.commit_compaction(
                 outcome.replacements,
                 outcome.summary,
                 outcome.boundary,
@@ -259,18 +228,19 @@ class ChatService:
         self.permission_prompter.set_handler(handler)
 
     def providers(self) -> tuple[ProviderView, ...]:
-        return self.provider_manager.list(self.settings.provider_id)
+        return self.provider_manager.list(self.state.provider.router.connection.id)
 
     async def refresh_provider_models(self, provider_id: str) -> ProviderView:
-        async with self._lock:
+        async with self.state.operation_lock():
             view = await self.provider_manager.refresh_models(provider_id)
-            if self.provider_router.connection.id == provider_id:
+            connection = self.state.provider.router.connection
+            if connection.id == provider_id:
                 source = (
                     CapabilitySource(view.capability_source)
                     if view.capability_source is not None
                     else CapabilitySource.FALLBACK
                 )
-                self.active_model_state.set(
+                self.state.provider.update_environment(
                     resolve_environment(
                         ModelDescriptor(
                             view.model,
@@ -280,7 +250,7 @@ class ChatService:
                         ),
                         requested_output_tokens=self.settings.max_output_tokens,
                         configured_trigger_tokens=(
-                            self.provider_router.connection.compact.trigger_input_tokens
+                            connection.compact.trigger_input_tokens
                         ),
                         discovered_at=view.discovered_at,
                         discovery_error=view.discovery_error,
@@ -289,53 +259,40 @@ class ChatService:
             return view
 
     async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
-        async with self._lock:
+        async with self.state.operation_lock():
             connection = self.provider_manager.configure(update)
-            await self.provider_router.switch(connection)
             descriptor = resolve_without_network(
                 connection.protocol,
                 connection.base_url,
                 connection.model,
                 connection.limits,
             )
-            self.active_model_state.set(
-                resolve_environment(
-                    descriptor,
-                    requested_output_tokens=self.settings.max_output_tokens,
-                    configured_trigger_tokens=connection.compact.trigger_input_tokens,
-                )
+            environment = resolve_environment(
+                descriptor,
+                requested_output_tokens=self.settings.max_output_tokens,
+                configured_trigger_tokens=connection.compact.trigger_input_tokens,
             )
-            self.settings = replace(
-                self.settings,
-                provider_id=connection.id,
-                model=connection.model,
-                base_url=connection.base_url,
-                api_key=connection.api_key,
-                credential_source=connection.credential_source,
-                protocol=connection.protocol,
-                reasoning=connection.reasoning,
-            )
+            await self.state.provider.switch(connection, environment)
             return self.status()
 
     async def list_sessions(self) -> tuple[SessionSummary, ...]:
         return SessionCatalog(self._project_state_dir).list(
-            exclude_session_id=self._active.session.session_id
+            exclude_session_id=self.state.session.session_id
         )
 
     async def resume_session(self, session_id: str) -> ResumedSession:
-        async with self._lock:
-            if session_id == self._active.session.session_id:
+        async with self.state.operation_lock():
+            if session_id == self.state.session.session_id:
                 raise ValueError("Session is already active")
             # Fully hydrate and repair every candidate component before publishing it.
             session = Session.restore(self._project_state_dir, session_id)
-            candidate = _SessionBundle(
-                session,
-                ContextSession(),
-                self._tool_result_store(session.session_id),
-            )
-            history = self._project_history(candidate.session)
-            self._active = candidate
+            history = self._project_history(session)
+            self.state.replace_session(session)
             return ResumedSession(status=self.status(), history=history)
+
+    async def close(self) -> None:
+        await self.permission_prompter.close()
+        await self.state.close()
 
     async def _load_attachments(self, prompt: str) -> tuple[ContextAttachment, ...]:
         if self.attachment_loader is None:

@@ -131,6 +131,31 @@ class ToolOutputText:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolOutputImage:
+    media_type: str
+    data: str
+    type: Literal["output_image"] = field(default="output_image", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.media_type.startswith("image/") or not self.data:
+            raise ValueError("Tool output image requires an image media type and data")
+
+
+@dataclass(frozen=True, slots=True)
+class ToolOutputDocument:
+    media_type: str
+    data: str
+    name: str | None = None
+    type: Literal["output_document"] = field(default="output_document", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.media_type.strip() or not self.data:
+            raise ValueError("Tool output document requires a media type and data")
+        if self.name is not None and not self.name.strip():
+            raise ValueError("Tool output document name must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelReasoningBlock:
     id: str
     presentation: ReasoningPresentation
@@ -144,7 +169,7 @@ class ModelReasoningBlock:
 
 type ModelAssistantContent = ModelTextBlock | ModelToolUseBlock | ModelReasoningBlock
 type InputContent = InputText | InputImage | InputDocument
-type ToolOutputContent = ToolOutputText
+type ToolOutputContent = ToolOutputText | ToolOutputImage | ToolOutputDocument
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,7 +223,10 @@ class ToolOutput:
             raise ValueError("Tool output call id must not be empty")
         if not self.content:
             raise ValueError("Tool output content must not be empty")
-        if not all(isinstance(block, ToolOutputText) for block in self.content):
+        if not all(
+            isinstance(block, (ToolOutputText, ToolOutputImage, ToolOutputDocument))
+            for block in self.content
+        ):
             raise TypeError("Tool output contains only tool output content")
 
 
@@ -315,6 +343,8 @@ __all__ = [
     "SystemPrompt",
     "ToolOutput",
     "ToolOutputContent",
+    "ToolOutputDocument",
+    "ToolOutputImage",
     "ToolOutputs",
     "ToolOutputText",
     "UserInput",

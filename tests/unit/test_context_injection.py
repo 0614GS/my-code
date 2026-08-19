@@ -12,7 +12,7 @@ from my_code.context.documents import ContextInstruction, UserContextDocument
 from my_code.context.models import ContextOverflow
 from my_code.context.normalization import ModelInputNormalizer
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import AttachmentDelivery, ContextSession
+from my_code.context.session import AttachmentDelivery
 from my_code.context.session import ContextSnapshot as ConversationSnapshot
 from my_code.context.window import ContextWindow
 from my_code.context.xml import render_context_instruction
@@ -28,8 +28,10 @@ from my_code.conversation.models import (
 from my_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
+    ProviderReplayRecord,
     ReasoningPresentation,
     TokenUsage,
+    replay_content_id,
 )
 from my_code.model.request import (
     AssistantOutput,
@@ -41,6 +43,20 @@ from my_code.model.request import (
 )
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
+
+
+class _SessionContextAccess:
+    def __init__(self) -> None:
+        self._prompt_cache = {}
+        self._user_context = None
+
+    def resolve_prompt(self, registry):
+        return registry.resolve(session_cache=self._prompt_cache)
+
+    def user_context(self, resolve):
+        if self._user_context is None:
+            self._user_context = tuple(resolve())
+        return self._user_context
 
 
 def _planner(*, user_resolver=None, attachment_resolver=None) -> ContextPlanner:
@@ -102,14 +118,14 @@ def test_attachment_projection_cannot_create_tool_protocol_blocks() -> None:
 
 def test_opaque_thinking_replays_only_for_active_tool_trajectory() -> None:
     human = HumanMessage("inspect")
+    continuation = ProviderContinuationState(
+        ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
+        "active_trajectory",
+        {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+    )
     opaque = ReasoningContent(
         "thinking",
         ReasoningPresentation("verbatim", ("hidden",)),
-        ProviderContinuationState(
-            ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
-            "active_trajectory",
-            {"type": "thinking", "thinking": "hidden", "signature": "signed"},
-        ),
     )
     assistant = AssistantMessage(
         (opaque, ToolCall("call", "Read", {"path": "x"})),
@@ -122,14 +138,15 @@ def test_opaque_thinking_replays_only_for_active_tool_trajectory() -> None:
         parent_uuid=assistant.uuid,
     )
     normalizer = ModelInputNormalizer()
+    replay = (ProviderReplayRecord(assistant.uuid, replay_content_id(0), continuation),)
 
-    active = normalizer.normalize((), (human, assistant, results), ())
+    active = normalizer.normalize((), (human, assistant, results), (), (), replay)
     compact = normalizer.normalize_transcript((human, assistant, results))
     completed_assistant = AssistantMessage(
         (TextContent("done"),), TokenUsage(), parent_uuid=results.uuid
     )
     completed = normalizer.normalize(
-        (), (human, assistant, results, completed_assistant), ()
+        (), (human, assistant, results, completed_assistant), (), (), replay
     )
 
     assert any(
@@ -248,7 +265,7 @@ def test_planner_caches_user_context_and_excludes_attachments_from_compact() -> 
         attachment_resolver=DerivedAttachmentResolver((attachment,)),
     )
     snapshot = ConversationSnapshot((HumanMessage("prompt"),))
-    session = ContextSession()
+    session = _SessionContextAccess()
     first = planner.plan(snapshot, session)
     second = planner.plan(snapshot, session)
     compact, replacements = planner.compaction_view(snapshot)
@@ -259,7 +276,25 @@ def test_planner_caches_user_context_and_excludes_attachments_from_compact() -> 
     assert replacements == ()
 
 
-def test_user_context_cache_is_owned_by_each_context_session() -> None:
+def test_context_plan_is_deterministic_for_the_same_inputs() -> None:
+    attachment = ContextAttachment(
+        "stable",
+        (TextContent("same"),),
+        retention="live_session",
+    )
+    planner = _planner(
+        attachment_resolver=DerivedAttachmentResolver((lambda _: (attachment,),))
+    )
+    snapshot = ConversationSnapshot((HumanMessage("prompt", uuid="human"),))
+    session = _SessionContextAccess()
+
+    first = planner.plan(snapshot, session)
+    second = planner.plan(snapshot, session)
+
+    assert first == second
+
+
+def test_user_context_cache_is_owned_by_each_session_context() -> None:
     document = UserContextDocument("memory", (TextContent("stable"),))
 
     class Resolver:
@@ -273,10 +308,10 @@ def test_user_context_cache_is_owned_by_each_context_session() -> None:
     builder = _planner(user_resolver=resolver)
     snapshot = ConversationSnapshot((HumanMessage("prompt"),))
 
-    first_session = ContextSession()
+    first_session = _SessionContextAccess()
     builder.plan(snapshot, first_session)
     builder.plan(snapshot, first_session)
-    builder.plan(snapshot, ContextSession())
+    builder.plan(snapshot, _SessionContextAccess())
 
     assert resolver.calls == 2
     assert not hasattr(builder, "_user_context_cache")

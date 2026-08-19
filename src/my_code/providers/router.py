@@ -91,10 +91,10 @@ class ProviderRouter(ModelClient):
     async def switch(self, connection: ProviderConnection) -> None:
         async with self._lock:
             previous = self._provider
-            self._provider = None
-            self._connection = connection
             if isinstance(previous, _ClosableProvider):
                 await previous.close()
+            self._provider = None
+            self._connection = connection
 
     async def close(self) -> None:
         async with self._lock:

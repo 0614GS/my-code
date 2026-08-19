@@ -22,20 +22,22 @@ from my_code.model.primitives import (
     JsonObject,
     ProviderBinding,
     ProviderContinuationState,
+    ProviderReplayRecord,
     ReasoningPresentation,
     TokenUsage,
+    replay_content_id,
     to_json_object,
     validate_provider_id,
 )
-from my_code.sessions.models import SessionMetadata, SessionStart
-from my_code.sessions.records import (
+from my_code.sessions._records import (
     AssistantMessageRecord,
     CompactBoundaryRecord,
     ContentReplacementRecord,
     ConversationSummaryMessageRecord,
     HumanMessageRecord,
-    LegacyToolResultsMessageRecord,
+    LegacyToolResultBatchRecord,
     MessageRecord,
+    ProviderReplaySidecarRecord,
     ReasoningContentRecord,
     SessionMetadataRecord,
     SessionStartedRecord,
@@ -46,6 +48,7 @@ from my_code.sessions.records import (
     ToolResultRecord,
     TranscriptEntry,
 )
+from my_code.sessions.models import SessionMetadata, SessionStart
 from my_code.tools.presentation import ToolResultPresentation
 
 
@@ -60,6 +63,7 @@ type DecodedEntry = (
     | SessionStart
     | SessionMetadata
     | ToolPresentationRecord
+    | ProviderReplayRecord
 )
 
 
@@ -103,6 +107,10 @@ def decode_entry(value: object) -> DecodedEntry:
         )
     if isinstance(entry, ToolPresentationRecord):
         return entry
+    if isinstance(entry, ProviderReplaySidecarRecord):
+        return ProviderReplayRecord(
+            entry.entry_id, entry.content_id, entry.continuation
+        )
     return record_to_message(entry)
 
 
@@ -169,19 +177,44 @@ def encode_tool_presentation(
     return entry_to_json(ToolPresentationRecord(tool_use_id, presentation))
 
 
+def encode_replay(record: ProviderReplayRecord) -> JsonObject:
+    return entry_to_json(
+        ProviderReplaySidecarRecord(record.entry_id, record.content_id, record.state)
+    )
+
+
 def presentations_from_json(
     value: object,
 ) -> tuple[tuple[str, ToolResultPresentation], ...]:
     """Read legacy embedded snapshots without returning them as conversation facts."""
 
     entry = entry_from_json(value)
-    if not isinstance(entry, (LegacyToolResultsMessageRecord, ToolResultBatchRecord)):
+    if not isinstance(entry, (LegacyToolResultBatchRecord, ToolResultBatchRecord)):
         return ()
     return tuple(
         (item.tool_use_id, item.presentation)
         for item in entry.content
         if item.presentation is not None
     )
+
+
+def replay_from_json(value: object) -> tuple[ProviderReplayRecord, ...]:
+    """Project legacy embedded continuation fields into replay sidecars."""
+
+    entry = entry_from_json(value)
+    if not isinstance(entry, AssistantMessageRecord):
+        return ()
+    records: list[ProviderReplayRecord] = []
+    for index, block in enumerate(entry.content):
+        if block.continuation is not None:
+            records.append(
+                ProviderReplayRecord(
+                    entry.uuid,
+                    replay_content_id(index),
+                    block.continuation,
+                )
+            )
+    return tuple(records)
 
 
 def message_to_record(message: ConversationEntry) -> MessageRecord:
@@ -193,11 +226,11 @@ def message_to_record(message: ConversationEntry) -> MessageRecord:
         assistant_content: tuple[
             TextContentRecord | ToolCallRecord | ReasoningContentRecord, ...
         ] = tuple(
-            TextContentRecord(b.text, b.continuation)
+            TextContentRecord(b.text)
             if isinstance(b, TextContent)
-            else ToolCallRecord(b.id, b.name, b.input, b.continuation)
+            else ToolCallRecord(b.id, b.name, b.input)
             if isinstance(b, ToolCall)
-            else ReasoningContentRecord(b.id, b.presentation, b.continuation)
+            else ReasoningContentRecord(b.id, b.presentation)
             for b in message.content
         )
         return AssistantMessageRecord(
@@ -234,11 +267,11 @@ def record_to_message(record: MessageRecord) -> ConversationEntry:
     if isinstance(record, AssistantMessageRecord):
         assistant_content: tuple[TextContent | ToolCall | ReasoningContent, ...] = (
             tuple(
-                TextContent(b.text, b.continuation)
+                TextContent(b.text)
                 if isinstance(b, TextContentRecord)
-                else ToolCall(b.id, b.name, b.input, b.continuation)
+                else ToolCall(b.id, b.name, b.input)
                 if isinstance(b, ToolCallRecord)
-                else ReasoningContent(b.id, b.presentation, b.continuation)
+                else ReasoningContent(b.id, b.presentation)
                 for b in record.content
             )
         )
@@ -251,7 +284,7 @@ def record_to_message(record: MessageRecord) -> ConversationEntry:
             record.provider_binding,
             record.request_input_tokens_estimate,
         )
-    if isinstance(record, (LegacyToolResultsMessageRecord, ToolResultBatchRecord)):
+    if isinstance(record, (LegacyToolResultBatchRecord, ToolResultBatchRecord)):
         result_content: tuple[ToolResult, ...] = tuple(
             ToolResult(b.tool_use_id, b.content, b.is_error) for b in record.content
         )
@@ -259,7 +292,7 @@ def record_to_message(record: MessageRecord) -> ConversationEntry:
             result_content,
             (
                 record.source_assistant_uuid
-                if isinstance(record, LegacyToolResultsMessageRecord)
+                if isinstance(record, LegacyToolResultBatchRecord)
                 else record.source_assistant_id
             ),
             record.uuid,
@@ -301,12 +334,19 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             last_prompt=entry.last_prompt,
         )
         return base
+    if isinstance(entry, ProviderReplaySidecarRecord):
+        base.update(
+            entry_id=entry.entry_id,
+            content_id=entry.content_id,
+            continuation=_continuation_json(entry.continuation),
+        )
+        return base
     if isinstance(
         entry,
         (
             HumanMessageRecord,
             AssistantMessageRecord,
-            LegacyToolResultsMessageRecord,
+            LegacyToolResultBatchRecord,
             ToolResultBatchRecord,
             ConversationSummaryMessageRecord,
         ),
@@ -323,7 +363,7 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             base["provider_binding"] = _binding_json(entry.provider_binding)
         if entry.request_input_tokens_estimate is not None:
             base["request_input_tokens_estimate"] = entry.request_input_tokens_estimate
-    elif isinstance(entry, LegacyToolResultsMessageRecord):
+    elif isinstance(entry, LegacyToolResultBatchRecord):
         base["content"] = [_result_json(b) for b in entry.content]
         base["source_assistant_uuid"] = entry.source_assistant_uuid
     elif isinstance(entry, ToolResultBatchRecord):
@@ -453,6 +493,15 @@ def entry_from_json(value: object) -> TranscriptEntry:
             _string(data, "tool_use_id"),
             _tool_presentation(data.get("presentation")),
         )
+    if kind == "provider_replay":
+        continuation = _optional_continuation(data)
+        if continuation is None:
+            raise TranscriptDecodeError("provider replay continuation is required")
+        return ProviderReplaySidecarRecord(
+            _string(data, "entry_id"),
+            _string(data, "content_id"),
+            continuation,
+        )
     uuid = _string(data, "uuid")
     parent_uuid = _optional_string(data, "parent_uuid")
     timestamp = _string(data, "timestamp")
@@ -493,7 +542,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
         result_content = tuple(_result(item) for item in raw)
         if not result_content:
             raise TranscriptDecodeError("Tool results must not be empty")
-        return LegacyToolResultsMessageRecord(
+        return LegacyToolResultBatchRecord(
             uuid,
             parent_uuid,
             timestamp,
@@ -533,19 +582,17 @@ def _assistant_block_json(
         if block.continuation is not None:
             result["continuation"] = _continuation_json(block.continuation)
         return result
-    return {
+    result = {
         "type": "reasoning",
         "id": block.id,
         "presentation": {
             "disclosure": block.presentation.disclosure,
             "parts": list(block.presentation.parts),
         },
-        "continuation": (
-            _continuation_json(block.continuation)
-            if block.continuation is not None
-            else None
-        ),
     }
+    if block.continuation is not None:
+        result["continuation"] = _continuation_json(block.continuation)
+    return result
 
 
 def _continuation_json(state: ProviderContinuationState) -> JsonObject:
@@ -704,10 +751,10 @@ def _assistant_block(
             _optional_continuation(data),
         )
     if kind == "reasoning":
-        _require_exact_fields(
-            data,
-            frozenset({"type", "id", "presentation", "continuation"}),
-        )
+        expected = {"type", "id", "presentation"}
+        if "continuation" in data:
+            expected.add("continuation")
+        _require_exact_fields(data, frozenset(expected))
         try:
             raw_presentation = _object(data.get("presentation"))
             _require_exact_fields(raw_presentation, frozenset({"disclosure", "parts"}))
@@ -897,5 +944,8 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
     ),
     "tool_presentation": frozenset(
         {"type", "schema_version", "tool_use_id", "presentation"}
+    ),
+    "provider_replay": frozenset(
+        {"type", "schema_version", "entry_id", "content_id", "continuation"}
     ),
 }

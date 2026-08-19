@@ -8,11 +8,11 @@
 
 `prompts.models.PromptSection` 声明 key、稳定性和 resolver。`PromptRegistry` 按注册顺序解析为 `ResolvedPromptSection`，再形成 `ModelRequest.system_prompt`。
 
-稳定 section 可由 `ContextSession` 按 key 缓存，生命周期仅限当前活动 Session。Provider 根据自身能力把稳定性映射为 prompt caching wire 字段；`prompts` 不依赖 Anthropic 或 OpenAI SDK。
+runtime-stable section 在 `PromptRegistry` 构造时冻结；session-stable section 的缓存由当前 Session 私有持有。Provider 根据自身能力把稳定性映射为 prompt caching wire 字段；`prompts` 不依赖 Anthropic 或 OpenAI SDK。
 
 ## 用户上下文
 
-`context.user_context.AgentsUserContextResolver` 从工作区层级读取适用的 AGENTS.md，转换为 `UserContextDocument`。解析结果在当前 ContextSession 首次使用后缓存，resume 时重建。
+`context.user_context.AgentsUserContextResolver` 从工作区层级读取适用的 AGENTS.md，转换为 `UserContextDocument`。解析结果在当前 Session 首次使用后缓存，resume/switch 时随新 Session 重建。
 
 用户上下文与真实 HumanMessage 不同：它是请求时可信指令输入，不写入 Conversation，也不作为恢复历史展示。
 
@@ -25,7 +25,7 @@
 ## 缓存边界
 
 - Prompt 内容与 section 顺序归 `prompts`。
-- Session 级解析缓存归 `ContextSession`。
+- Session 级 prompt 与 user-context cache 归 `Session` 私有 context state。
 - Provider wire cache control 归 `providers`。
 - Model capability 与限制归 `model.capabilities`。
 

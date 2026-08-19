@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import my_code.sessions._store as store_module
 from my_code.conversation.models import (
     AssistantMessage,
     ConversationSummaryMessage,
@@ -17,17 +18,19 @@ from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
+    ProviderReplayRecord,
     ReasoningPresentation,
     TokenUsage,
+    replay_content_id,
 )
-from my_code.sessions.catalog import SessionCatalog
-from my_code.sessions.codec import (
+from my_code.sessions._codec import (
     decode_entry,
     entry_from_json,
     entry_to_json,
     message_to_record,
 )
-from my_code.sessions.store import SessionStore
+from my_code.sessions._store import SessionStore
+from my_code.sessions.catalog import SessionCatalog
 from my_code.tools.presentation import ToolResultPresentation
 
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
@@ -96,16 +99,16 @@ def test_legacy_tool_results_message_decodes_as_tool_result_batch() -> None:
 def test_reasoning_assistant_content_round_trips_v5(tmp_path: Path) -> None:
     store = _store(tmp_path)
     human = HumanMessage("hello")
+    continuation = ProviderContinuationState(
+        ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
+        "active_trajectory",
+        {"type": "thinking", "thinking": "hidden", "signature": "signed"},
+    )
     assistant = AssistantMessage(
         (
             ReasoningContent(
                 "thinking",
                 ReasoningPresentation("verbatim", ("hidden",)),
-                ProviderContinuationState(
-                    ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
-                    "active_trajectory",
-                    {"type": "thinking", "thinking": "hidden", "signature": "signed"},
-                ),
             ),
             ToolCall("call", "Read", {"path": "x"}),
         ),
@@ -113,14 +116,125 @@ def test_reasoning_assistant_content_round_trips_v5(tmp_path: Path) -> None:
         parent_uuid=human.uuid,
     )
     store.append(human)
-    store.append(assistant)
+    store.append_message(
+        assistant,
+        replay_records=(
+            ProviderReplayRecord(assistant.uuid, replay_content_id(0), continuation),
+        ),
+    )
 
-    assert store.load().history == (human, assistant)
+    loaded = store.load()
+    restored = loaded.history[1]
+    assert isinstance(restored, AssistantMessage)
+    assert not any(hasattr(block, "continuation") for block in restored.content)
+    assert len(loaded.replay_records) == 1
+    assert loaded.replay_records[0].state == continuation
     document = [json.loads(line) for line in store.path.read_text().splitlines()]
     assistant_record = next(
         entry for entry in document if entry["type"] == "assistant_message"
     )
     assert assistant_record["content"][0]["type"] == "reasoning"
+    assert "continuation" not in assistant_record["content"][0]
+    replay_record = next(
+        entry for entry in document if entry["type"] == "provider_replay"
+    )
+    assert replay_record["entry_id"] == assistant.uuid
+    assert replay_record["content_id"] == "content:0"
+
+
+def test_atomic_append_failure_preserves_previous_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    first = HumanMessage("first")
+    store.append(first)
+    before = store.path.read_bytes()
+
+    def fail_replace(_source: object, _target: object) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(store_module.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="replace failed"):
+        store.append(HumanMessage("second", parent_uuid=first.uuid))
+
+    assert store.path.read_bytes() == before
+    assert not tuple(tmp_path.glob(".*.tmp"))
+
+
+def test_legacy_embedded_continuation_is_projected_to_replay_sidecar(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    human = HumanMessage("hello")
+    assistant = AssistantMessage(
+        (
+            ReasoningContent("thinking", ReasoningPresentation("hidden")),
+            TextContent("answer"),
+        ),
+        TokenUsage(),
+        parent_uuid=human.uuid,
+    )
+    continuation = {
+        "binding": {
+            "protocol": "anthropic-messages",
+            "provider_id": "anthropic",
+            "model": "claude-test",
+            "base_url": None,
+        },
+        "replay_scope": "working_context",
+        "payload": {"type": "thinking", "thinking": "", "signature": "signed"},
+    }
+    store.append(human)
+    store.append(assistant)
+    documents = [json.loads(line) for line in store.path.read_text().splitlines()]
+    assistant_document = next(
+        item for item in documents if item["type"] == "assistant_message"
+    )
+    assistant_document["content"][0]["continuation"] = continuation
+    store.path.write_text(
+        "".join(json.dumps(item) + "\n" for item in documents), encoding="utf-8"
+    )
+
+    loaded = SessionStore(tmp_path, SESSION_ID).load()
+
+    assert not hasattr(loaded.history[1].content[0], "continuation")  # type: ignore[union-attr]
+    assert loaded.replay_records[0].entry_id == assistant.uuid
+    assert loaded.replay_records[0].state.payload["signature"] == "signed"
+
+
+@pytest.mark.parametrize(
+    "field,value", [("entry_id", SESSION_ID), ("content_id", "content:9")]
+)
+def test_restore_rejects_invalid_replay_association(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    store = _store(tmp_path)
+    human = HumanMessage("hello")
+    assistant = AssistantMessage(
+        (TextContent("answer"),), TokenUsage(), parent_uuid=human.uuid
+    )
+    replay = ProviderReplayRecord(
+        assistant.uuid,
+        replay_content_id(0),
+        ProviderContinuationState(
+            ProviderBinding("openai-responses", "openai", "gpt-test"),
+            "working_context",
+            {"type": "message", "id": "msg", "role": "assistant", "content": []},
+        ),
+    )
+    store.append(human)
+    store.append_message(assistant, replay_records=(replay,))
+    documents = [json.loads(line) for line in store.path.read_text().splitlines()]
+    replay_document = next(
+        item for item in documents if item["type"] == "provider_replay"
+    )
+    replay_document[field] = value
+    store.path.write_text(
+        "".join(json.dumps(item) + "\n" for item in documents), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="Provider replay references"):
+        SessionStore(tmp_path, SESSION_ID).load()
 
 
 def test_tool_presentation_is_a_session_add_on_not_a_conversation_fact(

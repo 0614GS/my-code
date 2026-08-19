@@ -8,6 +8,7 @@ from uuid import UUID
 from my_code.conversation.models import ConversationEntry
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.capabilities import ModelLimits
+from my_code.model.primitives import ProviderReplayRecord
 from my_code.tools.presentation import ToolResultPresentation
 
 
@@ -72,6 +73,7 @@ class SessionSnapshot:
     tool_presentations: tuple[tuple[str, ToolResultPresentation], ...] = field(
         default_factory=tuple
     )
+    replay_records: tuple[ProviderReplayRecord, ...] = field(default_factory=tuple)
     metadata: SessionMetadata | None = None
 
 

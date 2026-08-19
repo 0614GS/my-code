@@ -30,12 +30,12 @@
 ## 保留的不变量
 
 - Provider SDK 类型不离开 `providers`。
-- Conversation 是消息事实唯一权威来源。
+- Session 是 canonical conversation 的唯一权威来源。
 - Session records 不成为领域模型。
 - Context 是请求时投影，不维护第二份可写历史。
 - ToolCall 在执行前已经作为完整 AssistantMessage 提交。
 - 权限拒绝和取消路径仍产生闭合结果。
-- 活动 Session 的 ContextSession 和 ToolResultStore 不会跨恢复复用。
+- 活动 Session 的 context cache/delivery、结果绑定与 replay sidecar 不会跨恢复混用。
 
 ## 与参考实现的关系
 

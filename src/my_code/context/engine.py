@@ -3,7 +3,7 @@
 from my_code.context.compaction import ContextCompactor
 from my_code.context.models import CompactionOutcome, ContextBudget, ContextPlan
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSession, ContextSnapshot
+from my_code.context.session import ContextSnapshot, SessionContextAccess
 from my_code.conversation.state import CompactTrigger
 
 
@@ -21,14 +21,14 @@ class ContextEngine:
     def plan(
         self,
         snapshot: ContextSnapshot,
-        session: ContextSession | None = None,
+        session: SessionContextAccess | None = None,
     ) -> ContextPlan:
         return self._planner.plan(snapshot, session)
 
     def inspect(
         self,
         snapshot: ContextSnapshot,
-        session: ContextSession | None = None,
+        session: SessionContextAccess | None = None,
     ) -> ContextBudget:
         return self._planner.inspect(snapshot, session)
 

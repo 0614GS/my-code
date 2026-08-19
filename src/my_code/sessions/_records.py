@@ -84,6 +84,15 @@ class ToolPresentationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderReplaySidecarRecord:
+    entry_id: str
+    content_id: str
+    continuation: ProviderContinuationState
+    type: Literal["provider_replay"] = "provider_replay"
+    schema_version: Literal[5] = 5
+
+
+@dataclass(frozen=True, slots=True)
 class HumanMessageRecord:
     uuid: str
     parent_uuid: str | None
@@ -107,7 +116,7 @@ class AssistantMessageRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class LegacyToolResultsMessageRecord:
+class LegacyToolResultBatchRecord:
     uuid: str
     parent_uuid: str | None
     timestamp: str
@@ -162,7 +171,7 @@ class CompactBoundaryRecord:
 type MessageRecord = (
     HumanMessageRecord
     | AssistantMessageRecord
-    | LegacyToolResultsMessageRecord
+    | LegacyToolResultBatchRecord
     | ToolResultBatchRecord
     | ConversationSummaryMessageRecord
 )
@@ -173,6 +182,7 @@ type TranscriptEntry = (
     | ContentReplacementRecord
     | CompactBoundaryRecord
     | ToolPresentationRecord
+    | ProviderReplaySidecarRecord
 )
 
 

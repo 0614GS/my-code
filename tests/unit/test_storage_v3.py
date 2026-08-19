@@ -9,8 +9,8 @@ from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.providers import ProviderProfile, ProviderProfileStore
 from my_code.config.store import SettingsFileError, SettingsLayer, SettingsStore
 from my_code.conversation.models import HumanMessage
+from my_code.sessions._store import SessionStore
 from my_code.sessions.catalog import SessionCatalog
-from my_code.sessions.store import SessionStore
 
 SESSION_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 

@@ -19,10 +19,10 @@
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| O1 | 待实现 | AppState 是 workspace、active Session、runtime permissions 和 ProviderRuntime 的唯一活动入口。 |
-| O2 | 待实现 | Session 是 canonical conversation、working set、session context state、工具结果绑定和 replay sidecar 的唯一所有者。 |
-| O3 | 待实现 | ChatService 不持有与 AppState 重复的 session/provider/permission 可变状态。 |
-| O4 | 待实现 | AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 均不持有 AppState。 |
+| O1 | 已验收 | AppState 是 workspace、active Session、runtime permissions 和 ProviderRuntime 的唯一活动入口。 |
+| O2 | 已验收 | Session 是 canonical conversation、working set、session context state、工具结果绑定和 replay sidecar 的唯一所有者。 |
+| O3 | 已验收 | ChatService 不持有与 AppState 重复的 session/provider/permission 可变状态。 |
+| O4 | 已验收 | AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 均不持有 AppState。 |
 | O5 | 已验收 | Context、Agent、Chat 和 TUI 不保存第二份可写 conversation entries。 |
 | O6 | 已验收 | request、turn、step、tool round 和 streaming 状态不会提升到 AppState 或 Session。 |
 | O7 | 已验收 | 派生 Todo 状态通过完整 Session history 投影，不维护第二份可变 Todo list。 |
@@ -34,12 +34,12 @@
 | S1 | 已验收 | Session 调用方只使用 snapshot 和语义提交方法，不接触 JSONL record、codec、store 或路径。 |
 | S2 | 已验收 | 进程内读取只使用已打开 Session 的内存状态，不把磁盘当 refresh API。 |
 | S3 | 已验收 | 所有提交先验证候选、再持久化、最后替换内存状态。 |
-| S4 | 待实现 | message、tool result、presentation、externalized result、replay 和 compaction 任一写入失败时，内存状态不部分推进。 |
-| S5 | 进行中 | 恢复严格校验 schema、父链、重复 ID、tool pairing、compact boundary 和 replay 关联。 |
+| S4 | 已验收 | message、tool result、presentation、externalized result、replay 和 compaction 任一写入失败时，内存状态不部分推进。 |
+| S5 | 已验收 | 恢复严格校验 schema、父链、重复 ID、tool pairing、compact boundary 和 replay 关联。 |
 | S6 | 已验收 | 尾部未闭合 ToolCall 在恢复时得到稳定错误结果，并且修复可再次恢复。 |
 | S7 | 已验收 | 旧 transcript 可读取；格式升级不会静默丢失 message、tool result、usage、presentation 或 continuation。 |
 | S8 | 已验收 | 目标 Session 恢复失败时，当前 runtime 仍完整引用旧 Session。 |
-| S9 | 待实现 | 切换 Session 会同时切换 conversation、context delivery/cache、工具结果和 replay sidecar。 |
+| S9 | 已验收 | 切换 Session 会同时切换 conversation、context delivery/cache、工具结果和 replay sidecar。 |
 
 ## Conversation 与工具协议
 
@@ -57,78 +57,94 @@
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| X1 | 待实现 | ContextEngine 对相同 SessionSnapshot、RequestContext 和 ModelEnvironment 产生确定性 ContextPlan。 |
+| X1 | 已验收 | ContextEngine 对相同 SessionSnapshot、RequestContext 和 ModelEnvironment 产生确定性 ContextPlan。 |
 | X2 | 已验收 | ContextEngine 不修改 Session，也不缓存 conversation history。 |
-| X3 | 已实现 | attachment、Todo reminder 和 user context 以 provider-neutral input item 注入。 |
-| X4 | 待实现 | Todo reminder 不写 canonical transcript；失败 TodoWrite 不覆盖最后成功的 Todo 状态。 |
-| X5 | 待实现 | live-session attachment delivery 在同一 Session 可重放，resume/switch 后按声明清空或重建。 |
-| X6 | 已实现 | Context 注入不会插入到 ToolCall 与对应 ToolOutput 的非法协议位置。 |
-| X7 | 已实现 | budget、trim 和 compaction 基于公共 ModelInputItem，不依赖 OpenAI/Anthropic SDK 类型。 |
+| X3 | 已验收 | attachment、Todo reminder 和 user context 以 provider-neutral input item 注入。 |
+| X4 | 已验收 | Todo reminder 不写 canonical transcript；失败 TodoWrite 不覆盖最后成功的 Todo 状态。 |
+| X5 | 已验收 | live-session attachment delivery 在同一 Session 可重放，resume/switch 后按声明清空或重建。 |
+| X6 | 已验收 | Context 注入不会插入到 ToolCall 与对应 ToolOutput 的非法协议位置。 |
+| X7 | 已验收 | budget、trim 和 compaction 基于公共 ModelInputItem，不依赖 OpenAI/Anthropic SDK 类型。 |
 | X8 | 已验收 | full compact proposal 失败不改变 Session；成功必须通过 Session 原子提交。 |
 
 ## Provider-neutral ModelRequest
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| M1 | 已实现 | `ModelRequest.input` 是有序 `ModelInputItem`，不再以 `tuple[ModelMessage]` 为核心抽象。 |
-| M2 | 已实现 | `ToolOutputs` 与 `UserInput`、`AssistantOutput` 并列。 |
-| M3 | 已实现 | 公共模型不包含 OpenAI/Anthropic SDK 类型或 wire 字段名要求。 |
-| M4 | 已实现 | common validation 不依赖 user/assistant role 识别 ToolCall/ToolOutput。 |
-| M5 | 已实现 | text、reasoning 和 tool call 的相对顺序从 Provider output 到 Session 再到后续 input 保持稳定。 |
-| M6 | 待实现 | Provider replay payload 与 canonical content 分离，并通过 entry/content ID 关联。 |
-| M7 | 已实现 | binding 不匹配时仍保留 canonical content，但不发送 replay payload。 |
-| M8 | 已实现 | compaction 后不发送已离开工作集的 replay payload。 |
+| M1 | 已验收 | `ModelRequest.input` 是有序 `ModelInputItem`，不再以 `tuple[ModelMessage]` 为核心抽象。 |
+| M2 | 已验收 | `ToolOutputs` 与 `UserInput`、`AssistantOutput` 并列。 |
+| M3 | 已验收 | 公共模型不包含 OpenAI/Anthropic SDK 类型或 wire 字段名要求。 |
+| M4 | 已验收 | common validation 不依赖 user/assistant role 识别 ToolCall/ToolOutput。 |
+| M5 | 已验收 | text、reasoning 和 tool call 的相对顺序从 Provider output 到 Session 再到后续 input 保持稳定。 |
+| M6 | 已验收 | Provider replay payload 与 canonical content 分离，并通过 entry/content ID 关联。 |
+| M7 | 已验收 | binding 不匹配时仍保留 canonical content，但不发送 replay payload。 |
+| M8 | 已验收 | compaction 后不发送已离开工作集的 replay payload。 |
 
 ## OpenAI Responses 映射
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| OR1 | 已实现 | Human/UserInput 映射为 OpenAI message input item。 |
-| OR2 | 已实现 | Assistant text、reasoning 和 ToolCall 分别映射为合法 Responses items。 |
-| OR3 | 已实现 | 每个 ToolOutput 映射为顶层 `function_call_output`，不会先构造 user-role tool-result message。 |
-| OR4 | 待实现 | function call 使用 `call_id` 配对；response item `id` 只存在于 replay sidecar。 |
-| OR5 | 已实现 | 多个并行 function call/output 保持顺序和一一对应。 |
-| OR6 | 已实现 | error ToolOutput 有稳定、可测试且模型可理解的编码。 |
-| OR7 | 已实现 | `store=False`、reasoning encrypted content 和匹配 replay 行为保持现有能力。 |
-| OR8 | 待实现 | OpenAI 流事件只形成短生命周期 delta；最终 response snapshot 才能进入 Session。 |
+| OR1 | 已验收 | Human/UserInput 映射为 OpenAI message input item。 |
+| OR2 | 已验收 | Assistant text、reasoning 和 ToolCall 分别映射为合法 Responses items。 |
+| OR3 | 已验收 | 每个 ToolOutput 映射为顶层 `function_call_output`，不会先构造 user-role tool-result message。 |
+| OR4 | 已验收 | function call 使用 `call_id` 配对；response item `id` 只存在于 replay sidecar。 |
+| OR5 | 已验收 | 多个并行 function call/output 保持顺序和一一对应。 |
+| OR6 | 已验收 | error ToolOutput 有稳定、可测试且模型可理解的编码。 |
+| OR7 | 已验收 | `store=False`、reasoning encrypted content 和匹配 replay 行为保持现有能力。 |
+| OR8 | 已验收 | OpenAI 流事件只形成短生命周期 delta；最终 response snapshot 才能进入 Session。 |
 
 ## Anthropic Messages 映射
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| AM1 | 已实现 | UserInput 映射为 user-role message content。 |
-| AM2 | 已实现 | AssistantOutput 映射为 assistant-role text/thinking/tool_use blocks。 |
-| AM3 | 已实现 | ToolOutputs 仅在 Anthropic adapter 中包装成 user-role tool_result blocks。 |
-| AM4 | 已实现 | 相邻 role 合并和 user/assistant 归一化只存在于 Anthropic adapter。 |
-| AM5 | 待实现 | tool_result 的 `is_error`、多个结果和媒体内容得到正确映射。 |
-| AM6 | 已实现 | thinking signature/redacted thinking 仅在 binding 和 scope 匹配时重放。 |
-| AM7 | 待实现 | Anthropic 流事件只形成短生命周期 delta；final Message 才能进入 Session。 |
+| AM1 | 已验收 | UserInput 映射为 user-role message content。 |
+| AM2 | 已验收 | AssistantOutput 映射为 assistant-role text/thinking/tool_use blocks。 |
+| AM3 | 已验收 | ToolOutputs 仅在 Anthropic adapter 中包装成 user-role tool_result blocks。 |
+| AM4 | 已验收 | 相邻 role 合并和 user/assistant 归一化只存在于 Anthropic adapter。 |
+| AM5 | 已验收 | tool_result 的 `is_error`、多个结果和媒体内容得到正确映射。 |
+| AM6 | 已验收 | thinking signature/redacted thinking 仅在 binding 和 scope 匹配时重放。 |
+| AM7 | 已验收 | Anthropic 流事件只形成短生命周期 delta；final Message 才能进入 Session。 |
 
 ## Runtime 切换、并发与失败
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| R1 | 待实现 | submit、stream、compact、resume 和 provider switch 不能并发修改同一 AppState。 |
-| R2 | 待实现 | 流式 step 进行中不能部分切换 Session 或 Provider。 |
-| R3 | 待实现 | Provider switch 原子替换 connection、client、capabilities 和 model environment，并关闭旧 client。 |
-| R4 | 待实现 | Provider switch 不改写 Session canonical facts。 |
-| R5 | 待实现 | Permission update 持久化失败时 runtime policy 不改变。 |
-| R6 | 待实现 | pending approval 完成、拒绝、异常或取消后都从 runtime 中释放。 |
-| R7 | 待实现 | runtime close 释放 Provider client 和 host task，不破坏已提交 Session。 |
-| R8 | 待实现 | Session/AppState 切换失败不产生旧 conversation 配新 context/tool store/provider 的混合状态。 |
+| R1 | 已验收 | submit、stream、compact、resume 和 provider switch 不能并发修改同一 AppState。 |
+| R2 | 已验收 | 流式 step 进行中不能部分切换 Session 或 Provider。 |
+| R3 | 已验收 | Provider switch 原子替换 connection、client、capabilities 和 model environment，并关闭旧 client。 |
+| R4 | 已验收 | Provider switch 不改写 Session canonical facts。 |
+| R5 | 已验收 | Permission update 持久化失败时 runtime policy 不改变。 |
+| R6 | 已验收 | pending approval 完成、拒绝、异常或取消后都从 runtime 中释放。 |
+| R7 | 已验收 | runtime close 释放 Provider client 和 host task，不破坏已提交 Session。 |
+| R8 | 已验收 | Session/AppState 切换失败不产生旧 conversation 配新 context/tool store/provider 的混合状态。 |
 
 ## 架构与质量门槛
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| A1 | 待实现 | AST 依赖图无环，且 AppState 只被允许的 application/bootstrap/host 模块依赖。 |
-| A2 | 待实现 | Provider SDK 类型只出现在 `providers`。 |
-| A3 | 待实现 | Session record、codec 和存储路径不泄漏出 `sessions` 私有实现。 |
-| A4 | 待实现 | 不存在两个可写的 conversation 或 runtime permission 权威来源。 |
-| A5 | 待实现 | `uv run ruff format .` 无待格式化文件。 |
-| A6 | 待实现 | `uv run ruff check .` 通过。 |
-| A7 | 待实现 | `uv run pyright` 通过。 |
-| A8 | 待实现 | `uv run pytest` 通过。 |
+| A1 | 已验收 | AST 依赖图无环，且 AppState 只被允许的 application/bootstrap/host 模块依赖。 |
+| A2 | 已验收 | Provider SDK 类型只出现在 `providers`。 |
+| A3 | 已验收 | Session record、codec 和存储路径不泄漏出 `sessions` 私有实现。 |
+| A4 | 已验收 | 不存在两个可写的 conversation 或 runtime permission 权威来源。 |
+| A5 | 已验收 | `uv run ruff format .` 无待格式化文件。 |
+| A6 | 已验收 | `uv run ruff check .` 通过。 |
+| A7 | 已验收 | `uv run pyright` 通过。 |
+| A8 | 已验收 | `uv run pytest` 通过。 |
+
+## 自动化证据索引
+
+| 验收项 | 主要自动化证据 |
+| --- | --- |
+| T1-T6 | `tests/unit/test_agent_engine.py`、`tests/unit/test_tool_round_executor.py` |
+| O1-O7 | `test_app_state_is_the_single_runtime_owner`、`test_session_is_the_only_public_conversation_and_persistence_boundary`、Todo projection tests |
+| S1-S9 | `tests/unit/test_conversation_state.py`、`tests/unit/test_session_store.py`、Chat resume/switch tests |
+| C1-C7 | conversation model/state、Agent tool loop 与 ToolRound cancellation tests |
+| X1-X8 | `tests/unit/test_context_injection.py`、`test_session_owns_ephemeral_attachment_delivery`、Todo reminder/compaction tests |
+| M1-M8 | model request validation、context normalization、reasoning replay 与 compaction replay tests |
+| OR1-OR8 | `tests/unit/test_openai_responses_provider.py`，以及 `test_native_stream_lifecycle_is_not_replayed_from_final_output` |
+| AM1-AM7 | `tests/unit/test_anthropic_provider.py`，以及 `test_native_stream_lifecycle_is_not_replayed_from_final_output` |
+| R1-R8 | Chat operation-lock/resume tests、ProviderRouter lifecycle tests、DeferredPermissionPrompter cleanup tests |
+| A1-A4 | `tests/architecture/` 与 `tests/unit/test_agent_architecture.py` |
+| A5-A8 | 最终质量门槛命令；本次结果为 Ruff/Pyright 全通过、pytest 395 passed |
 
 ## 完成定义
 

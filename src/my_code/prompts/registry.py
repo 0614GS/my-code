@@ -1,4 +1,4 @@
-"""提示词片段的确定性解析与生命周期缓存。"""
+"""提示词片段的确定性解析与显式生命周期快照。"""
 
 from collections.abc import Iterable
 
@@ -13,7 +13,7 @@ _STABILITY_ORDER = {
 
 
 class PromptRegistry:
-    """解析有序片段，并缓存本轮之前应保持稳定的内容。"""
+    """解析有序片段；runtime-stable 内容在构造时冻结为不可变快照。"""
 
     def __init__(self, sections: Iterable[PromptSection]) -> None:
         actual = tuple(sections)
@@ -28,7 +28,24 @@ class PromptRegistry:
                 "Prompt sections must be ordered static, session, then request"
             )
         self._sections = actual
-        self._cache: dict[str, ResolvedPromptSection] = {}
+        self._runtime_snapshot = tuple(
+            ResolvedPromptSection(
+                key=section.key,
+                content=section.resolve(),
+                stability=section.stability,
+            )
+            for section in actual
+            if section.stability is PromptStability.STATIC
+        )
+        self._runtime_by_key = {
+            section.key: section for section in self._runtime_snapshot
+        }
+
+    @property
+    def runtime_snapshot(self) -> tuple[ResolvedPromptSection, ...]:
+        """Return the immutable prompt prefix resolved during bootstrap."""
+
+        return self._runtime_snapshot
 
     @property
     def sections(self) -> tuple[PromptSection, ...]:
@@ -50,13 +67,9 @@ class PromptRegistry:
         section: PromptSection,
         session_cache: dict[str, ResolvedPromptSection] | None,
     ) -> ResolvedPromptSection:
-        cache = (
-            self._cache
-            if section.stability is PromptStability.STATIC
-            else session_cache
-            if section.stability is PromptStability.SESSION
-            else None
-        )
+        if section.stability is PromptStability.STATIC:
+            return self._runtime_by_key[section.key]
+        cache = session_cache if section.stability is PromptStability.SESSION else None
         if cache is not None:
             cached = cache.get(section.key)
             if cached is not None:

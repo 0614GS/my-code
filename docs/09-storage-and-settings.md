@@ -2,7 +2,7 @@
 
 ## 所有权
 
-`config` 拥有路径、分层 settings、provider profile 和配置持久化。`auth` 拥有 API key 存储与解析。`sessions` 拥有 Conversation JSONL，`tools.result_store` 拥有大型工具输出文件。
+`config` 拥有路径、分层 settings、provider profile 和配置持久化。`auth` 拥有 API key 存储与解析。`sessions` 私有拥有 Conversation JSONL 与大型工具输出文件。
 
 根 `my_code.bootstrap` 是唯一 composition root，负责初始化存储并组装运行时对象；其他模块不能导入 bootstrap。
 
@@ -39,8 +39,8 @@ Provider endpoint、protocol、默认 model、reasoning、limits 和 compact 配
 
 - settings、profiles 和凭据使用临时文件加原子替换。
 - PermissionUpdate 先写目标配置，再修改活动 PermissionPolicy。
-- Session 只追加 JSONL；恢复时严格校验 schema 和父链。
-- ToolResultStore 按 session ID 分目录，Chat resume 时创建新的 store。
+- Session 通过同目录临时文件与原子替换提交 JSONL 事务；恢复时严格校验 schema、父链、tool pairing、compact boundary 和 replay 关联。
+- 大型工具结果按 session ID 分目录，由 Session 在 tool batch 提交内创建或回滚；调用方不接触 store/path。
 
 ## 版本控制
 

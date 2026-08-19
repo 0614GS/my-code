@@ -15,7 +15,6 @@ from my_code.tools.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
 )
-from my_code.tools.result_store import ToolResultStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +55,6 @@ class ToolRoundExecutor:
         self,
         calls: tuple[ToolCall, ...],
         assistant_message: AssistantMessage,
-        *,
-        result_store: ToolResultStore,
     ) -> AsyncIterator[ToolRoundEvent]:
         results: list[ToolResult] = []
         try:
@@ -65,9 +62,7 @@ class ToolRoundExecutor:
             for call in calls:
                 yield ToolCallStarted(call, self.executor.present_use(call))
                 try:
-                    outcome = await self.executor.execute(
-                        call, result_store=result_store
-                    )
+                    outcome = await self.executor.execute(call)
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:

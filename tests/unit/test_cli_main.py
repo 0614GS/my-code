@@ -9,9 +9,14 @@ from my_code.config.settings import SettingsResolver
 
 
 class LimitedChat:
+    closed = False
+
     async def submit(self, prompt: str) -> MaxStepsReached:
         assert prompt == "keep going"
         return MaxStepsReached(3, 3, 12, 4)
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 @pytest.mark.asyncio

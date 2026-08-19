@@ -2,7 +2,7 @@
 
 ## 所有权
 
-`permissions` 拥有规则表示、工具局部判断、全局决策顺序和用户确认协议。`config.permission_updates` 负责把获批的长期更新写入设置，然后再更新内存中的 `PermissionPolicy`。
+`permissions` 拥有规则表示、工具局部判断、全局决策顺序和用户确认协议。活动 `PermissionPolicy` 的唯一引用位于 `AppState.permissions`。`config.permission_updates` 负责把获批的长期更新写入设置，然后再更新这一个 policy。
 
 ## 决策数据
 
@@ -38,7 +38,7 @@
 
 无头模式使用 `HeadlessPrompter` 并默认拒绝。TUI 通过 `chat.permissions.DeferredPermissionPrompter` 注册当前 handler；没有 handler 时同样 fail closed。
 
-权限确认只决定是否执行当前调用。长期规则变更必须先成功持久化，再应用到活动策略，避免内存已放行但磁盘仍未记录。
+权限确认只决定是否执行当前调用。长期规则变更必须先成功持久化，再应用到活动策略，避免内存已放行但磁盘仍未记录。pending approval 是 host task 的短生命周期状态；完成、异常、拒绝、取消和 runtime close 都必须释放。
 
 ## 安全不变量
 
@@ -46,3 +46,4 @@
 - 被拒绝或取消的调用也产生闭合 ToolResult。
 - API key、原始工具输出和敏感路径不进入权限展示 DTO。
 - PermissionPolicy 不读取设置文件，也不拥有配置存储。
+- Chat、Agent 和 Tool 不保存第二份 runtime permission mode/rules。

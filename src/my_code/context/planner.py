@@ -3,6 +3,7 @@
 import json
 from collections.abc import Callable
 from typing import Literal
+from uuid import NAMESPACE_URL, uuid5
 
 from my_code.context.attachments.models import ContextAttachment
 from my_code.context.attachments.sources import DerivedAttachmentResolver
@@ -15,8 +16,8 @@ from my_code.context.models import ContextBudget, ContextOverflow, ContextPlan
 from my_code.context.normalization import ModelInputNormalizer
 from my_code.context.session import (
     AttachmentDelivery,
-    ContextSession,
     ContextSnapshot,
+    SessionContextAccess,
 )
 from my_code.context.tokenizer import UnicodeTokenEstimator
 from my_code.context.user_context import EmptyUserContextResolver, UserContextResolver
@@ -27,7 +28,6 @@ from my_code.conversation.models import (
     ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
-    ReasoningContent,
     TextContent,
     ToolCall,
     ToolResultBatch,
@@ -35,11 +35,15 @@ from my_code.conversation.models import (
 from my_code.conversation.state import ContentReplacement
 from my_code.model.capabilities import (
     FALLBACK_INPUT_TOKENS,
-    ActiveModelState,
+    ActiveModelEnvironment,
     fallback_descriptor,
     resolve_environment,
 )
-from my_code.model.primitives import ProviderBinding, ProviderContinuationState
+from my_code.model.primitives import (
+    ProviderBinding,
+    ProviderContinuationState,
+    ProviderReplayRecord,
+)
 from my_code.model.request import (
     AssistantOutput,
     InputText,
@@ -51,6 +55,7 @@ from my_code.model.request import (
     ModelToolUseBlock,
     SystemPrompt,
     ToolOutputs,
+    ToolOutputText,
     UserInput,
 )
 from my_code.prompts.registry import PromptRegistry
@@ -71,7 +76,7 @@ class ContextPlanner:
         user_context_resolver: UserContextResolver | None = None,
         attachment_resolver: DerivedAttachmentResolver | None = None,
         binding_resolver: Callable[[], ProviderBinding] | None = None,
-        active_model_state: ActiveModelState | None = None,
+        model_environment: Callable[[], ActiveModelEnvironment] | None = None,
         token_estimator: UnicodeTokenEstimator | None = None,
     ) -> None:
         if max_output_tokens < 1:
@@ -87,20 +92,19 @@ class ContextPlanner:
         self.user_context_resolver = user_context_resolver or EmptyUserContextResolver()
         self.attachment_resolver = attachment_resolver or DerivedAttachmentResolver()
         self.binding_resolver = binding_resolver
-        self.active_model_state = active_model_state or ActiveModelState(
-            resolve_environment(
-                fallback_descriptor("unknown"),
-                requested_output_tokens=max_output_tokens,
-                configured_trigger_tokens=None,
-            )
+        fallback_environment = resolve_environment(
+            fallback_descriptor("unknown"),
+            requested_output_tokens=max_output_tokens,
+            configured_trigger_tokens=None,
         )
+        self._model_environment = model_environment or (lambda: fallback_environment)
         self.token_estimator = token_estimator or UnicodeTokenEstimator()
         self.attachment_projector = self.normalizer.attachment_projector
 
     def plan(
         self,
         snapshot: ContextSnapshot,
-        session: ContextSession | None = None,
+        session: SessionContextAccess | None = None,
     ) -> ContextPlan:
         effective, proposed = self._effective_messages(snapshot)
         user_context = self._get_user_context(session)
@@ -113,13 +117,14 @@ class ContextPlanner:
         selected = self.window.ensure_fits(
             effective,
             additional_chars=attachment_chars
-            + _replayed_continuation_chars(effective, binding),
+            + _replayed_continuation_chars(effective, snapshot.replay_records, binding),
         )
         model_messages = self.normalizer.normalize(
             user_context,
             selected,
             attachments,
             snapshot.attachment_deliveries,
+            snapshot.replay_records,
             active_binding=binding,
         )
         system_prompt = (
@@ -148,6 +153,7 @@ class ContextPlanner:
                     user_context,
                     attachments,
                     snapshot.attachment_deliveries,
+                    snapshot.replay_records,
                     system_prompt,
                 ),
             )
@@ -162,6 +168,7 @@ class ContextPlanner:
                     selected,
                     attachments,
                     snapshot.attachment_deliveries,
+                    snapshot.replay_records,
                     active_binding=binding,
                 )
                 request = ModelRequest(
@@ -188,7 +195,7 @@ class ContextPlanner:
     def inspect(
         self,
         snapshot: ContextSnapshot,
-        session: ContextSession | None = None,
+        session: SessionContextAccess | None = None,
     ) -> ContextBudget:
         effective, _ = self._effective_messages(snapshot, propose=False)
         user_context = self._get_user_context(session)
@@ -199,6 +206,7 @@ class ContextPlanner:
             effective,
             attachments,
             snapshot.attachment_deliveries,
+            snapshot.replay_records,
             active_binding=binding,
         )
         request = ModelRequest(
@@ -235,7 +243,7 @@ class ContextPlanner:
         return self.window.size(messages)
 
     def _get_user_context(
-        self, session: ContextSession | None
+        self, session: SessionContextAccess | None
     ) -> tuple[UserContextDocument, ...]:
         if session is None:
             return tuple(self.user_context_resolver.resolve())
@@ -261,7 +269,19 @@ class ContextPlanner:
         if not snapshot.messages:
             raise ValueError("Live-session attachments require a working-set anchor")
         anchor_uuid = snapshot.messages[-1].uuid
-        return tuple(AttachmentDelivery(anchor_uuid, attachment) for attachment in live)
+        return tuple(
+            AttachmentDelivery(
+                anchor_uuid,
+                attachment,
+                delivery_id=str(
+                    uuid5(
+                        NAMESPACE_URL,
+                        f"my-code:{anchor_uuid}:{index}:{attachment!r}",
+                    )
+                ),
+            )
+            for index, attachment in enumerate(live)
+        )
 
     def _effective_messages(
         self, snapshot: ContextSnapshot, *, propose: bool = True
@@ -304,7 +324,7 @@ class ContextPlanner:
                 - (anchor.request_input_tokens_estimate or local_estimate),
             )
             measurement = "reported_calibrated"
-        environment = self.active_model_state.get()
+        environment = self._model_environment()
         input_limit = (
             environment.descriptor.limits.effective_input_limit(self.max_output_tokens)
             or FALLBACK_INPUT_TOKENS
@@ -340,6 +360,7 @@ class ContextPlanner:
         user_context: tuple[UserContextDocument, ...],
         attachments: tuple[ContextAttachment, ...],
         deliveries: tuple[AttachmentDelivery, ...],
+        replay_records: tuple[ProviderReplayRecord, ...],
         prompt: SystemPrompt,
     ) -> int:
         binding = self.binding_resolver() if self.binding_resolver is not None else None
@@ -348,6 +369,7 @@ class ContextPlanner:
             conversation,
             attachments,
             deliveries,
+            replay_records,
             active_binding=binding,
         )
         request = ModelRequest(prompt, messages, self.tools, self.max_output_tokens)
@@ -385,7 +407,12 @@ def _message_chars(items: tuple[ModelInputItem, ...]) -> int:
                         size += _continuation_chars(block.continuation)
         elif isinstance(item, ToolOutputs):
             for output in item.results:
-                size += sum(len(block.text) for block in output.content)
+                size += sum(
+                    len(block.text)
+                    if isinstance(block, ToolOutputText)
+                    else len(block.data)
+                    for block in output.content
+                )
     return size
 
 
@@ -423,6 +450,7 @@ def _deliveries_after_last_assistant(
 
 def _replayed_continuation_chars(
     conversation: tuple[ConversationEntry, ...],
+    replay_records: tuple[ProviderReplayRecord, ...],
     binding: ProviderBinding | None,
 ) -> int:
     source_uuid = (
@@ -430,22 +458,30 @@ def _replayed_continuation_chars(
         if conversation and isinstance(conversation[-1], ToolResultBatch)
         else None
     )
-    return sum(
-        max(
+    by_id = {message.uuid: message for message in conversation}
+    size = 0
+    for record in replay_records:
+        message = by_id.get(record.entry_id)
+        if not isinstance(message, AssistantMessage):
+            continue
+        try:
+            index = int(record.content_id.removeprefix("content:"))
+            block = message.content[index]
+        except (ValueError, IndexError):
+            continue
+        continuation = record.state
+        if binding is not None and continuation.binding != binding:
+            continue
+        if (
+            continuation.replay_scope != "working_context"
+            and message.uuid != source_uuid
+        ):
+            continue
+        size += max(
             0,
             _continuation_chars(continuation) - _fallback_block_chars(block),
         )
-        for message in conversation
-        if isinstance(message, AssistantMessage)
-        for block in message.content
-        for continuation in (_block_continuation(block),)
-        if continuation is not None
-        and (binding is None or continuation.binding == binding)
-        and (
-            continuation.replay_scope == "working_context"
-            or message.uuid == source_uuid
-        )
-    )
+    return size
 
 
 def _fallback_block_chars(block: object) -> int:
@@ -546,12 +582,6 @@ def _continuation_chars(state: ProviderContinuationState) -> int:
             separators=(",", ":"),
         )
     )
-
-
-def _block_continuation(block: object) -> ProviderContinuationState | None:
-    if isinstance(block, (TextContent, ToolCall, ReasoningContent)):
-        return block.continuation
-    return None
 
 
 __all__ = [

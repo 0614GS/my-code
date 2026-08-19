@@ -14,7 +14,12 @@ from my_code.conversation.models import (
     ToolCall,
     ToolResultBatch,
 )
-from my_code.model.primitives import ProviderBinding, ProviderContinuationState
+from my_code.model.primitives import (
+    ProviderBinding,
+    ProviderContinuationState,
+    ProviderReplayRecord,
+    replay_content_id,
+)
 from my_code.model.request import (
     AssistantOutput,
     InputText,
@@ -42,6 +47,7 @@ class ModelInputNormalizer:
         history: tuple[ConversationEntry, ...],
         attachments: tuple[ContextAttachment, ...],
         attachment_deliveries: tuple[AttachmentDelivery, ...] = (),
+        replay_records: tuple[ProviderReplayRecord, ...] = (),
         active_binding: ProviderBinding | None = None,
     ) -> tuple[ModelInputItem, ...]:
         candidates = [
@@ -51,6 +57,7 @@ class ModelInputNormalizer:
                 attachment_deliveries,
                 self.attachment_projector,
                 replay_continuation=True,
+                replay_records=replay_records,
                 active_binding=active_binding,
             ),
             *self.attachment_projector.project_many(attachments),
@@ -83,17 +90,19 @@ def _conversation_message(
     *,
     active_trajectory: bool = False,
     replay_continuation: bool = True,
+    replay_records: dict[str, ProviderContinuationState] | None = None,
     active_binding: ProviderBinding | None = None,
 ) -> ModelInputItem:
     if isinstance(message, HumanMessage):
         return UserInput((InputText(message.content),))
     if isinstance(message, AssistantMessage):
+        replay_by_content = replay_records or {}
         return AssistantOutput(
             tuple(
                 ModelTextBlock(
                     block.text,
                     _selected_continuation(
-                        block.continuation,
+                        replay_by_content.get(replay_content_id(index)),
                         active_trajectory,
                         replay_continuation,
                         active_binding,
@@ -105,7 +114,7 @@ def _conversation_message(
                     block.name,
                     block.input,
                     _selected_continuation(
-                        block.continuation,
+                        replay_by_content.get(replay_content_id(index)),
                         active_trajectory,
                         replay_continuation,
                         active_binding,
@@ -116,16 +125,16 @@ def _conversation_message(
                     block.id,
                     block.presentation,
                     _selected_continuation(
-                        block.continuation,
+                        replay_by_content.get(replay_content_id(index)),
                         active_trajectory,
                         replay_continuation,
                         active_binding,
                     ),
                 )
-                for block in message.content
+                for index, block in enumerate(message.content)
                 if not isinstance(block, ReasoningContent)
                 or _selected_continuation(
-                    block.continuation,
+                    replay_by_content.get(replay_content_id(index)),
                     active_trajectory,
                     replay_continuation,
                     active_binding,
@@ -166,6 +175,7 @@ def _conversation_history(
     attachment_projector: AttachmentProjector,
     *,
     replay_continuation: bool,
+    replay_records: tuple[ProviderReplayRecord, ...] = (),
     active_binding: ProviderBinding | None = None,
 ) -> list[ModelInputItem]:
     by_anchor: dict[str, list[ContextAttachment]] = {}
@@ -179,6 +189,11 @@ def _conversation_history(
         else None
     )
     projected: list[ModelInputItem] = []
+    replay_by_entry: dict[str, dict[str, ProviderContinuationState]] = {}
+    for record in replay_records:
+        replay_by_entry.setdefault(record.entry_id, {})[record.content_id] = (
+            record.state
+        )
     for message in messages:
         projected.append(
             _conversation_message(
@@ -188,6 +203,7 @@ def _conversation_history(
                     and message.uuid == active_trajectory_uuid
                 ),
                 replay_continuation=replay_continuation,
+                replay_records=replay_by_entry.get(message.uuid),
                 active_binding=active_binding,
             )
         )

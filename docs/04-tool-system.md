@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-`tools` 拥有工具定义、注册、输入校验、权限调用、执行、展示投影和结果外置。内置文件与 Bash 工具位于 `tools.builtin`；TodoWrite 属于 `features.todos`，通过同一 Tool 接口注册。
+`tools` 拥有工具定义、注册、输入校验、权限调用、执行和展示投影。内置文件与 Bash 工具位于 `tools.builtin`；TodoWrite 属于 `features.todos`，通过同一 Tool 接口注册。结果外置属于 Session 的私有持久化行为。
 
 ## Tool 能力
 
@@ -25,14 +25,14 @@ ToolCall
   -> 必要时 PermissionPrompter 确认
   -> Tool 执行
   -> ToolResult + ToolResultPresentation
-  -> 大结果按 session 写入 ToolResultStore
+  -> Session 提交完整 batch，并按需外置大结果
 ```
 
-`ToolExecutor.execute()` 接受当前 session 的 `ToolResultStore`。Agent 路径必须显式传入 store，避免执行器隐藏绑定到某个活动会话。
+`ToolExecutor.execute()` 只返回完整领域结果与 presentation，不绑定活动 Session 或 result store。Session 在提交 `ToolResultBatch` 时决定是否外置大结果，并保证失败回滚。
 
 ## ToolRound
 
-`tools.round_executor.ToolRoundExecutor` 串行执行同一 AssistantMessage 中的 ToolCall。它发送 started/finished 事件，并最终产生一条闭合的 ToolResultsMessage；它不作为历史 presentation 的代理入口。
+`tools.round_executor.ToolRoundExecutor` 串行执行同一 AssistantMessage 中的 ToolCall。它发送 started/finished 事件，并最终产生一条闭合的 ToolResultBatch；它不作为历史 presentation 的代理入口。
 
 当前 MVP 不并行执行工具。取消时尚未执行完成的调用会得到稳定错误结果；已经完成的结果不会重复执行或丢失。
 
@@ -45,4 +45,4 @@ ToolCall
 
 ## 展示与持久化
 
-模型可见 `ToolResult` 与前端使用的 presentation 是两份不同数据。Session JSONL 保存必要的 presentation 快照；恢复旧记录缺失快照时，Chat 直接调用 `ToolExecutor` 的 presentation 能力。大型原始输出可以写入 session 专属工具结果目录，但引用仍由 canonical ToolResult 维护。
+模型可见 `ToolResult` 与前端使用的 presentation 是两份不同数据。Session JSONL 保存必要的 presentation 快照。大型原始输出可以写入 session 专属工具结果目录，但引用仍由 canonical ToolResult 维护；该目录和写入实现不暴露给 ToolExecutor 或 Chat。

@@ -12,7 +12,6 @@ from my_code.conversation.models import (
     ToolResultBatch,
 )
 from my_code.model.capabilities import (
-    ActiveModelState,
     CapabilitySource,
     ModelDescriptor,
     ModelLimits,
@@ -47,6 +46,11 @@ def _planner(
         ModelLimits(max_input_tokens=10_000),
         source=CapabilitySource.PROFILE_OVERRIDE,
     )
+    environment = resolve_environment(
+        descriptor,
+        requested_output_tokens=100,
+        configured_trigger_tokens=trigger,
+    )
     return ContextPlanner(
         window=ContextWindow(100_000),
         prompt=PromptRegistry(
@@ -56,13 +60,7 @@ def _planner(
         max_output_tokens=100,
         microcompact=policy,
         binding_resolver=lambda: binding,
-        active_model_state=ActiveModelState(
-            resolve_environment(
-                descriptor,
-                requested_output_tokens=100,
-                configured_trigger_tokens=trigger,
-            )
-        ),
+        model_environment=lambda: environment,
     )
 
 

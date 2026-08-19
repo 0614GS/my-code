@@ -1,12 +1,12 @@
-# 状态管理重构提案
+# 状态管理重构（已实现）
 
-本目录定义下一轮状态管理重构的目标模型、迁移顺序和验收标准。它描述的是待实现架构，不是当前实现手册；在迁移完成前，`docs/` 顶层文档仍代表仓库现状。
+本目录记录已经落地的状态管理目标模型、迁移顺序和验收标准。顶层 `docs/` 已同步为当前实现；本目录保留设计理由、兼容决策和逐项验收证据。
 
-本轮重构解决三个问题：
+本轮重构解决了三个问题：
 
-1. runtime 状态缺少统一入口，当前分散在 `ChatService`、`ContextSession`、`PermissionPolicy`、`ProviderRouter` 和 `ActiveModelState` 中；
-2. `Session`、`Conversation` 与 `SessionStore` 共同暴露对话状态，内存事实和本地持久化边界不够透明；
-3. `ModelMessage` 以 user/assistant role 为中心，把工具结果先建模成 user message，再由 OpenAI Responses adapter 拆回独立 item。
+1. runtime 状态统一从 `AppState` 进入，并拆分为 Session、PermissionState、ProviderRuntime 和 WorkspaceState；
+2. `Session` 成为内存对话事实和本地持久化的唯一公开边界；
+3. `ModelRequest.input` 改为 provider-neutral items，工具结果不再建模为 Human/User message。
 
 目标不是创建一个所有模块都能任意访问的全局变量，而是建立一个明确的 runtime 状态所有者，并让其内部状态胶囊各自保持唯一权威来源。
 
@@ -53,6 +53,6 @@ HumanMessage
 
 ## 使用规则
 
-- 后续实现 PR 必须引用 [03-migration-plan.md](03-migration-plan.md) 中的阶段和 [04-acceptance-criteria.md](04-acceptance-criteria.md) 中的验收 ID。
-- 每个阶段必须保持 CLI 可运行，并且不能引入两个可写的 messages 权威来源。
-- 若实现中推翻本目录的核心决策，应先更新文档并记录理由，再修改生产代码。
+- 后续改变这些边界的 PR 应引用 [04-acceptance-criteria.md](04-acceptance-criteria.md) 中受影响的验收 ID。
+- 变更必须保持 CLI 可运行，且不能引入第二个可写 conversation 或 runtime permission 权威来源。
+- 若推翻本目录的核心决策，应先更新文档并记录理由，再修改生产代码。

@@ -47,7 +47,10 @@ from my_code.model.request import (
     ModelToolUseBlock,
     PromptStability,
     SystemPrompt,
+    ToolOutputDocument,
+    ToolOutputImage,
     ToolOutputs,
+    ToolOutputText,
     UserInput,
 )
 
@@ -260,12 +263,19 @@ class AnthropicProvider(ModelClient):
                 append("assistant", content)
             elif isinstance(item, ToolOutputs):
                 for result in item.results:
+                    result_content = [
+                        _anthropic_tool_output_content(block)
+                        for block in result.content
+                    ]
                     content.append(
                         {
                             "type": "tool_result",
                             "tool_use_id": result.call_id,
-                            "content": "\n".join(
-                                block.text for block in result.content
+                            "content": (
+                                result_content[0]["text"]
+                                if len(result_content) == 1
+                                and result_content[0]["type"] == "text"
+                                else result_content
                             ),
                             "is_error": result.is_error,
                         }
@@ -375,6 +385,24 @@ def _anthropic_input_content(
         "data": block.data,
     }
     if isinstance(block, InputImage):
+        return {"type": "image", "source": source}
+    document: dict[str, object] = {"type": "document", "source": source}
+    if block.name is not None:
+        document["title"] = block.name
+    return document
+
+
+def _anthropic_tool_output_content(
+    block: ToolOutputText | ToolOutputImage | ToolOutputDocument,
+) -> dict[str, object]:
+    if isinstance(block, ToolOutputText):
+        return {"type": "text", "text": block.text}
+    source = {
+        "type": "base64",
+        "media_type": block.media_type,
+        "data": block.data,
+    }
+    if isinstance(block, ToolOutputImage):
         return {"type": "image", "source": source}
     document: dict[str, object] = {"type": "document", "source": source}
     if block.name is not None:

@@ -36,7 +36,6 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.registry import ToolRegistry
-from my_code.tools.result_store import ToolResultStore
 from my_code.workspace.local import Workspace
 
 
@@ -127,7 +126,6 @@ async def test_todo_write_executes_without_permission_prompt(tmp_path: Path) -> 
         PermissionPolicy(PermissionMode.DEFAULT),
         HeadlessPrompter(),
         Workspace(tmp_path),
-        ToolResultStore(tmp_path / "results"),
     )
 
     outcome = await executor.execute(ToolCall("todo", "TodoWrite", _todo_input()))
@@ -144,7 +142,6 @@ async def test_invalid_todo_write_becomes_protocol_error(tmp_path: Path) -> None
         PermissionPolicy(PermissionMode.BYPASS),
         HeadlessPrompter(),
         Workspace(tmp_path),
-        ToolResultStore(tmp_path / "results"),
     )
 
     outcome = await executor.execute(

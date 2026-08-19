@@ -21,7 +21,7 @@ AssistantMessage       # step 2
 
 ## Provider wire 基线
 
-公共层当前暂时把工具结果包装在 `ModelUserMessage`，这是待迁移的建模偏差，不是领域语义。
+阶段 0 时公共层曾把工具结果包装在 `ModelUserMessage`；迁移后公共层使用独立 `ToolOutputs`，本段保留原始基线以说明兼容约束。
 
 - OpenAI Responses 输出顶层 `function_call`，随后输出顶层 `function_call_output`；结果不编码成 user message。
 - Anthropic Messages 输出 assistant-role `tool_use`，随后输出 user-role `tool_result`；user role 只属于 Anthropic adapter 的 wire 编码。

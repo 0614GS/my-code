@@ -25,8 +25,6 @@ from my_code.context.engine import ContextEngine
 from my_code.context.models import ContextOverflow, ContextPlan
 from my_code.context.session import (
     AttachmentDelivery,
-    ContextSession,
-    ContextSnapshot,
 )
 from my_code.conversation.models import (
     AssistantMessage,
@@ -49,11 +47,14 @@ from my_code.model.events import (
     ModelTextDelta,
     ModelTextStarted,
 )
-from my_code.model.primitives import TokenUsage
+from my_code.model.primitives import (
+    ProviderReplayRecord,
+    TokenUsage,
+    replay_content_id,
+)
 from my_code.model.request import ModelOutput, ModelTextBlock, ModelToolUseBlock
 from my_code.sessions.session import Session
 from my_code.tools.presentation import ToolResultPresentation
-from my_code.tools.result_store import ToolResultStore
 from my_code.tools.round_executor import (
     ToolCallFinished,
     ToolCallStarted,
@@ -83,16 +84,12 @@ class AgentEngine:
     async def submit(
         self,
         session: Session,
-        context_session: ContextSession,
-        result_store: ToolResultStore,
         turn_input: AgentTurnInput,
     ) -> AgentTurnOutcome:
         """消费可观察循环并返回终态值。"""
 
         completed: AgentTurnOutcome | None = None
-        async for event in self.stream(
-            session, context_session, result_store, turn_input
-        ):
+        async for event in self.stream(session, turn_input):
             if isinstance(event, (AgentTurnSucceeded, AgentMaxStepsReached)):
                 completed = event
         if completed is None:
@@ -102,19 +99,15 @@ class AgentEngine:
     def stream(
         self,
         session: Session,
-        context_session: ContextSession,
-        result_store: ToolResultStore,
         turn_input: AgentTurnInput,
     ) -> AsyncIterator[AgentEvent]:
         """运行一个用户回合，同时暴露文本和工具生命周期事件。"""
 
-        return self._stream(session, context_session, result_store, turn_input)
+        return self._stream(session, turn_input)
 
     async def _stream(
         self,
         session: Session,
-        context_session: ContextSession,
-        result_store: ToolResultStore,
         turn_input: AgentTurnInput,
     ) -> AsyncIterator[AgentEvent]:
         user_message = HumanMessage(
@@ -123,12 +116,11 @@ class AgentEngine:
         )
         # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
         session.append_human_message(user_message)
-        context_session.add(
+        session.add_context_deliveries(
             tuple(
                 AttachmentDelivery(user_message.uuid, attachment)
                 for attachment in turn_input.attachments
             ),
-            session.snapshot(),
         )
 
         input_tokens = 0
@@ -136,7 +128,7 @@ class AgentEngine:
         step_count = 0
         while True:
             step_count += 1
-            request = await self._plan_with_proactive_compact(session, context_session)
+            request = await self._plan_with_proactive_compact(session)
             reactive_attempted = False
             while True:
                 response: ModelOutput | None = None
@@ -217,8 +209,8 @@ class AgentEngine:
                     if reactive_attempted:
                         raise
                     reactive_attempted = True
-                    await self._compact_for_retry(session, context_session, "reactive")
-                    request = await self._plan_request(session, context_session)
+                    await self._compact_for_retry(session, "reactive")
+                    request = await self._plan_request(session)
                     continue
                 break
 
@@ -229,13 +221,11 @@ class AgentEngine:
             output_tokens += response.usage.output_tokens
             assistant_message = AssistantMessage(
                 content=tuple(
-                    TextContent(block.text, block.continuation)
+                    TextContent(block.text)
                     if isinstance(block, ModelTextBlock)
-                    else ToolCall(block.id, block.name, block.input, block.continuation)
+                    else ToolCall(block.id, block.name, block.input)
                     if isinstance(block, ModelToolUseBlock)
-                    else ReasoningContent(
-                        block.id, block.presentation, block.continuation
-                    )
+                    else ReasoningContent(block.id, block.presentation)
                     for block in response.content
                 ),
                 parent_uuid=_last_uuid(session),
@@ -243,8 +233,19 @@ class AgentEngine:
                 provider_binding=request.request_binding,
                 request_input_tokens_estimate=request.request_input_tokens_estimate,
             )
+            replay_records = tuple(
+                ProviderReplayRecord(
+                    assistant_message.uuid,
+                    replay_content_id(index),
+                    block.continuation,
+                )
+                for index, block in enumerate(response.content)
+                if block.continuation is not None
+            )
             # 先持久化 assistant 的完整 tool_use，再进入执行阶段。
-            session.append_assistant_message(assistant_message)
+            session.append_assistant_message(
+                assistant_message, replay_records=replay_records
+            )
 
             final_text = "\n".join(
                 block.text
@@ -252,9 +253,9 @@ class AgentEngine:
                 if isinstance(block, ModelTextBlock)
             ).strip()
             tool_calls = tuple(
-                ToolCall(block.id, block.name, block.input, block.continuation)
-                for block in response.content
-                if isinstance(block, ModelToolUseBlock)
+                block
+                for block in assistant_message.content
+                if isinstance(block, ToolCall)
             )
             if not tool_calls:
                 yield AgentTurnSucceeded(
@@ -272,7 +273,6 @@ class AgentEngine:
                 async for tool_event in self._tool_round.run_round(
                     tool_calls,
                     assistant_message,
-                    result_store=result_store,
                 ):
                     if isinstance(tool_event, ToolCallStarted):
                         yield AgentToolStarted(
@@ -340,39 +340,27 @@ class AgentEngine:
     async def _compact_for_retry(
         self,
         session: Session,
-        context_session: ContextSession,
         trigger: CompactTrigger,
     ) -> None:
         """在当前 turn 内生成并提交 auto/reactive compact。"""
 
-        outcome = await self._context.compact(
-            _context_snapshot(session, context_session), trigger
-        )
+        outcome = await self._context.compact(session.context_snapshot(), trigger)
         session.commit_compaction(
             outcome.replacements, outcome.summary, outcome.boundary
         )
 
-    async def _plan_with_proactive_compact(
-        self, session: Session, context_session: ContextSession
-    ) -> ContextPlan:
+    async def _plan_with_proactive_compact(self, session: Session) -> ContextPlan:
         try:
-            return await self._plan_request(session, context_session)
+            return await self._plan_request(session)
         except ContextOverflow:
-            await self._compact_for_retry(session, context_session, "auto")
-            return await self._plan_request(session, context_session)
+            await self._compact_for_retry(session, "auto")
+            return await self._plan_request(session)
 
-    async def _plan_request(
-        self, session: Session, context_session: ContextSession
-    ) -> ContextPlan:
-        request = self._context.plan(
-            _context_snapshot(session, context_session), context_session
-        )
+    async def _plan_request(self, session: Session) -> ContextPlan:
+        request = self._context.plan(session.context_snapshot(), session)
         for replacement in request.new_content_replacements:
             session.commit_content_replacement(replacement)
-        context_session.add(
-            request.new_attachment_deliveries,
-            session.snapshot(),
-        )
+        session.add_context_deliveries(request.new_attachment_deliveries)
         return request
 
 
@@ -399,12 +387,6 @@ def _cancelled_results(
 def _last_uuid(session: Session) -> str | None:
     working_set = session.snapshot().working_set
     return working_set[-1].uuid if working_set else None
-
-
-def _context_snapshot(
-    session: Session, context_session: ContextSession
-) -> ContextSnapshot:
-    return context_session.snapshot(session.snapshot())
 
 
 __all__ = [

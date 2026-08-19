@@ -1,6 +1,6 @@
 # my-code 架构手册
 
-本目录描述 my-code 当前实现。`refactor/` 保存已完成模块化改造的原则、阶段记录和架构守卫规范；`state-management/` 保存下一轮状态所有权重构提案；被忽略的 `claude-code/` 只用于对照行为，不是本项目的包结构来源。
+本目录描述 my-code 当前实现。`refactor/` 与 `state-management/` 保存已完成改造的决策、迁移记录和验收证据；被忽略的 `claude-code/` 只用于对照行为，不是本项目的包结构来源。
 
 ## 架构地图
 
@@ -8,21 +8,21 @@
 CLI / TUI
     │
     v
-ChatService ──> Session + ContextSession + ToolResultStore
-    ├────────────> ContextEngine <──── AgentEngine
-    │                    │                 │
-    │                    ├── ContextPlanner ├── ModelClient ──> Anthropic / OpenAI Responses
-    │                    └── ContextCompactor
-    │
-    v
-ToolExecutor <──── ToolRoundExecutor <──── AgentEngine
-    │
-    └── Tool presentation + PermissionPolicy + Tool
+ChatService ──> AppState
+                   ├── WorkspaceState
+                   ├── PermissionState ──> PermissionPolicy
+                   ├── active Session
+                   │      ├── canonical conversation + working set
+                   │      ├── context delivery/cache + replay sidecar
+                   │      └── private JSONL + externalized tool results
+                   └── ProviderRuntime ──> ProviderRouter
 
-Conversation facts ──codec──> Session JSONL
+ChatService ──> AgentEngine ──> ContextEngine ──> provider-neutral ModelRequest
+                        ├─────> ModelClient ──> Anthropic / OpenAI Responses
+                        └─────> ToolRoundExecutor ──> ToolExecutor
 ```
 
-`conversation` 是内存对话事实的权威来源，`sessions` 负责持久化与恢复，`context` 负责发给模型的请求时投影与 compact proposal。活动会话由 `ChatService` 持有；`AgentEngine` 不保存会话状态，也不代理 context inspection、手动 compact 或工具历史展示。
+`AppState` 是活动 runtime 状态的唯一入口，但不是全局变量或 service locator。`Session` 是对话事实及其持久化的唯一所有者；`context` 只生成请求投影与 compact proposal。`ChatService` 协调用例，不复制 session、provider 或 permission 状态；Agent、Context、Tool 和 Provider adapter 均不持有完整 AppState。
 
 ## 文档索引
 
@@ -41,14 +41,14 @@ Conversation facts ──codec──> Session JSONL
 | [11-prompt-management.md](11-prompt-management.md) | System prompt 与用户上下文 |
 | [12-package-boundaries.md](12-package-boundaries.md) | 模块所有权、公开 API 和依赖方向 |
 
-下一轮重构提案见 [state-management/README.md](state-management/README.md)。其中内容在迁移完成前不代表当前代码行为。
+状态所有权的已实现设计与验收证据见 [state-management/README.md](state-management/README.md)。
 
 ## 统一术语
 
-- **Turn**：一条用户输入到正常完成或达到 step 上限。
-- **Step**：一次模型响应及其可选工具轮。
+- **Turn**：从一次真实用户输入开始，到下一次真实用户输入之前；可以包含多个 step。
+- **Step**：一次模型调用；只有完整响应才提交一条 AssistantMessage。
 - **ToolRound**：同一 AssistantMessage 中工具调用的串行执行和结果汇总。
-- **Conversation**：当前进程中的 canonical facts。
-- **Session**：Conversation 与 JSONL 提交边界。
-- **Context**：从 Conversation 构造的临时 ModelRequest，不是第二份历史。
+- **Conversation facts**：Session 私有持有的 provider-neutral canonical entries。
+- **Session**：内存事实、工作集、session context state 与透明持久化边界。
+- **Context**：从不可变 Session snapshot 构造的临时 ModelRequest，不是第二份历史。
 - **Compact**：写入摘要事实并建立新的工作集边界。

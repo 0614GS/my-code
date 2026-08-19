@@ -32,6 +32,9 @@ def test_registry_caches_stable_sections_and_recomputes_request_sections() -> No
         )
     )
 
+    assert calls == {"static": 1, "session": 0, "request": 0}
+    assert tuple(item.key for item in registry.runtime_snapshot) == ("static",)
+
     session_cache = {}
     first = registry.resolve(session_cache=session_cache)
     second = registry.resolve(session_cache=session_cache)

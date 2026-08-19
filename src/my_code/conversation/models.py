@@ -7,7 +7,6 @@ from my_code.conversation.primitives import new_id, utc_now
 from my_code.model.primitives import (
     JsonObject,
     ProviderBinding,
-    ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
     to_json_object,
@@ -17,7 +16,6 @@ from my_code.model.primitives import (
 @dataclass(frozen=True, slots=True)
 class TextContent:
     text: str
-    continuation: ProviderContinuationState | None = None
     kind: Literal["text"] = field(default="text", init=False)
 
 
@@ -26,7 +24,6 @@ class ToolCall:
     id: str
     name: str
     input: JsonObject
-    continuation: ProviderContinuationState | None = None
     kind: Literal["tool_call"] = field(default="tool_call", init=False)
 
     def __post_init__(self) -> None:
@@ -39,7 +36,6 @@ class ToolCall:
 class ReasoningContent:
     id: str
     presentation: ReasoningPresentation
-    continuation: ProviderContinuationState | None = None
     kind: Literal["reasoning"] = field(default="reasoning", init=False)
 
     def __post_init__(self) -> None:

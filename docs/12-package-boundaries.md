@@ -17,7 +17,8 @@ from my_code.permissions.models import PermissionDecision
 | 模块 | 拥有的能力 |
 | --- | --- |
 | `model` | provider-neutral 请求、响应、事件、usage 和能力 |
-| `conversation` | canonical message facts 和内存工作集 |
+| `conversation` | canonical entry/value 类型与事实不变量 |
+| `application` | AppState、活动 Session、ProviderRuntime 与 runtime operation lock |
 | `workspace` | 工作区路径与文件系统安全原语 |
 | `permissions` | 规则、决策、确认和 policy |
 | `prompts` | System prompt sections 与 registry |
@@ -25,11 +26,11 @@ from my_code.permissions.models import PermissionDecision
 | `config` | 路径、settings、provider profile 配置 |
 | `context` | Conversation 到 ModelRequest 的投影、预算与 compact proposal |
 | `tools` | Tool、registry、权限执行和 ToolRound |
-| `sessions` | JSONL、codec、catalog、恢复和提交 |
+| `sessions` | canonical conversation/working set、session context state、私有 JSONL、恢复和提交 |
 | `providers` | SDK adapter、发现、缓存和 runtime router |
 | `agent` | 无状态 turn 状态机和终态 |
 | `features.*` | 文件提及、Todo 等纵向能力 |
-| `chat` | 活动 session bundle 和用户级用例 |
+| `chat` | 基于 AppState 的用户级用例与安全 view |
 | `cli` / `tui` | host 输入输出 |
 | `bootstrap` | 唯一对象组装入口 |
 
@@ -42,7 +43,7 @@ permissions / prompts / auth / config
         ↓
 context / tools / sessions / providers
         ↓
-agent / features
+application / agent / features
         ↓
 chat
         ↓
@@ -55,13 +56,13 @@ bootstrap
 
 ## 状态边界
 
-- AgentEngine 无 Session 状态。
-- ContextEngine 无 Session facts；ContextSession 保存当前会话的临时 delivery/cache。
-- ChatService 持有一个不可拆分替换的 session bundle。
-- Conversation 保存内存事实；Session 提供持久化提交。
-- ContextSession 保存非持久化 delivery 和 cache。
-- ProviderRouter 只在模型调用之间切换连接。
-- PermissionPolicy 保存当前运行期规则，不负责磁盘写入。
+- AppState 是 workspace、active Session、runtime permissions 和 ProviderRuntime 的唯一入口，不是全局 service locator。
+- Session 是 canonical conversation、working set、非持久化 delivery/cache、工具结果绑定与 replay sidecar 的唯一所有者。
+- AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 不持有 AppState 或第二份 conversation。
+- ChatService 只协调 AppState operation，不复制其状态字段。
+- ProviderRuntime 原子切换 connection/client/capabilities/environment，并关闭旧 client。
+- PermissionState 持有唯一 runtime PermissionPolicy；policy 不负责磁盘写入。
+- request、turn、step、tool round、stream delta 与 pending approval 都是短生命周期状态。
 
 ## 架构守卫
 
@@ -72,7 +73,8 @@ AST 测试检查：
 - 跨模块导入是否来自声明了 `__all__` 的公开语义模块。
 - 是否导入私有模块、wildcard 或未声明符号。
 - 是否跨所有者 re-export。
-- Provider SDK、Textual、JSONL records 和 bootstrap 是否泄漏。
+- Provider SDK、Textual、Session 私有 JSONL 实现、AppState 和 bootstrap 是否泄漏。
+- 是否存在 Session 之外的可写 conversation collection 或第二份 permission 权威来源。
 
 测试可以导入实现细节以验证局部行为，但生产依赖必须满足上述规则。
 

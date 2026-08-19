@@ -94,19 +94,6 @@ class ActiveModelEnvironment:
     warning: str | None = None
 
 
-@dataclass(slots=True)
-class ActiveModelState:
-    """Mutable model environment switched atomically between model calls."""
-
-    environment: ActiveModelEnvironment
-
-    def get(self) -> ActiveModelEnvironment:
-        return self.environment
-
-    def set(self, environment: ActiveModelEnvironment) -> None:
-        self.environment = environment
-
-
 FALLBACK_INPUT_TOKENS = 200_000
 
 
@@ -153,7 +140,6 @@ def fallback_descriptor(model_id: str) -> ModelDescriptor:
 
 __all__ = [
     "ActiveModelEnvironment",
-    "ActiveModelState",
     "CapabilitySource",
     "FALLBACK_INPUT_TOKENS",
     "ModelCapabilities",

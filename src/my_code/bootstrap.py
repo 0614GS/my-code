@@ -9,6 +9,12 @@ from typing import Any
 from uuid import uuid4
 
 from my_code.agent.engine import AgentEngine
+from my_code.application.state import (
+    AppState,
+    PermissionState,
+    ProviderRuntime,
+    WorkspaceState,
+)
 from my_code.auth.credentials import CredentialStore
 from my_code.chat.events import MaxStepsReached, TurnSucceeded
 from my_code.chat.permissions import DeferredPermissionPrompter
@@ -36,7 +42,7 @@ from my_code.features.file_mentions.reader import WorkspaceAttachmentReader
 from my_code.features.file_mentions.suggestions import WorkspacePathSuggester
 from my_code.features.todos.reminder import TodoReminderAttachmentSource
 from my_code.features.todos.tool import TodoWriteTool
-from my_code.model.capabilities import ActiveModelState, resolve_environment
+from my_code.model.capabilities import resolve_environment
 from my_code.permissions.models import PermissionPrompter
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter, TerminalPrompter
@@ -51,7 +57,6 @@ from my_code.tools.base import ToolContext
 from my_code.tools.builtin import builtin_tools
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.registry import ToolRegistry
-from my_code.tools.result_store import ToolResultStore
 from my_code.tools.round_executor import ToolRoundExecutor
 from my_code.tui.app import MyCodeTui
 from my_code.workspace.local import Workspace
@@ -137,7 +142,7 @@ def _assemble_agent(
     PermissionPolicy,
     ToolContext,
     ToolExecutor,
-    ActiveModelState,
+    ProviderRuntime,
     Session,
 ]:
     actual_session_id = session_id or str(uuid4())
@@ -147,16 +152,13 @@ def _assemble_agent(
         settings.model,
         settings.model_limits,
     )
-    active_model_state = ActiveModelState(
-        resolve_environment(
-            descriptor,
-            requested_output_tokens=settings.max_output_tokens,
-            configured_trigger_tokens=settings.compact.trigger_input_tokens,
-            discovered_at=settings.model_discovered_at,
-            discovery_error=settings.model_discovery_error,
-        )
+    model_environment = resolve_environment(
+        descriptor,
+        requested_output_tokens=settings.max_output_tokens,
+        configured_trigger_tokens=settings.compact.trigger_input_tokens,
+        discovered_at=settings.model_discovered_at,
+        discovery_error=settings.model_discovery_error,
     )
-    model_environment = active_model_state.get()
     session = Session(
         settings.paths.project_state_dir,
         actual_session_id,
@@ -190,9 +192,6 @@ def _assemble_agent(
         policy=permission_policy,
         prompter=prompter,
         workspace=workspace,
-        result_store=ToolResultStore(
-            settings.paths.tool_results_dir(actual_session_id)
-        ),
         update_applier=PermissionUpdateApplier(
             permission_policy, SettingsStore(settings.paths)
         ).apply,
@@ -210,6 +209,7 @@ def _assemble_agent(
             compact=settings.compact,
         )
     )
+    provider_runtime = ProviderRuntime(provider, model_environment)
     planner = ContextPlanner(
         window=ContextWindow(settings.context_chars),
         prompt=build_system_prompt_registry(settings.cwd),
@@ -220,7 +220,7 @@ def _assemble_agent(
             (TodoReminderAttachmentSource(),)
         ),
         binding_resolver=lambda: provider.binding,
-        active_model_state=active_model_state,
+        model_environment=provider_runtime.environment,
     )
     context = ContextEngine(planner, ContextCompactor(provider))
     tool_round = ToolRoundExecutor(tool_executor)
@@ -238,7 +238,7 @@ def _assemble_agent(
         permission_policy,
         tool_context,
         tool_executor,
-        active_model_state,
+        provider_runtime,
         session,
     )
 
@@ -259,7 +259,7 @@ def bootstrap_chat(
         _,
         _,
         tool_executor,
-        active_model_state,
+        provider_runtime,
         session,
     ) = assembled
     return ChatService(
@@ -269,11 +269,11 @@ def bootstrap_chat(
         settings=settings,
         permission_prompter=prompter,
         provider_manager=ProviderManager(settings.paths),
-        provider_router=provider,
-        active_model_state=active_model_state,
-        session=session,
-        tool_result_store=lambda active_id: ToolResultStore(
-            settings.paths.tool_results_dir(active_id)
+        state=AppState(
+            workspace=WorkspaceState(tool_executor.workspace),
+            session=session,
+            permissions=PermissionState(tool_executor.policy),
+            provider=provider_runtime,
         ),
         attachment_loader=AttachmentLoader(
             WorkspaceAttachmentReader(settings.cwd, tool_executor.policy)
@@ -286,9 +286,11 @@ async def _submit(options: CliOptions, resolver: SettingsResolver) -> int:
     settings = resolver.resolve(options.settings_overrides, interactive=False)
     if settings.paths.providers_path.exists():
         settings = await discover_active_model(settings)
-    result = await bootstrap_chat(settings, options.session_id).submit(
-        options.prompt or ""
-    )
+    runtime = bootstrap_chat(settings, options.session_id)
+    try:
+        result = await runtime.submit(options.prompt or "")
+    finally:
+        await runtime.close()
     if isinstance(result, TurnSucceeded):
         print(result.text or "<no text response>")
         return 0
@@ -303,7 +305,11 @@ async def run(options: CliOptions, resolver: SettingsResolver) -> int:
     settings = resolver.resolve(options.settings_overrides, interactive=True)
     if settings.paths.providers_path.exists():
         settings = await discover_active_model(settings)
-    await MyCodeTui(bootstrap_chat(settings, options.session_id)).run()
+    runtime = bootstrap_chat(settings, options.session_id)
+    try:
+        await MyCodeTui(runtime).run()
+    finally:
+        await runtime.close()
     return 0
 
 

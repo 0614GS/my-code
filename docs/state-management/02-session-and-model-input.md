@@ -43,10 +43,7 @@ class SessionSnapshot:
 
 ```python
 type ConversationEntry = (
-    HumanMessage
-    | AssistantMessage
-    | ToolResultBatch
-    | ConversationSummary
+    HumanMessage | AssistantMessage | ToolResultBatch | ConversationSummary
 )
 ```
 
@@ -55,15 +52,13 @@ type ConversationEntry = (
 - `ToolResultBatch`：一个 assistant message 发起的工具调用结果，不属于 human 或 assistant role。
 - `ConversationSummary`：full compact 产生的可恢复事实和 working-set 锚点。
 
-推荐把当前 `ToolResultsMessage` 改名为 `ToolResultBatch` 或 `ToolResultsEntry`。名称不能包含 user/human role。
+当前实现使用 `ToolResultBatch`；名称和领域归属都不包含 user/human role。
 
 ### SessionContextEntry
 
 ```python
 type SessionContextEntry = (
-    AttachmentDelivery
-    | TodoReminderDelivery
-    | SessionInstruction
+    AttachmentDelivery | TodoReminderDelivery | SessionInstruction
 )
 ```
 
@@ -159,7 +154,7 @@ class ToolOutput:
 
 `ToolOutputs` 与 `UserInput`、`AssistantOutput` 并列。不得把它包装成 `ModelUserMessage` 以满足某个 Provider 的 schema。
 
-初始迁移可以只支持 text tool output，但公共模型应为后续 image/document/file output 留出显式扩展点，不能让 Provider SDK 类型进入 `model`。
+公共模型支持 text、image 和 document tool output，使用 provider-neutral content block；Provider SDK 类型不会进入 `model`。
 
 ## Provider 映射
 
@@ -234,4 +229,3 @@ ContextEngine 不负责：
 - Context 注入项不能破坏 tool call 与 tool output 的协议邻接要求；必要的 wire 邻接由 adapter 完成。
 - Provider 流式事件、部分文本和未完成 tool arguments 不成为 Session 事实。
 - full compact 不能保留孤立 ToolOutput 或删除其对应 ToolCall。
-

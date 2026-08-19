@@ -22,6 +22,7 @@ from my_code.model.request import (
     ModelToolUseBlock,
     PromptStability,
     ToolOutputs,
+    ToolOutputText,
     UserInput,
 )
 from my_code.prompts.models import PromptSection
@@ -73,7 +74,9 @@ def test_four_conversation_variants_project_exactly() -> None:
         )
     )
     assert isinstance(messages[2], ToolOutputs)
-    assert messages[2].results[0].content[0].text == "value"
+    result_content = messages[2].results[0].content[0]
+    assert isinstance(result_content, ToolOutputText)
+    assert result_content.text == "value"
     assert isinstance(messages[3], UserInput)
     assert "<conversation-summary>" in messages[3].content[0].text  # type: ignore[union-attr]
 
@@ -109,4 +112,6 @@ def test_microcompact_replaces_model_view_without_mutating_history() -> None:
     assert results.content[0].content == "x" * 100
     output = plan.request.input[-1]
     assert isinstance(output, ToolOutputs)
-    assert "compacted" in output.results[0].content[0].text
+    result_content = output.results[0].content[0]
+    assert isinstance(result_content, ToolOutputText)
+    assert "compacted" in result_content.text

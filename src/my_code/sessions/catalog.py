@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from my_code.conversation.models import HumanMessage
-from my_code.sessions.codec import decode_entry
+from my_code.sessions._codec import decode_entry
+from my_code.sessions._store import is_session_id
 from my_code.sessions.models import SessionMetadata, SessionStart
-from my_code.sessions.store import is_session_id
 
 _MAX_HEAD_BYTES = 128 * 1024
 _MAX_TAIL_BYTES = 128 * 1024

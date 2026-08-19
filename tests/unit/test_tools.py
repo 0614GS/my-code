@@ -33,7 +33,6 @@ from my_code.tools.invocation import ToolInvocation
 from my_code.tools.paths import resolve_workspace_path
 from my_code.tools.presentation import ToolResultPresentation
 from my_code.tools.registry import ToolRegistry
-from my_code.tools.result_store import ToolResultStore
 from my_code.workspace.local import Workspace
 
 
@@ -43,7 +42,6 @@ def build_executor(tmp_path: Path, mode: PermissionMode) -> ToolExecutor:
         policy=PermissionPolicy(mode),
         prompter=HeadlessPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
 
@@ -210,7 +208,6 @@ async def test_sensitive_path_can_run_after_one_time_approval(tmp_path: Path) ->
         policy=PermissionPolicy(PermissionMode.BYPASS),
         prompter=prompter,
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / "results"),
     )
 
     outcome = await executor.execute(
@@ -240,7 +237,6 @@ async def test_remembered_write_rule_persists_to_local_settings(
         policy=policy,
         prompter=prompter,
         workspace=Workspace(workspace),
-        result_store=ToolResultStore(tmp_path / "results"),
         update_applier=PermissionUpdateApplier(policy, SettingsStore(paths)).apply,
     )
 
@@ -279,13 +275,11 @@ async def test_unknown_tool_produces_matching_error_result(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_permission_denial_feedback_is_returned_to_model(tmp_path: Path) -> None:
-    store = ToolResultStore(tmp_path / ".my-code" / "results")
     executor = ToolExecutor(
         registry=ToolRegistry(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=FeedbackPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=store,
     )
 
     outcome = await executor.execute(
@@ -308,7 +302,6 @@ async def test_permission_prompt_failure_fails_closed(tmp_path: Path) -> None:
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=ExplodingPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / "results"),
     )
 
     outcome = await executor.execute(
@@ -330,7 +323,6 @@ async def test_permission_prompt_cancellation_destroys_pending_request(
         PermissionPolicy(),
         prompter,
         Workspace(tmp_path),
-        ToolResultStore(tmp_path / "results"),
     )
     task = asyncio.create_task(
         executor.execute(
@@ -354,7 +346,6 @@ async def test_audit_failure_prevents_tool_execution(tmp_path: Path) -> None:
         PermissionPolicy(PermissionMode.ACCEPT_EDITS),
         HeadlessPrompter(),
         Workspace(tmp_path),
-        ToolResultStore(tmp_path / "results"),
         audit=ExplodingAudit(),
     )
 
@@ -403,7 +394,6 @@ async def test_read_only_bash_executes_without_permission_prompt(
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=FailingPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(
@@ -445,7 +435,6 @@ async def test_session_allow_rule_removes_later_prompts(tmp_path: Path) -> None:
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=prompter,
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     first = await executor.execute(
@@ -490,7 +479,6 @@ async def test_explicit_deny_precedes_session_allow(tmp_path: Path) -> None:
         policy=policy,
         prompter=prompter,
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(
@@ -525,7 +513,6 @@ async def test_explicit_ask_precedes_session_allow(tmp_path: Path) -> None:
         policy=policy,
         prompter=FeedbackPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(
@@ -555,7 +542,6 @@ async def test_new_executor_does_not_inherit_session_rules(
                 policy=PermissionPolicy(PermissionMode.DEFAULT),
                 prompter=prompter,
                 workspace=Workspace(tmp_path),
-                result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
             ),
             prompter,
         )
@@ -613,7 +599,6 @@ async def test_executor_runs_the_exact_input_approved_by_tool_policy(
         policy=PermissionPolicy(),
         prompter=FailingPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(
@@ -641,7 +626,6 @@ async def test_presentation_failure_does_not_change_successful_tool_result(
         policy=PermissionPolicy(),
         prompter=FailingPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / ".my-code" / "results"),
     )
 
     outcome = await executor.execute(
@@ -662,7 +646,6 @@ async def test_unexpected_tool_exception_is_closed_as_protocol_result(
         PermissionPolicy(),
         HeadlessPrompter(),
         Workspace(tmp_path),
-        ToolResultStore(tmp_path / "results"),
     )
 
     outcome = await executor.execute(ToolCall("explode", "Normalize", {}))

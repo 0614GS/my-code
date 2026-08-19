@@ -16,7 +16,6 @@ from my_code.permissions.prompt import HeadlessPrompter
 from my_code.tools.builtin import builtin_tools
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from my_code.tools.registry import ToolRegistry
-from my_code.tools.result_store import ToolResultStore
 from my_code.tools.round_executor import (
     ToolCallFinished,
     ToolRoundCompleted,
@@ -32,7 +31,6 @@ def build_round_executor(tmp_path: Path) -> ToolRoundExecutor:
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=HeadlessPrompter(),
         workspace=Workspace(tmp_path),
-        result_store=ToolResultStore(tmp_path / "results"),
     )
     return ToolRoundExecutor(executor)
 
@@ -53,12 +51,7 @@ async def test_round_executor_is_serial_and_returns_one_completed_message(
     )
     calls = tuple(block for block in assistant.content if isinstance(block, ToolCall))
 
-    events = [
-        event
-        async for event in runner.run_round(
-            calls, assistant, result_store=runner.executor.result_store
-        )
-    ]
+    events = [event async for event in runner.run_round(calls, assistant)]
 
     finished = [event for event in events if isinstance(event, ToolCallFinished)]
     completed = [event for event in events if isinstance(event, ToolRoundCompleted)]
@@ -85,18 +78,13 @@ async def test_round_executor_cancellation_closes_every_call(tmp_path: Path) -> 
         usage=TokenUsage(),
     )
 
-    async def cancel(
-        _call: ToolCall, *, result_store: ToolResultStore | None = None
-    ) -> ToolExecutionOutcome:
-        del result_store
+    async def cancel(_call: ToolCall) -> ToolExecutionOutcome:
         raise asyncio.CancelledError
 
     runner.executor.execute = cancel  # type: ignore[assignment]
     events: list[ToolRoundEvent] = []
     with pytest.raises(asyncio.CancelledError):
-        async for event in runner.run_round(
-            calls, assistant, result_store=runner.executor.result_store
-        ):
+        async for event in runner.run_round(calls, assistant):
             events.append(event)
 
     finished = [event for event in events if isinstance(event, ToolCallFinished)]

@@ -26,7 +26,6 @@ from my_code.context.attachments.models import (
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSession
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import (
     AssistantMessage,
@@ -76,7 +75,6 @@ from my_code.sessions.session import Session
 from my_code.tools.builtin import builtin_tools
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from my_code.tools.registry import ToolRegistry
-from my_code.tools.result_store import ToolResultStore
 from my_code.tools.round_executor import ToolRoundExecutor
 from my_code.workspace.local import Workspace
 
@@ -137,22 +135,15 @@ class BoundEngine:
         self,
         engine: AgentEngine,
         session: Session,
-        result_store: ToolResultStore,
     ) -> None:
         self.engine = engine
         self.session = session
-        self.context = ContextSession()
-        self.result_store = result_store
 
     async def submit(self, turn_input: AgentTurnInput):
-        return await self.engine.submit(
-            self.session, self.context, self.result_store, turn_input
-        )
+        return await self.engine.submit(self.session, turn_input)
 
     def stream(self, turn_input: AgentTurnInput):
-        return self.engine.stream(
-            self.session, self.context, self.result_store, turn_input
-        )
+        return self.engine.stream(self.session, turn_input)
 
     @property
     def history(self):
@@ -160,7 +151,7 @@ class BoundEngine:
 
     @property
     def context_snapshot(self):
-        return self.context.snapshot(self.session.snapshot())
+        return self.session.context_snapshot()
 
 
 def _engine(
@@ -172,13 +163,11 @@ def _engine(
 ) -> tuple[BoundEngine, FakeModel, Session, ToolRoundExecutor]:
     session_id = "11111111-1111-1111-1111-111111111111"
     registry = ToolRegistry((*builtin_tools(), TodoWriteTool()))
-    result_store = ToolResultStore(tmp_path / "results")
     executor = ToolExecutor(
         registry,
         PermissionPolicy(PermissionMode.BYPASS),
         HeadlessPrompter(),
         Workspace(tmp_path),
-        result_store,
     )
     model = model_type(outputs)
     planner = ContextPlanner(
@@ -198,7 +187,7 @@ def _engine(
         context=context,
         max_steps=max_steps,
     )
-    return BoundEngine(engine, session, result_store), model, session, tool_round
+    return BoundEngine(engine, session), model, session, tool_round
 
 
 @pytest.mark.asyncio
@@ -225,6 +214,7 @@ async def test_native_stream_lifecycle_is_not_replayed_from_final_output(
     assert sum(isinstance(event, AgentTextCompleted) for event in events) == 1
     assistant = conversation.snapshot().history[-1]
     assert isinstance(assistant, AssistantMessage)
+    assert assistant.content[-1] == TextContent("draft corrected")
     assert sum(isinstance(block, ReasoningContent) for block in assistant.content) == 1
 
 
@@ -280,7 +270,9 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
 
 
 @pytest.mark.asyncio
-async def test_resume_discards_live_context_session_delivery(tmp_path: Path) -> None:
+async def test_replacement_session_discards_live_context_delivery(
+    tmp_path: Path,
+) -> None:
     engine, _, _, _ = _engine(
         tmp_path,
         [ModelOutput((ModelTextBlock("first"),), "end_turn", TokenUsage(3, 1))],
@@ -298,7 +290,6 @@ async def test_resume_discards_live_context_session_delivery(tmp_path: Path) -> 
         "22222222-2222-2222-2222-222222222222",
     )
     engine.session = replacement
-    engine.context = ContextSession()
 
     assert engine.context_snapshot.attachment_deliveries == ()
 
@@ -392,11 +383,12 @@ async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
         if isinstance(item, AssistantOutput)
         for block in item.content
     )
-    persisted = (
-        Session(tmp_path / "sessions", conversation.session_id).snapshot().history[1]
-    )
+    restored = Session(tmp_path / "sessions", conversation.session_id).snapshot()
+    persisted = restored.history[1]
     assert isinstance(persisted, AssistantMessage)
     assert persisted.content[0].kind == "reasoning"
+    assert not hasattr(persisted.content[0], "continuation")
+    assert len(restored.replay_records) == 1
 
 
 @pytest.mark.asyncio
@@ -589,12 +581,10 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
     )
     execute = tool_round.executor.execute
 
-    async def cancel_second(
-        call: ToolCall, *, result_store: ToolResultStore | None = None
-    ) -> ToolExecutionOutcome:
+    async def cancel_second(call: ToolCall) -> ToolExecutionOutcome:
         if call.id == "read-1":
             raise asyncio.CancelledError
-        return await execute(call, result_store=result_store)
+        return await execute(call)
 
     tool_round.executor.execute = cancel_second  # type: ignore[assignment]
     events = []

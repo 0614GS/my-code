@@ -5,6 +5,7 @@ import pytest
 
 from my_code.config.providers import ReasoningConfig
 from my_code.model.events import (
+    ModelOutputCompleted,
     ModelReasoningCompleted,
     ModelReasoningDelta,
     ModelReasoningStarted,
@@ -28,6 +29,8 @@ from my_code.model.request import (
     ModelToolUseBlock,
     SystemPrompt,
     ToolOutput,
+    ToolOutputDocument,
+    ToolOutputImage,
     ToolOutputs,
     ToolOutputText,
     UserInput,
@@ -223,6 +226,45 @@ def test_openai_maps_multimodal_user_input_without_provider_types_in_core() -> N
     ]
 
 
+def test_openai_maps_multimodal_tool_output_without_role_wrapper() -> None:
+    provider = _provider()
+    items = (
+        AssistantOutput((ModelToolUseBlock("call", "Read", {}),)),
+        ToolOutputs(
+            (
+                ToolOutput(
+                    "call",
+                    (
+                        ToolOutputText("caption"),
+                        ToolOutputImage("image/png", "aW1hZ2U="),
+                        ToolOutputDocument("application/pdf", "ZG9j", "notes.pdf"),
+                    ),
+                ),
+            )
+        ),
+    )
+
+    output = provider._input(items)[1]
+
+    assert output == {
+        "type": "function_call_output",
+        "call_id": "call",
+        "output": [
+            {"type": "input_text", "text": "caption"},
+            {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,aW1hZ2U=",
+                "detail": "auto",
+            },
+            {
+                "type": "input_file",
+                "file_data": "data:application/pdf;base64,ZG9j",
+                "filename": "notes.pdf",
+            },
+        ],
+    }
+
+
 def test_mismatched_binding_does_not_replay_encrypted_item() -> None:
     provider = _provider()
     other = ProviderContinuationState(
@@ -315,6 +357,76 @@ def test_stream_normalizer_serializes_interleaved_output_items() -> None:
     payloads = normalizer.feed(text_done)
     assert [type(payload) for payload in payloads] == [ModelTextCompleted]
     assert payloads[0].text == "final"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_emits_final_snapshot_after_ephemeral_deltas() -> None:
+    provider = _provider()
+    final = SimpleNamespace(
+        status="completed",
+        output=[
+            Item(
+                {
+                    "type": "message",
+                    "id": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "final"}],
+                }
+            )
+        ],
+        usage=SimpleNamespace(
+            input_tokens=3,
+            output_tokens=1,
+            input_tokens_details=SimpleNamespace(cached_tokens=0),
+        ),
+    )
+    raw_events = (
+        SimpleNamespace(
+            type="response.output_text.delta",
+            sequence_number=1,
+            output_index=0,
+            content_index=0,
+            delta="draft",
+        ),
+        SimpleNamespace(
+            type="response.completed",
+            sequence_number=2,
+            response=final,
+        ),
+    )
+
+    class EventStream:
+        def __aiter__(self) -> "EventStream":
+            self._events = iter(raw_events)
+            return self
+
+        async def __anext__(self) -> object:
+            try:
+                return next(self._events)
+            except StopIteration as error:
+                raise StopAsyncIteration from error
+
+    class Responses:
+        async def create(self, **_: object) -> EventStream:
+            return EventStream()
+
+    provider.client = SimpleNamespace(responses=Responses())  # type: ignore[assignment]
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (UserInput((InputText("hello"),)),),
+        (),
+        100,
+    )
+
+    events = [event async for event in provider.stream(request)]
+    payloads = [event.payload for event in events]
+
+    completed = payloads[-1]
+    assert isinstance(completed, ModelOutputCompleted)
+    assert len(completed.output.content) == 1
+    final_text = completed.output.content[0]
+    assert isinstance(final_text, ModelTextBlock)
+    assert final_text.text == "final"
 
 
 @pytest.mark.asyncio

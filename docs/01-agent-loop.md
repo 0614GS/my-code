@@ -2,22 +2,23 @@
 
 ## 所有权
 
-`agent.engine.AgentEngine` 是无状态的 turn 执行器。它只持有模型客户端、统一的 `ContextEngine`、工具轮执行器和 step 配置；`Session`、`ContextSession`、`ToolResultStore` 与用户输入都由调用方逐次传入。
+`agent.engine.AgentEngine` 是无活动会话状态的 turn 执行器。它持有模型调用能力、`ContextEngine`、工具轮执行器和 step 配置；活动 `Session` 与用户输入由 application service 逐次传入。
 
-`chat.service.ChatService` 是有状态的用户级编排器，持有当前活动 session bundle，并串行化 submit、stream、compact、resume 和 provider 切换。
+`chat.service.ChatService` 是用户级编排器，只持有一个 `AppState` 入口，并通过同一 operation lock 串行化 submit、stream、compact、resume 和 provider 切换。活动 Session、权限和 ProviderRuntime 的权威引用都在 AppState。
 
 ## 一次 Turn
 
 ```text
 ChatService.stream(prompt)
   -> 加载显式 attachment
-  -> AgentEngine.stream(session, context, result_store, input)
+  -> AgentEngine.stream(active_session, input)
      -> 先提交 HumanMessage
-     -> ContextEngine.plan()
+     -> Step 1: ContextEngine.plan(Session snapshot)
      -> ModelClient.stream()
      -> 提交完整 AssistantMessage
      -> 无工具：产生 AgentTurnSucceeded
-     -> 有工具：ToolRoundExecutor -> 提交 ToolResultsMessage -> 下一 Step
+     -> 有工具：ToolRoundExecutor -> Session 提交 ToolResultBatch
+     -> Step 2..N: 重新投影 Context 并调用模型
      -> 达到上限：产生 AgentMaxStepsReached
   -> 投影为 Chat events
 ```
@@ -29,7 +30,7 @@ ChatService.stream(prompt)
 - 正常完成与 step 上限直接使用 `agent.models` 中的两个终态值，不再额外包装 completed event。
 - provider 缺少最终响应、事件序号不连续或展示块重叠时立即失败。
 - context overflow 先尝试一次 reactive compact，再重新构造请求。
-- 工具取消时为尚未完成的调用补齐错误结果，提交闭合的 ToolResultsMessage 后继续抛出取消。
+- 工具取消时为尚未完成的调用补齐错误结果，提交闭合的 ToolResultBatch 后继续抛出取消。
 - 网络或模型失败不会撤销已经提交的 HumanMessage，恢复时仍能看到用户输入。
 
 ## 不变量
@@ -39,6 +40,6 @@ ChatService.stream(prompt)
 - 一个模型请求只接受一个最终 `ModelOutputCompleted`。
 - AssistantMessage 必须先持久化，工具才可以执行。
 - 每个 ToolCall 最终都有一个 ToolResult。
-- 一个活动 session bundle 同一时刻只运行一个会改变状态的 Chat 操作。
+- 一个 AppState 同一时刻只运行一个会改变状态的 application operation。
 
 主要入口：`agent.engine`、`agent.events`、`agent.models`、`chat.service`。

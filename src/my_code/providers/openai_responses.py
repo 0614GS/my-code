@@ -43,7 +43,10 @@ from my_code.model.request import (
     ModelTextBlock,
     ModelToolUseBlock,
     ToolOutput,
+    ToolOutputDocument,
+    ToolOutputImage,
     ToolOutputs,
+    ToolOutputText,
     UserInput,
 )
 
@@ -434,9 +437,36 @@ def _openai_user_input(item: UserInput) -> dict[str, object]:
     return {"role": "user", "content": content}
 
 
-def _openai_tool_output(output: ToolOutput) -> str:
-    text = "\n".join(block.text for block in output.content)
-    return f"Error: {text}" if output.is_error else text
+def _openai_tool_output(output: ToolOutput) -> str | list[dict[str, object]]:
+    text_blocks = tuple(
+        block for block in output.content if isinstance(block, ToolOutputText)
+    )
+    if len(text_blocks) == len(output.content):
+        text = "\n".join(block.text for block in text_blocks)
+        return f"Error: {text}" if output.is_error else text
+    content: list[dict[str, object]] = []
+    if output.is_error:
+        content.append({"type": "input_text", "text": "Error:"})
+    for block in output.content:
+        if isinstance(block, ToolOutputText):
+            content.append({"type": "input_text", "text": block.text})
+        elif isinstance(block, ToolOutputImage):
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": f"data:{block.media_type};base64,{block.data}",
+                    "detail": "auto",
+                }
+            )
+        elif isinstance(block, ToolOutputDocument):
+            item: dict[str, object] = {
+                "type": "input_file",
+                "file_data": f"data:{block.media_type};base64,{block.data}",
+            }
+            if block.name is not None:
+                item["filename"] = block.name
+            content.append(item)
+    return content
 
 
 def _validate_openai_payload(payload: JsonObject) -> None:

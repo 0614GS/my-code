@@ -99,69 +99,69 @@
 
 ### Context state
 
-- [ ] 将 attachment delivery 移入 Session 私有 context state。
-- [ ] 将 Todo reminder delivery 移入 Session 私有 context state。
-- [ ] 将 session prompt cache 和 user-context cache 移入 Session。
-- [ ] 将 runtime-stable prompt section 改为 bootstrap 时生成的不可变 snapshot，删除 `PromptRegistry` 的隐式 runtime cache。
-- [ ] 删除或降级 `ContextSession`；ContextEngine 不再持有 session 生命周期状态。
-- [ ] 明确 resume/switch 后每类 cache 和 delivery 的重建或清空规则。
+- [x] 将 attachment delivery 移入 Session 私有 context state。
+- [x] 将 Todo reminder delivery 移入 Session 私有 context state。
+- [x] 将 session prompt cache 和 user-context cache 移入 Session。
+- [x] 将 runtime-stable prompt section 改为 bootstrap 时生成的不可变 snapshot，删除 `PromptRegistry` 的隐式 runtime cache。
+- [x] 删除或降级 `ContextSession`；ContextEngine 不再持有 session 生命周期状态。
+- [x] 明确 resume/switch 后每类 cache 和 delivery 的重建或清空规则。
 
 ### Tool result state
 
-- [ ] 将 `ToolResultStore` 的 session binding 移入 Session 私有持久化。
-- [ ] ToolExecutor 返回完整领域结果，不持有活动 session 目录。
-- [ ] Session 提交负责外置大结果、record 和 presentation snapshot 的一致性。
-- [ ] 保持取消与异常时全部 ToolCall 被闭合。
+- [x] 将 `ToolResultStore` 的 session binding 移入 Session 私有持久化。
+- [x] ToolExecutor 返回完整领域结果，不持有活动 session 目录。
+- [x] Session 提交负责外置大结果、record 和 presentation snapshot 的一致性。
+- [x] 保持取消与异常时全部 ToolCall 被闭合。
 
 ### Provider replay
 
-- [ ] 从 Conversation content 移除 `ProviderContinuationState` 字段。
-- [ ] 增加按 entry/content ID 关联的 `ProviderReplayRecord`。
-- [ ] 将 OpenAI response item 和 Anthropic thinking payload 迁入 sidecar。
-- [ ] 保持 binding 匹配、active-trajectory/working-context scope 和 compact 裁剪。
-- [ ] 恢复旧 transcript 时把旧 continuation record 投影到新 sidecar。
+- [x] 从 Conversation content 移除 `ProviderContinuationState` 字段。
+- [x] 增加按 entry/content ID 关联的 `ProviderReplayRecord`。
+- [x] 将 OpenAI response item 和 Anthropic thinking payload 迁入 sidecar。
+- [x] 保持 binding 匹配、active-trajectory/working-context scope 和 compact 裁剪。
+- [x] 恢复旧 transcript 时把旧 continuation record 投影到新 sidecar。
 
 退出条件：切换 Session 时只需替换一个 Session 引用即可同时切换 messages、context state、工具结果和 replay state。
 
 ## 5. 引入 AppState
 
-- [ ] 定义 `AppState` 和 `WorkspaceState`、`PermissionState`、`ProviderRuntime` 边界。
-- [ ] 将 `ChatService._active` session bundle 移入 AppState。
-- [ ] 将 `ActiveModelState` 合并到 ProviderRuntime。
-- [ ] 将 runtime permission mode/rules 的唯一引用移入 PermissionState。
-- [ ] 将 session/provider switch 互斥与原子替换移入明确 application operation。
-- [ ] ChatService 改为持有 AppState 并协调用例，不再拥有重复状态字段。
-- [ ] AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 不得持有 AppState。
-- [ ] CLI/TUI 只通过 application service 读取安全的状态 view。
-- [ ] runtime close 明确关闭 Provider client 和 pending host operation。
+- [x] 定义 `AppState` 和 `WorkspaceState`、`PermissionState`、`ProviderRuntime` 边界。
+- [x] 将 `ChatService._active` session bundle 移入 AppState。
+- [x] 将 `ActiveModelState` 合并到 ProviderRuntime。
+- [x] 将 runtime permission mode/rules 的唯一引用移入 PermissionState。
+- [x] 将 session/provider switch 互斥与原子替换移入明确 application operation。
+- [x] ChatService 改为持有 AppState 并协调用例，不再拥有重复状态字段。
+- [x] AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 不得持有 AppState。
+- [x] CLI/TUI 只通过 application service 读取安全的状态 view。
+- [x] runtime close 明确关闭 Provider client 和 pending host operation。
 
 退出条件：runtime 活动状态可以从一个 AppState 图完整解释；ChatService 不再是隐式状态容器。
 
 ## 6. 删除兼容路径并增加架构守卫
 
-- [ ] 删除 `ModelUserMessage`、`ModelAssistantMessage` 和 `ModelToolResultBlock` 的旧生产入口。
-- [ ] 删除公开可变 `Conversation` API。
-- [ ] 删除 `ContextSession` 或遗留 session bundle。
-- [ ] 删除 ToolExecutor 的活动 result-store binding。
-- [ ] 更新 AST 依赖允许表。
-- [ ] 增加守卫：Provider SDK 类型只能出现在 `providers`。
-- [ ] 增加守卫：JSONL records/store 只能出现在 `sessions` 私有实现。
-- [ ] 增加守卫：除 application/bootstrap 外不得依赖完整 AppState。
-- [ ] 增加守卫：除 Session 外不得保存或修改 canonical conversation collection。
-- [ ] 搜索并清理 `ToolResultsMessage`、`ModelMessage.messages` 等旧术语。
+- [x] 删除 `ModelUserMessage`、`ModelAssistantMessage` 和 `ModelToolResultBlock` 的旧生产入口。
+- [x] 删除公开可变 `Conversation` API。
+- [x] 删除 `ContextSession` 或遗留 session bundle。
+- [x] 删除 ToolExecutor 的活动 result-store binding。
+- [x] 更新 AST 依赖允许表。
+- [x] 增加守卫：Provider SDK 类型只能出现在 `providers`。
+- [x] 增加守卫：JSONL records/store 只能出现在 `sessions` 私有实现。
+- [x] 增加守卫：除 application service/bootstrap/host 边界外不得依赖完整 AppState。
+- [x] 增加守卫：除 Session 外不得保存或修改 canonical conversation collection。
+- [x] 搜索并清理 `ToolResultsMessage`、`ModelMessage.messages` 等旧术语。
 
 退出条件：没有双重 API、兼容转发层或临时架构例外。
 
 ## 7. 最终同步与验证
 
-- [ ] 更新 `docs/README.md` 架构图和统一术语。
-- [ ] 更新 `docs/01-agent-loop.md` 的多 step turn 流程。
-- [ ] 更新 messages、sessions、context、providers、permissions 和 package boundary 文档。
-- [ ] 把本目录从“提案”标记为“已实现”，或将最终内容合并到顶层当前实现文档。
-- [ ] 运行 `uv run ruff format .`。
-- [ ] 运行 `uv run ruff check .`。
-- [ ] 运行 `uv run pyright`。
-- [ ] 运行 `uv run pytest`。
-- [ ] 逐项关闭 [04-acceptance-criteria.md](04-acceptance-criteria.md) 中的所有验收项。
+- [x] 更新 `docs/README.md` 架构图和统一术语。
+- [x] 更新 `docs/01-agent-loop.md` 的多 step turn 流程。
+- [x] 更新 messages、sessions、context、providers、permissions 和 package boundary 文档。
+- [x] 把本目录从“提案”标记为“已实现”，或将最终内容合并到顶层当前实现文档。
+- [x] 运行 `uv run ruff format .`。
+- [x] 运行 `uv run ruff check .`。
+- [x] 运行 `uv run pyright`。
+- [x] 运行 `uv run pytest`。
+- [x] 逐项关闭 [04-acceptance-criteria.md](04-acceptance-criteria.md) 中的所有验收项。
 
 退出条件：代码、测试、架构守卫和当前实现文档对状态所有权给出同一个答案。

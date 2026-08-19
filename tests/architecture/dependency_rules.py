@@ -12,6 +12,9 @@ REPOSITORY_ROOT = Path(__file__).parents[2]
 SOURCE_ROOT = REPOSITORY_ROOT / "src" / PACKAGE_NAME
 
 ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
+    "application": frozenset(
+        {"model", "permissions", "providers", "sessions", "workspace"}
+    ),
     "model": frozenset(),
     "workspace": frozenset(),
     "permissions": frozenset({"model"}),
@@ -21,7 +24,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "conversation": frozenset({"model"}),
     "context": frozenset({"conversation", "model", "prompts"}),
     "tools": frozenset({"conversation", "model", "permissions", "workspace"}),
-    "sessions": frozenset({"conversation", "model", "tools"}),
+    "sessions": frozenset({"context", "conversation", "model", "prompts", "tools"}),
     "providers": frozenset({"auth", "config", "model"}),
     "agent": frozenset({"context", "conversation", "model", "sessions", "tools"}),
     "features.file_mentions": frozenset(
@@ -35,6 +38,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "chat": frozenset(
         {
             "agent",
+            "application",
             "config",
             "context",
             "conversation",
@@ -64,6 +68,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "bootstrap": frozenset(
         {
             "agent",
+            "application",
             "auth",
             "chat",
             "cli",
@@ -318,7 +323,28 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
                         )
                     )
                 if (
-                    imported_module == "my_code.sessions.records"
+                    imported_module == "my_code.application.state"
+                    and relative_path
+                    not in {
+                        "src/my_code/bootstrap.py",
+                        "src/my_code/chat/service.py",
+                    }
+                ):
+                    leaks.append(
+                        TechnicalLeak(
+                            relative_path,
+                            _line_number(node),
+                            "app-state",
+                            imported_module,
+                        )
+                    )
+                if (
+                    imported_module
+                    in {
+                        "my_code.sessions._records",
+                        "my_code.sessions._codec",
+                        "my_code.sessions._store",
+                    }
                     and source != "sessions"
                 ):
                     leaks.append(

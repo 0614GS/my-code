@@ -45,6 +45,11 @@ class FakeProvider:
         self.closed = True
 
 
+class FailingCloseProvider(FakeProvider):
+    async def close(self) -> None:
+        raise OSError("close failed")
+
+
 def connection(provider_id: str) -> ProviderConnection:
     return ProviderConnection(
         id=provider_id,
@@ -87,6 +92,19 @@ async def test_router_switches_adapter_and_closes_previous() -> None:
 
 
 @pytest.mark.asyncio
+async def test_router_close_failure_does_not_publish_new_connection() -> None:
+    router = ProviderRouter(
+        connection("first"), factory=lambda value: FailingCloseProvider(value.id)
+    )
+    await collect_model_output(router, empty_request())
+
+    with pytest.raises(OSError, match="close failed"):
+        await router.switch(connection("second"))
+
+    assert router.connection.id == "first"
+
+
+@pytest.mark.asyncio
 async def test_router_forwards_provider_stream_and_final_event() -> None:
     router = ProviderRouter(
         connection("complete-only"), factory=lambda _: FakeProvider("ok")
@@ -98,3 +116,20 @@ async def test_router_forwards_provider_stream_and_final_event() -> None:
     assert isinstance(events[0].payload, ModelTextStarted)
     assert isinstance(events[1].payload, ModelTextCompleted)
     assert isinstance(events[2].payload, ModelOutputCompleted)
+
+
+@pytest.mark.asyncio
+async def test_router_close_releases_active_provider() -> None:
+    built: list[FakeProvider] = []
+
+    def factory(value: ProviderConnection) -> FakeProvider:
+        provider = FakeProvider(value.id)
+        built.append(provider)
+        return provider
+
+    router = ProviderRouter(connection("active"), factory=factory)
+    await collect_model_output(router, empty_request())
+
+    await router.close()
+
+    assert built[0].closed is True

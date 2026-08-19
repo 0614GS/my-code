@@ -1,8 +1,9 @@
-"""带父链校验的仅追加 JSONL 会话记录。"""
+"""带父链校验的 Session 私有 JSONL 会话记录。"""
 
 import json
 import os
 import re
+import tempfile
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,18 +17,21 @@ from my_code.conversation.models import (
     ToolResultBatch,
 )
 from my_code.conversation.state import CompactBoundary, ContentReplacement
-from my_code.sessions.codec import (
+from my_code.model.primitives import ProviderReplayRecord, replay_content_id
+from my_code.sessions._codec import (
     decode_entry,
     encode_boundary,
     encode_message,
     encode_metadata,
     encode_replacement,
+    encode_replay,
     encode_start,
     encode_tool_presentation,
     presentations_from_json,
+    replay_from_json,
 )
+from my_code.sessions._records import ToolPresentationRecord
 from my_code.sessions.models import SessionMetadata, SessionSnapshot, SessionStart
-from my_code.sessions.records import ToolPresentationRecord
 from my_code.tools.presentation import ToolResultPresentation
 
 _UUID_PATTERN = re.compile(
@@ -87,6 +91,7 @@ class SessionStore:
         self._content_replacements: dict[str, ContentReplacement] | None = None
         self._boundaries: dict[str, CompactBoundary] | None = None
         self._tool_presentations: dict[str, ToolResultPresentation] | None = None
+        self._replay_records: dict[tuple[str, str], ProviderReplayRecord] | None = None
 
     @property
     def session_id(self) -> str:
@@ -104,6 +109,7 @@ class SessionStore:
             self._content_replacements = {}
             self._boundaries = {}
             self._tool_presentations = {}
+            self._replay_records = {}
             return SessionSnapshot(history=(), working_set=())
 
         messages: list[ConversationEntry] = []
@@ -112,6 +118,7 @@ class SessionStore:
         replacements: dict[str, ContentReplacement] = {}
         boundaries: dict[str, CompactBoundary] = {}
         presentations: dict[str, ToolResultPresentation] = {}
+        replay_records: dict[tuple[str, str], ProviderReplayRecord] = {}
         contents = self.path.read_bytes()
         lines = contents.splitlines(keepends=True)
         start: SessionStart | None = None
@@ -147,6 +154,15 @@ class SessionStore:
                     )
                 for tool_use_id, presentation in presentations_from_json(raw):
                     presentations[tool_use_id] = presentation
+                for replay in replay_from_json(raw):
+                    key = (replay.entry_id, replay.content_id)
+                    previous_replay = replay_records.get(key)
+                    if previous_replay is not None and previous_replay != replay:
+                        raise ValueError(
+                            "Conflicting embedded and sidecar provider replay: "
+                            f"{replay.entry_id}/{replay.content_id}"
+                        )
+                    replay_records[key] = replay
                 entry = decode_entry(raw)
                 if line_number == 1:
                     if not isinstance(entry, SessionStart):
@@ -194,6 +210,16 @@ class SessionStore:
                     continue
                 if isinstance(entry, ToolPresentationRecord):
                     presentations[entry.tool_use_id] = entry.presentation
+                    continue
+                if isinstance(entry, ProviderReplayRecord):
+                    key = (entry.entry_id, entry.content_id)
+                    previous_replay = replay_records.get(key)
+                    if previous_replay is not None and previous_replay != entry:
+                        raise ValueError(
+                            f"Conflicting provider replay record: {entry.entry_id}/"
+                            f"{entry.content_id}"
+                        )
+                    replay_records[key] = entry
                     continue
                 message = entry
             except (json.JSONDecodeError, ValueError, TypeError) as error:
@@ -244,6 +270,7 @@ class SessionStore:
         self._content_replacements = replacements
         self._boundaries = boundaries
         self._tool_presentations = presentations
+        self._replay_records = replay_records
         self._metadata = metadata
         active = _active_parent_chain(messages, by_id)
         active_boundaries = _active_boundaries(boundaries, active)
@@ -253,6 +280,7 @@ class SessionStore:
             content_replacements=tuple(replacements.values()),
             compact_boundaries=active_boundaries,
             tool_presentations=tuple(presentations.items()),
+            replay_records=_validated_replay_records(replay_records, by_id),
             metadata=metadata,
         )
 
@@ -265,6 +293,7 @@ class SessionStore:
         self,
         message: ConversationEntry,
         presentations: tuple[tuple[str, ToolResultPresentation], ...] = (),
+        replay_records: tuple[ProviderReplayRecord, ...] = (),
     ) -> bool:
         """Append a message and its optional presentation add-on records together."""
 
@@ -308,6 +337,20 @@ class SessionStore:
         )
         if any(tool_use_id not in result_ids for tool_use_id, _ in presentations):
             raise ValueError("Tool presentation does not match the result message")
+        expected_content_ids = (
+            {replay_content_id(index) for index, _ in enumerate(message.content)}
+            if isinstance(message, AssistantMessage)
+            else set()
+        )
+        if any(
+            record.entry_id != message.uuid
+            or record.content_id not in expected_content_ids
+            for record in replay_records
+        ):
+            raise ValueError("Provider replay does not match assistant content")
+        replay_keys = [(item.entry_id, item.content_id) for item in replay_records]
+        if len(replay_keys) != len(set(replay_keys)):
+            raise ValueError("Duplicate provider replay record")
         records: list[object] = []
         if not self.path.exists():
             records.append(encode_start(self._start))
@@ -315,6 +358,7 @@ class SessionStore:
             encode_tool_presentation(tool_use_id, presentation)
             for tool_use_id, presentation in presentations
         )
+        records.extend(encode_replay(record) for record in replay_records)
         records.append(encode_message(message))
         previous = self._metadata
         metadata = SessionMetadata(
@@ -338,6 +382,10 @@ class SessionStore:
         self._messages_by_id[message.uuid] = message
         assert self._tool_presentations is not None
         self._tool_presentations.update(presentations)
+        assert self._replay_records is not None
+        self._replay_records.update(
+            ((record.entry_id, record.content_id), record) for record in replay_records
+        )
         return True
 
     def set_title(self, title: str) -> bool:
@@ -471,25 +519,39 @@ class SessionStore:
         self._append_records((record,))
 
     def _append_records(self, records: Iterable[object]) -> None:
-        """以仅属主可访问权限追加一个自包含 JSONL 记录。"""
+        """Atomically replace the transcript with all new records appended."""
 
-        # 会话数据可能包含源码和命令输出，因此目录和文件都使用仅属主可访问的权限。
         self.project_state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.project_state_dir, 0o700)
-        descriptor = os.open(
-            self.path,
-            os.O_WRONLY | os.O_APPEND | os.O_CREAT,
-            0o600,
+        existing = self.path.read_bytes() if self.path.exists() else b""
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{self.session_id}.",
+            suffix=".tmp",
+            dir=self.project_state_dir,
         )
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
-            # 每行一个自包含 JSON 值，使写入中断只影响可诊断的末条记录，
-            # 而不会损坏整个文件。
-            for record in records:
-                json.dump(record, handle, ensure_ascii=False)
-                handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        temporary = Path(temporary_name)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(existing)
+                if existing and not existing.endswith(b"\n"):
+                    handle.write(b"\n")
+                encoded: list[bytes] = []
+                for record in records:
+                    encoded.append(
+                        json.dumps(record, ensure_ascii=False).encode("utf-8") + b"\n"
+                    )
+                handle.writelines(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        except BaseException:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            temporary.unlink(missing_ok=True)
+            raise
 
 
 def _active_parent_chain(
@@ -537,3 +599,21 @@ def _working_set(
         if message.uuid == summary_uuid:
             return history[index:]
     return history
+
+
+def _validated_replay_records(
+    records: dict[tuple[str, str], ProviderReplayRecord],
+    messages: dict[str, ConversationEntry],
+) -> tuple[ProviderReplayRecord, ...]:
+    for record in records.values():
+        entry = messages.get(record.entry_id)
+        if not isinstance(entry, AssistantMessage):
+            raise ValueError(
+                f"Provider replay references non-assistant entry: {record.entry_id}"
+            )
+        valid = {replay_content_id(index) for index, _ in enumerate(entry.content)}
+        if record.content_id not in valid:
+            raise ValueError(
+                f"Provider replay references missing content: {record.content_id}"
+            )
+    return tuple(records.values())

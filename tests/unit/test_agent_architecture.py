@@ -107,7 +107,7 @@ def test_conversation_layer_dependency_boundaries() -> None:
     for source_path in provider_sources:
         source = source_path.read_text(encoding="utf-8")
         assert "ConversationMessage" not in source
-        assert "sessions.records" not in source
+        assert "sessions._records" not in source
         assert "ContextPlan" not in source
 
     for source_path in _AGENT_ROOT.rglob("*.py"):
@@ -118,9 +118,9 @@ def test_conversation_layer_dependency_boundaries() -> None:
     simultaneous = []
     for source_path in (_PACKAGE_ROOT / "sessions").glob("*.py"):
         source = source_path.read_text(encoding="utf-8")
-        if "sessions.records" in source and "ConversationEntry" in source:
+        if "sessions._records" in source and "ConversationEntry" in source:
             simultaneous.append(source_path.name)
-    assert set(simultaneous) == {"codec.py", "store.py"}
+    assert set(simultaneous) == {"_codec.py", "_store.py"}
 
     assert "presentation" not in ToolResult.__dataclass_fields__
     for source_path in (_PACKAGE_ROOT / "conversation").glob("*.py"):
@@ -273,7 +273,7 @@ def test_production_code_does_not_depend_on_legacy_chat_owners() -> None:
         imports = _imported_modules(source_path)
         assert not any(name.startswith(forbidden) for name in imports), source_path
 
-    assert not (_PACKAGE_ROOT / "application").exists()
+    assert (_PACKAGE_ROOT / "application" / "state.py").exists()
 
 
 def test_core_mechanisms_do_not_import_chat_service() -> None:
@@ -352,9 +352,27 @@ def test_session_is_the_only_public_conversation_and_persistence_boundary() -> N
         if "sessions" in source_path.relative_to(_PACKAGE_ROOT).parts:
             continue
         imports = _imported_modules(source_path)
-        assert "my_code.sessions.store" not in imports, source_path
-        assert "my_code.sessions.codec" not in imports, source_path
-        assert "my_code.sessions.records" not in imports, source_path
+        assert "my_code.sessions._store" not in imports, source_path
+        assert "my_code.sessions._codec" not in imports, source_path
+        assert "my_code.sessions._records" not in imports, source_path
+
+
+def test_full_app_state_stays_at_the_application_boundary() -> None:
+    allowed = {
+        Path("application/state.py"),
+        Path("bootstrap.py"),
+        Path("chat/service.py"),
+    }
+    for source_path in _PACKAGE_ROOT.rglob("*.py"):
+        relative_path = source_path.relative_to(_PACKAGE_ROOT)
+        if relative_path in allowed:
+            continue
+        imports = _imported_modules(source_path)
+        assert not any(
+            name == "my_code.application.state"
+            or name.startswith("my_code.application.state.")
+            for name in imports
+        ), source_path
 
 
 def test_todos_are_a_self_contained_product_feature() -> None:
