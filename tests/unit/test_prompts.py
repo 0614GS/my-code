@@ -7,7 +7,7 @@ from my_code.context.documents import ContextInstruction
 from my_code.context.normalization import ModelInputNormalizer
 from my_code.context.xml import render_context_instruction, wrap_xml
 from my_code.conversation.models import ConversationSummaryMessage
-from my_code.model.request import ModelTextBlock, PromptStability, SystemPrompt
+from my_code.model.request import InputText, PromptStability, SystemPrompt, UserInput
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.prompts.system import build_system_prompt_registry
@@ -137,8 +137,9 @@ def test_conversation_summary_uses_the_existing_xml_tag() -> None:
     summary = ConversationSummaryMessage("Continue from the verified state.")
     normalized = ModelInputNormalizer().normalize_transcript((summary,))
 
+    assert isinstance(normalized[0], UserInput)
     assert normalized[0].content == (
-        ModelTextBlock(
+        InputText(
             "<conversation-summary>\n"
             "Continue from the verified state.\n"
             "</conversation-summary>"

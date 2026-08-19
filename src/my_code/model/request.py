@@ -1,4 +1,4 @@
-"""Provider-neutral model requests, messages, content blocks, and outputs."""
+"""Provider-neutral model requests, ordered input items, and outputs."""
 
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -65,6 +65,41 @@ class ModelToolDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class InputText:
+    text: str
+    type: Literal["input_text"] = field(default="input_text", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.text:
+            raise ValueError("Input text must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class InputImage:
+    media_type: str
+    data: str
+    type: Literal["input_image"] = field(default="input_image", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.media_type.startswith("image/") or not self.data:
+            raise ValueError("Input image requires an image media type and data")
+
+
+@dataclass(frozen=True, slots=True)
+class InputDocument:
+    media_type: str
+    data: str
+    name: str | None = None
+    type: Literal["input_document"] = field(default="input_document", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.media_type.strip() or not self.data:
+            raise ValueError("Input document requires a media type and data")
+        if self.name is not None and not self.name.strip():
+            raise ValueError("Input document name must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelTextBlock:
     text: str
     continuation: ProviderContinuationState | None = None
@@ -86,11 +121,13 @@ class ModelToolUseBlock:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelToolResultBlock:
-    tool_use_id: str
-    content: str
-    is_error: bool = False
-    type: Literal["tool_result"] = field(default="tool_result", init=False)
+class ToolOutputText:
+    text: str
+    type: Literal["output_text"] = field(default="output_text", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.text:
+            raise ValueError("Tool output text must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,39 +142,40 @@ class ModelReasoningBlock:
             raise ValueError("Model reasoning id must not be empty")
 
 
-type ModelUserContent = ModelTextBlock | ModelToolResultBlock
 type ModelAssistantContent = ModelTextBlock | ModelToolUseBlock | ModelReasoningBlock
+type InputContent = InputText | InputImage | InputDocument
+type ToolOutputContent = ToolOutputText
 
 
 @dataclass(frozen=True, slots=True)
-class ModelUserMessage:
-    content: tuple[ModelUserContent, ...]
-    role: Literal["user"] = field(default="user", init=False)
+class UserInput:
+    content: tuple[InputContent, ...]
+    type: Literal["user_input"] = field(default="user_input", init=False)
 
     def __post_init__(self) -> None:
         if not self.content:
-            raise ValueError("Model user message content must not be empty")
+            raise ValueError("User input content must not be empty")
         if not all(
-            isinstance(block, (ModelTextBlock, ModelToolResultBlock))
+            isinstance(block, (InputText, InputImage, InputDocument))
             for block in self.content
         ):
-            raise TypeError("Model user messages contain only text or tool results")
+            raise TypeError("User input contains only input content")
 
 
 @dataclass(frozen=True, slots=True)
-class ModelAssistantMessage:
+class AssistantOutput:
     content: tuple[ModelAssistantContent, ...]
-    role: Literal["assistant"] = field(default="assistant", init=False)
+    type: Literal["assistant_output"] = field(default="assistant_output", init=False)
 
     def __post_init__(self) -> None:
         if not self.content:
-            raise ValueError("Model assistant message content must not be empty")
+            raise ValueError("Assistant output content must not be empty")
         if not all(
             isinstance(block, (ModelTextBlock, ModelToolUseBlock, ModelReasoningBlock))
             for block in self.content
         ):
             raise TypeError(
-                "Model assistant messages contain only text or tool uses or reasoning"
+                "Assistant output contains only text, tool calls, or reasoning"
             )
         if not any(
             isinstance(block, ModelToolUseBlock)
@@ -145,22 +183,94 @@ class ModelAssistantMessage:
             and bool(block.text)
             for block in self.content
         ):
-            raise ValueError("Model assistant message contained no actionable content")
+            raise ValueError("Assistant output contained no actionable content")
 
 
-type ModelMessage = ModelUserMessage | ModelAssistantMessage
+@dataclass(frozen=True, slots=True)
+class ToolOutput:
+    call_id: str
+    content: tuple[ToolOutputContent, ...]
+    is_error: bool = False
+    type: Literal["tool_output"] = field(default="tool_output", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.call_id:
+            raise ValueError("Tool output call id must not be empty")
+        if not self.content:
+            raise ValueError("Tool output content must not be empty")
+        if not all(isinstance(block, ToolOutputText) for block in self.content):
+            raise TypeError("Tool output contains only tool output content")
+
+
+@dataclass(frozen=True, slots=True)
+class ToolOutputs:
+    results: tuple[ToolOutput, ...]
+    type: Literal["tool_outputs"] = field(default="tool_outputs", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.results:
+            raise ValueError("Tool outputs must contain at least one result")
+        if not all(isinstance(result, ToolOutput) for result in self.results):
+            raise TypeError("Tool outputs contain only ToolOutput values")
+
+
+type ModelInputItem = UserInput | AssistantOutput | ToolOutputs
 
 
 @dataclass(frozen=True, slots=True)
 class ModelRequest:
     system_prompt: SystemPrompt
-    messages: tuple[ModelMessage, ...]
+    input: tuple[ModelInputItem, ...]
     tools: tuple[ModelToolDefinition, ...]
     max_output_tokens: int
 
     def __post_init__(self) -> None:
         if self.max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
+        validate_model_input(self.input)
+
+
+def validate_model_input(items: tuple[ModelInputItem, ...]) -> None:
+    """Validate tool protocol over semantic items without provider roles."""
+
+    pending: set[str] = set()
+    seen_calls: set[str] = set()
+    seen_outputs: set[str] = set()
+    for item in items:
+        if pending and not isinstance(item, ToolOutputs):
+            raise ValueError(
+                "Unresolved tool use before next model input item: "
+                f"{', '.join(sorted(pending))}"
+            )
+        if isinstance(item, AssistantOutput):
+            for block in item.content:
+                if not isinstance(block, ModelToolUseBlock):
+                    continue
+                if block.id in seen_calls:
+                    raise ValueError(f"Duplicate tool use in model input: {block.id}")
+                seen_calls.add(block.id)
+                pending.add(block.id)
+        elif isinstance(item, ToolOutputs):
+            for result in item.results:
+                if result.call_id in seen_outputs:
+                    raise ValueError(
+                        f"Duplicate tool output in model input: {result.call_id}"
+                    )
+                if result.call_id not in pending:
+                    raise ValueError(
+                        f"Orphan tool output in model input: {result.call_id}"
+                    )
+                seen_outputs.add(result.call_id)
+                pending.remove(result.call_id)
+            if pending:
+                raise ValueError(
+                    "Tool outputs did not close all pending calls: "
+                    f"{', '.join(sorted(pending))}"
+                )
+    if pending:
+        raise ValueError(
+            f"Unresolved tool use in model input: {', '.join(sorted(pending))}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,19 +297,26 @@ class ModelOutput:
 
 
 __all__ = [
+    "AssistantOutput",
+    "InputContent",
+    "InputDocument",
+    "InputImage",
+    "InputText",
     "ModelAssistantContent",
-    "ModelAssistantMessage",
-    "ModelMessage",
+    "ModelInputItem",
     "ModelOutput",
     "ModelReasoningBlock",
     "ModelRequest",
     "ModelTextBlock",
     "ModelToolDefinition",
-    "ModelToolResultBlock",
     "ModelToolUseBlock",
-    "ModelUserContent",
-    "ModelUserMessage",
     "PromptStability",
     "ResolvedPromptSection",
     "SystemPrompt",
+    "ToolOutput",
+    "ToolOutputContent",
+    "ToolOutputs",
+    "ToolOutputText",
+    "UserInput",
+    "validate_model_input",
 ]

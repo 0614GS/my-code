@@ -13,11 +13,15 @@ from my_code.conversation.models import (
 )
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
-    ModelAssistantMessage,
+    AssistantOutput,
+    InputText,
     ModelTextBlock,
-    ModelToolResultBlock,
     ModelToolUseBlock,
-    ModelUserMessage,
+    ToolOutput,
+    ToolOutputs,
+    ToolOutputText,
+    UserInput,
+    validate_model_input,
 )
 
 
@@ -44,11 +48,44 @@ def test_conversation_variants_reject_cross_layer_content() -> None:
         ToolResultsMessage((ToolCall("call", "Read", {}),), "source")  # type: ignore[arg-type]
 
 
-def test_model_role_variants_reject_opposite_role_blocks() -> None:
-    with pytest.raises(TypeError, match="only text or tool results"):
-        ModelUserMessage((ModelToolUseBlock("call", "Read", {}),))  # type: ignore[arg-type]
-    with pytest.raises(TypeError, match="only text or tool uses"):
-        ModelAssistantMessage((ModelToolResultBlock("call", "bad"),))  # type: ignore[arg-type]
+def test_model_input_variants_reject_cross_semantic_content() -> None:
+    with pytest.raises(TypeError, match="only input content"):
+        UserInput((ModelToolUseBlock("call", "Read", {}),))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="only text, tool calls"):
+        AssistantOutput((InputText("bad"),))  # type: ignore[arg-type]
 
-    assert ModelUserMessage((ModelTextBlock("user"),)).role == "user"
-    assert ModelAssistantMessage((ModelTextBlock("assistant"),)).role == "assistant"
+    user = UserInput((InputText("user"),))
+    assistant = AssistantOutput((ModelTextBlock("assistant"),))
+    outputs = ToolOutputs((ToolOutput("call", (ToolOutputText("done"),)),))
+    assert (user.type, assistant.type, outputs.type) == (
+        "user_input",
+        "assistant_output",
+        "tool_outputs",
+    )
+
+
+def test_model_input_tool_protocol_validation_is_role_free() -> None:
+    call = AssistantOutput((ModelToolUseBlock("call", "Read", {}),))
+    result = ToolOutputs((ToolOutput("call", (ToolOutputText("done"),)),))
+    validate_model_input((call, result))
+
+    with pytest.raises(ValueError, match="Orphan"):
+        validate_model_input((result,))
+    with pytest.raises(ValueError, match="Unresolved"):
+        validate_model_input((call,))
+    with pytest.raises(ValueError, match="Duplicate tool use"):
+        validate_model_input(
+            (
+                AssistantOutput(
+                    (
+                        ModelToolUseBlock("call", "Read", {}),
+                        ModelToolUseBlock("call", "Read", {}),
+                    )
+                ),
+                result,
+            )
+        )
+    with pytest.raises(ValueError, match="Duplicate tool output"):
+        validate_model_input((call, result, result))
+    with pytest.raises(ValueError, match="before next model input item"):
+        validate_model_input((call, UserInput((InputText("injected"),)), result))

@@ -21,7 +21,14 @@ from my_code.features.todos.projection import project_todos
 from my_code.features.todos.reminder import TodoReminderAttachmentSource
 from my_code.features.todos.tool import TodoWriteTool
 from my_code.model.primitives import TokenUsage
-from my_code.model.request import ModelTextBlock, PromptStability
+from my_code.model.request import (
+    AssistantOutput,
+    InputText,
+    ModelInputItem,
+    ModelTextBlock,
+    PromptStability,
+    UserInput,
+)
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
@@ -31,6 +38,22 @@ from my_code.tools.executor import ToolExecutor
 from my_code.tools.registry import ToolRegistry
 from my_code.tools.result_store import ToolResultStore
 from my_code.workspace.local import Workspace
+
+
+def _input_texts(items: tuple[ModelInputItem, ...]) -> list[str]:
+    texts: list[str] = []
+    for item in items:
+        if isinstance(item, UserInput):
+            texts.extend(
+                block.text for block in item.content if isinstance(block, InputText)
+            )
+        elif isinstance(item, AssistantOutput):
+            texts.extend(
+                block.text
+                for block in item.content
+                if isinstance(block, ModelTextBlock)
+            )
+    return texts
 
 
 def _todo_input(status: str = "in_progress") -> dict:
@@ -262,19 +285,9 @@ def test_context_planner_attaches_reminder_but_compaction_excludes_it() -> None:
     snapshot = ConversationSnapshot(history, session_history=history)
 
     plan = planner.plan(snapshot)
-    request_text = [
-        block.text
-        for message in plan.request.messages
-        for block in message.content
-        if isinstance(block, ModelTextBlock)
-    ]
+    request_text = _input_texts(plan.request.input)
     compact_messages, _ = planner.compaction_view(snapshot)
-    compact_text = [
-        block.text
-        for message in compact_messages
-        for block in message.content
-        if isinstance(block, ModelTextBlock)
-    ]
+    compact_text = _input_texts(compact_messages)
 
     assert any("<system-reminder>" in text for text in request_text)
     assert len(plan.new_attachment_deliveries) == 1
@@ -306,28 +319,22 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
         session_history=history,
         attachment_deliveries=(delivery,),
     )
-    messages = planner.plan(snapshot).request.messages
+    items = planner.plan(snapshot).request.input
 
     reminder_index = next(
         index
-        for index, message in enumerate(messages)
-        if any(
-            isinstance(block, ModelTextBlock)
-            and "TodoWrite tool hasn't been used" in block.text
-            for block in message.content
-        )
+        for index, item in enumerate(items)
+        if "TodoWrite tool hasn't been used" in "\n".join(_input_texts((item,)))
     )
     later_index = next(
         index
-        for index, message in enumerate(messages)
-        if ModelTextBlock("after reminder") in message.content
+        for index, item in enumerate(items)
+        if "after reminder" in _input_texts((item,))
     )
     assert reminder_index < later_index
 
     compact_messages, _ = planner.compaction_view(snapshot)
     assert any(
-        isinstance(block, ModelTextBlock)
-        and "TodoWrite tool hasn't been used" in block.text
-        for message in compact_messages
-        for block in message.content
+        "TodoWrite tool hasn't been used" in text
+        for text in _input_texts(compact_messages)
     )

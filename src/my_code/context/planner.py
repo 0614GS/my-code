@@ -41,19 +41,23 @@ from my_code.model.capabilities import (
 )
 from my_code.model.primitives import ProviderBinding, ProviderContinuationState
 from my_code.model.request import (
-    ModelMessage,
+    AssistantOutput,
+    InputText,
+    ModelInputItem,
     ModelReasoningBlock,
     ModelRequest,
     ModelTextBlock,
     ModelToolDefinition,
     ModelToolUseBlock,
     SystemPrompt,
+    ToolOutputs,
+    UserInput,
 )
 from my_code.prompts.registry import PromptRegistry
 
 
 class ContextPlanner:
-    """集中拥有 ConversationMessage → ModelMessage 投影边界。"""
+    """集中拥有 ConversationMessage → ModelInputItem 投影边界。"""
 
     def __init__(
         self,
@@ -218,7 +222,7 @@ class ContextPlanner:
 
     def compaction_view(
         self, snapshot: ContextSnapshot
-    ) -> tuple[tuple[ModelMessage, ...], tuple[ContentReplacement, ...]]:
+    ) -> tuple[tuple[ModelInputItem, ...], tuple[ContentReplacement, ...]]:
         effective, proposed = self._effective_messages(snapshot)
         return (
             self.normalizer.normalize_transcript(
@@ -307,9 +311,7 @@ class ContextPlanner:
         )
         budget = ContextBudget(
             message_limit_chars=self.window.max_chars,
-            message_chars=_message_chars(request.messages)
-            - user_chars
-            - attachment_chars,
+            message_chars=_message_chars(request.input) - user_chars - attachment_chars,
             system_chars=len(request.system_prompt.text),
             tool_schema_chars=_tool_schema_chars(self.tools),
             reserved_output_tokens=self.max_output_tokens,
@@ -355,27 +357,35 @@ class ContextPlanner:
         return budget.input_tokens
 
 
-def _message_chars(messages: tuple[ModelMessage, ...]) -> int:
+def _message_chars(items: tuple[ModelInputItem, ...]) -> int:
     size = 0
-    for message in messages:
-        for block in message.content:
-            if isinstance(block, ModelTextBlock):
-                size += (
-                    _continuation_chars(block.continuation)
-                    if block.continuation is not None
-                    else len(block.text)
-                )
-            elif isinstance(block, ModelToolUseBlock):
-                size += (
-                    _continuation_chars(block.continuation)
-                    if block.continuation is not None
-                    else len(block.name) + len(str(block.input))
-                )
-            elif isinstance(block, ModelReasoningBlock):
-                if block.continuation is not None:
-                    size += _continuation_chars(block.continuation)
-            else:
-                size += len(block.content)
+    for item in items:
+        if isinstance(item, UserInput):
+            for block in item.content:
+                if isinstance(block, InputText):
+                    size += len(block.text)
+                else:
+                    size += len(block.data)
+        elif isinstance(item, AssistantOutput):
+            for block in item.content:
+                if isinstance(block, ModelTextBlock):
+                    size += (
+                        _continuation_chars(block.continuation)
+                        if block.continuation is not None
+                        else len(block.text)
+                    )
+                elif isinstance(block, ModelToolUseBlock):
+                    size += (
+                        _continuation_chars(block.continuation)
+                        if block.continuation is not None
+                        else len(block.name) + len(str(block.input))
+                    )
+                elif isinstance(block, ModelReasoningBlock):
+                    if block.continuation is not None:
+                        size += _continuation_chars(block.continuation)
+        elif isinstance(item, ToolOutputs):
+            for output in item.results:
+                size += sum(len(block.text) for block in output.content)
     return size
 
 
@@ -485,7 +495,7 @@ def _conversation_chars(messages: tuple[ConversationMessage, ...]) -> int:
 
 def _estimate(
     conversation: tuple[ConversationMessage, ...],
-    model: tuple[ModelMessage, ...],
+    model: tuple[ModelInputItem, ...],
     system: str,
     tools: tuple[ModelToolDefinition, ...],
     attachment_chars: int,

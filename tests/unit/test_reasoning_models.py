@@ -16,7 +16,7 @@ from my_code.model.primitives import (
     ReasoningPresentation,
     TokenUsage,
 )
-from my_code.model.request import ModelOutput, ModelReasoningBlock
+from my_code.model.request import AssistantOutput, ModelOutput, ModelReasoningBlock
 
 
 @pytest.mark.parametrize("disclosure", ["verbatim", "summary"])
@@ -97,21 +97,25 @@ def test_scoped_continuations_are_selected_and_compaction_strips_them() -> None:
 
     assert any(
         isinstance(block, ModelReasoningBlock)
-        for message in active_view
-        for block in message.content
+        for item in active_view
+        if isinstance(item, AssistantOutput)
+        for block in item.content
     )
     assert not any(
         isinstance(block, ModelReasoningBlock)
-        for message in compact_view
-        for block in message.content
+        for item in compact_view
+        if isinstance(item, AssistantOutput)
+        for block in item.content
     )
     assert all(
         getattr(block, "continuation", None) is None
-        for message in compact_view
-        for block in message.content
+        for item in compact_view
+        if isinstance(item, AssistantOutput)
+        for block in item.content
     )
     assert not any(
         getattr(block, "continuation", None) is not None
-        for message in mismatched_view
-        for block in message.content
+        for item in mismatched_view
+        if isinstance(item, AssistantOutput)
+        for block in item.content
     )

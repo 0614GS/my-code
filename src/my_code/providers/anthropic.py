@@ -8,12 +8,8 @@ from anthropic import AsyncAnthropic, BadRequestError
 from anthropic.types import (
     Message,
     MessageParam,
-    RedactedThinkingBlockParam,
     TextBlockParam,
-    ThinkingBlockParam,
     ToolParam,
-    ToolResultBlockParam,
-    ToolUseBlockParam,
 )
 
 from my_code.config.providers import ReasoningConfig
@@ -39,15 +35,20 @@ from my_code.model.primitives import (
     to_json_object,
 )
 from my_code.model.request import (
-    ModelMessage,
+    AssistantOutput,
+    InputDocument,
+    InputImage,
+    InputText,
+    ModelInputItem,
     ModelOutput,
     ModelReasoningBlock,
     ModelRequest,
     ModelTextBlock,
-    ModelToolResultBlock,
     ModelToolUseBlock,
     PromptStability,
     SystemPrompt,
+    ToolOutputs,
+    UserInput,
 )
 
 
@@ -107,7 +108,7 @@ class AnthropicProvider(ModelClient):
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=self._system(request.system_prompt),
-                messages=self._messages(request.messages, binding=self.binding),
+                messages=self._messages(request.input, binding=self.binding),
                 tools=self._tools(request),
                 **cast(Any, self._reasoning_params()),
             ) as stream:
@@ -210,62 +211,67 @@ class AnthropicProvider(ModelClient):
 
     @staticmethod
     def _messages(
-        messages: Iterable[ModelMessage],
+        items: Iterable[ModelInputItem],
         *,
         binding: ProviderBinding | None = None,
         model: str | None = None,
     ) -> list[MessageParam]:
         # 上下文层已经移除了 Transcript 元数据并校验协议；适配器只转换 SDK 类型。
-        normalized: list[MessageParam] = []
-        for message in messages:
-            content: list[
-                TextBlockParam
-                | ToolUseBlockParam
-                | ToolResultBlockParam
-                | ThinkingBlockParam
-                | RedactedThinkingBlockParam
-            ] = []
-            for block in message.content:
-                if isinstance(block, ModelTextBlock):
-                    content.append({"type": "text", "text": block.text})
-                elif isinstance(block, ModelToolUseBlock):
-                    # JsonObject 递归地比 SDK object 类型更窄；此 cast 只改变
-                    # 静态类型变体，不改变运行时数据。
-                    content.append(
-                        {
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": cast(dict[str, object], block.input),
-                        }
-                    )
-                elif isinstance(block, ModelToolResultBlock):
+        normalized: list[dict[str, Any]] = []
+
+        def append(role: Literal["user", "assistant"], content: list[object]) -> None:
+            if normalized and normalized[-1]["role"] == role:
+                cast(list[object], normalized[-1]["content"]).extend(content)
+            else:
+                normalized.append({"role": role, "content": content})
+
+        for item in items:
+            content: list[object] = []
+            if isinstance(item, UserInput):
+                for block in item.content:
+                    content.append(_anthropic_input_content(block))
+                append("user", content)
+            elif isinstance(item, AssistantOutput):
+                for block in item.content:
+                    if isinstance(block, ModelTextBlock):
+                        content.append({"type": "text", "text": block.text})
+                    elif isinstance(block, ModelToolUseBlock):
+                        # JsonObject 比 SDK object 类型更窄；cast 不改运行时数据。
+                        content.append(
+                            {
+                                "type": "tool_use",
+                                "id": block.id,
+                                "name": block.name,
+                                "input": cast(dict[str, object], block.input),
+                            }
+                        )
+                    elif (
+                        isinstance(block, ModelReasoningBlock)
+                        and block.continuation is not None
+                        and _binding_matches(
+                            block.continuation.binding,
+                            binding
+                            or ProviderBinding(
+                                "anthropic-messages", "anthropic", model or "unknown"
+                            ),
+                        )
+                    ):
+                        content.append(dict(_anthropic_payload(block.continuation)))
+                append("assistant", content)
+            elif isinstance(item, ToolOutputs):
+                for result in item.results:
                     content.append(
                         {
                             "type": "tool_result",
-                            "tool_use_id": block.tool_use_id,
-                            "content": block.content,
-                            "is_error": block.is_error,
+                            "tool_use_id": result.call_id,
+                            "content": "\n".join(
+                                block.text for block in result.content
+                            ),
+                            "is_error": result.is_error,
                         }
                     )
-                elif (
-                    isinstance(block, ModelReasoningBlock)
-                    and block.continuation is not None
-                    and _binding_matches(
-                        block.continuation.binding,
-                        binding
-                        or ProviderBinding(
-                            "anthropic-messages", "anthropic", model or "unknown"
-                        ),
-                    )
-                ):
-                    payload = _anthropic_payload(block.continuation)
-                    if payload["type"] == "thinking":
-                        content.append(cast(ThinkingBlockParam, dict(payload)))
-                    else:
-                        content.append(cast(RedactedThinkingBlockParam, dict(payload)))
-            normalized.append({"role": message.role, "content": content})
-        return normalized
+                append("user", content)
+        return cast(list[MessageParam], normalized)
 
     def _system(self, prompt: SystemPrompt) -> str | list[TextBlockParam]:
         """按 provider 自身能力消费核心提供的稳定性信息。"""
@@ -356,6 +362,24 @@ class AnthropicProvider(ModelClient):
 
 def _binding_matches(actual: ProviderBinding, expected: ProviderBinding) -> bool:
     return actual == expected
+
+
+def _anthropic_input_content(
+    block: InputText | InputImage | InputDocument,
+) -> dict[str, object]:
+    if isinstance(block, InputText):
+        return {"type": "text", "text": block.text}
+    source = {
+        "type": "base64",
+        "media_type": block.media_type,
+        "data": block.data,
+    }
+    if isinstance(block, InputImage):
+        return {"type": "image", "source": source}
+    document: dict[str, object] = {"type": "document", "source": source}
+    if block.name is not None:
+        document["title"] = block.name
+    return document
 
 
 def _anthropic_payload(state: ProviderContinuationState) -> dict[str, object]:

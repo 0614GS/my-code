@@ -58,6 +58,8 @@ from my_code.model.primitives import (
     TokenUsage,
 )
 from my_code.model.request import (
+    AssistantOutput,
+    InputText,
     ModelOutput,
     ModelReasoningBlock,
     ModelRequest,
@@ -239,7 +241,8 @@ async def test_engine_persists_human_and_assistant_messages(tmp_path: Path) -> N
     assert result.text == "done"
     assert isinstance(conversation.working_messages[0], HumanMessage)
     assert isinstance(conversation.working_messages[1], AssistantMessage)
-    assert model.requests[0].messages[0].content[0] == ModelTextBlock("hello")
+    first_input = model.requests[0].input[0]
+    assert first_input.content[0] == InputText("hello")  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
@@ -264,9 +267,10 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
 
     for request in model.requests:
         assert any(
-            isinstance(block, ModelTextBlock) and "notes.txt" in block.text
-            for message in request.messages
-            for block in message.content
+            isinstance(block, InputText) and "notes.txt" in block.text
+            for item in request.input
+            if hasattr(item, "content")
+            for block in item.content  # type: ignore[union-attr]
         )
     delivery = engine.context_snapshot.attachment_deliveries[0]
     assert delivery.anchor_uuid == conversation.history[0].uuid
@@ -308,7 +312,11 @@ def test_agent_turn_input_rejects_request_only_attachments() -> None:
 
 
 @pytest.mark.asyncio
-async def test_engine_closes_tool_loop_and_preserves_results(tmp_path: Path) -> None:
+async def test_one_human_turn_can_contain_multiple_steps_and_one_tool_round(
+    tmp_path: Path,
+) -> None:
+    """A turn starts at Human input; each model call is a step."""
+
     (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
     engine, model, conversation, _ = _engine(
         tmp_path,
@@ -334,6 +342,18 @@ async def test_engine_closes_tool_loop_and_preserves_results(tmp_path: Path) -> 
     assert len(tool_messages) == 1
     assert "hello" in tool_messages[0].content[0].content
     assert len(model.requests) == 2
+    assert result.completed_steps == 2
+    assert [message.kind for message in conversation.history] == [
+        "human",
+        "assistant",
+        "tool_results",
+        "assistant",
+    ]
+    first_assistant = conversation.history[1]
+    tool_round = conversation.history[2]
+    assert isinstance(first_assistant, AssistantMessage)
+    assert isinstance(tool_round, ToolResultsMessage)
+    assert tool_round.source_assistant_uuid == first_assistant.uuid
 
 
 @pytest.mark.asyncio
@@ -367,8 +387,9 @@ async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
     assert result.text == "finished"
     assert any(
         isinstance(block, ModelReasoningBlock)
-        for message in model.requests[1].messages
-        for block in message.content
+        for item in model.requests[1].input
+        if isinstance(item, AssistantOutput)
+        for block in item.content
     )
     persisted = conversation.store.load().history[1]
     assert isinstance(persisted, AssistantMessage)

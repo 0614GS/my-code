@@ -22,7 +22,7 @@ from my_code.model.primitives import (
     ReasoningPresentation,
     TokenUsage,
 )
-from my_code.model.request import ModelReasoningBlock
+from my_code.model.request import AssistantOutput, ModelReasoningBlock
 from my_code.sessions.models import SessionSnapshot
 from my_code.sessions.session import Session
 from my_code.sessions.store import SessionStore
@@ -99,8 +99,9 @@ def test_restore_repairs_trailing_tool_calls_before_returning(tmp_path: Path) ->
     request_messages = ModelInputNormalizer().normalize((), resumed.history, ())
     assert any(
         isinstance(block, ModelReasoningBlock)
-        for message in request_messages
-        for block in message.content
+        for item in request_messages
+        if isinstance(item, AssistantOutput)
+        for block in item.content
     )
 
 

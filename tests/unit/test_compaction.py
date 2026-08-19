@@ -11,10 +11,11 @@ from my_code.conversation.models import AssistantMessage, HumanMessage, TextCont
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
+    InputText,
     ModelOutput,
     ModelRequest,
     ModelTextBlock,
-    ModelUserMessage,
+    UserInput,
 )
 
 
@@ -46,15 +47,15 @@ async def test_compaction_service_extracts_summary_and_discards_analyze() -> Non
     service = ContextCompactor(model)
 
     summary, usage = await service.summarize(
-        (ModelUserMessage((ModelTextBlock("Fix the parser"),)),)
+        (UserInput((InputText("Fix the parser"),)),)
     )
 
     assert summary == "Continue from verified state."
     assert usage.provider_reported is True
     request = model.requests[0]
     assert "<analyze>" in request.system_prompt.text
-    final_block = request.messages[-1].content[-1]
-    assert isinstance(final_block, ModelTextBlock)
+    final_block = request.input[-1].content[-1]  # type: ignore[union-attr]
+    assert isinstance(final_block, InputText)
     assert "recent user-authored messages" in final_block.text
     assert request.tools == ()
 
@@ -74,12 +75,12 @@ async def test_compaction_service_rejects_invalid_summary_contract(
     service = ContextCompactor(_CompletionModel(response))
 
     with pytest.raises(RuntimeError, match="exactly one non-empty <summary>"):
-        await service.summarize((ModelUserMessage((ModelTextBlock("Keep going"),)),))
+        await service.summarize((UserInput((InputText("Keep going"),)),))
 
 
 class _Context:
     def compaction_view(self, snapshot: ConversationSnapshot):  # type: ignore[no-untyped-def]
-        return (ModelUserMessage((ModelTextBlock("model view"),)),), ()
+        return (UserInput((InputText("model view"),)),), ()
 
     def measure(self, messages):  # type: ignore[no-untyped-def]
         return 100

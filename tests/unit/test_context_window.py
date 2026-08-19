@@ -16,12 +16,13 @@ from my_code.conversation.models import (
 )
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
-    ModelAssistantMessage,
+    AssistantOutput,
+    InputText,
     ModelTextBlock,
-    ModelToolResultBlock,
     ModelToolUseBlock,
-    ModelUserMessage,
     PromptStability,
+    ToolOutputs,
+    UserInput,
 )
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
@@ -64,15 +65,17 @@ def test_four_conversation_variants_project_exactly() -> None:
     messages = _planner().normalizer.normalize_transcript(
         (human, assistant, results, summary)
     )
-    assert messages[0] == ModelUserMessage((ModelTextBlock("hello"),))
-    assert messages[1] == ModelAssistantMessage(
+    assert messages[0] == UserInput((InputText("hello"),))
+    assert messages[1] == AssistantOutput(
         (
             ModelTextBlock("thinking"),
             ModelToolUseBlock("call", "Read", {"path": "x"}),
         )
     )
-    assert messages[2].content[0] == ModelToolResultBlock("call", "value")
-    assert "<conversation-summary>" in messages[2].content[1].text  # type: ignore[union-attr]
+    assert isinstance(messages[2], ToolOutputs)
+    assert messages[2].results[0].content[0].text == "value"
+    assert isinstance(messages[3], UserInput)
+    assert "<conversation-summary>" in messages[3].content[0].text  # type: ignore[union-attr]
 
 
 def test_projection_rejects_orphan_and_unresolved_tool_protocol() -> None:
@@ -104,4 +107,6 @@ def test_microcompact_replaces_model_view_without_mutating_history() -> None:
     )
     assert len(plan.new_content_replacements) == 1
     assert results.content[0].content == "x" * 100
-    assert "compacted" in plan.request.messages[-1].content[0].content  # type: ignore[union-attr]
+    output = plan.request.input[-1]
+    assert isinstance(output, ToolOutputs)
+    assert "compacted" in output.results[0].content[0].text

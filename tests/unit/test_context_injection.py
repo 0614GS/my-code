@@ -32,10 +32,12 @@ from my_code.model.primitives import (
     TokenUsage,
 )
 from my_code.model.request import (
+    AssistantOutput,
+    InputText,
     ModelReasoningBlock,
-    ModelTextBlock,
-    ModelUserMessage,
     PromptStability,
+    ToolOutputs,
+    UserInput,
 )
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
@@ -79,11 +81,11 @@ def test_attachment_observation_projects_only_as_user_side_reminder() -> None:
         (), (HumanMessage("inspect"),), (attachment,)
     )
 
-    assert len(result) == 1
-    assert isinstance(result[0], ModelUserMessage)
-    assert result[0].content[0] == ModelTextBlock("inspect")
-    reminder = result[0].content[1]
-    assert isinstance(reminder, ModelTextBlock)
+    assert len(result) == 2
+    assert result[0] == UserInput((InputText("inspect"),))
+    assert isinstance(result[1], UserInput)
+    reminder = result[1].content[0]
+    assert isinstance(reminder, InputText)
     assert reminder.text.startswith("<system-reminder>")
     assert "explicitly attached" in reminder.text
     assert "notes.txt" in reminder.text
@@ -94,8 +96,8 @@ def test_attachment_projection_cannot_create_tool_protocol_blocks() -> None:
         "file", (ContextObservation("File: a.txt", "content"),)
     )
     projected = ModelInputNormalizer().attachment_projector.project(attachment)
-    assert isinstance(projected, ModelUserMessage)
-    assert all(isinstance(block, ModelTextBlock) for block in projected.content)
+    assert isinstance(projected, UserInput)
+    assert all(isinstance(block, InputText) for block in projected.content)
 
 
 def test_opaque_thinking_replays_only_for_active_tool_trajectory() -> None:
@@ -132,18 +134,20 @@ def test_opaque_thinking_replays_only_for_active_tool_trajectory() -> None:
 
     assert any(
         isinstance(block, ModelReasoningBlock)
-        for message in active
-        for block in message.content
+        for item in active
+        if isinstance(item, AssistantOutput)
+        for block in item.content
     )
     assert not any(
         isinstance(block, ModelReasoningBlock)
         for messages in (compact, completed)
-        for message in messages
-        for block in message.content
+        for item in messages
+        if isinstance(item, AssistantOutput)
+        for block in item.content
     )
 
 
-def test_reminder_after_real_tool_result_stays_in_same_user_message() -> None:
+def test_reminder_after_real_tool_result_keeps_semantic_item_boundary() -> None:
     human = HumanMessage("inspect")
     assistant = AssistantMessage(
         (ToolCall("call", "Read", {"path": "x"}),),
@@ -161,14 +165,13 @@ def test_reminder_after_real_tool_result_stays_in_same_user_message() -> None:
         (), (human, assistant, results), (reminder,)
     )
 
+    assert isinstance(normalized[-2], ToolOutputs)
     last = normalized[-1]
-    assert isinstance(last, ModelUserMessage)
-    assert last.content[0].type == "tool_result"
-    assert last.content[1].type == "text"
-    assert "<system-reminder>" in last.content[1].text  # type: ignore[union-attr]
+    assert isinstance(last, UserInput)
+    assert "<system-reminder>" in last.content[0].text  # type: ignore[union-attr]
 
 
-def test_normalizer_orders_context_history_and_attachments_then_merges() -> None:
+def test_normalizer_orders_context_history_and_attachments_without_merging() -> None:
     instruction = ContextInstruction("keep active")
     result = ModelInputNormalizer().normalize(
         (UserContextDocument("AGENTS.md", (instruction,)),),
@@ -177,13 +180,9 @@ def test_normalizer_orders_context_history_and_attachments_then_merges() -> None
     )
 
     assert result == (
-        ModelUserMessage(
-            (
-                ModelTextBlock(render_context_instruction(instruction)),
-                ModelTextBlock("prompt"),
-                ModelTextBlock("attachment"),
-            )
-        ),
+        UserInput((InputText(render_context_instruction(instruction)),)),
+        UserInput((InputText("prompt"),)),
+        UserInput((InputText("attachment"),)),
     )
 
 
@@ -255,8 +254,8 @@ def test_planner_caches_user_context_and_excludes_attachments_from_compact() -> 
     compact, replacements = planner.compaction_view(snapshot)
 
     assert resolver.calls == 1
-    assert first.request.messages != second.request.messages
-    assert compact == (ModelUserMessage((ModelTextBlock("prompt"),)),)
+    assert first.request.input != second.request.input
+    assert compact == (UserInput((InputText("prompt"),)),)
     assert replacements == ()
 
 

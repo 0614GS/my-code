@@ -1,6 +1,6 @@
 # my-code 架构手册
 
-本目录描述 my-code 当前实现。`refactor/` 保存模块化改造的原则、阶段记录和架构守卫规范；被忽略的 `claude-code/` 只用于对照行为，不是本项目的包结构来源。
+本目录描述 my-code 当前实现。`refactor/` 保存已完成模块化改造的原则、阶段记录和架构守卫规范；`state-management/` 保存下一轮状态所有权重构提案；被忽略的 `claude-code/` 只用于对照行为，不是本项目的包结构来源。
 
 ## 架构地图
 
@@ -40,6 +40,8 @@ Conversation facts ──codec──> Session JSONL
 | [10-terminal-ui.md](10-terminal-ui.md) | TUI 与 Chat 的交互 |
 | [11-prompt-management.md](11-prompt-management.md) | System prompt 与用户上下文 |
 | [12-package-boundaries.md](12-package-boundaries.md) | 模块所有权、公开 API 和依赖方向 |
+
+下一轮重构提案见 [state-management/README.md](state-management/README.md)。其中内容在迁移完成前不代表当前代码行为。
 
 ## 统一术语
 

@@ -4,12 +4,14 @@ import json
 import unicodedata
 
 from my_code.model.request import (
-    ModelAssistantMessage,
+    AssistantOutput,
+    InputText,
     ModelReasoningBlock,
     ModelRequest,
     ModelTextBlock,
-    ModelToolResultBlock,
     ModelToolUseBlock,
+    ToolOutputs,
+    UserInput,
 )
 
 
@@ -56,10 +58,23 @@ class UnicodeTokenEstimator:
             count += 8
             count += self.count_text(tool.name) + self.count_text(tool.description)
             count += self.count_text(_json(tool.input_schema))
-        for message in request.messages:
+        for item in request.input:
             count += 5
-            count += 1 if isinstance(message, ModelAssistantMessage) else 0
-            for block in message.content:
+            count += 1 if isinstance(item, AssistantOutput) else 0
+            if isinstance(item, ToolOutputs):
+                for output in item.results:
+                    count += 3 + sum(
+                        self.count_text(block.text) for block in output.content
+                    )
+                continue
+            if isinstance(item, UserInput):
+                for block in item.content:
+                    count += 3
+                    count += self.count_text(
+                        block.text if isinstance(block, InputText) else block.data
+                    )
+                continue
+            for block in item.content:
                 count += 3
                 continuation = getattr(block, "continuation", None)
                 if continuation is not None:
@@ -70,8 +85,6 @@ class UnicodeTokenEstimator:
                     count += self.count_text(block.name) + self.count_text(
                         _json(block.input)
                     )
-                elif isinstance(block, ModelToolResultBlock):
-                    count += self.count_text(block.content)
                 elif isinstance(block, ModelReasoningBlock):
                     # Provider-private reasoning without replay state is not input.
                     continue

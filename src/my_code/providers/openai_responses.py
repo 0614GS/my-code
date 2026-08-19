@@ -32,13 +32,19 @@ from my_code.model.primitives import (
     to_json_object,
 )
 from my_code.model.request import (
-    ModelMessage,
+    AssistantOutput,
+    InputDocument,
+    InputImage,
+    InputText,
+    ModelInputItem,
     ModelOutput,
     ModelReasoningBlock,
     ModelRequest,
     ModelTextBlock,
-    ModelToolResultBlock,
     ModelToolUseBlock,
+    ToolOutput,
+    ToolOutputs,
+    UserInput,
 )
 
 type _DisplayKey = tuple[str, int]
@@ -243,7 +249,7 @@ class OpenAIResponsesProvider(ModelClient):
             "model": self.model,
             "store": False,
             "instructions": request.system_prompt.text,
-            "input": self._input(request.messages),
+            "input": self._input(request.input),
             "tools": [
                 {
                     "type": "function",
@@ -261,34 +267,41 @@ class OpenAIResponsesProvider(ModelClient):
             params["reasoning"] = reasoning
         return params
 
-    def _input(self, messages: Iterable[ModelMessage]) -> list[object]:
-        materialized = tuple(messages)
+    def _input(self, items: Iterable[ModelInputItem]) -> list[object]:
         result: list[object] = []
-        for message in materialized:
-            for block in message.content:
-                continuation = getattr(block, "continuation", None)
-                if continuation is not None and continuation.binding == self.binding:
-                    result.append(_openai_item(continuation))
-                    continue
-                if isinstance(block, ModelTextBlock):
-                    result.append({"role": message.role, "content": block.text})
-                elif isinstance(block, ModelToolUseBlock):
-                    result.append(
-                        {
-                            "type": "function_call",
-                            "call_id": block.id,
-                            "name": block.name,
-                            "arguments": json.dumps(
-                                block.input, ensure_ascii=False, separators=(",", ":")
-                            ),
-                        }
-                    )
-                elif isinstance(block, ModelToolResultBlock):
+        for item in items:
+            if isinstance(item, UserInput):
+                result.append(_openai_user_input(item))
+            elif isinstance(item, AssistantOutput):
+                for block in item.content:
+                    continuation = getattr(block, "continuation", None)
+                    if (
+                        continuation is not None
+                        and continuation.binding == self.binding
+                    ):
+                        result.append(_openai_item(continuation))
+                    elif isinstance(block, ModelTextBlock):
+                        result.append({"role": "assistant", "content": block.text})
+                    elif isinstance(block, ModelToolUseBlock):
+                        result.append(
+                            {
+                                "type": "function_call",
+                                "call_id": block.id,
+                                "name": block.name,
+                                "arguments": json.dumps(
+                                    block.input,
+                                    ensure_ascii=False,
+                                    separators=(",", ":"),
+                                ),
+                            }
+                        )
+            elif isinstance(item, ToolOutputs):
+                for output in item.results:
                     result.append(
                         {
                             "type": "function_call_output",
-                            "call_id": block.tool_use_id,
-                            "output": block.content,
+                            "call_id": output.call_id,
+                            "output": _openai_tool_output(output),
                         }
                     )
         return result
@@ -393,6 +406,37 @@ def _openai_item(state: ProviderContinuationState) -> JsonObject:
     payload = state.payload
     _validate_openai_payload(payload)
     return to_json_object(payload)
+
+
+def _openai_user_input(item: UserInput) -> dict[str, object]:
+    if len(item.content) == 1 and isinstance(item.content[0], InputText):
+        return {"role": "user", "content": item.content[0].text}
+    content: list[dict[str, object]] = []
+    for block in item.content:
+        if isinstance(block, InputText):
+            content.append({"type": "input_text", "text": block.text})
+        elif isinstance(block, InputImage):
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": f"data:{block.media_type};base64,{block.data}",
+                    "detail": "auto",
+                }
+            )
+        elif isinstance(block, InputDocument):
+            document: dict[str, object] = {
+                "type": "input_file",
+                "file_data": f"data:{block.media_type};base64,{block.data}",
+            }
+            if block.name is not None:
+                document["filename"] = block.name
+            content.append(document)
+    return {"role": "user", "content": content}
+
+
+def _openai_tool_output(output: ToolOutput) -> str:
+    text = "\n".join(block.text for block in output.content)
+    return f"Error: {text}" if output.is_error else text
 
 
 def _validate_openai_payload(payload: JsonObject) -> None:

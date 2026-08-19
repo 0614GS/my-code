@@ -14,11 +14,12 @@ from my_code.conversation.state import CompactBoundary, CompactTrigger
 from my_code.model.client import ModelClient, collect_model_output
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
-    ModelMessage,
+    InputText,
+    ModelInputItem,
     ModelRequest,
     ModelTextBlock,
-    ModelUserMessage,
     SystemPrompt,
+    UserInput,
 )
 
 _COMPACTION_SYSTEM_PROMPT = """You are a coding-agent conversation compactor.
@@ -77,7 +78,7 @@ class ContextCompactor:
         self.max_output_tokens = max_output_tokens
 
     async def summarize(
-        self, messages: tuple[ModelMessage, ...]
+        self, messages: tuple[ModelInputItem, ...]
     ) -> tuple[str, TokenUsage]:
         response = await collect_model_output(
             self.provider,
@@ -86,7 +87,7 @@ class ContextCompactor:
                     _COMPACTION_SYSTEM_PROMPT,
                     key="my-code.compaction",
                 ),
-                messages=_append_summary_request(messages),
+                input=_append_summary_request(messages),
                 tools=(),
                 max_output_tokens=self.max_output_tokens,
             ),
@@ -132,15 +133,13 @@ class ContextCompactor:
 
 
 def _append_summary_request(
-    messages: tuple[ModelMessage, ...],
-) -> tuple[ModelMessage, ...]:
-    instruction = ModelTextBlock(_COMPACTION_REQUEST)
-    if messages and messages[-1].role == "user":
-        last = messages[-1]
-        return messages[:-1] + (
-            ModelUserMessage(content=last.content + (instruction,)),
-        )
-    return messages + (ModelUserMessage(content=(instruction,)),)
+    items: tuple[ModelInputItem, ...],
+) -> tuple[ModelInputItem, ...]:
+    instruction = InputText(_COMPACTION_REQUEST)
+    if items and isinstance(items[-1], UserInput):
+        last = items[-1]
+        return items[:-1] + (UserInput(content=last.content + (instruction,)),)
+    return items + (UserInput(content=(instruction,)),)
 
 
 def _extract_summary(response_text: str) -> str:

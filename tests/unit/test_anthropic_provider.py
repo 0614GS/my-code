@@ -18,15 +18,21 @@ from my_code.model.primitives import (
     ReasoningPresentation,
 )
 from my_code.model.request import (
-    ModelAssistantMessage,
+    AssistantOutput,
+    InputDocument,
+    InputImage,
+    InputText,
     ModelReasoningBlock,
     ModelRequest,
     ModelTextBlock,
     ModelToolUseBlock,
-    ModelUserMessage,
     PromptStability,
     ResolvedPromptSection,
     SystemPrompt,
+    ToolOutput,
+    ToolOutputs,
+    ToolOutputText,
+    UserInput,
 )
 from my_code.providers.anthropic import AnthropicProvider, _system_prompt_param
 
@@ -76,23 +82,128 @@ def test_anthropic_cache_breakpoints_end_static_and_session_prefixes() -> None:
 
 
 def test_user_context_and_attachments_surround_conversation_messages() -> None:
-    user_context = ModelUserMessage((ModelTextBlock("user context"),))
-    history = ModelAssistantMessage((ModelTextBlock("history"),))
-    attachment = ModelUserMessage((ModelTextBlock("attachment"),))
+    user_context = UserInput((InputText("user context"),))
+    history = AssistantOutput((ModelTextBlock("history"),))
+    attachment = UserInput((InputText("attachment"),))
     request = ModelRequest(
         system_prompt=SystemPrompt.from_text("system"),
-        messages=(user_context, history, attachment),
+        input=(user_context, history, attachment),
         tools=(),
         max_output_tokens=10,
     )
 
-    normalized = cast(
-        list[dict[str, Any]], AnthropicProvider._messages(request.messages)
-    )
+    normalized = cast(list[dict[str, Any]], AnthropicProvider._messages(request.input))
 
     assert normalized[0]["content"][0]["text"] == "user context"
     assert normalized[1]["content"][0]["text"] == "history"
     assert normalized[2]["content"][0]["text"] == "attachment"
+
+
+def test_anthropic_tool_sequence_snapshot_uses_assistant_then_user_roles() -> None:
+    """Lock the phase-0 wire baseline; the user role is adapter-only encoding."""
+
+    messages = (
+        AssistantOutput((ModelToolUseBlock("call", "Read", {"path": "x"}),)),
+        ToolOutputs((ToolOutput("call", (ToolOutputText("ok"),), True),)),
+    )
+
+    actual = cast(list[dict[str, Any]], AnthropicProvider._messages(messages))
+
+    assert actual == [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call",
+                    "name": "Read",
+                    "input": {"path": "x"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call",
+                    "content": "ok",
+                    "is_error": True,
+                }
+            ],
+        },
+    ]
+
+
+def test_anthropic_groups_adjacent_roles_and_preserves_multiple_results() -> None:
+    items = (
+        UserInput((InputText("context"),)),
+        UserInput((InputText("prompt"),)),
+        AssistantOutput(
+            (
+                ModelToolUseBlock("first", "Read", {"path": "a"}),
+                ModelToolUseBlock("second", "Read", {"path": "b"}),
+            )
+        ),
+        ToolOutputs(
+            (
+                ToolOutput("first", (ToolOutputText("a"),)),
+                ToolOutput("second", (ToolOutputText("bad"),), True),
+            )
+        ),
+        UserInput((InputText("reminder"),)),
+    )
+
+    actual = cast(list[dict[str, Any]], AnthropicProvider._messages(items))
+
+    assert [message["role"] for message in actual] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert [block["type"] for block in actual[0]["content"]] == ["text", "text"]
+    assert [block["tool_use_id"] for block in actual[2]["content"][:2]] == [
+        "first",
+        "second",
+    ]
+    assert actual[2]["content"][1]["is_error"] is True
+    assert actual[2]["content"][2] == {"type": "text", "text": "reminder"}
+
+
+def test_anthropic_maps_image_and_document_inside_adapter() -> None:
+    item = UserInput(
+        (
+            InputImage("image/png", "aW1hZ2U="),
+            InputDocument("application/pdf", "ZG9j", "notes.pdf"),
+        )
+    )
+
+    actual = cast(list[dict[str, Any]], AnthropicProvider._messages((item,)))
+
+    assert actual == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "aW1hZ2U=",
+                    },
+                },
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": "ZG9j",
+                    },
+                    "title": "notes.pdf",
+                },
+            ],
+        }
+    ]
 
 
 def test_anthropic_thinking_round_trips_only_for_matching_model() -> None:
@@ -115,7 +226,7 @@ def test_anthropic_thinking_round_trips_only_for_matching_model() -> None:
             {"type": "redacted_thinking", "data": "ciphertext"},
         ),
     )
-    message = ModelAssistantMessage(
+    message = AssistantOutput(
         (thinking, redacted, ModelToolUseBlock("call", "Read", {"path": "x"}))
     )
 
@@ -280,7 +391,7 @@ async def test_anthropic_stream_empty_thinking_completes_hidden_without_replay()
     provider.client = SimpleNamespace(messages=Messages())  # type: ignore[assignment]
     request = ModelRequest(
         SystemPrompt.from_text("system"),
-        (ModelUserMessage((ModelTextBlock("hello"),)),),
+        (UserInput((InputText("hello"),)),),
         (),
         100,
     )

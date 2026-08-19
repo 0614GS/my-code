@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -17,14 +18,19 @@ from my_code.model.primitives import (
     ProviderContinuationState,
 )
 from my_code.model.request import (
-    ModelAssistantMessage,
+    AssistantOutput,
+    InputDocument,
+    InputImage,
+    InputText,
     ModelReasoningBlock,
     ModelRequest,
     ModelTextBlock,
-    ModelToolResultBlock,
     ModelToolUseBlock,
-    ModelUserMessage,
     SystemPrompt,
+    ToolOutput,
+    ToolOutputs,
+    ToolOutputText,
+    UserInput,
 )
 from my_code.providers.openai_responses import (
     OpenAIResponsesProvider,
@@ -106,6 +112,30 @@ def test_response_preserves_reasoning_and_output_item_order() -> None:
     assert output.usage.total_input_tokens == 12
 
 
+def test_openai_tool_sequence_snapshot_uses_top_level_function_items() -> None:
+    """Lock the phase-0 wire baseline: tool output is not a user message."""
+
+    provider = _provider()
+    messages = (
+        AssistantOutput((ModelToolUseBlock("call", "Read", {"path": "x"}),)),
+        ToolOutputs((ToolOutput("call", (ToolOutputText("ok"),)),)),
+    )
+
+    assert provider._input(messages) == [
+        {
+            "type": "function_call",
+            "call_id": "call",
+            "name": "Read",
+            "arguments": '{"path":"x"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call",
+            "output": "ok",
+        },
+    ]
+
+
 def test_input_replays_matching_items_and_maps_tool_results() -> None:
     provider = _provider()
     raw: JsonObject = {
@@ -118,10 +148,10 @@ def test_input_replays_matching_items_and_maps_tool_results() -> None:
     }
     continuation = ProviderContinuationState(provider.binding, "working_context", raw)
     messages = (
-        ModelAssistantMessage(
+        AssistantOutput(
             (ModelToolUseBlock("call", "Read", {"path": "x"}, continuation),)
         ),
-        ModelUserMessage((ModelToolResultBlock("call", "ok"),)),
+        ToolOutputs((ToolOutput("call", (ToolOutputText("ok"),)),)),
     )
 
     result = provider._input(messages)
@@ -132,6 +162,65 @@ def test_input_replays_matching_items_and_maps_tool_results() -> None:
         "call_id": "call",
         "output": "ok",
     }
+
+
+def test_openai_preserves_multiple_outputs_and_stably_encodes_errors() -> None:
+    provider = _provider()
+    items = (
+        AssistantOutput(
+            (
+                ModelToolUseBlock("first", "Read", {"path": "a"}),
+                ModelToolUseBlock("second", "Read", {"path": "b"}),
+            )
+        ),
+        ToolOutputs(
+            (
+                ToolOutput("first", (ToolOutputText("a"),)),
+                ToolOutput("second", (ToolOutputText("denied"),), True),
+            )
+        ),
+    )
+
+    result = cast(list[dict[str, object]], provider._input(items))
+
+    assert [item["call_id"] for item in result] == [
+        "first",
+        "second",
+        "first",
+        "second",
+    ]
+    assert result[-2]["output"] == "a"
+    assert result[-1]["output"] == "Error: denied"
+
+
+def test_openai_maps_multimodal_user_input_without_provider_types_in_core() -> None:
+    provider = _provider()
+    item = UserInput(
+        (
+            InputText("inspect"),
+            InputImage("image/png", "aW1hZ2U="),
+            InputDocument("application/pdf", "ZG9j", "notes.pdf"),
+        )
+    )
+
+    assert provider._input((item,)) == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "inspect"},
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,aW1hZ2U=",
+                    "detail": "auto",
+                },
+                {
+                    "type": "input_file",
+                    "file_data": "data:application/pdf;base64,ZG9j",
+                    "filename": "notes.pdf",
+                },
+            ],
+        }
+    ]
 
 
 def test_mismatched_binding_does_not_replay_encrypted_item() -> None:
@@ -147,9 +236,7 @@ def test_mismatched_binding_does_not_replay_encrypted_item() -> None:
             "encrypted_content": "secret",
         },
     )
-    result = provider._input(
-        (ModelAssistantMessage((ModelTextBlock("visible", other),)),)
-    )
+    result = provider._input((AssistantOutput((ModelTextBlock("visible", other),)),))
     assert result == [{"role": "assistant", "content": "visible"}]
 
 
@@ -157,7 +244,7 @@ def test_request_is_stateless_and_requests_safe_reasoning_summary() -> None:
     provider = _provider()
     request = ModelRequest(
         SystemPrompt.from_text("system"),
-        (ModelUserMessage((ModelTextBlock("hello"),)),),
+        (UserInput((InputText("hello"),)),),
         (),
         100,
     )
@@ -257,7 +344,7 @@ async def test_openai_stream_rejects_non_increasing_provider_sequence() -> None:
     provider.client = SimpleNamespace(responses=Responses())  # type: ignore[assignment]
     request = ModelRequest(
         SystemPrompt.from_text("system"),
-        (ModelUserMessage((ModelTextBlock("hello"),)),),
+        (UserInput((InputText("hello"),)),),
         (),
         100,
     )

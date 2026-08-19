@@ -59,7 +59,7 @@ def connection(provider_id: str) -> ProviderConnection:
 def empty_request() -> ModelRequest:
     return ModelRequest(
         system_prompt=SystemPrompt.from_text("system"),
-        messages=(),
+        input=(),
         tools=(),
         max_output_tokens=10,
     )
