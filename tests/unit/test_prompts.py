@@ -6,17 +6,11 @@ import nano_code.prompts.system as system
 from nano_code.context.documents import ContextInstruction
 from nano_code.context.normalization import ModelInputNormalizer
 from nano_code.context.xml import render_context_instruction, wrap_xml
-from nano_code.conversation import ConversationSummaryMessage
-from nano_code.model import (
-    ModelTextBlock,
-    PromptStability,
-    SystemPrompt,
-)
-from nano_code.prompts import (
-    PromptRegistry,
-    PromptSection,
-    build_system_prompt_registry,
-)
+from nano_code.conversation.models import ConversationSummaryMessage
+from nano_code.model.request import ModelTextBlock, PromptStability, SystemPrompt
+from nano_code.prompts.models import PromptSection
+from nano_code.prompts.registry import PromptRegistry
+from nano_code.prompts.system import build_system_prompt_registry
 
 
 def test_registry_caches_stable_sections_and_recomputes_request_sections() -> None:

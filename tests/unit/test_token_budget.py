@@ -1,9 +1,9 @@
-from nano_code.context import ContextBuilder
-from nano_code.context import ContextSnapshot as ConversationSnapshot
 from nano_code.context.microcompact import MicrocompactPolicy
+from nano_code.context.planner import ContextBuilder
+from nano_code.context.session import ContextSnapshot as ConversationSnapshot
 from nano_code.context.tokenizer import UnicodeTokenEstimator
 from nano_code.context.window import ContextWindow
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     TextContent,
@@ -11,20 +11,17 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model import (
+from nano_code.model.capabilities import (
     ActiveModelState,
     CapabilitySource,
     ModelDescriptor,
     ModelLimits,
-    PromptStability,
-    ProviderBinding,
-    TokenUsage,
     resolve_environment,
 )
-from nano_code.prompts import (
-    PromptRegistry,
-    PromptSection,
-)
+from nano_code.model.primitives import ProviderBinding, TokenUsage
+from nano_code.model.request import PromptStability
+from nano_code.prompts.models import PromptSection
+from nano_code.prompts.registry import PromptRegistry
 
 
 def test_unknown_model_defaults_to_200k_with_180k_auto_compact() -> None:

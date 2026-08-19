@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
-from nano_code.conversation import ToolCall, ToolResult
-from nano_code.model import JsonObject
+from nano_code.conversation.models import ToolCall, ToolResult
+from nano_code.model.primitives import JsonObject
 
 if TYPE_CHECKING:
-    from nano_code.permissions import PermissionDecision
+    from nano_code.permissions.models import PermissionDecision
     from nano_code.tools.base import Tool, ToolContext
 
 

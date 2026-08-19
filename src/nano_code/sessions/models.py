@@ -5,13 +5,10 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-from nano_code.conversation import (
-    CompactBoundary,
-    ContentReplacement,
-    ConversationMessage,
-)
-from nano_code.model import ModelLimits
-from nano_code.tools import ToolResultPresentation
+from nano_code.conversation.models import ConversationMessage
+from nano_code.conversation.state import CompactBoundary, ContentReplacement
+from nano_code.model.capabilities import ModelLimits
+from nano_code.tools.presentation import ToolResultPresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,4 +85,8 @@ def _timestamp(value: str, name: str) -> datetime:
     return parsed
 
 
-__all__ = ["SessionMetadata", "SessionSnapshot", "SessionStart"]
+__all__ = [
+    "SessionMetadata",
+    "SessionSnapshot",
+    "SessionStart",
+]

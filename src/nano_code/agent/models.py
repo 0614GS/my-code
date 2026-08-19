@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass
 
-from nano_code.context import ContextAttachment
-from nano_code.model import TokenUsage
+from nano_code.context.attachments.models import ContextAttachment
+from nano_code.model.primitives import TokenUsage
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,8 +44,8 @@ type AgentTurnOutcome = AgentTurnSucceeded | AgentMaxStepsReached
 
 
 __all__ = [
-    "AgentTurnInput",
     "AgentMaxStepsReached",
+    "AgentTurnInput",
     "AgentTurnOutcome",
     "AgentTurnSucceeded",
 ]

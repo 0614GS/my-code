@@ -2,13 +2,13 @@
 
 from nano_code.config.paths import SettingsScope
 from nano_code.config.store import SettingsStore
-from nano_code.permissions import (
-    PermissionPolicy,
+from nano_code.permissions.models import (
     PermissionUpdate,
     PermissionUpdateDestination,
     PermissionUpdateType,
-    permission_rule_to_string,
 )
+from nano_code.permissions.policy import PermissionPolicy
+from nano_code.permissions.rules import permission_rule_to_string
 
 _SCOPE_BY_DESTINATION = {
     PermissionUpdateDestination.USER: SettingsScope.USER,
@@ -80,4 +80,6 @@ class PermissionUpdateApplier:
         )
 
 
-__all__ = ["PermissionUpdateApplier"]
+__all__ = [
+    "PermissionUpdateApplier",
+]

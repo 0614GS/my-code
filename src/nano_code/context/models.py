@@ -4,18 +4,11 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from nano_code.context.session import AttachmentDelivery
-from nano_code.conversation import (
-    CompactBoundary,
-    ContentReplacement,
-    ConversationSummaryMessage,
-)
-from nano_code.model import (
-    CapabilitySource,
-    ModelLimits,
-    ModelRequest,
-    ProviderBinding,
-    TokenUsage,
-)
+from nano_code.conversation.models import ConversationSummaryMessage
+from nano_code.conversation.state import CompactBoundary, ContentReplacement
+from nano_code.model.capabilities import CapabilitySource, ModelLimits
+from nano_code.model.primitives import ProviderBinding, TokenUsage
+from nano_code.model.request import ModelRequest
 
 
 @dataclass(frozen=True, slots=True)

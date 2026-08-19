@@ -94,3 +94,18 @@ def completed_output_payloads(output: ModelOutput) -> tuple[ModelStreamPayload, 
             )
     payloads.append(ModelOutputCompleted(output))
     return tuple(payloads)
+
+
+__all__ = [
+    "ModelOutputCompleted",
+    "ModelReasoningCompleted",
+    "ModelReasoningDelta",
+    "ModelReasoningStarted",
+    "ModelStreamEvent",
+    "ModelStreamPayload",
+    "ModelStreamSequencer",
+    "ModelTextCompleted",
+    "ModelTextDelta",
+    "ModelTextStarted",
+    "completed_output_payloads",
+]

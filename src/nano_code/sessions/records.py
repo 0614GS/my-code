@@ -3,15 +3,15 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from nano_code.model import (
+from nano_code.model.capabilities import ModelLimits
+from nano_code.model.primitives import (
     JsonObject,
-    ModelLimits,
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
 )
-from nano_code.tools import ToolResultPresentation
+from nano_code.tools.presentation import ToolResultPresentation
 
 
 @dataclass(frozen=True, slots=True)

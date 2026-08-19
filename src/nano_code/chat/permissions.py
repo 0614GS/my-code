@@ -1,8 +1,29 @@
 """Permission prompting bridge for interactive chat frontends."""
 
-from nano_code.chat.models import PermissionHandler, PermissionRequest
-from nano_code.permissions import PermissionConfirmation, PermissionPrompt
-from nano_code.tools import ToolUsePresentation
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+
+from nano_code.model.primitives import JsonObject
+from nano_code.permissions.models import (
+    PermissionConfirmation,
+    PermissionPrompt,
+    PermissionUpdate,
+)
+from nano_code.tools.presentation import ToolUsePresentation
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionRequest:
+    tool_name: str
+    tool_input: JsonObject
+    message: str
+    presentation: ToolUsePresentation
+    suggestions: tuple[PermissionUpdate, ...] = ()
+
+
+type PermissionHandler = Callable[
+    [PermissionRequest], Awaitable[PermissionConfirmation]
+]
 
 
 class DeferredPermissionPrompter:
@@ -31,3 +52,10 @@ class DeferredPermissionPrompter:
                 suggestions=request.decision.suggestions,
             )
         )
+
+
+__all__ = [
+    "DeferredPermissionPrompter",
+    "PermissionHandler",
+    "PermissionRequest",
+]

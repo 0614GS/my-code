@@ -4,21 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.config import (
-    NanoCodePaths,
-    PermissionUpdateApplier,
-    SettingsScope,
-    SettingsStore,
-)
-from nano_code.conversation import ToolCall
-from nano_code.model import JsonObject, ModelToolDefinition
-from nano_code.permissions import (
+from nano_code.config.paths import NanoCodePaths, SettingsScope
+from nano_code.config.permission_updates import PermissionUpdateApplier
+from nano_code.config.store import SettingsStore
+from nano_code.conversation.models import ToolCall
+from nano_code.model.primitives import JsonObject
+from nano_code.model.request import ModelToolDefinition
+from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,
+    PermissionDecision,
     PermissionDecisionKind,
     PermissionDecisionReason,
     PermissionMode,
-    PermissionPolicy,
     PermissionPrompt,
     PermissionRule,
     PermissionUpdate,
@@ -26,16 +24,17 @@ from nano_code.permissions import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from nano_code.permissions.models import PermissionDecision
+from nano_code.permissions.policy import PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.tools import Tool, ToolContext, ToolRegistry, ToolResultPresentation
-from nano_code.tools.base import ToolOutput
+from nano_code.tools.base import Tool, ToolContext, ToolOutput
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
 from nano_code.tools.invocation import ToolInvocation
 from nano_code.tools.paths import resolve_workspace_path
+from nano_code.tools.presentation import ToolResultPresentation
+from nano_code.tools.registry import ToolRegistry
 from nano_code.tools.result_store import ToolResultStore
-from nano_code.workspace import Workspace
+from nano_code.workspace.local import Workspace
 
 
 def build_executor(tmp_path: Path, mode: PermissionMode) -> ToolExecutor:

@@ -22,4 +22,6 @@ def builtin_tools() -> tuple[Tool, ...]:
     )
 
 
-__all__ = ["builtin_tools"]
+__all__ = [
+    "builtin_tools",
+]

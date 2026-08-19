@@ -1,7 +1,8 @@
 """在工作区文件中执行精确字符串替换。"""
 
-from nano_code.model import JsonObject, ModelToolDefinition
-from nano_code.permissions import ToolPermissionContext, ToolPermissionResult
+from nano_code.model.primitives import JsonObject
+from nano_code.model.request import ModelToolDefinition
+from nano_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from nano_code.tools.base import (
     Tool,
     ToolContext,

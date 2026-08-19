@@ -3,25 +3,20 @@ from collections.abc import Iterable
 
 import pytest
 
-from nano_code.context import (
-    AttachmentDelivery,
-    ContextBuilder,
-    ContextOverflow,
-    ContextSession,
-)
-from nano_code.context import (
-    ContextSnapshot as ConversationSnapshot,
-)
 from nano_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
 )
 from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.documents import ContextInstruction, UserContextDocument
+from nano_code.context.models import ContextOverflow
 from nano_code.context.normalization import ModelInputNormalizer
+from nano_code.context.planner import ContextBuilder
+from nano_code.context.session import AttachmentDelivery, ContextSession
+from nano_code.context.session import ContextSnapshot as ConversationSnapshot
 from nano_code.context.window import ContextWindow
 from nano_code.context.xml import render_context_instruction
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     ReasoningContent,
@@ -30,20 +25,20 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model import (
-    ModelReasoningBlock,
-    ModelTextBlock,
-    ModelUserMessage,
-    PromptStability,
+from nano_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
 )
-from nano_code.prompts import (
-    PromptRegistry,
-    PromptSection,
+from nano_code.model.request import (
+    ModelReasoningBlock,
+    ModelTextBlock,
+    ModelUserMessage,
+    PromptStability,
 )
+from nano_code.prompts.models import PromptSection
+from nano_code.prompts.registry import PromptRegistry
 
 
 def _planner(*, user_resolver=None, attachment_resolver=None) -> ContextBuilder:

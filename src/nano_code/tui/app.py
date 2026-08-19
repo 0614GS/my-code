@@ -8,30 +8,31 @@ from textual.events import Key
 from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
 
-from nano_code.chat import (
+from nano_code.chat.events import (
     AttachmentLoaded,
-    ChatService,
-    ContextStatus,
-    HistoryAssistantMessage,
-    HistoryReasoning,
-    HistorySystemMessage,
-    HistoryToolCall,
-    HistoryUserMessage,
-    PathSuggestion,
-    PermissionConfirmation,
-    PermissionRequest,
+    MaxStepsReached,
     ReasoningCompleted,
     ReasoningDelta,
     ReasoningStarted,
-    StepLimitReached,
     TextCompleted,
     TextDelta,
     TextStarted,
     TodoListUpdated,
     ToolFinished,
     ToolStarted,
-    TurnCompleted,
+    TurnSucceeded,
 )
+from nano_code.chat.history import (
+    HistoryEntry,
+    HistoryReasoning,
+    HistoryText,
+    HistoryToolCall,
+)
+from nano_code.chat.permissions import PermissionRequest
+from nano_code.chat.service import ChatService
+from nano_code.chat.status import ContextStatus
+from nano_code.features.file_mentions.models import PathSuggestion
+from nano_code.permissions.models import PermissionConfirmation
 from nano_code.tui.commands import SlashCommandRegistry
 from nano_code.tui.completion import format_path_mention, mention_at_cursor
 from nano_code.tui.provider_screen import ProviderScreen
@@ -577,13 +578,13 @@ class NanoCodeApp(App[None]):
                 elif isinstance(event, TodoListUpdated):
                     self.query_one(TodoPanel).set_todos(event.todos)
                     activity.set_todos(event.todos)
-                elif isinstance(event, TurnCompleted):
+                elif isinstance(event, TurnSucceeded):
                     completed = True
-                elif isinstance(event, StepLimitReached):
+                elif isinstance(event, MaxStepsReached):
                     completed = True
                     await self._mount_message(
                         SystemMessage(
-                            f"Error: Reached max steps ({event.result.max_steps})",
+                            f"Error: Reached max steps ({event.max_steps})",
                             error=True,
                         )
                     )
@@ -708,27 +709,21 @@ class NanoCodeApp(App[None]):
 
     async def _render_history(
         self,
-        history: tuple[
-            HistoryUserMessage
-            | HistoryAssistantMessage
-            | HistoryReasoning
-            | HistorySystemMessage
-            | HistoryToolCall,
-            ...,
-        ],
+        history: tuple[HistoryEntry, ...],
     ) -> None:
         await self._clear_messages()
         for entry in history:
-            if isinstance(entry, HistoryUserMessage):
-                await self._mount_message(UserMessage(entry.text))
-            elif isinstance(entry, HistoryAssistantMessage):
-                await self._mount_message(AssistantMessage(entry.text))
+            if isinstance(entry, HistoryText):
+                if entry.role == "user":
+                    await self._mount_message(UserMessage(entry.text))
+                elif entry.role == "assistant":
+                    await self._mount_message(AssistantMessage(entry.text))
+                else:
+                    await self._mount_message(SystemMessage(entry.text))
             elif isinstance(entry, HistoryReasoning):
                 item = ReasoningMessage(entry.presentation.disclosure, expanded=False)
                 item.load_presentation(entry.presentation)
                 await self._mount_message(item)
-            elif isinstance(entry, HistorySystemMessage):
-                await self._mount_message(SystemMessage(entry.text))
             elif isinstance(entry, HistoryToolCall):
                 tool = ToolCallMessage(entry.tool_use_id, entry.use)
                 tool.finish(entry.result, is_error=entry.is_error)
@@ -856,3 +851,9 @@ def _format_context_usage(status: ContextStatus) -> str:
 def _format_token_k(tokens: int) -> str:
     value = f"{tokens / 1000:.1f}".removesuffix(".0")
     return f"{value}k"
+
+
+__all__ = [
+    "NanoCodeApp",
+    "NanoCodeTui",
+]

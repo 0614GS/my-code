@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from nano_code.model import PromptStability, ResolvedPromptSection, SystemPrompt
+from nano_code.model.request import PromptStability, ResolvedPromptSection, SystemPrompt
 from nano_code.prompts.models import PromptSection
 
 _STABILITY_ORDER = {
@@ -69,3 +69,8 @@ class PromptRegistry:
         if cache is not None:
             cache[section.key] = resolved
         return resolved
+
+
+__all__ = [
+    "PromptRegistry",
+]

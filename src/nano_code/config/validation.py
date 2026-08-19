@@ -20,3 +20,8 @@ def validate_base_url(value: str) -> str:
             "base URL must be an http(s) URL without credentials, query, or fragment"
         )
     return normalized
+
+
+__all__ = [
+    "validate_base_url",
+]

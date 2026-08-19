@@ -53,3 +53,9 @@ class Workspace:
         if not resolved.is_relative_to(self.root):
             raise WorkspaceBoundaryError(f"Path escapes the workspace: {path}")
         return resolved
+
+
+__all__ = [
+    "Workspace",
+    "WorkspaceBoundaryError",
+]

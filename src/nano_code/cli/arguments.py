@@ -7,7 +7,8 @@ from enum import StrEnum
 from pathlib import Path
 
 from nano_code import __version__
-from nano_code.config import PermissionMode, SettingsOverrides
+from nano_code.config.settings import SettingsOverrides
+from nano_code.permissions.models import PermissionMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,3 +110,10 @@ def _parse_chat_options(namespace: argparse.Namespace) -> CliOptions:
             context_chars=namespace.context_chars,
         ),
     )
+
+
+__all__ = [
+    "AuthOptions",
+    "CliOptions",
+    "parse_cli",
+]

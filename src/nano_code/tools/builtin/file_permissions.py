@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nano_code.model import JsonObject
-from nano_code.permissions import (
+from nano_code.model.primitives import JsonObject
+from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionDecisionKind,
     PermissionDecisionReason,
@@ -15,8 +15,8 @@ from nano_code.permissions import (
     PermissionUpdateDestination,
     ToolPermissionContext,
     ToolPermissionResult,
-    matching_path_rule,
 )
+from nano_code.permissions.path_rules import matching_path_rule
 from nano_code.tools.base import ToolInputError
 from nano_code.tools.paths import (
     is_sensitive_write_path,

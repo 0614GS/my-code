@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.auth import CredentialSource, CredentialStore
+from nano_code.auth.credentials import CredentialSource, CredentialStore
 from nano_code.cli.arguments import (
     AuthAction,
     AuthOptions,
@@ -12,8 +12,8 @@ from nano_code.cli.arguments import (
     parse_args,
     parse_cli,
 )
-from nano_code.config import AgentSettings, SettingsResolver
-from nano_code.permissions import PermissionMode
+from nano_code.config.settings import AgentSettings, SettingsResolver
+from nano_code.permissions.models import PermissionMode
 
 
 def clear_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from nano_code.model import JsonObject
+from nano_code.model.primitives import JsonObject
 from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionDecision,
@@ -213,3 +213,8 @@ def _rule_reason(rule: PermissionRule) -> PermissionDecisionReason:
         f"{rule.tool_name}:{rule.behavior.value}",
         rule=rule,
     )
+
+
+__all__ = [
+    "PermissionPolicy",
+]

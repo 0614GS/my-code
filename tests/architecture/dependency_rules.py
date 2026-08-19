@@ -47,8 +47,20 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "tools",
         }
     ),
-    "cli": frozenset({"auth", "chat", "config"}),
-    "tui": frozenset({"chat"}),
+    "cli": frozenset({"auth", "chat", "config", "permissions"}),
+    "tui": frozenset(
+        {
+            "chat",
+            "config",
+            "features.file_mentions",
+            "features.todos",
+            "model",
+            "permissions",
+            "providers",
+            "sessions",
+            "tools",
+        }
+    ),
     "bootstrap": frozenset(
         {
             "agent",
@@ -84,6 +96,7 @@ class ImportEdge:
     source: str
     target: str
     imported_module: str
+    imported_names: tuple[str, ...] = ()
 
     def describe(self) -> str:
         return (
@@ -151,8 +164,6 @@ def _temporary_edges(
 # until this list is tightened.
 TEMPORARY_DEPENDENCY_VIOLATIONS: tuple[TemporaryViolation, ...] = ()
 
-TEMPORARY_DEEP_IMPORTS: tuple[TemporaryViolation, ...] = ()
-
 TEMPORARY_TECHNICAL_LEAKS: tuple[TemporaryTechnicalLeak, ...] = ()
 
 TEMPORARY_CYCLIC_COMPONENTS: frozenset[frozenset[str]] = frozenset()
@@ -175,7 +186,9 @@ def collect_import_edges() -> tuple[ImportEdge, ...]:
         source = architecture_module(module_name)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            for imported_module in _imports_from_node(node, module_name, is_package):
+            for imported_module, imported_names in _import_records_from_node(
+                node, module_name, is_package
+            ):
                 if not imported_module.startswith(f"{PACKAGE_NAME}."):
                     continue
                 target = architecture_module(imported_module)
@@ -188,6 +201,7 @@ def collect_import_edges() -> tuple[ImportEdge, ...]:
                         source=source,
                         target=target,
                         imported_module=imported_module,
+                        imported_names=imported_names,
                     )
                 )
     return tuple(sorted(set(edges)))
@@ -201,12 +215,63 @@ def dependency_violations(edges: tuple[ImportEdge, ...]) -> tuple[ImportEdge, ..
     )
 
 
-def deep_imports(edges: tuple[ImportEdge, ...]) -> tuple[ImportEdge, ...]:
-    return tuple(
-        edge
-        for edge in edges
-        if edge.imported_module != public_module_name(edge.target)
-    )
+def public_import_violations(edges: tuple[ImportEdge, ...]) -> tuple[ImportEdge, ...]:
+    """Return imports that bypass a declared semantic-module API."""
+
+    exports: dict[str, frozenset[str] | None] = {}
+    violations: list[ImportEdge] = []
+    for edge in edges:
+        suffix = edge.imported_module.removeprefix(f"{PACKAGE_NAME}.")
+        if any(part.startswith("_") for part in suffix.split(".")):
+            violations.append(edge)
+            continue
+        declared = exports.setdefault(
+            edge.imported_module,
+            _static_exports(edge.imported_module),
+        )
+        if declared is None or any(
+            name == "*" or name not in declared for name in edge.imported_names
+        ):
+            violations.append(edge)
+    return tuple(violations)
+
+
+def foreign_reexports() -> tuple[ImportEdge, ...]:
+    """Return public symbols re-exported from a different owner module."""
+
+    violations: list[ImportEdge] = []
+    for path in iter_python_files():
+        module_name, is_package = _module_name_for_path(path)
+        source = architecture_module(module_name)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        exported = _exports_from_tree(tree)
+        if exported is None:
+            continue
+        for node in tree.body:
+            for imported_module, _ in _import_records_from_node(
+                node, module_name, is_package
+            ):
+                target = architecture_module(imported_module)
+                if target == source:
+                    continue
+                aliases = (
+                    node.names if isinstance(node, (ast.Import, ast.ImportFrom)) else ()
+                )
+                for alias in aliases:
+                    local_name = alias.asname or alias.name
+                    if local_name not in exported:
+                        continue
+                    violations.append(
+                        ImportEdge(
+                            path.relative_to(REPOSITORY_ROOT).as_posix(),
+                            _line_number(node),
+                            source,
+                            target,
+                            imported_module,
+                            (alias.name,),
+                        )
+                    )
+    return tuple(sorted(set(violations)))
 
 
 def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
@@ -367,10 +432,6 @@ def target_dependency_graph() -> dict[str, frozenset[str]]:
     return {module: targets for module, targets in ALLOWED_DEPENDENCIES.items()}
 
 
-def public_module_name(module: str) -> str:
-    return f"{PACKAGE_NAME}.{module}"
-
-
 def violation_key(edge: ImportEdge) -> tuple[str, str]:
     return (edge.source, edge.target)
 
@@ -412,12 +473,24 @@ def architecture_module(module_name: str) -> str:
 def _imports_from_node(
     node: ast.AST, source_module: str, is_package: bool
 ) -> tuple[str, ...]:
+    return tuple(
+        imported_module
+        for imported_module, _ in _import_records_from_node(
+            node, source_module, is_package
+        )
+    )
+
+
+def _import_records_from_node(
+    node: ast.AST, source_module: str, is_package: bool
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
     if isinstance(node, ast.Import):
-        return tuple(alias.name for alias in node.names)
+        return tuple((alias.name, ()) for alias in node.names)
     if not isinstance(node, ast.ImportFrom):
         return ()
+    imported_names = tuple(alias.name for alias in node.names)
     if node.level == 0:
-        return (node.module,) if node.module is not None else ()
+        return ((node.module, imported_names),) if node.module is not None else ()
 
     source_parts = source_module.split(".")
     package_parts = source_parts if is_package else source_parts[:-1]
@@ -427,4 +500,48 @@ def _imports_from_node(
     resolved = package_parts[:keep]
     if node.module is not None:
         resolved.extend(node.module.split("."))
-    return (".".join(resolved),)
+    return ((".".join(resolved), imported_names),)
+
+
+def _static_exports(module_name: str) -> frozenset[str] | None:
+    path = _path_for_module(module_name)
+    if path is None:
+        return None
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return _exports_from_tree(tree)
+
+
+def _exports_from_tree(tree: ast.Module) -> frozenset[str] | None:
+    for node in tree.body:
+        value: ast.expr | None = None
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in node.targets
+        ):
+            value = node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "__all__"
+        ):
+            value = node.value
+        if not isinstance(value, (ast.List, ast.Tuple)):
+            continue
+        if not all(
+            isinstance(item, ast.Constant) and isinstance(item.value, str)
+            for item in value.elts
+        ):
+            return None
+        return frozenset(item.value for item in value.elts)  # type: ignore[union-attr]
+    return None
+
+
+def _path_for_module(module_name: str) -> Path | None:
+    if not module_name.startswith(f"{PACKAGE_NAME}."):
+        return None
+    relative = Path(*module_name.split(".")[1:])
+    module_path = SOURCE_ROOT / relative.with_suffix(".py")
+    if module_path.exists():
+        return module_path
+    package_path = SOURCE_ROOT / relative / "__init__.py"
+    return package_path if package_path.exists() else None

@@ -23,4 +23,6 @@ def permission_rule_for_destination(
     )
 
 
-__all__ = ["permission_rule_for_destination"]
+__all__ = [
+    "permission_rule_for_destination",
+]

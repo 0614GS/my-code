@@ -134,3 +134,10 @@ def _canonical_path(path: Path) -> Path:
     # ``resolve`` 会尽可能规范化符号链接，并允许尚未创建的配置路径存在。
     resolved = path.resolve(strict=False)
     return Path(unicodedata.normalize("NFC", str(resolved)))
+
+
+__all__ = [
+    "NanoCodePaths",
+    "SettingsScope",
+    "sanitize_path",
+]

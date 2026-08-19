@@ -7,19 +7,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nano_code.model import JsonObject, ModelToolDefinition
+from nano_code.model.primitives import JsonObject
+from nano_code.model.request import ModelToolDefinition
 from nano_code.tools.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
     compact_text,
 )
-from nano_code.workspace import Workspace
+from nano_code.workspace.local import Workspace
 
 if TYPE_CHECKING:
-    from nano_code.permissions import (
-        ToolPermissionContext,
-        ToolPermissionResult,
-    )
+    from nano_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -164,3 +162,10 @@ class Tool(ABC):
     @abstractmethod
     async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
         """执行已校验并获准的调用。"""
+
+
+__all__ = [
+    "Tool",
+    "ToolContext",
+    "ToolOutput",
+]

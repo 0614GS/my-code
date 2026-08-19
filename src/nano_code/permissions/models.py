@@ -7,7 +7,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from nano_code.model import JsonObject
+from nano_code.model.primitives import JsonObject
 
 
 class PermissionMode(StrEnum):
@@ -326,3 +326,23 @@ class PermissionPrompter(Protocol):
     """Host capability for resolving a pending interactive decision."""
 
     async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation: ...
+
+
+__all__ = [
+    "PermissionBehavior",
+    "PermissionConfirmation",
+    "PermissionDecision",
+    "PermissionDecisionKind",
+    "PermissionDecisionReason",
+    "PermissionMode",
+    "PermissionPrompt",
+    "PermissionPrompter",
+    "PermissionRequest",
+    "PermissionRule",
+    "PermissionUpdate",
+    "PermissionUpdateDestination",
+    "PermissionUpdateType",
+    "ToolPermissionBehavior",
+    "ToolPermissionContext",
+    "ToolPermissionResult",
+]

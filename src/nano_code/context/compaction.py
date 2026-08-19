@@ -7,22 +7,20 @@ from typing import Protocol
 from nano_code.context.models import CompactionOutcome
 from nano_code.context.planner import ContextBuilder
 from nano_code.context.session import ContextSnapshot
-from nano_code.conversation import (
-    CompactBoundary,
-    CompactTrigger,
+from nano_code.conversation.models import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
 )
-from nano_code.model import (
-    ModelClient,
+from nano_code.conversation.state import CompactBoundary, CompactTrigger
+from nano_code.model.client import ModelClient, collect_model_output
+from nano_code.model.primitives import TokenUsage
+from nano_code.model.request import (
     ModelMessage,
     ModelRequest,
     ModelTextBlock,
     ModelUserMessage,
     SystemPrompt,
-    TokenUsage,
-    collect_model_output,
 )
 
 _COMPACTION_SYSTEM_PROMPT = """You are a coding-agent conversation compactor.
@@ -221,3 +219,10 @@ def _build_continuation_context(
         for index, content in enumerate(excerpts, start=1)
     )
     return f"{compacted}\n\n## Recent user messages (verbatim excerpts)\n\n{rendered}"
+
+
+__all__ = [
+    "CompactionCoordinator",
+    "CompactionResult",
+    "CompactionService",
+]

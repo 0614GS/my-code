@@ -149,3 +149,17 @@ def fallback_descriptor(model_id: str) -> ModelDescriptor:
         ModelLimits(max_input_tokens=FALLBACK_INPUT_TOKENS),
         source=CapabilitySource.FALLBACK,
     )
+
+
+__all__ = [
+    "ActiveModelEnvironment",
+    "ActiveModelState",
+    "CapabilitySource",
+    "FALLBACK_INPUT_TOKENS",
+    "ModelCapabilities",
+    "ModelDescriptor",
+    "ModelLimits",
+    "ProviderCapabilities",
+    "fallback_descriptor",
+    "resolve_environment",
+]

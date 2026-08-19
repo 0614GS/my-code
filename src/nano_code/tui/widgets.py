@@ -17,21 +17,19 @@ from textual.widgets import Input, Label, LoadingIndicator, OptionList, Static
 from textual.widgets.option_list import Option
 
 from nano_code import __version__
-from nano_code.chat import (
+from nano_code.chat.permissions import PermissionRequest
+from nano_code.chat.status import RuntimeStatus
+from nano_code.features.todos.models import TodoItem
+from nano_code.model.primitives import ReasoningDisclosure, ReasoningPresentation
+from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,
-    PermissionRequest,
     PermissionUpdate,
     PermissionUpdateDestination,
-    ReasoningDisclosure,
-    ReasoningPresentation,
-    RuntimeStatus,
-    TodoItem,
-    ToolResultPresentation,
-    ToolUsePresentation,
-    permission_rule_for_destination,
-    validate_bash_rule_content,
 )
+from nano_code.permissions.rules import validate_bash_rule_content
+from nano_code.permissions.updates import permission_rule_for_destination
+from nano_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
 
 
 class WelcomePanel(Static):

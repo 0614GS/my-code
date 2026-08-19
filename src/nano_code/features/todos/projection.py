@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
     ConversationMessage,
     ToolCall,
@@ -67,4 +67,7 @@ def _completed_model_calls_since_write(
     return completed_calls
 
 
-__all__ = ["TodoProjection", "project_todos"]
+__all__ = [
+    "TodoProjection",
+    "project_todos",
+]

@@ -6,13 +6,10 @@ from uuid import uuid4
 
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.documents import UserContextDocument
-from nano_code.conversation import (
-    ContentReplacement,
-    ConversationMessage,
-    ConversationSnapshot,
-)
-from nano_code.model import ResolvedPromptSection, SystemPrompt
-from nano_code.prompts import PromptRegistry
+from nano_code.conversation.models import ConversationMessage
+from nano_code.conversation.state import ContentReplacement, ConversationSnapshot
+from nano_code.model.request import ResolvedPromptSection, SystemPrompt
+from nano_code.prompts.registry import PromptRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,4 +94,8 @@ class ContextSession:
         self._deliveries += tuple(pending)
 
 
-__all__ = ["AttachmentDelivery", "ContextSession", "ContextSnapshot"]
+__all__ = [
+    "AttachmentDelivery",
+    "ContextSession",
+    "ContextSnapshot",
+]

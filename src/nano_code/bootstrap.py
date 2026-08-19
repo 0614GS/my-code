@@ -8,69 +8,53 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from nano_code.agent import AgentEngine
-from nano_code.auth import CredentialStore
-from nano_code.chat import (
-    ChatService,
-    DeferredPermissionPrompter,
-    MaxStepsReached,
-    TurnSucceeded,
-)
-from nano_code.cli import AuthOptions, CliOptions, parse_cli, run_auth_command
-from nano_code.config import (
+from nano_code.agent.engine import AgentEngine
+from nano_code.auth.credentials import CredentialStore
+from nano_code.chat.events import MaxStepsReached, TurnSucceeded
+from nano_code.chat.permissions import DeferredPermissionPrompter
+from nano_code.chat.service import ChatService
+from nano_code.cli.arguments import AuthOptions, CliOptions, parse_cli
+from nano_code.cli.auth import run_auth_command
+from nano_code.config.paths import NanoCodePaths, SettingsScope
+from nano_code.config.permission_updates import PermissionUpdateApplier
+from nano_code.config.providers import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_ID,
-    AgentSettings,
-    NanoCodePaths,
-    PermissionUpdateApplier,
     ProviderProfile,
     ProviderProfileStore,
-    SettingsLayer,
-    SettingsResolver,
-    SettingsScope,
-    SettingsStore,
 )
-from nano_code.context import (
-    AgentsUserContextResolver,
-    CompactionCoordinator,
-    CompactionService,
-    ContextBuilder,
-    ContextWindow,
-    DerivedAttachmentResolver,
-)
-from nano_code.features.file_mentions import (
-    AttachmentLoader,
-    WorkspaceAttachmentReader,
-    WorkspacePathSuggester,
-)
-from nano_code.features.todos import TodoReminderAttachmentSource, TodoWriteTool
-from nano_code.model import ActiveModelState, resolve_environment
-from nano_code.permissions import (
-    HeadlessPrompter,
-    PermissionPolicy,
-    PermissionPrompter,
-    TerminalPrompter,
-)
-from nano_code.prompts import build_system_prompt_registry
-from nano_code.providers import (
-    ModelCatalogCache,
-    ModelDiscoveryService,
-    ProviderConnection,
-    ProviderManager,
-    ProviderRouter,
-    resolve_without_network,
-)
-from nano_code.sessions import Session, SessionStart, SessionStore
-from nano_code.tools import (
-    ToolContext,
-    ToolExecutor,
-    ToolRegistry,
-    ToolResultStore,
-    ToolRoundExecutor,
-    builtin_tools,
-)
-from nano_code.tui import NanoCodeTui
-from nano_code.workspace import Workspace
+from nano_code.config.settings import AgentSettings, SettingsResolver
+from nano_code.config.store import SettingsLayer, SettingsStore
+from nano_code.context.attachments.sources import DerivedAttachmentResolver
+from nano_code.context.compaction import CompactionCoordinator, CompactionService
+from nano_code.context.planner import ContextBuilder
+from nano_code.context.user_context import AgentsUserContextResolver
+from nano_code.context.window import ContextWindow
+from nano_code.features.file_mentions.loader import AttachmentLoader
+from nano_code.features.file_mentions.reader import WorkspaceAttachmentReader
+from nano_code.features.file_mentions.suggestions import WorkspacePathSuggester
+from nano_code.features.todos.reminder import TodoReminderAttachmentSource
+from nano_code.features.todos.tool import TodoWriteTool
+from nano_code.model.capabilities import ActiveModelState, resolve_environment
+from nano_code.permissions.models import PermissionPrompter
+from nano_code.permissions.policy import PermissionPolicy
+from nano_code.permissions.prompt import HeadlessPrompter, TerminalPrompter
+from nano_code.prompts.system import build_system_prompt_registry
+from nano_code.providers.discovery import ModelDiscoveryService, resolve_without_network
+from nano_code.providers.manager import ProviderManager
+from nano_code.providers.model_cache import ModelCatalogCache
+from nano_code.providers.router import ProviderConnection, ProviderRouter
+from nano_code.sessions.models import SessionStart
+from nano_code.sessions.session import Session
+from nano_code.sessions.store import SessionStore
+from nano_code.tools.base import ToolContext
+from nano_code.tools.builtin import builtin_tools
+from nano_code.tools.executor import ToolExecutor
+from nano_code.tools.registry import ToolRegistry
+from nano_code.tools.result_store import ToolResultStore
+from nano_code.tools.round_executor import ToolRoundExecutor
+from nano_code.tui.app import NanoCodeTui
+from nano_code.workspace.local import Workspace
 
 
 @dataclass(frozen=True, slots=True)

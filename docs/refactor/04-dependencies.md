@@ -51,8 +51,18 @@ ALLOWED_DEPENDENCIES = {
         "sessions",
         "tools",
     },
-    "cli": {"auth", "chat", "config"},
-    "tui": {"chat"},
+    "cli": {"auth", "chat", "config", "permissions"},
+    "tui": {
+        "chat",
+        "config",
+        "features.file_mentions",
+        "features.todos",
+        "model",
+        "permissions",
+        "providers",
+        "sessions",
+        "tools",
+    },
 }
 ```
 
@@ -70,26 +80,32 @@ ALLOWED_DEPENDENCIES = {
 - `agent` 不得导入 OpenAI、Anthropic、Textual、CLI 或 JSONL record。
 - `agent` 不得负责 session catalog、resume 或保存活动 Session 单例。
 - `providers` 不得导入 Agent、Context、Tools、Chat 或 UI。
-- `tui` 不得直接导入 Agent、Provider、SessionStore、ToolExecutor 或 Context。
+- `tui` 不得直接导入 Agent、Provider SDK、SessionStore、ToolExecutor、Conversation 或 Context；它可以从公开语义模块读取安全展示 DTO。
 - 除 `bootstrap` 外，任何模块不得注册全部工具或创建完整运行时对象图。
 
 ## 公开 API
 
-每个模块使用 `__init__.py` 和 `__all__` 声明稳定能力：
+顶层领域包的 `__init__.py` 不聚合 API。每个语义子模块使用静态 `__all__` 声明自己的稳定能力：
 
 ```python
-from nano_code.model import ModelClient, ModelRequest
-from nano_code.conversation import Conversation, ToolCall
-```
-
-跨模块默认不得深层导入：
-
-```python
-# 禁止
+from nano_code.model.client import ModelClient
 from nano_code.model.request import ModelRequest
-
-# 允许
-from nano_code.model import ModelRequest
+from nano_code.conversation.models import ToolCall
+from nano_code.conversation.state import Conversation
 ```
 
-模块内部可以直接导入自己的子模块。最终生产代码没有深层 import 例外；公开 re-export 只声明当前能力，不兼容旧路径。
+跨模块必须直接指向符号所有者：
+
+```python
+# 禁止：包根聚合
+from nano_code.model import ModelRequest
+
+# 禁止：Chat 转发其他所有者
+from nano_code.chat import PermissionConfirmation
+
+# 允许：语义子模块声明自身能力
+from nano_code.model.request import ModelRequest
+from nano_code.permissions.models import PermissionConfirmation
+```
+
+模块内部可以直接导入自己的实现文件。跨模块不能导入以下划线开头的私有路径、使用 wildcard，或引用未列入目标模块 `__all__` 的符号。公开模块不得 re-export 其他架构模块拥有的能力。

@@ -141,3 +141,8 @@ async def _stop_process(process: asyncio.subprocess.Process | None) -> None:
     with suppress(ProcessLookupError):
         process.kill()
     await process.wait()
+
+
+__all__ = [
+    "WorkspacePathSuggester",
+]

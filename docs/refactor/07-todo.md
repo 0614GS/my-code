@@ -11,7 +11,7 @@
 - [x] 写入目标允许表和当前临时违规清单。
 - [x] 确认临时违规不会被新代码增加。
 
-验收：架构测试能够报告依赖边、深层 import、循环路径和技术泄漏。
+验收：架构测试能够报告依赖边、公开 API 违规、循环路径和技术泄漏。
 
 ## 1. 统一使用 Pyright
 
@@ -80,10 +80,10 @@
 - [x] 建立具体 `ChatService`，不保留单实现 `ChatRuntime` Protocol。
 - [x] Chat 原子持有并切换 Session、ContextSession 和 session tool-result binding。
 - [x] 将 session catalog、resume 和恢复历史投影从 Agent 移到 Chat/Sessions。
-- [x] TUI 和 CLI 只通过 Chat 的公开 API 驱动对话。
+- [x] TUI 和 CLI 通过 ChatService 驱动对话，并从各所有者的公开语义模块读取展示 DTO。
 - [x] AgentEvent 与 ChatEvent 保持不同生命周期并显式投影。
 
-验收：Agent 在 turn 之间无可变领域状态且不依赖 UI、具体 Provider 或 JSONL；流式 turn/compact/resume 互斥；TUI/CLI 不越过 Chat 访问内部模块。
+验收：Agent 在 turn 之间无可变领域状态且不依赖 UI、具体 Provider 或 JSONL；流式 turn/compact/resume 互斥；TUI/CLI 不直接访问 Agent、Context、Conversation、SessionStore 或 ToolExecutor。
 
 ## 7. 收尾
 

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.context import ContextAttachment
+from nano_code.context.attachments.models import ContextAttachment
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,4 +40,8 @@ class PathSuggestion:
     display: str
 
 
-__all__ = ["FileMention", "LoadedAttachment", "PathSuggestion"]
+__all__ = [
+    "FileMention",
+    "LoadedAttachment",
+    "PathSuggestion",
+]

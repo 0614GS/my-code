@@ -2,14 +2,13 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from nano_code.model import (
+from nano_code.model.client import collect_model_output
+from nano_code.model.events import ModelOutputCompleted, ModelStreamEvent
+from nano_code.model.request import (
     ModelOutput,
-    ModelOutputCompleted,
     ModelRequest,
-    ModelStreamEvent,
     ModelTextBlock,
     SystemPrompt,
-    collect_model_output,
 )
 
 

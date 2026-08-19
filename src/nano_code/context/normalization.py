@@ -5,7 +5,7 @@ from nano_code.context.attachments.projection import AttachmentProjector
 from nano_code.context.documents import UserContextDocument
 from nano_code.context.session import AttachmentDelivery
 from nano_code.context.xml import render_context_instruction, wrap_xml
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
     ConversationMessage,
     HumanMessage,
@@ -14,7 +14,8 @@ from nano_code.conversation import (
     ToolCall,
     ToolResultsMessage,
 )
-from nano_code.model import (
+from nano_code.model.primitives import ProviderBinding, ProviderContinuationState
+from nano_code.model.request import (
     ModelAssistantMessage,
     ModelMessage,
     ModelReasoningBlock,
@@ -22,8 +23,6 @@ from nano_code.model import (
     ModelToolResultBlock,
     ModelToolUseBlock,
     ModelUserMessage,
-    ProviderBinding,
-    ProviderContinuationState,
 )
 
 

@@ -6,28 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import (
-    AgentEvent,
-    AgentTurnCompleted,
-    AgentTurnInput,
-    AgentTurnSucceeded,
-)
-from nano_code.auth import CredentialSource
+from nano_code.agent.events import AgentEvent
+from nano_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from nano_code.auth.credentials import CredentialSource
 from nano_code.bootstrap import bootstrap_chat
-from nano_code.chat import (
-    ChatService,
-    HistoryAssistantMessage,
-    HistoryToolCall,
-    HistoryUserMessage,
-)
-from nano_code.config import AgentSettings, NanoCodePaths
-from nano_code.context import (
-    AttachmentDelivery,
-    ContextAttachment,
-    ContextObservation,
-    ContextSession,
-)
-from nano_code.conversation import (
+from nano_code.chat.history import HistoryText, HistoryToolCall
+from nano_code.chat.service import ChatService
+from nano_code.config.paths import NanoCodePaths
+from nano_code.config.settings import AgentSettings
+from nano_code.context.attachments.models import ContextAttachment, ContextObservation
+from nano_code.context.session import AttachmentDelivery, ContextSession
+from nano_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     TextContent,
@@ -35,14 +24,12 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model import TokenUsage
-from nano_code.permissions import PermissionMode
-from nano_code.sessions import Session, SessionStore
-from nano_code.tools import (
-    ToolResultPresentation,
-    ToolResultStore,
-    ToolUsePresentation,
-)
+from nano_code.model.primitives import TokenUsage
+from nano_code.permissions.models import PermissionMode
+from nano_code.sessions.session import Session
+from nano_code.sessions.store import SessionStore
+from nano_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from nano_code.tools.result_store import ToolResultStore
 
 _CURRENT_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 _TARGET_SESSION_ID = "22222222-2222-2222-2222-222222222222"
@@ -129,8 +116,8 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     assert resumed.status.session_id == _TARGET_SESSION_ID
     assert resumed.status.working_message_count == 2
     assert resumed.history == (
-        HistoryUserMessage("historical question"),
-        HistoryAssistantMessage("historical answer"),
+        HistoryText("user", "historical question"),
+        HistoryText("assistant", "historical answer"),
     )
     assert runtime.status().session_id == _TARGET_SESSION_ID
     assert runtime._active is not previous
@@ -174,7 +161,7 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
     resumed = await runtime.resume_session(_TARGET_SESSION_ID)
 
     assert resumed.history == (
-        HistoryUserMessage("read it"),
+        HistoryText("user", "read it"),
         HistoryToolCall(
             tool_use_id="read-1",
             use=ToolUsePresentation(
@@ -285,7 +272,7 @@ async def test_stream_prevents_session_switch_until_turn_finishes(
             del session, context, result_store, turn_input
             started.set()
             await release.wait()
-            yield AgentTurnCompleted(AgentTurnSucceeded("done", 1, TokenUsage()))
+            yield AgentTurnSucceeded("done", 1, TokenUsage())
 
     runtime.agent = BlockingAgent()  # type: ignore[assignment]
 

@@ -87,3 +87,9 @@ class HeadlessPrompter:
     async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
         del request
         return PermissionConfirmation(False)
+
+
+__all__ = [
+    "HeadlessPrompter",
+    "TerminalPrompter",
+]

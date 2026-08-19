@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from nano_code.model import PromptStability
+from nano_code.model.request import PromptStability
 
 type PromptResolver = Callable[[], str]
 
@@ -19,3 +19,8 @@ class PromptSection:
     def __post_init__(self) -> None:
         if not self.key.strip():
             raise ValueError("Prompt section key must not be empty")
+
+
+__all__ = [
+    "PromptSection",
+]

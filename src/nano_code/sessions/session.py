@@ -2,19 +2,21 @@
 
 from collections.abc import Iterable
 
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
-    CompactBoundary,
-    ContentReplacement,
-    Conversation,
     ConversationMessage,
     ConversationSummaryMessage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
 )
+from nano_code.conversation.state import (
+    CompactBoundary,
+    ContentReplacement,
+    Conversation,
+)
 from nano_code.sessions.store import SessionStore
-from nano_code.tools import ToolResultPresentation
+from nano_code.tools.presentation import ToolResultPresentation
 
 
 class Session:
@@ -165,4 +167,6 @@ def _trailing_tool_repairs(
     )
 
 
-__all__ = ["Session"]
+__all__ = [
+    "Session",
+]

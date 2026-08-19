@@ -7,16 +7,15 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
-    CompactBoundary,
-    ContentReplacement,
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
     ToolCall,
     ToolResultsMessage,
 )
+from nano_code.conversation.state import CompactBoundary, ContentReplacement
 from nano_code.sessions.codec import (
     decode_entry,
     encode_boundary,
@@ -29,14 +28,17 @@ from nano_code.sessions.codec import (
 )
 from nano_code.sessions.models import SessionMetadata, SessionSnapshot, SessionStart
 from nano_code.sessions.records import ToolPresentationRecord
-from nano_code.tools import ToolResultPresentation
+from nano_code.tools.presentation import ToolResultPresentation
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
 
-__all__ = ["SessionStore", "is_session_id"]
+__all__ = [
+    "SessionStore",
+    "is_session_id",
+]
 
 
 def is_session_id(value: str) -> bool:

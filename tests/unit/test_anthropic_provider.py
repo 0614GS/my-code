@@ -3,24 +3,28 @@ from typing import Any, cast
 
 import pytest
 
-from nano_code.config import ReasoningConfig
-from nano_code.model import (
-    ModelAssistantMessage,
-    ModelReasoningBlock,
+from nano_code.config.providers import ReasoningConfig
+from nano_code.model.capabilities import ProviderCapabilities
+from nano_code.model.events import (
     ModelReasoningCompleted,
     ModelReasoningStarted,
-    ModelRequest,
-    ModelTextBlock,
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
+)
+from nano_code.model.primitives import (
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
+)
+from nano_code.model.request import (
+    ModelAssistantMessage,
+    ModelReasoningBlock,
+    ModelRequest,
+    ModelTextBlock,
     ModelToolUseBlock,
     ModelUserMessage,
     PromptStability,
-    ProviderBinding,
-    ProviderCapabilities,
-    ProviderContinuationState,
-    ReasoningPresentation,
     ResolvedPromptSection,
     SystemPrompt,
 )

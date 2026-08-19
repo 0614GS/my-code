@@ -5,20 +5,13 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from nano_code.auth import CredentialSource
-from nano_code.config import (
-    CompactConfig,
-    ProviderProtocol,
-    ReasoningConfig,
-)
-from nano_code.model import (
-    ModelClient,
-    ModelLimits,
-    ModelRequest,
-    ModelStreamEvent,
-    ProviderBinding,
-    ProviderCapabilities,
-)
+from nano_code.auth.credentials import CredentialSource
+from nano_code.config.providers import CompactConfig, ProviderProtocol, ReasoningConfig
+from nano_code.model.capabilities import ModelLimits, ProviderCapabilities
+from nano_code.model.client import ModelClient
+from nano_code.model.events import ModelStreamEvent
+from nano_code.model.primitives import ProviderBinding
+from nano_code.model.request import ModelRequest
 from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.openai_responses import OpenAIResponsesProvider
 
@@ -128,3 +121,9 @@ def _build_provider(connection: ProviderConnection) -> ModelClient:
                 provider_id=connection.id,
                 reasoning=connection.reasoning,
             )
+
+
+__all__ = [
+    "ProviderConnection",
+    "ProviderRouter",
+]

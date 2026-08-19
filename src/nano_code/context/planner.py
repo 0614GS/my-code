@@ -22,9 +22,8 @@ from nano_code.context.tokenizer import UnicodeTokenEstimator
 from nano_code.context.user_context import EmptyUserContextResolver, UserContextResolver
 from nano_code.context.window import ContextWindow
 from nano_code.context.xml import render_context_instruction
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
-    ContentReplacement,
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
@@ -33,22 +32,24 @@ from nano_code.conversation import (
     ToolCall,
     ToolResultsMessage,
 )
-from nano_code.model import (
+from nano_code.conversation.state import ContentReplacement
+from nano_code.model.capabilities import (
     FALLBACK_INPUT_TOKENS,
     ActiveModelState,
+    fallback_descriptor,
+    resolve_environment,
+)
+from nano_code.model.primitives import ProviderBinding, ProviderContinuationState
+from nano_code.model.request import (
     ModelMessage,
     ModelReasoningBlock,
     ModelRequest,
     ModelTextBlock,
     ModelToolDefinition,
     ModelToolUseBlock,
-    ProviderBinding,
-    ProviderContinuationState,
     SystemPrompt,
-    fallback_descriptor,
-    resolve_environment,
 )
-from nano_code.prompts import PromptRegistry
+from nano_code.prompts.registry import PromptRegistry
 
 
 class ContextBuilder:
@@ -541,3 +542,8 @@ def _block_continuation(block: object) -> ProviderContinuationState | None:
     if isinstance(block, (TextContent, ToolCall, ReasoningContent)):
         return block.continuation
     return None
+
+
+__all__ = [
+    "ContextBuilder",
+]

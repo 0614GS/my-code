@@ -5,7 +5,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from nano_code.auth import CredentialSource, CredentialStore, resolve_api_key
+from nano_code.auth.credentials import (
+    CredentialSource,
+    CredentialStore,
+    resolve_api_key,
+)
 from nano_code.config.paths import NanoCodePaths, SettingsScope
 from nano_code.config.providers import (
     DEFAULT_MODEL,
@@ -18,13 +22,14 @@ from nano_code.config.providers import (
 )
 from nano_code.config.store import SettingsLayer, SettingsStore
 from nano_code.config.validation import validate_base_url
-from nano_code.model import ModelDescriptor, ModelLimits, validate_provider_id
-from nano_code.permissions import (
+from nano_code.model.capabilities import ModelDescriptor, ModelLimits
+from nano_code.model.primitives import validate_provider_id
+from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionMode,
     PermissionRule,
-    validate_permission_rule,
 )
+from nano_code.permissions.rules import validate_permission_rule
 
 DEFAULT_MAX_OUTPUT_TOKENS = 8192
 DEFAULT_CONTEXT_CHARS = 160_000
@@ -249,3 +254,10 @@ def _resolve_permission_rules(
                     )
                 )
     return tuple(merged)
+
+
+__all__ = [
+    "AgentSettings",
+    "SettingsOverrides",
+    "SettingsResolver",
+]

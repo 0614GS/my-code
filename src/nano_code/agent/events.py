@@ -3,15 +3,12 @@
 from dataclasses import dataclass
 
 from nano_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
-from nano_code.model import (
+from nano_code.model.primitives import (
     JsonObject,
     ReasoningDisclosure,
     ReasoningPresentation,
 )
-from nano_code.tools import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-)
+from nano_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,16 +66,6 @@ class AgentConversationUpdated:
     pass
 
 
-@dataclass(frozen=True, slots=True)
-class AgentTurnCompleted:
-    result: AgentTurnSucceeded
-
-
-@dataclass(frozen=True, slots=True)
-class AgentStepLimitReached:
-    result: AgentMaxStepsReached
-
-
 type AgentEvent = (
     AgentTextStarted
     | AgentTextDelta
@@ -89,6 +76,20 @@ type AgentEvent = (
     | AgentToolStarted
     | AgentToolFinished
     | AgentConversationUpdated
-    | AgentTurnCompleted
-    | AgentStepLimitReached
+    | AgentTurnSucceeded
+    | AgentMaxStepsReached
 )
+
+
+__all__ = [
+    "AgentConversationUpdated",
+    "AgentEvent",
+    "AgentReasoningCompleted",
+    "AgentReasoningDelta",
+    "AgentReasoningStarted",
+    "AgentTextCompleted",
+    "AgentTextDelta",
+    "AgentTextStarted",
+    "AgentToolFinished",
+    "AgentToolStarted",
+]

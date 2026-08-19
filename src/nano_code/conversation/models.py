@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from nano_code.conversation.primitives import new_id, utc_now
-from nano_code.model import (
+from nano_code.model.primitives import (
     JsonObject,
     ProviderBinding,
     ProviderContinuationState,

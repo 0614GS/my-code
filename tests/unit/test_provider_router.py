@@ -2,22 +2,24 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from nano_code.auth import CredentialSource
-from nano_code.config import ProviderProtocol
-from nano_code.model import (
-    ModelOutput,
+from nano_code.auth.credentials import CredentialSource
+from nano_code.config.providers import ProviderProtocol
+from nano_code.model.capabilities import ProviderCapabilities
+from nano_code.model.client import collect_model_output
+from nano_code.model.events import (
     ModelOutputCompleted,
-    ModelRequest,
     ModelStreamEvent,
     ModelStreamSequencer,
-    ModelTextBlock,
     ModelTextCompleted,
     ModelTextStarted,
-    ProviderCapabilities,
-    SystemPrompt,
-    TokenUsage,
-    collect_model_output,
     completed_output_payloads,
+)
+from nano_code.model.primitives import TokenUsage
+from nano_code.model.request import (
+    ModelOutput,
+    ModelRequest,
+    ModelTextBlock,
+    SystemPrompt,
 )
 from nano_code.providers.router import ProviderConnection, ProviderRouter
 

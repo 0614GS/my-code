@@ -5,7 +5,7 @@ import platform
 import sys
 from pathlib import Path
 
-from nano_code.model import PromptStability
+from nano_code.model.request import PromptStability
 from nano_code.prompts.defaults import (
     IDENTITY_PROMPT,
     RESPONSE_STYLE_PROMPT,
@@ -83,4 +83,6 @@ def build_system_prompt_registry(cwd: Path) -> PromptRegistry:
     )
 
 
-__all__ = ["build_system_prompt_registry"]
+__all__ = [
+    "build_system_prompt_registry",
+]

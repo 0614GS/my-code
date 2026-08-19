@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nano_code.config.paths import NanoCodePaths, SettingsScope
-from nano_code.model import validate_provider_id
-from nano_code.permissions import (
-    PermissionMode,
+from nano_code.model.primitives import validate_provider_id
+from nano_code.permissions.models import PermissionMode
+from nano_code.permissions.rules import (
     permission_rule_to_string,
     validate_permission_rule,
 )
@@ -490,3 +490,12 @@ def _atomic_json_write(path: Path, document: object) -> None:
     finally:
         if temporary is not None and temporary.exists():
             temporary.unlink()
+
+
+__all__ = [
+    "AgentSettingsLayer",
+    "PermissionSettingsLayer",
+    "SettingsFileError",
+    "SettingsLayer",
+    "SettingsStore",
+]

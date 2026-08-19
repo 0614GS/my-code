@@ -88,3 +88,8 @@ def _parse_line_range(value: str) -> tuple[int, int] | None:
     if start < 1 or end < start or end - start + 1 > 5000:
         return None
     return start, end
+
+
+__all__ = [
+    "parse_file_mentions",
+]

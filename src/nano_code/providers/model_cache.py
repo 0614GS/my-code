@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nano_code.config import atomic_private_json_write
-from nano_code.model import (
+from nano_code.config.providers import atomic_private_json_write
+from nano_code.model.capabilities import (
     CapabilitySource,
     ModelCapabilities,
     ModelDescriptor,
@@ -134,4 +134,7 @@ def _optional_bool(value: object) -> bool | None:
     raise ValueError("cached model capability is invalid")
 
 
-__all__ = ["CachedModelCatalog", "ModelCatalogCache"]
+__all__ = [
+    "CachedModelCatalog",
+    "ModelCatalogCache",
+]

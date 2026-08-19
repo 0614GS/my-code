@@ -2,14 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.model import JsonObject
-from nano_code.permissions import (
+from nano_code.model.primitives import JsonObject
+from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,
+    PermissionDecision,
     PermissionDecisionKind,
     PermissionDecisionReason,
     PermissionMode,
-    PermissionPolicy,
     PermissionPrompt,
     PermissionRequest,
     PermissionRule,
@@ -17,9 +17,9 @@ from nano_code.permissions import (
     PermissionUpdateDestination,
     ToolPermissionContext,
 )
-from nano_code.permissions.models import PermissionDecision
+from nano_code.permissions.policy import PermissionPolicy
 from nano_code.permissions.prompt import TerminalPrompter
-from nano_code.tools import Tool, ToolContext
+from nano_code.tools.base import Tool, ToolContext
 from nano_code.tools.builtin.bash import BashTool
 from nano_code.tools.builtin.read_file import ReadFileTool
 from nano_code.tools.builtin.write_file import WriteFileTool

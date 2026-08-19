@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from nano_code.tools.base import ToolInputError
-from nano_code.workspace import Workspace, WorkspaceBoundaryError
+from nano_code.workspace.local import Workspace, WorkspaceBoundaryError
 
 _SENSITIVE_WRITE_ROOTS = frozenset({".git", ".nano-code"})
 

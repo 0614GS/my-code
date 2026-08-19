@@ -1,206 +1,48 @@
 # 工具系统
 
-> 架构边界说明已由 `docs/refactor/` 取代。Todo 状态现由 Chat 从 Conversation 投影，Agent 不再提供 `AgentStatus.todos`；最终所有权见 `refactor/15-phase-6-7-finalization.md`。
+## 模块职责
 
-## 1. Tool 是协议对象
+`tools` 拥有工具定义、注册、输入校验、权限调用、执行、展示投影和结果外置。内置文件与 Bash 工具位于 `tools.builtin`；TodoWrite 属于 `features.todos`，通过同一 Tool 接口注册。
 
-`Tool` 不只是可调用函数。参考实现的接口同时描述五类信息，定义在 `claude-code/src/Tool.ts:362`：
+## Tool 能力
 
-| 类别 | 代表字段 |
-| --- | --- |
-| 身份与发现 | `name`、`aliases`、`searchHint`、`isMcp`、`shouldDefer` |
-| Schema | `inputSchema`、`inputJSONSchema`、`outputSchema` |
-| 调度属性 | `isEnabled`、`isConcurrencySafe`、`interruptBehavior` |
-| 风险属性 | `isReadOnly`、`isDestructive`、`isOpenWorld`、`checkPermissions` |
-| 执行与结果 | `validateInput`、`call`、`mapToolResultToToolResultBlockParam` |
+具体 Tool 直接实现 `tools.base.Tool` 所需行为：
 
-接口还包含 `getToolUseSummary`、`getActivityDescription`、
-`renderToolUseMessage` 和 `renderToolResultMessage` 等展示方法。关键思想不是让顶层
-执行器识别每种工具，而是由最了解领域输出的 Tool 提供展示语义；React/Ink 组件
-仍属于 Claude Code 前端实现，不能直接泄漏进 Python 核心层。
+- 提供 provider-neutral `ModelToolDefinition`。
+- 根据输入生成工具级权限判断。
+- 在 `ToolContext` 中执行并返回 `ToolOutput`。
+- 生成不含敏感原始数据的 presentation。
 
-## 2. ToolResult
+没有为单一实现建立额外 Tool port 或 adapter。
 
-`call()` 返回的 `ToolResult<T>` 可包含：
-
-- `data`：工具的领域输出；
-- `newMessages`：工具额外产生的内部消息；
-- `contextModifier`：成功后对 `ToolUseContext` 的变换；
-- `mcpMeta`：MCP 的 `_meta` 和 `structuredContent`。
-
-领域输出不会直接塞进对话。`mapToolResultToToolResultBlockParam()` 负责生成带正确 `tool_use_id` 的 API `tool_result`，之后再经过大小预算和持久化处理。
-
-## 3. 默认实现
-
-`buildTool()` 为常用字段补默认值：
-
-- enabled：`true`
-- concurrency-safe：`false`
-- read-only：`false`
-- destructive：`false`
-- permission：返回 allow 和原输入
-- classifier input：空字符串
-- user-facing name：工具名
-
-这些是当前源码的兼容性默认，不应自动视为理想安全策略。尤其 permission/destructive 元数据需要每个有副作用的 Python 工具显式声明。
-
-## 4. 工具池组装
-
-工具集合不是全局常量，而是按当前环境和权限上下文投影：
-
-1. `getAllBaseTools()` 枚举构建产物中可能存在的内置工具。
-2. `getTools()` 应用 feature、simple mode、REPL mode、`isEnabled()` 等过滤。
-3. blanket deny 的工具在发送给模型前直接移出集合。
-4. `assembleToolPool()` 合并内置工具和 MCP 工具。
-5. 同名冲突时内置工具优先。
-6. 内置与 MCP 分区后分别按名称排序，保持 prompt cache 前缀稳定。
-
-工具名查找支持 alias；只在恢复旧 Transcript 等兼容场景下回退到已废弃名称。
-
-主要实现位于 `claude-code/src/tools.ts` 和 `claude-code/src/utils/toolPool.ts`。
-
-## 5. 单次执行管线
-
-`runToolUse()` 与 `checkPermissionsAndCallTool()` 形成统一执行管线：
+## 执行管线
 
 ```text
-按 name/alias 查找工具
-  → Schema 类型校验
-  → validateInput 语义校验
-  → 防御性清理内部字段
-  → 在克隆输入上补充观察字段
-  → PreToolUse hooks
-  → 权限决策
-  → Tool.call
-  → 映射 tool_result
-  → 大结果外置
-  → PostToolUse / PostToolUseFailure hooks
-  → 生成内部 Message
+ToolCall
+  -> ToolRegistry 查找与输入校验
+  -> Tool 自身的权限分析
+  -> PermissionPolicy 合并规则和 mode
+  -> 必要时 PermissionPrompter 确认
+  -> Tool 执行
+  -> ToolResult + ToolResultPresentation
+  -> 大结果按 session 写入 ToolResultStore
 ```
 
-Schema 错误、语义错误、未知工具、权限拒绝和执行异常都会转换成 `is_error: true` 的 tool result，而不是仅抛异常终止循环。这样模型能够看到失败并调整下一步。
+`ToolExecutor.execute()` 接受当前 session 的 `ToolResultStore`。Agent 路径必须显式传入 store，避免执行器隐藏绑定到某个活动会话。
 
-`backfillObservableInput()` 只修改克隆：SDK、Transcript、hook 和权限层可以看到派生字段，但重新发送给模型的原始 tool input 不被改写，从而保护 prompt cache 和 thinking 签名。
+## ToolRound
 
-对应实现：`claude-code/src/services/tools/toolExecution.ts`。
+`tools.round_executor.ToolRoundExecutor` 串行执行同一 AssistantMessage 中的 ToolCall。它发送 started/finished 事件，并最终产生一条闭合的 ToolResultsMessage。
 
-## 6. 批量调度
+当前 MVP 不并行执行工具。取消时尚未执行完成的调用会得到稳定错误结果；已经完成的结果不会重复执行或丢失。
 
-非流式调度器 `runTools()` 把调用划分成两类批次：
+## 权限与工作区
 
-- 连续的 concurrency-safe 调用组成并行批次；
-- 每个非 concurrency-safe 调用单独串行执行。
+- 输入含义和只读判断归具体 Tool。
+- 全局 mode、allow/ask/deny 规则和确认顺序归 `permissions`。
+- 路径解析、工作区逃逸防护和文件读写原语归 `workspace`。
+- Bash AST、命令语义和重定向分析留在 `tools.builtin.bash`。
 
-并行资格在 Schema 解析成功后由工具根据具体输入判断；判断抛错时按不安全处理。非流式兼容路径会按 tool ID 暂存 modifier，再按原始工具顺序应用；但工具协议只保证非 safe 工具的 context modifier，调用方不应依赖并行 modifier。
+## 展示与持久化
 
-实现位于 `claude-code/src/services/tools/toolOrchestration.ts`。
-
-## 7.1 nano-code 的 ToolRoundPort
-
-nano-code 将同一 AssistantMessage 中的工具批次收敛到 `ToolRoundPort`。它只暴露串行
-`run_round()`、调用展示和历史结果展示；`ToolRoundExecutor` 是现有 `ToolExecutor`
-的适配器，负责按顺序执行、生成开始/结束事件、绑定 session-scoped 结果目录，并在
-取消时为尚未完成的每个 `tool_use` 补上错误 `tool_result`。AgentEngine 只消费这些
-事件并决定是否进入下一模型轮，不识别具体工具或权限实现。
-
-本轮仍保持 MVP 的串行策略。未来并行调度、并发安全工具和取消屏障应只修改
-`ToolRoundExecutor`，不扩张 AgentEngine 的职责。
-
-## 7. 流式调度
-
-`StreamingToolExecutor` 在模型还在输出时接收完整 tool block。每个调用经历：
-
-```text
-queued → executing → completed → yielded
-```
-
-调度规则：
-
-- 当前无运行工具时，队首工具可启动。
-- 当前全是 concurrency-safe 工具时，新的 safe 工具可并行启动。
-- 非 safe 工具必须等待所有运行工具结束，并阻止后续越过它。
-- progress 不受最终结果顺序约束，立即发出。
-- 已完成的 safe 工具结果可以先发出；非 safe 工具是结果与执行顺序的屏障，结果关联依靠 tool ID 而非完成顺序。
-
-Bash 工具报错会取消并行 sibling，因为批量 shell 命令常存在隐式依赖；Read/WebFetch 等独立读失败不会取消其他读取。
-
-取消使用父子 `AbortController`：用户取消可向下传播，sibling error 只取消本批工具而不直接终止整个 query controller。
-
-实现位于 `claude-code/src/services/tools/StreamingToolExecutor.ts`。
-
-## 8. 结果大小与上下文变更
-
-每个工具声明单结果阈值；执行器统一把超大文本落盘并返回预览。聚合结果预算和跨轮稳定替换由上下文层负责，见 [03-context-management.md](03-context-management.md)。
-
-`contextModifier` 只适用于不会并发冲突的变更。流式执行器不支持 safe 并行工具修改 context；需要共享状态的工具应串行，或把状态更新改造成可交换事件。
-
-## 9. 核心不变量
-
-1. 工具输入在 Schema 和语义校验通过前不得进入权限或执行层。
-2. 调度属性由具体输入决定，异常时保守地串行。
-3. 工具异常必须产生协议完整的 tool result。
-4. 并行完成顺序不可作为业务语义；关联依靠 tool ID，共享 context 变更必须串行。
-5. 模型原始 tool input 与观察层派生 input 必须分开。
-6. 工具池排序和冲突规则必须稳定，否则会破坏 prompt cache。
-
-## 10. nano-code 的职责边界
-
-### 权限语义
-
-nano-code 每个工具必须按具体输入实现 `is_read_only(input, context)` 和 `check_permissions(input, context)`。后者返回
-`allow | ask | deny | passthrough`，只表达工具领域内的事实；全局规则、mode 和
-最终 ask 收敛仍由 `PermissionPolicy` 统一处理。`ToolExecutor` 不识别 Bash、Read
-等具体类型，只保证 validation → permission → execution → result 的顺序。
-
-Bash 位于 `tools/builtin/bash/` 领域包：`ast.py` 只产生静态解析事实，
-`semantics.py` 判断 argv 是否只读，`permissions.py` 编排规则与路径约束，
-`process.py` 负责进程生命周期。执行器固定调用 `/bin/bash -c`，不使用用户默认
-shell，也不回退到 `/bin/sh`。权限层批准了修改后的 input 时，Executor 必须把同一个
-input 交给弹窗和执行阶段，避免“用户批准 A、工具执行 B”。
-
-### 双重结果投影
-
-一次 Tool 执行产生两种用途不同的结果：
-
-```text
-ToolOutput（领域输出 + metadata）
-  ├─ Tool.to_model_result()  → ToolResultBlock → Provider / Transcript
-  └─ Tool.present_result()   → ToolResultPresentation → Runtime event → TUI
-```
-
-`Tool` 同时通过 `present_use()` 提供显示名、调用摘要和活动描述。内置 Tool 从自己
-产生的结构化 `metadata` 中构造结果摘要；TUI 不按工具名分支，也不解析模型可见的
-结果字符串。`ToolExecutor` 只负责调用两种投影、结果外置和错误回退，因此新增工具
-无需修改 Executor 或 TUI。
-
-展示对象只包含文本、布尔值等前端无关数据，不依赖 Textual。实时事件和权限弹窗
-消费同一份调用展示对象；成功结果的展示快照随 `ToolResultBlock` 写入 Transcript，
-保证 `/resume` 不受后来展示算法变化影响。旧记录没有快照时，runtime 把旧结果交回
-对应 Tool 做兼容投影。未知工具或展示方法异常时，Executor 使用有界通用摘要。
-
-这一设计保留了 Claude Code 的“Tool 拥有展示语义”，同时维持
-Tool → Agent → Runtime → TUI 的单向依赖和核心 runtime 与具体前端解耦。
-
-## 11. 主要源码入口
-
-- `claude-code/src/Tool.ts`
-- `claude-code/src/tools.ts`
-- `claude-code/src/services/tools/{toolExecution,toolOrchestration,StreamingToolExecutor}.ts`
-- `claude-code/src/utils/toolPool.ts`
-- `claude-code/src/utils/toolResultStorage.ts`
-
-## 12. TodoWrite 与运行时状态
-
-`TodoWrite` 接收完整列表，每项包含 `content`、`activeForm` 和
-`pending | in_progress | completed` 状态。输入使用严格 schema；工具不访问工作区或
-外部系统，因此无需权限确认。成功结果只向模型确认更新，TUI 展示由工具自己的
-presentation 投影生成。
-
-Todo 不新增独立持久化 record。assistant message 中已经持久化的原始 tool call input
-是恢复事实；运行时从 `ConversationState` 的完整活动历史投影最新列表。全部项目为
-completed 时，运行时可见列表清空，但 Transcript 保留原始调用。这样新建、resume、
-分支和 compact 都服从相同事实来源，不需要重复读取磁盘或维护第二份 todo 文件。
-
-Agent inbound 边界用 `AgentStatus.todos` 提供启动/resume 快照，并在工具轮持久化后用
-`AgentTodoListUpdated` 提供即时变更。多个 TodoWrite 位于同一工具轮时只发布最终投影；
-失败调用不覆盖此前列表。TUI 只消费结构化 TodoItem，不解析工具调用或结果文本。
+模型可见 `ToolResult` 与前端使用的 presentation 是两份不同数据。Session JSONL 保存必要的 presentation 快照；大型原始输出可以写入 session 专属工具结果目录，但引用仍由 canonical ToolResult 维护。

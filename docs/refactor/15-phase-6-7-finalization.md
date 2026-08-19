@@ -1,11 +1,13 @@
 # 阶段 6–7：Agent、Chat 与收尾
 
+> 本文记录阶段 6–7 完成时的快照。后续公开 API 与 dataclass 收敛见 `16-semantic-api-dataclass-review.md`；其中的文件数量、import 数量和“只从包根导入”结论不再代表当前实现。
+
 ## 最终边界
 
 - `AgentEngine` 只拥有模型/工具循环算法与不可变依赖。每次 `submit/stream` 显式接收 `Session`、`ContextSession` 和 `ToolResultStore`，不提供 status、resume 或 session catalog。
 - `ChatService` 是唯一活动会话协调者。它持有一个 `Session + ContextSession + ToolResultStore` bundle，并用同一把锁串行化 submit、stream、compact、resume 和 provider switch。
 - `sessions` 完成目标 Session 的严格 hydration、尾部工具轮修复与 catalog；Chat 只在候选 bundle 完整构造和历史投影成功后替换活动引用。
-- `chat` 拥有 host DTO 和 AgentEvent → ChatEvent 投影。TUI 只 import `nano_code.chat`；CLI 参数与认证不接触 Agent、Provider、Session 或 TUI。
+- `chat` 拥有 host DTO 和 AgentEvent → ChatEvent 投影。阶段完成时 TUI 通过 `nano_code.chat` 聚合入口导入；该入口随后改为语义子模块 API。
 - `config` 拥有路径、settings、provider profile schema/store 和权限更新的持久化协调；根 `bootstrap.py` 是唯一完整对象图与进程入口。
 
 `AgentInboundPort`、Agent contracts/ports、`ChatRuntime` Protocol、`DefaultChatRuntime`、CLI application adapters、`core`、`constants`、`application` 以及未实现的空 `hooks`/`mcp` 包均已删除，没有旧路径 re-export。
@@ -41,7 +43,7 @@ request: ModelRequest/provider stream locals
 - 技术泄漏例外：0。
 - 生产模块依赖环：0。
 
-AST 守卫不再包含旧 `core.bootstrap` 或 `application.chat` 的特殊映射。后续跨模块调用必须使用模块根公开 API；任何新增依赖都必须先更新正式允许表。
+AST 守卫不再包含旧 `core.bootstrap` 或 `application.chat` 的特殊映射。本文完成时仍采用模块根公开 API；后续已改为由语义子模块静态声明 API。
 
 ## 验证
 

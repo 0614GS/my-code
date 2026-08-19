@@ -4,31 +4,30 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import (
+from nano_code.agent.engine import AgentEngine
+from nano_code.agent.events import (
     AgentConversationUpdated,
-    AgentEngine,
-    AgentMaxStepsReached,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
     AgentTextCompleted,
     AgentTextDelta,
     AgentTextStarted,
+)
+from nano_code.agent.models import (
+    AgentMaxStepsReached,
     AgentTurnInput,
     AgentTurnSucceeded,
-)
-from nano_code.context import (
-    CompactionCoordinator,
-    CompactionService,
-    ContextBuilder,
-    ContextSession,
 )
 from nano_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
 )
+from nano_code.context.compaction import CompactionCoordinator, CompactionService
+from nano_code.context.planner import ContextBuilder
+from nano_code.context.session import ContextSession
 from nano_code.context.window import ContextWindow
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     ReasoningContent,
@@ -36,43 +35,48 @@ from nano_code.conversation import (
     ToolCall,
     ToolResultsMessage,
 )
-from nano_code.features.todos import TodoWriteTool, project_todos
-from nano_code.model import (
-    ModelContextOverflow,
-    ModelOutput,
+from nano_code.features.todos.projection import project_todos
+from nano_code.features.todos.tool import TodoWriteTool
+from nano_code.model.errors import ModelContextOverflow
+from nano_code.model.events import (
     ModelOutputCompleted,
-    ModelReasoningBlock,
     ModelReasoningCompleted,
     ModelReasoningDelta,
     ModelReasoningStarted,
-    ModelRequest,
     ModelStreamEvent,
     ModelStreamSequencer,
-    ModelTextBlock,
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
-    ModelToolUseBlock,
-    PromptStability,
+    completed_output_payloads,
+)
+from nano_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
-    completed_output_payloads,
 )
-from nano_code.permissions import PermissionMode, PermissionPolicy
+from nano_code.model.request import (
+    ModelOutput,
+    ModelReasoningBlock,
+    ModelRequest,
+    ModelTextBlock,
+    ModelToolUseBlock,
+    PromptStability,
+)
+from nano_code.permissions.models import PermissionMode
+from nano_code.permissions.policy import PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.prompts import (
-    PromptRegistry,
-    PromptSection,
-)
-from nano_code.sessions import Session, SessionStore
-from nano_code.tools import ToolRegistry
+from nano_code.prompts.models import PromptSection
+from nano_code.prompts.registry import PromptRegistry
+from nano_code.sessions.session import Session
+from nano_code.sessions.store import SessionStore
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
+from nano_code.tools.registry import ToolRegistry
 from nano_code.tools.result_store import ToolResultStore
 from nano_code.tools.round_executor import ToolRoundExecutor
-from nano_code.workspace import Workspace
+from nano_code.workspace.local import Workspace
 
 
 class FakeModel:

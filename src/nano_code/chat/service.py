@@ -4,55 +4,52 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 
-from nano_code.agent import (
+from nano_code.agent.engine import AgentEngine
+from nano_code.agent.events import (
     AgentConversationUpdated,
-    AgentEngine,
-    AgentMaxStepsReached,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
-    AgentStepLimitReached,
     AgentTextCompleted,
     AgentTextDelta,
     AgentTextStarted,
     AgentToolFinished,
     AgentToolStarted,
-    AgentTurnCompleted,
+)
+from nano_code.agent.models import (
+    AgentMaxStepsReached,
     AgentTurnInput,
     AgentTurnSucceeded,
 )
-from nano_code.chat.models import (
+from nano_code.chat.events import (
     AttachmentLoaded,
-    ContextStatus,
-    HistoryAssistantMessage,
-    HistoryEntry,
-    HistoryReasoning,
-    HistorySystemMessage,
-    HistoryToolCall,
-    HistoryUserMessage,
     MaxStepsReached,
-    PermissionHandler,
     ReasoningCompleted,
     ReasoningDelta,
     ReasoningStarted,
-    ResumedSession,
-    RuntimeStatus,
-    StepLimitReached,
     TextCompleted,
     TextDelta,
     TextStarted,
     TodoListUpdated,
     ToolFinished,
     ToolStarted,
-    TurnCompleted,
     TurnEvent,
     TurnOutcome,
     TurnSucceeded,
 )
-from nano_code.chat.permissions import DeferredPermissionPrompter
-from nano_code.config import AgentSettings
-from nano_code.context import ContextAttachment, ContextSession
-from nano_code.conversation import (
+from nano_code.chat.history import (
+    HistoryEntry,
+    HistoryReasoning,
+    HistoryText,
+    HistoryToolCall,
+    ResumedSession,
+)
+from nano_code.chat.permissions import DeferredPermissionPrompter, PermissionHandler
+from nano_code.chat.status import ContextStatus, RuntimeStatus
+from nano_code.config.settings import AgentSettings
+from nano_code.context.attachments.models import ContextAttachment
+from nano_code.context.session import ContextSession
+from nano_code.conversation.models import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,
@@ -62,27 +59,23 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.features.file_mentions import (
-    AttachmentLoader,
-    PathSuggestion,
-    WorkspacePathSuggester,
-)
-from nano_code.features.todos import project_todos
-from nano_code.model import (
+from nano_code.features.file_mentions.loader import AttachmentLoader
+from nano_code.features.file_mentions.models import PathSuggestion
+from nano_code.features.file_mentions.suggestions import WorkspacePathSuggester
+from nano_code.features.todos.projection import project_todos
+from nano_code.model.capabilities import (
     ActiveModelState,
     CapabilitySource,
     ModelDescriptor,
     resolve_environment,
 )
-from nano_code.providers import (
-    ProviderManager,
-    ProviderRouter,
-    ProviderUpdate,
-    ProviderView,
-    resolve_without_network,
-)
-from nano_code.sessions import Session, SessionCatalog, SessionStore, SessionSummary
-from nano_code.tools import ToolResultStore
+from nano_code.providers.discovery import resolve_without_network
+from nano_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
+from nano_code.providers.router import ProviderRouter
+from nano_code.sessions.catalog import SessionCatalog, SessionSummary
+from nano_code.sessions.session import Session
+from nano_code.sessions.store import SessionStore
+from nano_code.tools.result_store import ToolResultStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,25 +172,19 @@ class ChatService:
                     if current_todos != previous_todos:
                         previous_todos = current_todos
                         yield TodoListUpdated(current_todos)
-                elif isinstance(event, AgentTurnCompleted):
-                    result = event.result
-                    yield TurnCompleted(
-                        TurnSucceeded(
-                            result.text,
-                            result.completed_steps,
-                            result.usage.input_tokens,
-                            result.usage.output_tokens,
-                        )
+                elif isinstance(event, AgentTurnSucceeded):
+                    yield TurnSucceeded(
+                        event.text,
+                        event.completed_steps,
+                        event.usage.input_tokens,
+                        event.usage.output_tokens,
                     )
-                elif isinstance(event, AgentStepLimitReached):
-                    result = event.result
-                    yield StepLimitReached(
-                        MaxStepsReached(
-                            result.max_steps,
-                            result.completed_steps,
-                            result.usage.input_tokens,
-                            result.usage.output_tokens,
-                        )
+                elif isinstance(event, AgentMaxStepsReached):
+                    yield MaxStepsReached(
+                        event.max_steps,
+                        event.completed_steps,
+                        event.usage.input_tokens,
+                        event.usage.output_tokens,
                     )
 
     async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
@@ -349,13 +336,13 @@ class ChatService:
         history: list[HistoryEntry] = []
         for message in session.history:
             if isinstance(message, HumanMessage):
-                history.append(HistoryUserMessage(message.content))
+                history.append(HistoryText("user", message.content))
             elif isinstance(message, ConversationSummaryMessage):
-                history.append(HistorySystemMessage("Conversation compacted"))
+                history.append(HistoryText("system", "Conversation compacted"))
             elif isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextContent) and block.text:
-                        history.append(HistoryAssistantMessage(block.text))
+                        history.append(HistoryText("assistant", block.text))
                     elif isinstance(block, ReasoningContent):
                         history.append(HistoryReasoning(block.presentation))
                     elif isinstance(block, ToolCall):
@@ -392,4 +379,6 @@ def _project_turn_outcome(
     )
 
 
-__all__ = ["ChatService"]
+__all__ = [
+    "ChatService",
+]

@@ -7,36 +7,30 @@ import pytest
 from rich.console import Console
 from textual.widgets import Input, OptionList
 
-from nano_code.chat import (
-    ChatService,
-    ContextStatus,
-    HistoryAssistantMessage,
-    HistoryUserMessage,
+from nano_code.chat.events import (
     MaxStepsReached,
-    PathSuggestion,
-    PermissionHandler,
-    PermissionRequest,
     ReasoningCompleted,
     ReasoningDelta,
     ReasoningStarted,
-    ResumedSession,
-    RuntimeStatus,
-    StepLimitReached,
     TextCompleted,
     TextDelta,
     TextStarted,
     TodoListUpdated,
     ToolFinished,
     ToolStarted,
-    TurnCompleted,
     TurnEvent,
     TurnOutcome,
     TurnSucceeded,
 )
-from nano_code.config import ProviderProtocol
-from nano_code.features.todos import TodoItem
-from nano_code.model import ReasoningPresentation
-from nano_code.permissions import (
+from nano_code.chat.history import HistoryText, ResumedSession
+from nano_code.chat.permissions import PermissionHandler, PermissionRequest
+from nano_code.chat.service import ChatService
+from nano_code.chat.status import ContextStatus, RuntimeStatus
+from nano_code.config.providers import ProviderProtocol
+from nano_code.features.file_mentions.models import PathSuggestion
+from nano_code.features.todos.models import TodoItem
+from nano_code.model.primitives import ReasoningPresentation
+from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,
     PermissionRule,
@@ -44,18 +38,12 @@ from nano_code.permissions import (
     PermissionUpdateDestination,
 )
 from nano_code.providers.manager import ProviderUpdate, ProviderView
-from nano_code.sessions import SessionSummary
-from nano_code.tools import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-)
-from nano_code.tui import (
-    NanoCodeApp,
-    ProviderScreen,
-    ResumeScreen,
-)
-from nano_code.tui.app import _format_context_usage, _render_context_status
+from nano_code.sessions.catalog import SessionSummary
+from nano_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from nano_code.tui.app import NanoCodeApp, _format_context_usage, _render_context_status
 from nano_code.tui.commands import SlashCommandRegistry
+from nano_code.tui.provider_screen import ProviderScreen
+from nano_code.tui.resume_screen import ResumeScreen
 from nano_code.tui.widgets import (
     ActivityBar,
     AssistantMessage,
@@ -112,7 +100,7 @@ class FakeRuntime:
             yield TodoListUpdated(self.todos)
         yield TextDelta("**model ")
         yield TextDelta("response**")
-        yield TurnCompleted(TurnSucceeded("**model response**", 1, 10, 2))
+        yield TurnSucceeded("**model response**", 1, 10, 2)
 
     def status(self) -> RuntimeStatus:
         return RuntimeStatus(
@@ -178,8 +166,8 @@ class FakeRuntime:
         return ResumedSession(
             status=self.status(),
             history=(
-                HistoryUserMessage("old prompt"),
-                HistoryAssistantMessage("old response"),
+                HistoryText("user", "old prompt"),
+                HistoryText("assistant", "old response"),
             ),
         )
 
@@ -187,7 +175,7 @@ class FakeRuntime:
 class MaxStepsRuntime(FakeRuntime):
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
         self.prompts.append(prompt)
-        yield StepLimitReached(MaxStepsReached(3, 3, 30, 6))
+        yield MaxStepsReached(3, 3, 30, 6)
 
 
 class ReasoningRuntime(FakeRuntime):
@@ -202,7 +190,7 @@ class ReasoningRuntime(FakeRuntime):
         yield TextStarted()
         yield TextDelta("draft")
         yield TextCompleted("corrected")
-        yield TurnCompleted(TurnSucceeded("corrected", 1, 1, 1))
+        yield TurnSucceeded("corrected", 1, 1, 1)
 
 
 class InterruptedReasoningRuntime(FakeRuntime):

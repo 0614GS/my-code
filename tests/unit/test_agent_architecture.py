@@ -7,37 +7,37 @@ import nano_code.context as context_adapter
 import nano_code.providers as provider_adapter
 import nano_code.sessions as session_adapter
 import nano_code.tools as tool_adapter
-from nano_code.agent import (
-    AgentEngine,
-)
-from nano_code.chat import ChatService, RuntimeStatus
-from nano_code.context import (
-    CompactionOutcome,
-    ContextPlan,
-)
+from nano_code.agent.engine import AgentEngine
+from nano_code.chat.service import ChatService
+from nano_code.chat.status import RuntimeStatus
 from nano_code.context.attachments.models import ContextAttachment
-from nano_code.conversation import Conversation, ConversationMessage, ToolResult
-from nano_code.features.file_mentions import FileMention, PathSuggestion
-from nano_code.features.todos import TodoItem, TodoWriteTool
-from nano_code.model import ModelClient, ModelToolDefinition
-from nano_code.permissions import PermissionPolicy, PermissionRequest
+from nano_code.context.models import CompactionOutcome, ContextPlan
+from nano_code.conversation.models import ConversationMessage, ToolResult
+from nano_code.conversation.state import Conversation
+from nano_code.features.file_mentions.models import FileMention, PathSuggestion
+from nano_code.features.todos.models import TodoItem
+from nano_code.features.todos.tool import TodoWriteTool
+from nano_code.model.client import ModelClient
+from nano_code.model.request import ModelToolDefinition
+from nano_code.permissions.models import PermissionRequest
+from nano_code.permissions.policy import PermissionPolicy
 from nano_code.providers.anthropic import AnthropicProvider
 from nano_code.providers.openai_responses import OpenAIResponsesProvider
 from nano_code.providers.router import ProviderRouter
-from nano_code.sessions import Session, SessionSnapshot
-from nano_code.tools import ToolRoundCompleted, ToolUsePresentation
-from nano_code.tools.round_executor import ToolRoundExecutor
-from nano_code.workspace import Workspace
+from nano_code.sessions.models import SessionSnapshot
+from nano_code.sessions.session import Session
+from nano_code.tools.presentation import ToolUsePresentation
+from nano_code.tools.round_executor import ToolRoundCompleted, ToolRoundExecutor
+from nano_code.workspace.local import Workspace
 
 _AGENT_ROOT = Path(__file__).parents[2] / "src" / "nano_code" / "agent"
 _PACKAGE_ROOT = _AGENT_ROOT.parent
 _ADAPTER_PREFIXES = (
-    "nano_code.context.planner",
-    "nano_code.context.compaction",
-    "nano_code.context.normalization",
     "nano_code.providers",
-    "nano_code.tools.executor",
-    "nano_code.tools.round_executor",
+    "nano_code.chat",
+    "nano_code.cli",
+    "nano_code.tui",
+    "nano_code.bootstrap",
 )
 
 
@@ -62,7 +62,8 @@ def test_model_exposes_the_single_authoritative_client_protocol() -> None:
     assert not hasattr(session_adapter, "SessionRepository")
     assert not hasattr(agent_api, "ConversationState")
     assert not hasattr(agent_api, "ToolRoundPort")
-    assert tool_adapter.ToolRoundExecutor is ToolRoundExecutor
+    assert not hasattr(tool_adapter, "ToolRoundExecutor")
+    assert ToolRoundExecutor.__module__ == "nano_code.tools.round_executor"
     assert ToolRoundCompleted.__module__ == "nano_code.tools.round_executor"
     assert not (_AGENT_ROOT / "contracts" / "tool.py").exists()
     assert not (_AGENT_ROOT / "ports" / "tool.py").exists()
@@ -86,7 +87,7 @@ def test_concrete_adapters_explicitly_inherit_their_real_protocols() -> None:
         assert all(port in adapter.__bases__ for port in ports), adapter
 
 
-def test_agent_core_does_not_import_concrete_adapters() -> None:
+def test_agent_core_does_not_import_hosts_or_provider_implementations() -> None:
     for source_path in _AGENT_ROOT.glob("*.py"):
         tree = ast.parse(source_path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -236,7 +237,7 @@ def _imported_modules(source_path: Path) -> tuple[str, ...]:
 
 def test_chat_owns_frontend_neutral_contracts_without_runtime_protocol() -> None:
     assert ChatService.__module__ == "nano_code.chat.service"
-    assert RuntimeStatus.__module__ == "nano_code.chat.models"
+    assert RuntimeStatus.__module__ == "nano_code.chat.status"
     assert not hasattr(
         __import__("nano_code.chat", fromlist=["ChatRuntime"]), "ChatRuntime"
     )

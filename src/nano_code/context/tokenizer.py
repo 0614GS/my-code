@@ -3,7 +3,7 @@
 import json
 import unicodedata
 
-from nano_code.model import (
+from nano_code.model.request import (
     ModelAssistantMessage,
     ModelReasoningBlock,
     ModelRequest,

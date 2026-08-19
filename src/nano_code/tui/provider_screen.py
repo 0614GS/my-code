@@ -10,15 +10,14 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Switch
 from textual.widgets.option_list import Option
 
-from nano_code.chat import (
+from nano_code.config.providers import (
     CompactConfig,
-    ModelLimits,
     ProviderProfile,
     ProviderProtocol,
-    ProviderUpdate,
-    ProviderView,
     ReasoningConfig,
 )
+from nano_code.model.capabilities import ModelLimits
+from nano_code.providers.manager import ProviderUpdate, ProviderView
 
 
 class ProviderScreen(ModalScreen[ProviderUpdate | None]):
@@ -312,3 +311,8 @@ class ProviderScreen(ModalScreen[ProviderUpdate | None]):
 
 def _number_text(value: int | None) -> str:
     return "" if value is None else str(value)
+
+
+__all__ = [
+    "ProviderScreen",
+]

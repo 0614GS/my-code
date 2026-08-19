@@ -5,10 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
-    CompactBoundary,
-    ContentReplacement,
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
@@ -18,9 +16,10 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model import (
+from nano_code.conversation.state import CompactBoundary, ContentReplacement
+from nano_code.model.capabilities import ModelLimits
+from nano_code.model.primitives import (
     JsonObject,
-    ModelLimits,
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
@@ -46,7 +45,7 @@ from nano_code.sessions.records import (
     ToolResultsMessageRecord,
     TranscriptEntry,
 )
-from nano_code.tools import ToolResultPresentation
+from nano_code.tools.presentation import ToolResultPresentation
 
 
 class TranscriptDecodeError(ValueError):

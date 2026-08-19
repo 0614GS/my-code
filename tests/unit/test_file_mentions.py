@@ -4,18 +4,15 @@ from pathlib import Path
 import pytest
 
 from nano_code.context.attachments.models import ContextObservation
-from nano_code.features.file_mentions import (
-    AttachmentLoader,
+from nano_code.features.file_mentions.loader import AttachmentLoader
+from nano_code.features.file_mentions.parser import parse_file_mentions
+from nano_code.features.file_mentions.reader import (
+    WorkspaceAttachment,
     WorkspaceAttachmentReader,
-    WorkspacePathSuggester,
-    parse_file_mentions,
 )
-from nano_code.features.file_mentions.reader import WorkspaceAttachment
-from nano_code.permissions import (
-    PermissionBehavior,
-    PermissionPolicy,
-    PermissionRule,
-)
+from nano_code.features.file_mentions.suggestions import WorkspacePathSuggester
+from nano_code.permissions.models import PermissionBehavior, PermissionRule
+from nano_code.permissions.policy import PermissionPolicy
 
 
 def test_parse_file_mentions_supports_quotes_ranges_and_deduplication() -> None:

@@ -25,4 +25,8 @@ class TodoItem:
             raise ValueError("Todo activeForm must not be empty")
 
 
-__all__ = ["TODO_STATUSES", "TodoItem", "TodoStatus"]
+__all__ = [
+    "TODO_STATUSES",
+    "TodoItem",
+    "TodoStatus",
+]

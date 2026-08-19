@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from nano_code.config import NanoCodePaths, SettingsScope, sanitize_path
+from nano_code.config.paths import NanoCodePaths, SettingsScope, sanitize_path
 
 _SESSION_ID = "12345678-1234-1234-1234-123456789abc"
 

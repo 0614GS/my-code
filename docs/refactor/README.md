@@ -2,9 +2,9 @@
 
 本目录定义 nano-code 下一轮重构的目标和执行计划。重构采用模块化单体，目标是让每个概念只有一个明确所有者，并用 AST 测试固定模块依赖。
 
-自阶段 0 起，本目录是本轮重构的权威设计。旧架构文档只用于核对现有行为；与本目录冲突的模块边界、抽象方式和类型检查要求，以本目录为准。
+自阶段 0 起，本目录保存重构决策和阶段记录。`docs/` 顶层文档现已同步为当前实现手册；若历史阶段指标与现状不同，以当前模块文档和 AST 守卫为准。
 
-本轮不追求形式上的 Clean Architecture。具体实现是默认选择；只有存在真实多态需求时才引入 Protocol。旧文档仍可用于确认运行行为，但其中的包结构、port/adapter 和类型检查要求可以被本目录替代。
+本轮不追求形式上的 Clean Architecture。具体实现是默认选择；只有存在真实多态需求时才引入 Protocol。
 
 ## 文档索引
 
@@ -25,6 +25,7 @@
 | [13-phase-4-tools-permissions-workspace.md](13-phase-4-tools-permissions-workspace.md) | 阶段 4 Tool、Permission 与 Workspace 边界结果 |
 | [14-phase-5-context-features.md](14-phase-5-context-features.md) | 阶段 5 Context 生命周期与 Features 所有权结果 |
 | [15-phase-6-7-finalization.md](15-phase-6-7-finalization.md) | 阶段 6–7 Agent/Chat 简化、配置收尾与最终架构结果 |
+| [16-semantic-api-dataclass-review.md](16-semantic-api-dataclass-review.md) | 语义子模块 API、文档同步与 dataclass 审计 |
 
 ## 最终判定标准
 

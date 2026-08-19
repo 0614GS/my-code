@@ -29,3 +29,9 @@ async def collect_model_output(
     if output is None:
         raise RuntimeError("Model stream ended without a completed output")
     return output
+
+
+__all__ = [
+    "ModelClient",
+    "collect_model_output",
+]

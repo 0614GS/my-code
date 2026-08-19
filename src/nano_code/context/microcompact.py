@@ -3,9 +3,8 @@
 from collections.abc import Callable
 from dataclasses import replace
 
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
-    ContentReplacement,
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
@@ -15,6 +14,7 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
+from nano_code.conversation.state import ContentReplacement
 
 _ELIGIBLE_TOOLS = frozenset({"Bash", "Glob", "Grep", "Read"})
 

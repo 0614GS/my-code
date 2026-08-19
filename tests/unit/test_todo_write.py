@@ -2,17 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.context import (
-    AttachmentDelivery,
-    ContextBuilder,
-)
-from nano_code.context import (
-    ContextSnapshot as ConversationSnapshot,
-)
 from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.documents import ContextInstruction
+from nano_code.context.planner import ContextBuilder
+from nano_code.context.session import AttachmentDelivery
+from nano_code.context.session import ContextSnapshot as ConversationSnapshot
 from nano_code.context.window import ContextWindow
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     TextContent,
@@ -20,21 +16,21 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.features.todos import TodoWriteTool
 from nano_code.features.todos.codec import parse_todo_input
 from nano_code.features.todos.projection import project_todos
 from nano_code.features.todos.reminder import TodoReminderAttachmentSource
-from nano_code.model import ModelTextBlock, PromptStability, TokenUsage
-from nano_code.permissions import PermissionMode, PermissionPolicy
+from nano_code.features.todos.tool import TodoWriteTool
+from nano_code.model.primitives import TokenUsage
+from nano_code.model.request import ModelTextBlock, PromptStability
+from nano_code.permissions.models import PermissionMode
+from nano_code.permissions.policy import PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.prompts import (
-    PromptRegistry,
-    PromptSection,
-)
-from nano_code.tools import ToolRegistry
+from nano_code.prompts.models import PromptSection
+from nano_code.prompts.registry import PromptRegistry
 from nano_code.tools.executor import ToolExecutor
+from nano_code.tools.registry import ToolRegistry
 from nano_code.tools.result_store import ToolResultStore
-from nano_code.workspace import Workspace
+from nano_code.workspace.local import Workspace
 
 
 def _todo_input(status: str = "in_progress") -> dict:

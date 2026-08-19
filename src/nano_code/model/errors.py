@@ -3,3 +3,8 @@
 
 class ModelContextOverflow(RuntimeError):
     """The selected model rejected a request exceeding its context window."""
+
+
+__all__ = [
+    "ModelContextOverflow",
+]

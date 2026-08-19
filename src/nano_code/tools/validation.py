@@ -1,6 +1,6 @@
 """工具实现共用的输入读取辅助函数。"""
 
-from nano_code.model import JsonObject
+from nano_code.model.primitives import JsonObject
 from nano_code.tools.base import ToolInputError
 
 

@@ -9,7 +9,8 @@ from enum import StrEnum
 from pathlib import Path
 
 from nano_code.config.validation import validate_base_url
-from nano_code.model import ModelLimits, validate_provider_id
+from nano_code.model.capabilities import ModelLimits
+from nano_code.model.primitives import validate_provider_id
 
 DEFAULT_PROVIDER_ID = "anthropic"
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -309,3 +310,16 @@ def atomic_private_json_write(path: Path, document: object) -> None:
     finally:
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()
+
+
+__all__ = [
+    "CompactConfig",
+    "DEFAULT_MODEL",
+    "DEFAULT_PROVIDER_ID",
+    "ProviderProfile",
+    "ProviderProfileError",
+    "ProviderProfileStore",
+    "ProviderProtocol",
+    "ReasoningConfig",
+    "atomic_private_json_write",
+]

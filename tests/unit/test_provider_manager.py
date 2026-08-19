@@ -1,15 +1,11 @@
 import json
 from pathlib import Path
 
-from nano_code.auth import CredentialSource, CredentialStore
+from nano_code.auth.credentials import CredentialSource, CredentialStore
 from nano_code.bootstrap import initialize_user_storage
-from nano_code.config import (
-    NanoCodePaths,
-    ProviderProfileStore,
-    ProviderProtocol,
-    SettingsScope,
-    SettingsStore,
-)
+from nano_code.config.paths import NanoCodePaths, SettingsScope
+from nano_code.config.providers import ProviderProfileStore, ProviderProtocol
+from nano_code.config.store import SettingsStore
 from nano_code.providers.manager import ProviderManager, ProviderUpdate
 
 

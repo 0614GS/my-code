@@ -9,13 +9,11 @@ from nano_code.agent.events import (
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
-    AgentStepLimitReached,
     AgentTextCompleted,
     AgentTextDelta,
     AgentTextStarted,
     AgentToolFinished,
     AgentToolStarted,
-    AgentTurnCompleted,
 )
 from nano_code.agent.models import (
     AgentMaxStepsReached,
@@ -23,20 +21,16 @@ from nano_code.agent.models import (
     AgentTurnOutcome,
     AgentTurnSucceeded,
 )
-from nano_code.context import (
+from nano_code.context.compaction import CompactionCoordinator
+from nano_code.context.models import ContextBudget, ContextOverflow, ContextPlan
+from nano_code.context.planner import ContextBuilder
+from nano_code.context.session import (
     AttachmentDelivery,
-    CompactionCoordinator,
-    ContextBudget,
-    ContextBuilder,
-    ContextOverflow,
-    ContextPlan,
     ContextSession,
     ContextSnapshot,
 )
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
-    CompactBoundary,
-    CompactTrigger,
     HumanMessage,
     ReasoningContent,
     TextContent,
@@ -44,30 +38,28 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model import (
-    ModelClient,
-    ModelContextOverflow,
-    ModelOutput,
+from nano_code.conversation.state import CompactBoundary, CompactTrigger
+from nano_code.model.client import ModelClient
+from nano_code.model.errors import ModelContextOverflow
+from nano_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
     ModelReasoningDelta,
     ModelReasoningStarted,
-    ModelTextBlock,
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
-    ModelToolUseBlock,
-    TokenUsage,
 )
-from nano_code.sessions import Session
-from nano_code.tools import (
+from nano_code.model.primitives import TokenUsage
+from nano_code.model.request import ModelOutput, ModelTextBlock, ModelToolUseBlock
+from nano_code.sessions.session import Session
+from nano_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from nano_code.tools.result_store import ToolResultStore
+from nano_code.tools.round_executor import (
     ToolCallFinished,
     ToolCallStarted,
-    ToolResultPresentation,
-    ToolResultStore,
     ToolRoundCompleted,
     ToolRoundExecutor,
-    ToolUsePresentation,
 )
 
 
@@ -104,10 +96,8 @@ class AgentEngine:
         async for event in self.stream(
             session, context_session, result_store, turn_input
         ):
-            if isinstance(event, AgentTurnCompleted):
-                completed = event.result
-            elif isinstance(event, AgentStepLimitReached):
-                completed = event.result
+            if isinstance(event, (AgentTurnSucceeded, AgentMaxStepsReached)):
+                completed = event
         if completed is None:
             raise RuntimeError("Agent stream ended without a completed turn")
         return completed
@@ -270,12 +260,10 @@ class AgentEngine:
                 if isinstance(block, ModelToolUseBlock)
             )
             if not tool_calls:
-                yield AgentTurnCompleted(
-                    AgentTurnSucceeded(
-                        text=final_text,
-                        completed_steps=step_count,
-                        usage=TokenUsage(input_tokens, output_tokens),
-                    )
+                yield AgentTurnSucceeded(
+                    text=final_text,
+                    completed_steps=step_count,
+                    usage=TokenUsage(input_tokens, output_tokens),
                 )
                 return
 
@@ -346,12 +334,10 @@ class AgentEngine:
             if round_cancelled:
                 raise asyncio.CancelledError
             if self.max_steps is not None and step_count >= self.max_steps:
-                yield AgentStepLimitReached(
-                    AgentMaxStepsReached(
-                        max_steps=self.max_steps,
-                        completed_steps=step_count,
-                        usage=TokenUsage(input_tokens, output_tokens),
-                    )
+                yield AgentMaxStepsReached(
+                    max_steps=self.max_steps,
+                    completed_steps=step_count,
+                    usage=TokenUsage(input_tokens, output_tokens),
                 )
                 return
 
@@ -438,3 +424,8 @@ def _context_snapshot(
     session: Session, context_session: ContextSession
 ) -> ContextSnapshot:
     return context_session.snapshot(session.conversation.snapshot())
+
+
+__all__ = [
+    "AgentEngine",
+]

@@ -12,7 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, OptionList
 from textual.widgets.option_list import Option
 
-from nano_code.chat import SessionSummary
+from nano_code.sessions.catalog import SessionSummary
 
 
 class ResumeScreen(ModalScreen[str | None]):
@@ -95,3 +95,8 @@ def _relative_time(value: datetime, now: datetime) -> str:
     if months < 12:
         return f"{months}mo ago"
     return f"{days // 365}y ago"
+
+
+__all__ = [
+    "ResumeScreen",
+]

@@ -5,11 +5,7 @@ from typing import Any, cast
 
 import pytest
 
-from nano_code.model import (
-    CapabilitySource,
-    ModelDescriptor,
-    ModelLimits,
-)
+from nano_code.model.capabilities import CapabilitySource, ModelDescriptor, ModelLimits
 from nano_code.providers.discovery import OpenAIModelCatalog
 from nano_code.providers.model_cache import ModelCatalogCache
 

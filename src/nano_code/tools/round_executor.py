@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
     ToolCall,
     ToolResult,

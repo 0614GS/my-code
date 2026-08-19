@@ -1,7 +1,7 @@
 import pytest
 
 from nano_code.context.normalization import ModelInputNormalizer
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
     ReasoningContent,
@@ -10,14 +10,13 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model import (
-    ModelOutput,
-    ModelReasoningBlock,
+from nano_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
 )
+from nano_code.model.request import ModelOutput, ModelReasoningBlock
 
 
 @pytest.mark.parametrize("disclosure", ["verbatim", "summary"])

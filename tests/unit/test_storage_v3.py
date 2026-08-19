@@ -4,21 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.auth import CredentialStore, CredentialStoreError
-from nano_code.config import (
-    NanoCodePaths,
-    ProviderProfile,
-    ProviderProfileStore,
-    SettingsFileError,
-    SettingsLayer,
-    SettingsScope,
-    SettingsStore,
-)
-from nano_code.conversation import HumanMessage
-from nano_code.sessions import (
-    SessionCatalog,
-    SessionStore,
-)
+from nano_code.auth.credentials import CredentialStore, CredentialStoreError
+from nano_code.config.paths import NanoCodePaths, SettingsScope
+from nano_code.config.providers import ProviderProfile, ProviderProfileStore
+from nano_code.config.store import SettingsFileError, SettingsLayer, SettingsStore
+from nano_code.conversation.models import HumanMessage
+from nano_code.sessions.catalog import SessionCatalog
+from nano_code.sessions.store import SessionStore
 
 SESSION_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 

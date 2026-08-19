@@ -55,4 +55,7 @@ def _wildcard_matches(pattern: str, value: str) -> bool:
     )
 
 
-__all__ = ["matching_path_rule", "read_denied"]
+__all__ = [
+    "matching_path_rule",
+    "read_denied",
+]

@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 
 import nano_code.bootstrap as cli_main
-from nano_code.chat import MaxStepsReached
+from nano_code.chat.events import MaxStepsReached
 from nano_code.cli.arguments import parse_args
-from nano_code.config import SettingsResolver
+from nano_code.config.settings import SettingsResolver
 
 
 class LimitedChat:

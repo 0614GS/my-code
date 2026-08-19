@@ -3,7 +3,7 @@
 from typing import cast
 
 from nano_code.features.todos.models import TODO_STATUSES, TodoItem, TodoStatus
-from nano_code.model import JsonObject
+from nano_code.model.primitives import JsonObject
 
 TODO_WRITE_TOOL_NAME = "TodoWrite"
 
@@ -40,4 +40,7 @@ def parse_todo_input(tool_input: JsonObject) -> tuple[TodoItem, ...]:
     return tuple(todos)
 
 
-__all__ = ["TODO_WRITE_TOOL_NAME", "parse_todo_input"]
+__all__ = [
+    "TODO_WRITE_TOOL_NAME",
+    "parse_todo_input",
+]

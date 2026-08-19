@@ -16,34 +16,38 @@ from anthropic.types import (
     ToolUseBlockParam,
 )
 
-from nano_code.config import ReasoningConfig
-from nano_code.model import (
-    ModelClient,
-    ModelContextOverflow,
-    ModelMessage,
-    ModelOutput,
+from nano_code.config.providers import ReasoningConfig
+from nano_code.model.capabilities import ProviderCapabilities
+from nano_code.model.client import ModelClient
+from nano_code.model.errors import ModelContextOverflow
+from nano_code.model.events import (
     ModelOutputCompleted,
-    ModelReasoningBlock,
     ModelReasoningCompleted,
     ModelReasoningDelta,
     ModelReasoningStarted,
-    ModelRequest,
     ModelStreamEvent,
     ModelStreamSequencer,
-    ModelTextBlock,
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
+)
+from nano_code.model.primitives import (
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
+    TokenUsage,
+    to_json_object,
+)
+from nano_code.model.request import (
+    ModelMessage,
+    ModelOutput,
+    ModelReasoningBlock,
+    ModelRequest,
+    ModelTextBlock,
     ModelToolResultBlock,
     ModelToolUseBlock,
     PromptStability,
-    ProviderBinding,
-    ProviderCapabilities,
-    ProviderContinuationState,
-    ReasoningPresentation,
     SystemPrompt,
-    TokenUsage,
-    to_json_object,
 )
 
 

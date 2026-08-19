@@ -1,7 +1,7 @@
 """上下文消息预算的最终防线。"""
 
 from nano_code.context.models import ContextOverflow as _ContextOverflow
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
@@ -63,4 +63,6 @@ class ContextWindow:
         return size
 
 
-__all__ = ["ContextWindow"]
+__all__ = [
+    "ContextWindow",
+]

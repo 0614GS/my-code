@@ -6,11 +6,8 @@ from nano_code.context.attachments.models import (
 )
 from nano_code.context.documents import ContextInstruction
 from nano_code.context.xml import render_context_instruction, wrap_xml
-from nano_code.conversation import TextContent
-from nano_code.model import (
-    ModelTextBlock,
-    ModelUserMessage,
-)
+from nano_code.conversation.models import TextContent
+from nano_code.model.request import ModelTextBlock, ModelUserMessage
 
 
 class AttachmentProjector:

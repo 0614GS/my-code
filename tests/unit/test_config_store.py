@@ -6,15 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.config import (
-    NanoCodePaths,
-    SettingsFileError,
-    SettingsLayer,
-    SettingsResolver,
-    SettingsScope,
-    SettingsStore,
+from nano_code.config.paths import NanoCodePaths, SettingsScope
+from nano_code.config.settings import SettingsResolver
+from nano_code.config.store import SettingsFileError, SettingsLayer, SettingsStore
+from nano_code.permissions.models import (
+    PermissionBehavior,
+    PermissionMode,
+    PermissionRule,
 )
-from nano_code.permissions import PermissionBehavior, PermissionMode, PermissionRule
 
 
 def make_paths(tmp_path: Path) -> NanoCodePaths:

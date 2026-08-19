@@ -2,15 +2,15 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.model import JsonObject
-from nano_code.permissions import (
+from nano_code.model.primitives import JsonObject
+from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionMode,
-    PermissionPolicy,
     PermissionRequest,
     PermissionRule,
     ToolPermissionContext,
 )
+from nano_code.permissions.policy import PermissionPolicy
 from nano_code.tools.builtin.bash import BashTool
 from nano_code.tools.builtin.bash.ast import parse_bash
 from nano_code.tools.builtin.bash.permissions import analyze_bash_command

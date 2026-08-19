@@ -7,34 +7,38 @@ from uuid import uuid4
 
 from openai import AsyncOpenAI, BadRequestError
 
-from nano_code.config import ReasoningConfig
-from nano_code.model import (
-    JsonObject,
-    ModelClient,
-    ModelContextOverflow,
-    ModelMessage,
-    ModelOutput,
+from nano_code.config.providers import ReasoningConfig
+from nano_code.model.capabilities import ProviderCapabilities
+from nano_code.model.client import ModelClient
+from nano_code.model.errors import ModelContextOverflow
+from nano_code.model.events import (
     ModelOutputCompleted,
-    ModelReasoningBlock,
     ModelReasoningCompleted,
     ModelReasoningDelta,
     ModelReasoningStarted,
-    ModelRequest,
     ModelStreamEvent,
     ModelStreamPayload,
     ModelStreamSequencer,
-    ModelTextBlock,
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
-    ModelToolResultBlock,
-    ModelToolUseBlock,
+)
+from nano_code.model.primitives import (
+    JsonObject,
     ProviderBinding,
-    ProviderCapabilities,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
     to_json_object,
+)
+from nano_code.model.request import (
+    ModelMessage,
+    ModelOutput,
+    ModelReasoningBlock,
+    ModelRequest,
+    ModelTextBlock,
+    ModelToolResultBlock,
+    ModelToolUseBlock,
 )
 
 type _DisplayKey = tuple[str, int]

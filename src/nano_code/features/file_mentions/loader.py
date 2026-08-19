@@ -1,9 +1,6 @@
 """Load submitted file mentions into live context attachments."""
 
-from nano_code.context import (
-    ContextAttachment,
-    ContextObservation,
-)
+from nano_code.context.attachments.models import ContextAttachment, ContextObservation
 from nano_code.features.file_mentions.models import FileMention, LoadedAttachment
 from nano_code.features.file_mentions.parser import parse_file_mentions
 from nano_code.features.file_mentions.reader import WorkspaceAttachmentReader
@@ -49,3 +46,8 @@ class AttachmentLoader:
             # One unavailable mention must not suppress later explicit mentions.
             # asyncio.CancelledError derives from BaseException and still propagates.
             return None
+
+
+__all__ = [
+    "AttachmentLoader",
+]

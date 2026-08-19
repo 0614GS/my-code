@@ -31,4 +31,7 @@ class DerivedAttachmentResolver:
         return tuple(attachments)
 
 
-__all__ = ["DerivedAttachmentResolver", "DerivedAttachmentSource"]
+__all__ = [
+    "DerivedAttachmentResolver",
+    "DerivedAttachmentSource",
+]

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from nano_code.model import validate_provider_id
+from nano_code.model.primitives import validate_provider_id
 
 _DEFAULT_PROVIDER_ID = "anthropic"
 _SCHEMA_VERSION = 2
@@ -209,3 +209,12 @@ def resolve_api_key(
     if stored_key is not None:
         return ResolvedCredential(stored_key, CredentialSource.STORED)
     return ResolvedCredential(None, CredentialSource.NONE)
+
+
+__all__ = [
+    "CredentialSource",
+    "CredentialStore",
+    "CredentialStoreError",
+    "ResolvedCredential",
+    "resolve_api_key",
+]

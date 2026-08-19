@@ -7,8 +7,8 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
-from nano_code.config import ProviderProfile, ProviderProtocol
-from nano_code.model import (
+from nano_code.config.providers import ProviderProfile, ProviderProtocol
+from nano_code.model.capabilities import (
     CapabilitySource,
     ModelCapabilities,
     ModelDescriptor,

@@ -2,24 +2,28 @@ from types import SimpleNamespace
 
 import pytest
 
-from nano_code.config import ReasoningConfig
-from nano_code.model import (
-    JsonObject,
-    ModelAssistantMessage,
-    ModelReasoningBlock,
+from nano_code.config.providers import ReasoningConfig
+from nano_code.model.events import (
     ModelReasoningCompleted,
     ModelReasoningDelta,
     ModelReasoningStarted,
-    ModelRequest,
-    ModelTextBlock,
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
+)
+from nano_code.model.primitives import (
+    JsonObject,
+    ProviderBinding,
+    ProviderContinuationState,
+)
+from nano_code.model.request import (
+    ModelAssistantMessage,
+    ModelReasoningBlock,
+    ModelRequest,
+    ModelTextBlock,
     ModelToolResultBlock,
     ModelToolUseBlock,
     ModelUserMessage,
-    ProviderBinding,
-    ProviderContinuationState,
     SystemPrompt,
 )
 from nano_code.providers.openai_responses import (

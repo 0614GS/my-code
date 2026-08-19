@@ -4,20 +4,20 @@ import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from nano_code.conversation import ToolCall, ToolResult
-from nano_code.model import JsonObject
-from nano_code.permissions import (
+from nano_code.conversation.models import ToolCall, ToolResult
+from nano_code.model.primitives import JsonObject
+from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionDecision,
     PermissionDecisionKind,
     PermissionDecisionReason,
-    PermissionPolicy,
     PermissionPrompt,
     PermissionPrompter,
     PermissionRequest,
     PermissionUpdate,
     ToolPermissionContext,
 )
+from nano_code.permissions.policy import PermissionPolicy
 from nano_code.tools.base import (
     Tool,
     ToolContext,
@@ -38,7 +38,7 @@ from nano_code.tools.presentation import (
 )
 from nano_code.tools.registry import ToolRegistry
 from nano_code.tools.result_store import ToolResultStore
-from nano_code.workspace import Workspace
+from nano_code.workspace.local import Workspace
 
 logger = logging.getLogger("nano_code.permissions")
 
@@ -373,3 +373,8 @@ def _apply_updates(
             policy.apply_update(update)
 
     return apply
+
+
+__all__ = [
+    "ToolExecutor",
+]

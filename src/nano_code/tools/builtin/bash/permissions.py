@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from nano_code.permissions import PermissionRule
+from nano_code.permissions.models import PermissionRule
 from nano_code.tools.builtin.bash.ast import (
     BashAstResult,
     Redirection,

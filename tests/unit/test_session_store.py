@@ -3,10 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.conversation import (
+from nano_code.conversation.models import (
     AssistantMessage,
-    CompactBoundary,
-    ContentReplacement,
     ConversationSummaryMessage,
     HumanMessage,
     ReasoningContent,
@@ -15,15 +13,17 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.model import (
+from nano_code.conversation.state import CompactBoundary, ContentReplacement
+from nano_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
 )
-from nano_code.sessions import SessionCatalog, SessionStore
+from nano_code.sessions.catalog import SessionCatalog
 from nano_code.sessions.codec import entry_from_json, entry_to_json, message_to_record
-from nano_code.tools import ToolResultPresentation
+from nano_code.sessions.store import SessionStore
+from nano_code.tools.presentation import ToolResultPresentation
 
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
 

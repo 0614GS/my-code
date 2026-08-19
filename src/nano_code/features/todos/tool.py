@@ -1,14 +1,16 @@
 """TodoWrite tool owned and exported by the Todo feature."""
 
 from nano_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
-from nano_code.model import JsonObject, ModelToolDefinition
-from nano_code.permissions import (
+from nano_code.model.primitives import JsonObject
+from nano_code.model.request import ModelToolDefinition
+from nano_code.permissions.models import (
     PermissionDecisionKind,
     PermissionDecisionReason,
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from nano_code.tools import Tool, ToolContext, ToolOutput, ToolResultPresentation
+from nano_code.tools.base import Tool, ToolContext, ToolOutput
+from nano_code.tools.presentation import ToolResultPresentation
 
 _DESCRIPTION = """Update the structured todo list for the current coding session.
 Use it for complex multi-step work, explicit user task lists, and newly discovered
@@ -115,4 +117,6 @@ class TodoWriteTool(Tool):
         )
 
 
-__all__ = ["TodoWriteTool"]
+__all__ = [
+    "TodoWriteTool",
+]

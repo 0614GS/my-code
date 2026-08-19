@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from nano_code.model import ModelToolDefinition
+from nano_code.model.request import ModelToolDefinition
 from nano_code.tools.base import Tool
 
 
@@ -34,3 +34,8 @@ class ToolRegistry:
 
     def get(self, name: str) -> Tool | None:
         return self._by_name.get(name)
+
+
+__all__ = [
+    "ToolRegistry",
+]

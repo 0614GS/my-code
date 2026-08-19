@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.auth import CredentialStore
+from nano_code.auth.credentials import CredentialStore
 from nano_code.bootstrap import initialize_user_storage, main
-from nano_code.config import NanoCodePaths, ProviderProfileStore
+from nano_code.config.paths import NanoCodePaths
+from nano_code.config.providers import ProviderProfileStore
 
 
 def make_paths(tmp_path: Path) -> NanoCodePaths:

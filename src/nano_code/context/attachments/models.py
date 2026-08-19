@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from nano_code.context.documents import ContextInstruction
-from nano_code.conversation import TextContent
+from nano_code.conversation.models import TextContent
 
 type AttachmentRetention = Literal["request", "live_session"]
 

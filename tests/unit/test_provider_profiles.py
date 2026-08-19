@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.config import (
+from nano_code.config.providers import (
     CompactConfig,
     ProviderProfile,
     ProviderProfileError,
@@ -12,7 +12,7 @@ from nano_code.config import (
     ProviderProtocol,
     ReasoningConfig,
 )
-from nano_code.model import ModelLimits
+from nano_code.model.capabilities import ModelLimits
 
 
 def test_provider_profiles_round_trip_without_credentials(tmp_path: Path) -> None:

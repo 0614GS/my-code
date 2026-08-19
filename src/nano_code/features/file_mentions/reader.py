@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from nano_code.permissions import PermissionPolicy, read_denied
-from nano_code.workspace import Workspace, WorkspaceBoundaryError
+from nano_code.permissions.path_rules import read_denied
+from nano_code.permissions.policy import PermissionPolicy
+from nano_code.workspace.local import Workspace, WorkspaceBoundaryError
 
 _MAX_READ_BYTES = 8 * 1024 * 1024
 _DEFAULT_LINE_LIMIT = 2000

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from shlex import split as shell_split
 
-from nano_code.chat import RuntimeStatus
+from nano_code.chat.status import RuntimeStatus
 
 
 class SlashCommandAction(StrEnum):
@@ -186,3 +186,8 @@ def _render_auth(status: RuntimeStatus) -> str:
         f"Authentication source: {status.credential_source}. "
         "Use `nanocode auth status` for details."
     )
+
+
+__all__ = [
+    "SlashCommandRegistry",
+]
