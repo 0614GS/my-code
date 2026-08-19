@@ -1,11 +1,10 @@
 """Permission prompting bridge for interactive chat frontends."""
 
 from nano_code.application.chat.contracts import PermissionHandler, PermissionRequest
-from nano_code.application.chat.presentation import generic_tool_use_presentation
-from nano_code.conversation import JsonObject
+from nano_code.model import JsonObject
 from nano_code.permissions import PermissionConfirmation
 from nano_code.permissions.models import PermissionDecision
-from nano_code.tools import Tool
+from nano_code.tools import Tool, generic_tool_use_presentation
 
 
 class DeferredPermissionPrompter:

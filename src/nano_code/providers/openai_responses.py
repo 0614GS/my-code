@@ -3,10 +3,14 @@
 import json
 from collections.abc import AsyncIterator, Iterable
 from typing import Any, cast
+from uuid import uuid4
 
 from openai import AsyncOpenAI, BadRequestError
 
-from nano_code.agent.contracts.model import (
+from nano_code.model import (
+    JsonObject,
+    ModelClient,
+    ModelContextOverflow,
     ModelMessage,
     ModelOutput,
     ModelOutputCompleted,
@@ -17,27 +21,21 @@ from nano_code.agent.contracts.model import (
     ModelRequest,
     ModelStreamEvent,
     ModelStreamPayload,
+    ModelStreamSequencer,
     ModelTextBlock,
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
     ModelToolResultBlock,
     ModelToolUseBlock,
-)
-from nano_code.agent.errors import ModelContextOverflow
-from nano_code.agent.ports.model import ModelCompletionPort
-from nano_code.conversation import (
-    JsonObject,
     ProviderBinding,
+    ProviderCapabilities,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
     to_json_object,
 )
-from nano_code.conversation.primitives import new_id
-from nano_code.providers.base import ProviderCapabilities
 from nano_code.providers.profiles import ReasoningConfig
-from nano_code.providers.streaming import ModelStreamSequencer
 
 type _DisplayKey = tuple[str, int]
 
@@ -169,7 +167,7 @@ class _OpenAIStreamNormalizer:
         return payloads
 
 
-class OpenAIResponsesProvider(ModelCompletionPort):
+class OpenAIResponsesProvider(ModelClient):
     def __init__(
         self,
         model: str,
@@ -190,16 +188,6 @@ class OpenAIResponsesProvider(ModelCompletionPort):
 
     async def close(self) -> None:
         await self.client.close()
-
-    async def complete(self, request: ModelRequest) -> ModelOutput:
-        try:
-            response = await self.client.responses.create(
-                **cast(Any, self._request_params(request))
-            )
-        except BadRequestError as error:
-            _raise_context_overflow(error)
-            raise
-        return self._response(response)
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         params = self._request_params(request)
@@ -315,7 +303,7 @@ class OpenAIResponsesProvider(ModelCompletionPort):
                 presentation = _reasoning_presentation(payload)
                 content.append(
                     ModelReasoningBlock(
-                        new_id(),
+                        str(uuid4()),
                         presentation,
                         continuation,
                     )

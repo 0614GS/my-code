@@ -3,11 +3,9 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from nano_code.conversation import ProviderBinding
-from nano_code.providers.catalog import CapabilitySource, ModelLimits
-
-from .model import ModelRequest
-from .session import AttachmentDelivery, ContentReplacement
+from nano_code.context import AttachmentDelivery
+from nano_code.conversation import ContentReplacement
+from nano_code.model import CapabilitySource, ModelLimits, ModelRequest, ProviderBinding
 
 
 @dataclass(frozen=True, slots=True)

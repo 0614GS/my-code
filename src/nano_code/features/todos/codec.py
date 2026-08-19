@@ -2,8 +2,8 @@
 
 from typing import cast
 
-from nano_code.conversation import JsonObject
 from nano_code.features.todos.models import TODO_STATUSES, TodoItem, TodoStatus
+from nano_code.model import JsonObject
 
 TODO_WRITE_TOOL_NAME = "TodoWrite"
 

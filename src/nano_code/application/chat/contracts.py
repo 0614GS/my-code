@@ -4,19 +4,19 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from nano_code.application.chat.presentation import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-)
-from nano_code.conversation import (
+from nano_code.features.todos.models import TodoItem
+from nano_code.model import (
     JsonObject,
     ReasoningDisclosure,
     ReasoningPresentation,
 )
-from nano_code.features.todos.models import TodoItem
 from nano_code.permissions import PermissionConfirmation, PermissionUpdate
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.sessions import SessionSummary
+from nano_code.tools import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
 
 
 @dataclass(frozen=True, slots=True)

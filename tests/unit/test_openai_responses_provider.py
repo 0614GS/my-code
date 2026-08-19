@@ -2,7 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from nano_code.agent import (
+from nano_code.model import (
+    JsonObject,
     ModelAssistantMessage,
     ModelReasoningBlock,
     ModelReasoningCompleted,
@@ -16,9 +17,10 @@ from nano_code.agent import (
     ModelToolResultBlock,
     ModelToolUseBlock,
     ModelUserMessage,
+    ProviderBinding,
+    ProviderContinuationState,
+    SystemPrompt,
 )
-from nano_code.conversation import ProviderBinding, ProviderContinuationState
-from nano_code.prompts import SystemPrompt
 from nano_code.providers.openai_responses import (
     OpenAIResponsesProvider,
     _OpenAIStreamNormalizer,
@@ -102,7 +104,7 @@ def test_response_preserves_reasoning_and_output_item_order() -> None:
 
 def test_input_replays_matching_items_and_maps_tool_results() -> None:
     provider = _provider()
-    raw = {
+    raw: JsonObject = {
         "type": "function_call",
         "id": "fc",
         "call_id": "call",

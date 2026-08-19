@@ -3,14 +3,12 @@
 import logging
 from collections.abc import Callable, Iterable
 
-from nano_code.agent.contracts.session import ConversationSnapshot
+from nano_code.context import ContextSnapshot
 from nano_code.context.attachments.models import ContextAttachment
 
 logger = logging.getLogger(__name__)
 
-type DerivedAttachmentSource = Callable[
-    [ConversationSnapshot], Iterable[ContextAttachment]
-]
+type DerivedAttachmentSource = Callable[[ContextSnapshot], Iterable[ContextAttachment]]
 
 
 class DerivedAttachmentResolver:
@@ -19,7 +17,7 @@ class DerivedAttachmentResolver:
     def __init__(self, sources: Iterable[DerivedAttachmentSource] = ()) -> None:
         self._sources = tuple(sources)
 
-    def resolve(self, snapshot: ConversationSnapshot) -> tuple[ContextAttachment, ...]:
+    def resolve(self, snapshot: ContextSnapshot) -> tuple[ContextAttachment, ...]:
         """在不保留 resolver 内部状态的前提下解析一次快照。"""
 
         attachments: list[ContextAttachment] = []

@@ -2,11 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import AgentMaxStepsReached, AgentTurnInput
+from nano_code.agent import (
+    AgentMaxStepsReached,
+    AgentTurnInput,
+)
 from nano_code.cli import main as cli_main
 from nano_code.cli.arguments import parse_args
-from nano_code.conversation import TokenUsage
 from nano_code.core import SettingsResolver
+from nano_code.model import TokenUsage
 
 
 class LimitedAgent:

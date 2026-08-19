@@ -55,6 +55,8 @@ async def test_loader_reads_file_range_and_lists_directory(tmp_path: Path) -> No
     ]
     observations = [item.attachment.content[0] for item in loaded]
     assert all(isinstance(item, ContextObservation) for item in observations)
+    assert isinstance(observations[0], ContextObservation)
+    assert isinstance(observations[1], ContextObservation)
     assert "     2\ttwo" in observations[0].body
     assert "docs/a.txt" in observations[1].body
     assert all(item.attachment.retention == "live_session" for item in loaded)

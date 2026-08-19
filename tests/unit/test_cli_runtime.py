@@ -2,15 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import AgentTurnInput, AgentTurnSucceeded
+from nano_code.agent import (
+    AgentTurnInput,
+    AgentTurnSucceeded,
+)
 from nano_code.application.chat.contracts import (
     HistoryAssistantMessage,
     HistoryToolCall,
     HistoryUserMessage,
-)
-from nano_code.application.chat.presentation import (
-    ToolResultPresentation,
-    ToolUsePresentation,
 )
 from nano_code.application.chat.runtime import DefaultChatRuntime
 from nano_code.auth import CredentialSource
@@ -18,15 +17,19 @@ from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
 )
 from nano_code.core import AgentSettings, NanoCodePaths
 from nano_code.core.bootstrap import bootstrap_cli_runtime
+from nano_code.model import TokenUsage
 from nano_code.permissions import PermissionMode
 from nano_code.sessions import SessionStore
+from nano_code.tools import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
 
 _CURRENT_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 _TARGET_SESSION_ID = "22222222-2222-2222-2222-222222222222"
@@ -133,14 +136,14 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
             ToolResult(
                 "read-1",
                 "model-visible historical content",
-                presentation=snapshot,
             ),
         ),
         parent_uuid=assistant.uuid,
         source_assistant_uuid=assistant.uuid,
     )
-    for message in (user, assistant, result):
-        store.append(message)
+    store.append(user)
+    store.append(assistant)
+    store.append_message(result, (("read-1", snapshot),))
 
     resumed = await runtime.resume_session(_TARGET_SESSION_ID)
 

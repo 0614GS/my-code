@@ -1,4 +1,4 @@
-"""Agent outbound port 使用的稳定错误类型。"""
+"""Agent and context planning errors."""
 
 
 class ContextOverflow(RuntimeError):
@@ -10,7 +10,3 @@ class ContextOverflow(RuntimeError):
         super().__init__(
             f"Context requires {current_chars} chars but the limit is {max_chars}"
         )
-
-
-class ModelContextOverflow(RuntimeError):
-    """模型 adapter 拒绝了超过 provider 上下文窗口的请求。"""

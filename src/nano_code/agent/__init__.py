@@ -20,46 +20,14 @@ from nano_code.agent.contracts.inbound import (
     AgentTurnOutcome,
     AgentTurnSucceeded,
 )
-from nano_code.agent.contracts.model import (
-    ModelAssistantMessage,
-    ModelMessage,
-    ModelOutput,
-    ModelOutputCompleted,
-    ModelReasoningBlock,
-    ModelReasoningCompleted,
-    ModelReasoningDelta,
-    ModelReasoningStarted,
-    ModelRequest,
-    ModelStreamEvent,
-    ModelStreamPayload,
-    ModelTextBlock,
-    ModelTextCompleted,
-    ModelTextDelta,
-    ModelTextStarted,
-    ModelToolDefinition,
-    ModelToolResultBlock,
-    ModelToolUseBlock,
-    ModelUserMessage,
-)
-from nano_code.agent.contracts.session import (
-    AttachmentDelivery,
-    CompactBoundary,
-    CompactTrigger,
-    ContentReplacement,
-    ConversationSnapshot,
-    SessionMetadata,
-    SessionSnapshot,
-    SessionStart,
-)
 from nano_code.agent.contracts.tool import (
     ToolCallFinished,
     ToolCallStarted,
     ToolRoundCompleted,
     ToolRoundEvent,
 )
-from nano_code.agent.conversation import ConversationState
 from nano_code.agent.engine import AgentEngine
-from nano_code.agent.errors import ContextOverflow, ModelContextOverflow
+from nano_code.agent.errors import ContextOverflow
 from nano_code.agent.events import (
     AgentEvent,
     AgentReasoningCompleted,
@@ -77,8 +45,6 @@ from nano_code.agent.events import (
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
 from nano_code.agent.ports.inbound import AgentInboundPort
-from nano_code.agent.ports.model import ModelCallPort, ModelCompletionPort
-from nano_code.agent.ports.session import SessionRepository
 from nano_code.agent.ports.tool import ToolRoundPort
 
 __all__ = [
@@ -109,44 +75,12 @@ __all__ = [
     "AgentTurnOutcome",
     "AgentTurnInput",
     "AgentTurnSucceeded",
-    "CompactBoundary",
-    "AttachmentDelivery",
-    "CompactTrigger",
     "CompactionOutcome",
     "CompactorPort",
-    "ContentReplacement",
     "ContextBudget",
     "ContextPlan",
     "ContextPort",
-    "ConversationSnapshot",
-    "ConversationState",
     "ContextOverflow",
-    "ModelCallPort",
-    "ModelCompletionPort",
-    "ModelContextOverflow",
-    "ModelAssistantMessage",
-    "ModelMessage",
-    "ModelOutput",
-    "ModelOutputCompleted",
-    "ModelReasoningBlock",
-    "ModelReasoningCompleted",
-    "ModelReasoningDelta",
-    "ModelReasoningStarted",
-    "ModelRequest",
-    "ModelStreamEvent",
-    "ModelStreamPayload",
-    "ModelTextBlock",
-    "ModelTextCompleted",
-    "ModelTextDelta",
-    "ModelTextStarted",
-    "ModelToolDefinition",
-    "ModelToolResultBlock",
-    "ModelToolUseBlock",
-    "ModelUserMessage",
-    "SessionRepository",
-    "SessionMetadata",
-    "SessionSnapshot",
-    "SessionStart",
     "ToolCallFinished",
     "ToolCallStarted",
     "ToolRoundPort",

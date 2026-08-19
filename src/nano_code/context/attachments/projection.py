@@ -1,9 +1,5 @@
 """ContextAttachment 到 provider-neutral 模型消息的唯一投影边界。"""
 
-from nano_code.agent.contracts.model import (
-    ModelTextBlock,
-    ModelUserMessage,
-)
 from nano_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
@@ -11,6 +7,10 @@ from nano_code.context.attachments.models import (
 from nano_code.context.documents import ContextInstruction
 from nano_code.context.xml import render_context_instruction, wrap_xml
 from nano_code.conversation import TextContent
+from nano_code.model import (
+    ModelTextBlock,
+    ModelUserMessage,
+)
 
 
 class AttachmentProjector:

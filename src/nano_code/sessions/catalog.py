@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nano_code.agent.contracts.session import SessionMetadata, SessionStart
 from nano_code.conversation import HumanMessage
 from nano_code.sessions.codec import decode_entry
+from nano_code.sessions.models import SessionMetadata, SessionStart
 from nano_code.sessions.store import is_session_id
 
 _MAX_HEAD_BYTES = 128 * 1024

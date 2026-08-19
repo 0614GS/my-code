@@ -5,14 +5,16 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from nano_code.agent.contracts.model import ModelOutput, ModelRequest, ModelStreamEvent
-from nano_code.agent.ports.model import ModelCallPort, ModelCompletionPort
 from nano_code.auth import CredentialSource
-from nano_code.conversation import ProviderBinding
+from nano_code.model import (
+    ModelClient,
+    ModelLimits,
+    ModelRequest,
+    ModelStreamEvent,
+    ProviderBinding,
+    ProviderCapabilities,
+)
 from nano_code.providers.anthropic import AnthropicProvider
-from nano_code.providers.base import ProviderCapabilities
-from nano_code.providers.call import CompleteModelCallAdapter
-from nano_code.providers.catalog import ModelLimits
 from nano_code.providers.openai_responses import OpenAIResponsesProvider
 from nano_code.providers.profiles import (
     CompactConfig,
@@ -36,7 +38,7 @@ class ProviderConnection:
     compact: CompactConfig = CompactConfig()
 
 
-type ProviderFactory = Callable[[ProviderConnection], ModelCompletionPort]
+type ProviderFactory = Callable[[ProviderConnection], ModelClient]
 
 
 @runtime_checkable
@@ -45,14 +47,7 @@ class _ClosableProvider(Protocol):
         """释放 provider 持有的网络资源。"""
 
 
-@runtime_checkable
-class _StreamingProvider(Protocol):
-    def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
-        """可选的原生 streaming adapter 能力。"""
-        ...
-
-
-class ProviderRouter(ModelCallPort, ModelCompletionPort):
+class ProviderRouter(ModelClient):
     """串行化请求与切换，同时保持智能体循环协议。"""
 
     def __init__(
@@ -63,7 +58,7 @@ class ProviderRouter(ModelCallPort, ModelCompletionPort):
     ) -> None:
         self._factory = factory or _build_provider
         self._connection = connection
-        self._provider: ModelCompletionPort | None = None
+        self._provider: ModelClient | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -90,14 +85,6 @@ class ProviderRouter(ModelCallPort, ModelCompletionPort):
             case ProviderProtocol.OPENAI_RESPONSES:
                 return ProviderCapabilities()
 
-    async def complete(self, request: ModelRequest) -> ModelOutput:
-        # 在一次完整请求期间持有锁，使 profile 切换成为明确的 ModelCall 间操作，
-        # 而不是请求途中的状态变更。
-        async with self._lock:
-            if self._provider is None:
-                self._provider = self._factory(self._connection)
-            return await self._provider.complete(request)
-
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """在完整 SSE 响应期间保持同一个适配器和连接。"""
 
@@ -105,11 +92,7 @@ class ProviderRouter(ModelCallPort, ModelCompletionPort):
             if self._provider is None:
                 self._provider = self._factory(self._connection)
             provider = self._provider
-            if isinstance(provider, _StreamingProvider):
-                async for event in provider.stream(request):
-                    yield event
-                return
-            async for event in CompleteModelCallAdapter(provider).stream(request):
+            async for event in provider.stream(request):
                 yield event
 
     async def switch(self, connection: ProviderConnection) -> None:
@@ -127,7 +110,7 @@ class ProviderRouter(ModelCallPort, ModelCompletionPort):
             self._provider = None
 
 
-def _build_provider(connection: ProviderConnection) -> ModelCompletionPort:
+def _build_provider(connection: ProviderConnection) -> ModelClient:
     match connection.protocol:
         case ProviderProtocol.ANTHROPIC_MESSAGES:
             return AnthropicProvider(

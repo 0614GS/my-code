@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.conversation import JsonObject
+from nano_code.model import JsonObject
 from nano_code.permissions import (
     PermissionBehavior,
     PermissionConfirmation,

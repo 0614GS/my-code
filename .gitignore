@@ -6,7 +6,7 @@ dist/
 wheels/
 *.egg-info
 .pytest_cache/
-.mypy_cache/
+.pyright/
 .ruff_cache/
 .coverage
 coverage.xml

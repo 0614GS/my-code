@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.providers.catalog import ModelLimits
+from nano_code.model import ModelLimits
 from nano_code.providers.profiles import (
     CompactConfig,
     ProviderProfile,

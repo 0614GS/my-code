@@ -10,10 +10,9 @@ from nano_code.agent.contracts.inbound import (
     AgentTurnInput,
     AgentTurnOutcome,
 )
-from nano_code.agent.contracts.session import CompactBoundary, CompactTrigger
 from nano_code.agent.events import AgentEvent
-
-from .session import SessionRepository
+from nano_code.conversation import CompactBoundary, CompactTrigger
+from nano_code.sessions import Session
 
 
 @runtime_checkable
@@ -40,7 +39,7 @@ class AgentInboundPort(Protocol):
         """生成并提交一次 compact boundary。"""
         ...
 
-    def resume(self, repository: SessionRepository) -> AgentSessionView:
+    def resume(self, session: Session) -> AgentSessionView:
         """校验并切换到另一个 session，同时返回历史投影。"""
         ...
 

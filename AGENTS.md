@@ -13,14 +13,14 @@
 - `uv run nanocode -p "prompt"`：执行一次非交互式对话。
 - `uv run ruff format .`：格式化 Python 文件。
 - `uv run ruff check .`：执行代码规范检查。
-- `uv run mypy src`：执行静态类型检查。
+- `uv run pyright`：以 standard 模式执行静态类型检查。
 - `uv run pytest`：运行测试套件。
 
 首次开发前运行 `uv sync --group dev`。真实模型请求需要已配置的 provider API key，也可用 `ANTHROPIC_API_KEY` 临时覆盖。
 
 ## 代码风格与命名约定
 
-使用四空格缩进和完整类型标注，并通过 mypy 获得类似 TypeScript 的静态类型保障。模块与函数使用 `snake_case`，类使用 `PascalCase`，常量使用 `UPPER_SNAKE_CASE`。避免职责含混的 `utils` 模块。单个代码文件一般不得超过 1,000 行；接近上限时，应先重新划分职责和目录结构。
+使用四空格缩进和完整类型标注，并通过 Pyright standard 获得静态类型保障。模块与函数使用 `snake_case`，类使用 `PascalCase`，常量使用 `UPPER_SNAKE_CASE`。避免职责含混的 `utils` 模块。单个代码文件一般不得超过 1,000 行；接近上限时，应先重新划分职责和目录结构。
 
 ## 测试规范
 

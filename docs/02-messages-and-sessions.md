@@ -146,15 +146,13 @@ Agent 工作集则从最后一个有效 summary 开始。
 
 ## 11. 会话状态边界
 
-`SessionRepository` 是 JSONL 实现向 Agent 暴露的最小接口：构造或 resume 时一次
-`load()` 返回活动历史、compact 后工作集、metadata、内容替换和有效 boundary；追加消息、
-替换和 boundary 仍是三个显式操作。`SessionStore` 负责解析和校验记录，
-`ConversationState` 负责工作集、持久化优先追加、未闭合 tool-use 修复和会话切换。
+`Conversation` 是纯内存会话事实来源，负责活动父链、compact working set 和内容替换
+不变量；它不做 I/O。具体 `Session` 持有 Conversation，`SessionStore` 负责 JSONL 解析、
+严格校验和追加写入，不再通过单实现 Repository Protocol 转发。
 
-`ConversationState` 是运行期会话事实来源。所有状态变更都遵循“先写 repository，
-再将同一领域事实增量应用到内存”，不在写后重新解析 JSONL。恢复目标
-会话时，目标日志的完整解析和修复完成前不会替换当前 repository；compact 提交则固定
-按以下顺序执行：
+所有可恢复状态变更都遵循“先在 Conversation 副本验证，再写 store，最后替换活动
+Conversation”。恢复目标时先完整构造并修复候选 Session，成功后才允许 Chat 切换；
+compact 的持久记录顺序为：
 
 ```text
 content replacements → compact boundary → summary message → working set replacement
@@ -166,6 +164,6 @@ schema 版本；旧记录缺失时不会把零 usage 当成事实，而是使用
 同时保存启动时解析出的 limits、来源和 compact threshold 诊断快照；恢复请求仍以当前
 Profile、endpoint 与模型能力为准。
 
-因此摘要模型失败不会写入 boundary，后续 JSONL 写入失败也不会让当前进程先使用一份
-未持久化的工作集。`SessionSnapshot` 只是 hydration DTO；AgentEngine 不读取
-SessionStore，后续 API 投影只依赖 `ConversationState.context_snapshot()`。
+因此摘要模型失败不会写入 boundary，JSONL 写入失败也不会让当前进程先使用未持久化的
+工作集。`SessionSnapshot` 只是 store hydration DTO；Context 请求从 Conversation 的最新
+不可变快照与当前 `ContextSession` delivery 重新构造。

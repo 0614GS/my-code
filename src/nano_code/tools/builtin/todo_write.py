@@ -1,15 +1,14 @@
 """维护当前会话结构化任务列表。"""
 
-from nano_code.agent.contracts.model import ModelToolDefinition
-from nano_code.application.chat.presentation import ToolResultPresentation
-from nano_code.conversation import JsonObject
 from nano_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
+from nano_code.model import JsonObject, ModelToolDefinition
 from nano_code.permissions.models import (
     PermissionDecisionKind,
     PermissionDecisionReason,
     ToolPermissionContext,
     ToolPermissionResult,
 )
+from nano_code.tools import ToolResultPresentation
 from nano_code.tools.base import Tool, ToolContext, ToolOutput
 
 _DESCRIPTION = """Update the structured todo list for the current coding session.

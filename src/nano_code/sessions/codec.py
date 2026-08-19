@@ -5,33 +5,30 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from nano_code.agent.contracts.session import (
-    CompactBoundary,
-    ContentReplacement,
-    SessionMetadata,
-    SessionStart,
-)
-from nano_code.application.chat.presentation import ToolResultPresentation
 from nano_code.conversation import (
     AssistantMessage,
+    CompactBoundary,
+    ContentReplacement,
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
-    ProviderBinding,
-    ProviderContinuationState,
     ReasoningContent,
-    ReasoningPresentation,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
-    to_json_object,
 )
-from nano_code.conversation.primitives import JsonObject
-from nano_code.permissions import PermissionMode
-from nano_code.providers.catalog import ModelLimits
-from nano_code.providers.ids import validate_provider_id
+from nano_code.model import (
+    JsonObject,
+    ModelLimits,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
+    TokenUsage,
+    to_json_object,
+    validate_provider_id,
+)
+from nano_code.sessions.models import SessionMetadata, SessionStart
 from nano_code.sessions.records import (
     AssistantMessageRecord,
     CompactBoundaryRecord,
@@ -44,10 +41,12 @@ from nano_code.sessions.records import (
     SessionStartedRecord,
     TextContentRecord,
     ToolCallRecord,
+    ToolPresentationRecord,
     ToolResultRecord,
     ToolResultsMessageRecord,
     TranscriptEntry,
 )
+from nano_code.tools import ToolResultPresentation
 
 
 class TranscriptDecodeError(ValueError):
@@ -60,6 +59,7 @@ type DecodedEntry = (
     | CompactBoundary
     | SessionStart
     | SessionMetadata
+    | ToolPresentationRecord
 )
 
 
@@ -101,6 +101,8 @@ def decode_entry(value: object) -> DecodedEntry:
             entry.pre_compact_chars,
             entry.id,
         )
+    if isinstance(entry, ToolPresentationRecord):
+        return entry
     return record_to_message(entry)
 
 
@@ -161,6 +163,27 @@ def encode_metadata(metadata: SessionMetadata) -> JsonObject:
     )
 
 
+def encode_tool_presentation(
+    tool_use_id: str, presentation: ToolResultPresentation
+) -> JsonObject:
+    return entry_to_json(ToolPresentationRecord(tool_use_id, presentation))
+
+
+def presentations_from_json(
+    value: object,
+) -> tuple[tuple[str, ToolResultPresentation], ...]:
+    """Read legacy embedded snapshots without returning them as conversation facts."""
+
+    entry = entry_from_json(value)
+    if not isinstance(entry, ToolResultsMessageRecord):
+        return ()
+    return tuple(
+        (item.tool_use_id, item.presentation)
+        for item in entry.content
+        if item.presentation is not None
+    )
+
+
 def message_to_record(message: ConversationMessage) -> MessageRecord:
     if isinstance(message, HumanMessage):
         return HumanMessageRecord(
@@ -188,7 +211,7 @@ def message_to_record(message: ConversationMessage) -> MessageRecord:
         )
     if isinstance(message, ToolResultsMessage):
         result_content: tuple[ToolResultRecord, ...] = tuple(
-            ToolResultRecord(b.tool_use_id, b.content, b.is_error, b.presentation)
+            ToolResultRecord(b.tool_use_id, b.content, b.is_error)
             for b in message.content
         )
         return ToolResultsMessageRecord(
@@ -230,8 +253,7 @@ def record_to_message(record: MessageRecord) -> ConversationMessage:
         )
     if isinstance(record, ToolResultsMessageRecord):
         result_content: tuple[ToolResult, ...] = tuple(
-            ToolResult(b.tool_use_id, b.content, b.is_error, b.presentation)
-            for b in record.content
+            ToolResult(b.tool_use_id, b.content, b.is_error) for b in record.content
         )
         return ToolResultsMessage(
             result_content,
@@ -306,13 +328,22 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             original_chars=entry.original_chars,
             content=entry.content,
         )
-    else:
+    elif isinstance(entry, CompactBoundaryRecord):
         base.update(
             id=entry.id,
             parent_uuid=entry.parent_uuid,
             summary_uuid=entry.summary_uuid,
             trigger=entry.trigger,
             pre_compact_chars=entry.pre_compact_chars,
+        )
+    else:
+        base.update(
+            tool_use_id=entry.tool_use_id,
+            presentation={
+                "summary": entry.presentation.summary,
+                "detail": entry.presentation.detail,
+                "truncated": entry.presentation.truncated,
+            },
         )
     return base
 
@@ -350,10 +381,14 @@ def entry_from_json(value: object) -> TranscriptEntry:
         except ValueError as error:
             raise TranscriptDecodeError(str(error)) from error
         permission_mode = _string(data, "permission_mode")
-        try:
-            PermissionMode(permission_mode)
-        except ValueError as error:
-            raise TranscriptDecodeError("Unsupported permission_mode") from error
+        if permission_mode not in {
+            "default",
+            "acceptEdits",
+            "plan",
+            "dontAsk",
+            "bypassPermissions",
+        }:
+            raise TranscriptDecodeError("Unsupported permission_mode")
         return SessionStartedRecord(
             _string(data, "session_id"),
             _timestamp_string(data, "created_at"),
@@ -374,45 +409,6 @@ def entry_from_json(value: object) -> TranscriptEntry:
             _timestamp_string(data, "updated_at"),
             _optional_non_empty_string(data, "title"),
             _optional_non_empty_string(data, "last_prompt"),
-        )
-    if kind in {
-        "human_message",
-        "assistant_message",
-        "tool_results_message",
-        "conversation_summary_message",
-    }:
-        common = (
-            _string(data, "uuid"),
-            _optional_string(data, "parent_uuid"),
-            _string(data, "timestamp"),
-        )
-    if kind == "human_message":
-        return HumanMessageRecord(*common, _string(data, "content"))
-    if kind == "conversation_summary_message":
-        return ConversationSummaryMessageRecord(*common, _string(data, "content"))
-    if kind == "assistant_message":
-        raw = _list(data, "content")
-        assistant_content = tuple(_assistant_block(item) for item in raw)
-        if not assistant_content:
-            raise TranscriptDecodeError("Assistant content must not be empty")
-        return AssistantMessageRecord(
-            *common,
-            assistant_content,
-            _usage(data.get("usage")),
-            _optional_binding(data.get("provider_binding")),
-            (
-                _positive_int(data, "request_input_tokens_estimate")
-                if "request_input_tokens_estimate" in data
-                else None
-            ),
-        )
-    if kind == "tool_results_message":
-        raw = _list(data, "content")
-        result_content = tuple(_result(item) for item in raw)
-        if not result_content:
-            raise TranscriptDecodeError("Tool results must not be empty")
-        return ToolResultsMessageRecord(
-            *common, result_content, _string(data, "source_assistant_uuid")
         )
     if kind == "content_replacement":
         return ContentReplacementRecord(
@@ -438,6 +434,58 @@ def entry_from_json(value: object) -> TranscriptEntry:
             _string(data, "summary_uuid"),
             actual_trigger,
             _positive_int(data, "pre_compact_chars"),
+        )
+    if kind == "tool_presentation":
+        return ToolPresentationRecord(
+            _string(data, "tool_use_id"),
+            _tool_presentation(data.get("presentation")),
+        )
+    uuid = _string(data, "uuid")
+    parent_uuid = _optional_string(data, "parent_uuid")
+    timestamp = _string(data, "timestamp")
+    if kind == "human_message":
+        return HumanMessageRecord(
+            uuid,
+            parent_uuid,
+            timestamp,
+            _string(data, "content"),
+        )
+    if kind == "conversation_summary_message":
+        return ConversationSummaryMessageRecord(
+            uuid,
+            parent_uuid,
+            timestamp,
+            _string(data, "content"),
+        )
+    if kind == "assistant_message":
+        raw = _list(data, "content")
+        assistant_content = tuple(_assistant_block(item) for item in raw)
+        if not assistant_content:
+            raise TranscriptDecodeError("Assistant content must not be empty")
+        return AssistantMessageRecord(
+            uuid,
+            parent_uuid,
+            timestamp,
+            assistant_content,
+            _usage(data.get("usage")),
+            _optional_binding(data.get("provider_binding")),
+            (
+                _positive_int(data, "request_input_tokens_estimate")
+                if "request_input_tokens_estimate" in data
+                else None
+            ),
+        )
+    if kind == "tool_results_message":
+        raw = _list(data, "content")
+        result_content = tuple(_result(item) for item in raw)
+        if not result_content:
+            raise TranscriptDecodeError("Tool results must not be empty")
+        return ToolResultsMessageRecord(
+            uuid,
+            parent_uuid,
+            timestamp,
+            result_content,
+            _string(data, "source_assistant_uuid"),
         )
     raise AssertionError("Validated transcript discriminator was not handled")
 
@@ -724,6 +772,18 @@ def _result(value: object) -> ToolResultRecord:
     )
 
 
+def _tool_presentation(value: object) -> ToolResultPresentation:
+    item = _object(value)
+    _require_exact_fields(item, frozenset({"summary", "detail", "truncated"}))
+    detail = item.get("detail")
+    truncated = item.get("truncated")
+    if detail is not None and not isinstance(detail, str):
+        raise TranscriptDecodeError("presentation detail must be string or null")
+    if not isinstance(truncated, bool):
+        raise TranscriptDecodeError("presentation truncated must be boolean")
+    return ToolResultPresentation(_string(item, "summary"), detail, truncated)
+
+
 def _usage(value: object) -> TokenUsage:
     data = _object(value)
     expected = {
@@ -808,5 +868,8 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
             "trigger",
             "pre_compact_chars",
         }
+    ),
+    "tool_presentation": frozenset(
+        {"type", "schema_version", "tool_use_id", "presentation"}
     ),
 }

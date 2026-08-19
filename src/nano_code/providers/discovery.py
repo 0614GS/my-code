@@ -7,7 +7,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
-from nano_code.providers.catalog import (
+from nano_code.model import (
     CapabilitySource,
     ModelCapabilities,
     ModelDescriptor,

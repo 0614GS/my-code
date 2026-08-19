@@ -28,7 +28,6 @@ from nano_code.agent import (
     AgentTurnSucceeded,
 )
 from nano_code.agent.ports.inbound import AgentInboundPort
-from nano_code.agent.ports.session import SessionRepository
 from nano_code.application.chat.contracts import (
     AttachmentLoaded,
     ContextStatus,
@@ -64,7 +63,7 @@ from nano_code.core import AgentSettings
 from nano_code.features.file_mentions import AttachmentLoader, WorkspacePathSuggester
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.providers.router import ProviderConnection
-from nano_code.sessions import SessionSummary
+from nano_code.sessions import Session, SessionSummary
 
 
 class ProviderControlPort(Protocol):
@@ -82,7 +81,7 @@ class SessionSourcePort(Protocol):
 
     def list(self, *, exclude_session_id: str) -> tuple[SessionSummary, ...]: ...
 
-    def open(self, session_id: str) -> SessionRepository: ...
+    def open(self, session_id: str) -> Session: ...
 
 
 class DefaultChatRuntime:

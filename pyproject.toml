@@ -21,7 +21,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "mypy>=1.17.0",
+    "pyright>=1.1.404",
     "pytest>=8.4.0",
     "pytest-asyncio>=1.1.0",
     "ruff>=0.12.0",
@@ -34,10 +34,13 @@ line-length = 88
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
-[tool.mypy]
-python_version = "3.12"
-strict = true
-files = ["src"]
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+include = ["src", "tests"]
+exclude = [".venv", "claude-code"]
+venvPath = "."
+venv = ".venv"
 
 [tool.pytest.ini_options]
 addopts = "-q"

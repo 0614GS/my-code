@@ -1,6 +1,6 @@
 """Non-persistent, live-session TodoWrite reminder attachment."""
 
-from nano_code.agent.contracts.session import ConversationSnapshot
+from nano_code.context import ContextSnapshot
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.documents import ContextInstruction
 from nano_code.conversation import AssistantMessage, ToolCall
@@ -22,7 +22,7 @@ _REMINDER = (
 class TodoReminderAttachmentSource:
     """Inject a reminder every ten completed model calls without TodoWrite."""
 
-    def __call__(self, snapshot: ConversationSnapshot) -> tuple[ContextAttachment, ...]:
+    def __call__(self, snapshot: ContextSnapshot) -> tuple[ContextAttachment, ...]:
         projection = project_todos(snapshot.session_history or snapshot.messages)
         calls_since_write = _completed_model_calls_since_todo_write(snapshot)
         calls_since_reminder = _completed_model_calls_since_reminder(snapshot)
@@ -50,7 +50,7 @@ class TodoReminderAttachmentSource:
         )
 
 
-def _completed_model_calls_since_todo_write(snapshot: ConversationSnapshot) -> int:
+def _completed_model_calls_since_todo_write(snapshot: ContextSnapshot) -> int:
     completed_calls = 0
     for message in reversed(snapshot.messages):
         if not isinstance(message, AssistantMessage):
@@ -64,7 +64,7 @@ def _completed_model_calls_since_todo_write(snapshot: ConversationSnapshot) -> i
     return completed_calls
 
 
-def _completed_model_calls_since_reminder(snapshot: ConversationSnapshot) -> int:
+def _completed_model_calls_since_reminder(snapshot: ContextSnapshot) -> int:
     anchors = {
         delivery.anchor_uuid
         for delivery in snapshot.attachment_deliveries

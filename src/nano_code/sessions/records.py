@@ -3,14 +3,15 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from nano_code.application.chat.presentation import ToolResultPresentation
-from nano_code.conversation import (
+from nano_code.model import (
+    JsonObject,
+    ModelLimits,
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
+    TokenUsage,
 )
-from nano_code.conversation.primitives import JsonObject, TokenUsage
-from nano_code.providers.catalog import ModelLimits
+from nano_code.tools import ToolResultPresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +73,14 @@ class ToolResultRecord:
     is_error: bool = False
     presentation: ToolResultPresentation | None = None
     type: Literal["tool_result"] = "tool_result"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolPresentationRecord:
+    tool_use_id: str
+    presentation: ToolResultPresentation
+    type: Literal["tool_presentation"] = "tool_presentation"
+    schema_version: Literal[5] = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,4 +160,5 @@ type TranscriptEntry = (
     | MessageRecord
     | ContentReplacementRecord
     | CompactBoundaryRecord
+    | ToolPresentationRecord
 )

@@ -65,7 +65,7 @@ nanocode --provider company-gateway auth login
 ```bash
 uv run ruff format .
 uv run ruff check .
-uv run mypy
+uv run pyright
 uv run pytest
 ```
 

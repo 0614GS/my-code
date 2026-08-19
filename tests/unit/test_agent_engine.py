@@ -16,21 +16,6 @@ from nano_code.agent import (
     AgentTodoListUpdated,
     AgentTurnInput,
     AgentTurnSucceeded,
-    ConversationState,
-    ModelContextOverflow,
-    ModelOutput,
-    ModelOutputCompleted,
-    ModelReasoningBlock,
-    ModelReasoningCompleted,
-    ModelReasoningDelta,
-    ModelReasoningStarted,
-    ModelRequest,
-    ModelStreamEvent,
-    ModelTextBlock,
-    ModelTextCompleted,
-    ModelTextDelta,
-    ModelTextStarted,
-    ModelToolUseBlock,
 )
 from nano_code.context.attachments.models import (
     ContextAttachment,
@@ -42,23 +27,41 @@ from nano_code.context.window import ContextWindow
 from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
-    ProviderBinding,
-    ProviderContinuationState,
     ReasoningContent,
-    ReasoningPresentation,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResultsMessage,
 )
-from nano_code.permissions import PermissionMode, PermissionPolicy
-from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
-from nano_code.providers.streaming import (
+from nano_code.model import (
+    ModelContextOverflow,
+    ModelOutput,
+    ModelOutputCompleted,
+    ModelReasoningBlock,
+    ModelReasoningCompleted,
+    ModelReasoningDelta,
+    ModelReasoningStarted,
+    ModelRequest,
+    ModelStreamEvent,
     ModelStreamSequencer,
+    ModelTextBlock,
+    ModelTextCompleted,
+    ModelTextDelta,
+    ModelTextStarted,
+    ModelToolUseBlock,
+    PromptStability,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
+    TokenUsage,
     completed_output_payloads,
 )
-from nano_code.sessions import SessionStore
+from nano_code.permissions import PermissionMode, PermissionPolicy
+from nano_code.permissions.prompt import HeadlessPrompter
+from nano_code.prompts import (
+    PromptRegistry,
+    PromptSection,
+)
+from nano_code.sessions import Session, SessionStore
 from nano_code.tools import ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
@@ -121,7 +124,7 @@ def _engine(
     *,
     max_steps: int | None = None,
     model_type: type[FakeModel] = FakeModel,
-) -> tuple[AgentEngine, FakeModel, ConversationState, ToolRoundExecutor]:
+) -> tuple[AgentEngine, FakeModel, Session, ToolRoundExecutor]:
     store = SessionStore(tmp_path / "sessions", "11111111-1111-1111-1111-111111111111")
     registry = ToolRegistry(builtin_tools())
     executor = ToolExecutor(
@@ -140,17 +143,17 @@ def _engine(
         tools=registry.definitions,
         max_output_tokens=100,
     )
-    conversation = ConversationState(store)
+    session = Session(store)
     tool_round = ToolRoundExecutor(executor)
     engine = AgentEngine(
         model_call=model,
         tool_round=tool_round,
-        conversation=conversation,
+        session=session,
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(model)),
         max_steps=max_steps,
     )
-    return engine, model, conversation, tool_round
+    return engine, model, session, tool_round
 
 
 @pytest.mark.asyncio
@@ -221,9 +224,9 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
             for message in request.messages
             for block in message.content
         )
-    delivery = conversation.context_snapshot().attachment_deliveries[0]
+    delivery = engine._context_snapshot.attachment_deliveries[0]
     assert delivery.anchor_uuid == conversation.history[0].uuid
-    assert conversation.repository.load().history == conversation.history
+    assert conversation.store.load().history == conversation.history
 
 
 def test_agent_turn_input_rejects_request_only_attachments() -> None:
@@ -297,7 +300,7 @@ async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
         for message in model.requests[1].messages
         for block in message.content
     )
-    persisted = conversation.repository.load().history[1]
+    persisted = conversation.store.load().history[1]
     assert isinstance(persisted, AssistantMessage)
     assert persisted.content[0].kind == "reasoning"
 
@@ -374,7 +377,15 @@ async def test_reactive_retry_does_not_increment_completed_steps(
     engine, model, _, _ = _engine(
         tmp_path,
         [
-            ModelOutput((ModelTextBlock("summary"),), "end_turn", TokenUsage(2, 1)),
+            ModelOutput(
+                (
+                    ModelTextBlock(
+                        "<analyze>covered</analyze><summary>summary</summary>"
+                    ),
+                ),
+                "end_turn",
+                TokenUsage(2, 1),
+            ),
             ModelOutput((ModelTextBlock("done"),), "end_turn", TokenUsage(3, 1)),
         ],
         model_type=OverflowOnceModel,

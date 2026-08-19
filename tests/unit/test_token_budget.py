@@ -1,4 +1,4 @@
-from nano_code.agent import ConversationSnapshot
+from nano_code.context import ContextSnapshot as ConversationSnapshot
 from nano_code.context.microcompact import MicrocompactPolicy
 from nano_code.context.planner import ContextPlanner
 from nano_code.context.tokenizer import UnicodeTokenEstimator
@@ -6,20 +6,24 @@ from nano_code.context.window import ContextWindow
 from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
-    ProviderBinding,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
-from nano_code.providers.catalog import (
+from nano_code.model import (
     ActiveModelState,
     CapabilitySource,
     ModelDescriptor,
     ModelLimits,
+    PromptStability,
+    ProviderBinding,
+    TokenUsage,
     resolve_environment,
+)
+from nano_code.prompts import (
+    PromptRegistry,
+    PromptSection,
 )
 
 

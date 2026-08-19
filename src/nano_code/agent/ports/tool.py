@@ -4,11 +4,11 @@ from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
 from nano_code.agent.contracts.tool import ToolRoundEvent
-from nano_code.application.chat.presentation import (
+from nano_code.conversation import AssistantMessage, ToolCall, ToolResult
+from nano_code.tools import (
     ToolResultPresentation,
     ToolUsePresentation,
 )
-from nano_code.conversation import AssistantMessage, ToolCall, ToolResult
 
 
 @runtime_checkable

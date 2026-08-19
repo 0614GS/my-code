@@ -3,16 +3,16 @@
 from dataclasses import dataclass
 
 from nano_code.agent.contracts.inbound import AgentMaxStepsReached, AgentTurnSucceeded
-from nano_code.application.chat.presentation import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-)
-from nano_code.conversation import (
+from nano_code.features.todos.models import TodoItem
+from nano_code.model import (
     JsonObject,
     ReasoningDisclosure,
     ReasoningPresentation,
 )
-from nano_code.features.todos.models import TodoItem
+from nano_code.tools import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,8 +2,7 @@
 
 from pathlib import Path
 
-from nano_code.agent.ports.session import SessionRepository
-from nano_code.providers.catalog import (
+from nano_code.model import (
     ActiveModelState,
     CapabilitySource,
     ModelDescriptor,
@@ -12,7 +11,7 @@ from nano_code.providers.catalog import (
 from nano_code.providers.discovery import resolve_without_network
 from nano_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
 from nano_code.providers.router import ProviderConnection, ProviderRouter
-from nano_code.sessions import SessionCatalog, SessionStore, SessionSummary
+from nano_code.sessions import Session, SessionCatalog, SessionStore, SessionSummary
 
 
 class CliProviderController:
@@ -92,5 +91,5 @@ class ProjectSessionSource:
     def list(self, *, exclude_session_id: str) -> tuple[SessionSummary, ...]:
         return self._catalog.list(exclude_session_id=exclude_session_id)
 
-    def open(self, session_id: str) -> SessionRepository:
-        return SessionStore(self._project_state_dir, session_id)
+    def open(self, session_id: str) -> Session:
+        return Session.restore(SessionStore(self._project_state_dir, session_id))

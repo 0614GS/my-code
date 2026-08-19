@@ -10,7 +10,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Switch
 from textual.widgets.option_list import Option
 
-from nano_code.providers.catalog import ModelLimits
+from nano_code.model import ModelLimits
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.providers.profiles import (
     CompactConfig,

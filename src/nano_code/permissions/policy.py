@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from nano_code.conversation import JsonObject
+from nano_code.model import JsonObject
 from nano_code.permissions.models import (
     PermissionBehavior,
     PermissionDecision,

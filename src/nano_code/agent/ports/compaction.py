@@ -3,7 +3,8 @@
 from typing import Protocol, runtime_checkable
 
 from nano_code.agent.contracts.compaction import CompactionOutcome
-from nano_code.agent.contracts.session import CompactTrigger, ConversationSnapshot
+from nano_code.context import ContextSnapshot
+from nano_code.conversation import CompactTrigger
 
 
 @runtime_checkable
@@ -12,7 +13,7 @@ class CompactorPort(Protocol):
 
     async def compact(
         self,
-        snapshot: ConversationSnapshot,
+        snapshot: ContextSnapshot,
         trigger: CompactTrigger,
     ) -> CompactionOutcome: ...
 

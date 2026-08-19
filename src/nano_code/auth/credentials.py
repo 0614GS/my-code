@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from nano_code.providers.ids import validate_provider_id
+from nano_code.model import validate_provider_id
 
 _DEFAULT_PROVIDER_ID = "anthropic"
 _SCHEMA_VERSION = 2

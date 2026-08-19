@@ -2,31 +2,29 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import ConversationState, ModelReasoningBlock
-from nano_code.agent.contracts.compaction import CompactionOutcome
-from nano_code.agent.contracts.session import (
-    AttachmentDelivery,
-    CompactBoundary,
-    ContentReplacement,
-    SessionSnapshot,
-)
+from nano_code.context import AttachmentDelivery, ContextSession
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.documents import ContextInstruction
 from nano_code.context.normalization import ModelInputNormalizer
 from nano_code.conversation import (
     AssistantMessage,
+    CompactBoundary,
+    ContentReplacement,
     ConversationSummaryMessage,
     HumanMessage,
-    ProviderBinding,
-    ProviderContinuationState,
     ReasoningContent,
-    ReasoningPresentation,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResultsMessage,
 )
-from nano_code.sessions import SessionStore
+from nano_code.model import (
+    ModelReasoningBlock,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
+    TokenUsage,
+)
+from nano_code.sessions import Session, SessionSnapshot, SessionStore
 
 
 class CountingSessionStore(SessionStore):
@@ -47,29 +45,29 @@ def test_append_is_persisted_then_applied_without_runtime_reload(
     tmp_path: Path,
 ) -> None:
     store = CountingSessionStore(tmp_path, "00000000-0000-0000-0000-000000000001")
-    state = ConversationState(store)
+    session = Session(store)
     message = HumanMessage("hello")
-    state.append(message)
-    assert state.history == (message,)
-    assert state.working_messages == (message,)
+    session.append(message)
+    assert session.history == (message,)
+    assert session.working_messages == (message,)
     assert store.load_calls == 1
 
 
-def test_append_tool_results_builds_semantic_message(tmp_path: Path) -> None:
-    state = ConversationState(_store(tmp_path, "2"))
+def test_append_tool_results_requires_a_result(tmp_path: Path) -> None:
+    session = Session(_store(tmp_path, "2"))
     human = HumanMessage("read")
     assistant = AssistantMessage(
         (ToolCall("call", "Read", {"path": "x"}),),
         TokenUsage(),
         parent_uuid=human.uuid,
     )
-    state.append(human)
-    state.append(assistant)
+    session.append(human)
+    session.append(assistant)
     with pytest.raises(ValueError, match="at least one"):
-        state.append_tool_results((), assistant)
+        session.append_tool_results((), assistant)
 
 
-def test_resume_repairs_trailing_tool_calls(tmp_path: Path) -> None:
+def test_restore_repairs_trailing_tool_calls_before_returning(tmp_path: Path) -> None:
     target = CountingSessionStore(tmp_path, "00000000-0000-0000-0000-000000000003")
     human = HumanMessage("read")
     assistant = AssistantMessage(
@@ -93,14 +91,11 @@ def test_resume_repairs_trailing_tool_calls(tmp_path: Path) -> None:
     target.append(assistant)
     target.load_calls = 0
 
-    state = ConversationState(_store(tmp_path, "4"))
-    resumed = state.resume(target)
-
-    assert isinstance(resumed[-1], ToolResultsMessage)
-    assert resumed[-1].source_assistant_uuid == assistant.uuid
-    assert resumed[-1].content[0].is_error is True
+    resumed = Session.restore(target)
+    assert isinstance(resumed.history[-1], ToolResultsMessage)
+    assert resumed.history[-1].content[0].is_error is True
     assert target.load_calls == 1
-    request_messages = ModelInputNormalizer().normalize((), resumed, ())
+    request_messages = ModelInputNormalizer().normalize((), resumed.history, ())
     assert any(
         isinstance(block, ModelReasoningBlock)
         for message in request_messages
@@ -108,192 +103,158 @@ def test_resume_repairs_trailing_tool_calls(tmp_path: Path) -> None:
     )
 
 
-def test_resume_empty_session_keeps_current_repository(tmp_path: Path) -> None:
-    current = _store(tmp_path, "5")
+def test_empty_or_repair_failure_does_not_replace_current_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = Session(_store(tmp_path, "4"))
     current.append(HumanMessage("current"))
-    state = ConversationState(current)
+    active = current
     with pytest.raises(ValueError, match="no messages"):
-        state.resume(_store(tmp_path, "6"))
-    assert state.session_id == current.session_id
+        Session.restore(_store(tmp_path, "5"))
+    assert active is current
+
+    target = _store(tmp_path, "6")
+    human = HumanMessage("read")
+    target.append(human)
+    target.append(
+        AssistantMessage(
+            (ToolCall("call", "Read", {"path": "x"}),),
+            TokenUsage(),
+            parent_uuid=human.uuid,
+        )
+    )
+
+    def fail(_: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(target, "_append_records", fail)
+    with pytest.raises(OSError, match="disk full"):
+        Session.restore(target)
+    assert active is current
+    assert active.history[-1] == current.history[-1]
 
 
-def test_failed_persistence_does_not_change_runtime_state(
+def test_failed_persistence_does_not_change_conversation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = _store(tmp_path, "7")
-    state = ConversationState(store)
+    session = Session(store)
 
     def fail(_: object) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(store, "_append_records", fail)
     with pytest.raises(OSError, match="disk full"):
-        state.append(HumanMessage("not durable"))
-    assert state.history == ()
-    assert state.working_messages == ()
+        session.append(HumanMessage("not durable"))
+    assert session.history == ()
 
 
-def test_compaction_updates_runtime_without_reload(tmp_path: Path) -> None:
-    store = CountingSessionStore(tmp_path, "00000000-0000-0000-0000-000000000008")
-    state = ConversationState(store)
+def test_compaction_is_persisted_before_conversation_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path, "8")
+    session = Session(store)
     human = HumanMessage("hello")
-    state.append(human)
-    state.add_attachment_deliveries(
-        (
-            AttachmentDelivery(
-                human.uuid,
-                ContextAttachment(
-                    "event",
-                    (TextContent("runtime"),),
-                    retention="live_session",
-                ),
-            ),
-        )
-    )
+    session.append(human)
     summary = ConversationSummaryMessage("summary", parent_uuid=human.uuid)
     boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5)
     replacement = ContentReplacement("call", "Read", 10, "short")
 
-    state.commit_compaction(
-        CompactionOutcome(
-            replacements=(replacement,),
-            summary=summary,
-            boundary=boundary,
-            usage=TokenUsage(),
-        )
-    )
+    def fail(_: object) -> None:
+        raise OSError("disk full")
 
-    assert state.history == (human, summary)
-    assert state.working_messages == (summary,)
-    assert state.compact_boundaries == (boundary,)
-    assert state.context_snapshot().attachment_deliveries == ()
+    monkeypatch.setattr(store, "_append_records", fail)
+    with pytest.raises(OSError, match="disk full"):
+        session.commit_compaction((replacement,), summary, boundary)
+    assert session.history == (human,)
+    assert session.conversation.all_content_replacements == ()
+    assert session.compact_boundaries == ()
+
+
+def test_compaction_updates_working_set_without_reload(tmp_path: Path) -> None:
+    store = CountingSessionStore(tmp_path, "00000000-0000-0000-0000-000000000009")
+    session = Session(store)
+    human = HumanMessage("hello")
+    session.append(human)
+    summary = ConversationSummaryMessage("summary", parent_uuid=human.uuid)
+    boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5)
+    session.commit_compaction((), summary, boundary)
+    assert session.history == (human, summary)
+    assert session.working_messages == (summary,)
     assert store.load_calls == 1
 
 
-def test_partial_compaction_write_does_not_advance_runtime_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    store = _store(tmp_path, "10")
-    state = ConversationState(store)
-    human = HumanMessage("hello")
-    state.append(human)
-    summary = ConversationSummaryMessage("summary", parent_uuid=human.uuid)
-    boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5)
-    replacement = ContentReplacement("call", "Read", 10, "short")
-    original_append_records = store._append_records
-
-    def fail_summary(records: object) -> None:
-        items = tuple(records)  # type: ignore[arg-type]
-        if any(
-            isinstance(record, dict)
-            and record.get("type") == "conversation_summary_message"
-            for record in items
-        ):
-            raise OSError("disk full")
-        original_append_records(items)
-
-    monkeypatch.setattr(store, "_append_records", fail_summary)
-    with pytest.raises(OSError, match="disk full"):
-        state.commit_compaction(
-            CompactionOutcome(
-                replacements=(replacement,),
-                summary=summary,
-                boundary=boundary,
-                usage=TokenUsage(),
-            )
-        )
-
-    assert state.history == (human,)
-    assert state.working_messages == (human,)
-    assert state.snapshot.content_replacements == ()
-    assert state.compact_boundaries == ()
-
-
-def test_external_transcript_append_is_visible_only_after_new_load(
-    tmp_path: Path,
-) -> None:
-    session_id = "00000000-0000-0000-0000-000000000009"
-    state = ConversationState(SessionStore(tmp_path, session_id))
-    human = HumanMessage("local")
-    state.append(human)
-
-    external = AssistantMessage(
-        (TextContent("external"),),
-        TokenUsage(),
-        parent_uuid=human.uuid,
-    )
-    SessionStore(tmp_path, session_id).append(external)
-
-    assert state.history == (human,)
-    reloaded = ConversationState(SessionStore(tmp_path, session_id))
-    assert reloaded.history == (human, external)
-
-
-def test_live_attachment_delivery_is_not_persisted_and_clears_on_resume(
-    tmp_path: Path,
-) -> None:
-    current = _store(tmp_path, "11")
-    state = ConversationState(current)
+def test_context_session_owns_ephemeral_attachment_delivery(tmp_path: Path) -> None:
+    session = Session(_store(tmp_path, "10"))
     human = HumanMessage("current")
-    state.append(human)
+    session.append(human)
+    context = ContextSession()
     reminder = ContextAttachment(
         "todo_reminder",
         (ContextInstruction("remember todos"),),
         retention="live_session",
     )
-
-    delivery = AttachmentDelivery(human.uuid, reminder)
-    state.add_attachment_deliveries((delivery,))
-
-    snapshot = state.context_snapshot()
-    assert snapshot.attachment_deliveries[0].anchor_uuid == human.uuid
-    assert snapshot.attachment_deliveries[0].attachment == reminder
-    assert current.load().history == (human,)
-
-    target = _store(tmp_path, "12")
-    target.append(HumanMessage("target"))
-    state.resume(target)
-    assert state.context_snapshot().attachment_deliveries == ()
+    delivery = AttachmentDelivery(human.uuid, reminder, delivery_id="fixed")
+    context.add((delivery, delivery), session.conversation.snapshot())
+    assert context.snapshot(session.conversation.snapshot()).attachment_deliveries == (
+        delivery,
+    )
+    assert session.store.load().history == (human,)
+    assert (
+        ContextSession().snapshot(session.conversation.snapshot()).attachment_deliveries
+        == ()
+    )
 
 
-def test_attachment_delivery_is_idempotent_and_conflicts_fail(tmp_path: Path) -> None:
-    state = ConversationState(_store(tmp_path, "13"))
+def test_external_transcript_append_is_visible_only_after_new_session(
+    tmp_path: Path,
+) -> None:
+    session_id = "00000000-0000-0000-0000-000000000012"
+    session = Session(SessionStore(tmp_path, session_id))
+    human = HumanMessage("local")
+    session.append(human)
+    external = AssistantMessage(
+        (TextContent("external"),), TokenUsage(), parent_uuid=human.uuid
+    )
+    SessionStore(tmp_path, session_id).append(external)
+    assert session.history == (human,)
+    assert Session(SessionStore(tmp_path, session_id)).history == (human, external)
+
+
+def test_context_session_rejects_conflicting_delivery_id(tmp_path: Path) -> None:
+    session = Session(_store(tmp_path, "13"))
     human = HumanMessage("current")
-    state.append(human)
+    session.append(human)
+    context = ContextSession()
     first = AttachmentDelivery(
         human.uuid,
         ContextAttachment("event", (TextContent("first"),), retention="live_session"),
         delivery_id="fixed",
     )
-
-    state.add_attachment_deliveries((first, first))
-    assert state.context_snapshot().attachment_deliveries == (first,)
-
+    context.add((first,), session.conversation.snapshot())
     conflict = AttachmentDelivery(
         human.uuid,
         ContextAttachment("event", (TextContent("second"),), retention="live_session"),
         delivery_id="fixed",
     )
     with pytest.raises(ValueError, match="Conflicting attachment delivery"):
-        state.add_attachment_deliveries((conflict,))
-    assert state.context_snapshot().attachment_deliveries == (first,)
+        context.add((conflict,), session.conversation.snapshot())
+    assert context.snapshot(session.conversation.snapshot()).attachment_deliveries == (
+        first,
+    )
 
 
-def test_attachment_delivery_requires_a_working_set_anchor(tmp_path: Path) -> None:
-    state = ConversationState(_store(tmp_path, "14"))
-    state.append(HumanMessage("current"))
+def test_attachment_delivery_rejects_bad_anchor_and_retention(tmp_path: Path) -> None:
+    session = Session(_store(tmp_path, "11"))
+    session.append(HumanMessage("current"))
+    context = ContextSession()
     delivery = AttachmentDelivery(
         "missing",
         ContextAttachment("event", (TextContent("content"),), retention="live_session"),
     )
-
     with pytest.raises(ValueError, match="not in the working set"):
-        state.add_attachment_deliveries((delivery,))
-
-
-def test_attachment_delivery_rejects_request_retention() -> None:
+        context.add((delivery,), session.conversation.snapshot())
     with pytest.raises(ValueError, match="live_session"):
         AttachmentDelivery(
-            "anchor",
-            ContextAttachment("temporary", (TextContent("content"),)),
+            "anchor", ContextAttachment("temporary", (TextContent("content"),))
         )

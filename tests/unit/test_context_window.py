@@ -1,14 +1,7 @@
 import pytest
 
-from nano_code.agent import (
-    ConversationSnapshot,
-    ModelAssistantMessage,
-    ModelTextBlock,
-    ModelToolResultBlock,
-    ModelToolUseBlock,
-    ModelUserMessage,
-)
 from nano_code.agent.errors import ContextOverflow
+from nano_code.context import ContextSnapshot as ConversationSnapshot
 from nano_code.context.microcompact import MicrocompactPolicy
 from nano_code.context.planner import ContextPlanner
 from nano_code.context.window import ContextWindow
@@ -17,12 +10,23 @@ from nano_code.conversation import (
     ConversationSummaryMessage,
     HumanMessage,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
+from nano_code.model import (
+    ModelAssistantMessage,
+    ModelTextBlock,
+    ModelToolResultBlock,
+    ModelToolUseBlock,
+    ModelUserMessage,
+    PromptStability,
+    TokenUsage,
+)
+from nano_code.prompts import (
+    PromptRegistry,
+    PromptSection,
+)
 
 
 def _planner(max_chars: int = 1_000, microcompact=None) -> ContextPlanner:

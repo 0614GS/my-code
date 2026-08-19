@@ -9,30 +9,26 @@ import nano_code.tools as tool_adapter
 from nano_code.agent import (
     AgentEngine,
     AgentInboundPort,
-    ConversationState,
-    ModelToolDefinition,
     ToolRoundPort,
 )
 from nano_code.agent.contracts.compaction import CompactionOutcome
-from nano_code.agent.contracts.session import SessionSnapshot
 from nano_code.agent.contracts.tool import ToolRoundCompleted
 from nano_code.agent.ports.compaction import CompactorPort
 from nano_code.agent.ports.context import ContextPort
-from nano_code.agent.ports.model import ModelCallPort, ModelCompletionPort
-from nano_code.agent.ports.session import SessionRepository
 from nano_code.agent.ports.tool import ToolRoundPort as DeclaredToolRoundPort
 from nano_code.application.chat.contracts import ChatRuntime, RuntimeStatus
-from nano_code.application.chat.presentation import ToolUsePresentation
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.compaction import CompactionCoordinator
 from nano_code.context.planner import ContextPlanner
-from nano_code.conversation import ConversationMessage
+from nano_code.conversation import Conversation, ConversationMessage, ToolResult
 from nano_code.features.file_mentions import FileMention
 from nano_code.features.todos.models import TodoItem
+from nano_code.model import ModelClient, ModelToolDefinition
 from nano_code.providers.anthropic import AnthropicProvider
-from nano_code.providers.call import CompleteModelCallAdapter
+from nano_code.providers.openai_responses import OpenAIResponsesProvider
 from nano_code.providers.router import ProviderRouter
-from nano_code.sessions import SessionStore
+from nano_code.sessions import Session, SessionSnapshot
+from nano_code.tools import ToolUsePresentation
 from nano_code.tools.builtin.todo_write import TodoWriteTool
 from nano_code.tools.round_executor import ToolRoundExecutor
 
@@ -43,18 +39,31 @@ _ADAPTER_PREFIXES = (
     "nano_code.context.compaction",
     "nano_code.context.normalization",
     "nano_code.providers",
-    "nano_code.sessions",
-    "nano_code.tools",
+    "nano_code.tools.executor",
+    "nano_code.tools.round_executor",
 )
 
 
-def test_agent_ports_are_the_single_authoritative_declarations() -> None:
+def test_model_exposes_the_single_authoritative_client_protocol() -> None:
     assert not hasattr(context_adapter, "ContextPort")
     assert not hasattr(context_adapter, "ContextPlan")
-    assert not hasattr(provider_adapter, "ModelCompletionPort")
-    assert not hasattr(provider_adapter, "ModelResponseCompleted")
+    assert not hasattr(agent_api, "ModelCallPort")
+    assert not hasattr(agent_api, "ModelCompletionPort")
+    assert not hasattr(provider_adapter, "ModelClient")
+    assert ModelClient.__module__ == "nano_code.model.client"
+    model_sources = tuple((_PACKAGE_ROOT / "model").glob("*.py"))
+    protocol_declarations = [
+        node
+        for source_path in model_sources
+        for node in ast.walk(ast.parse(source_path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.ClassDef)
+        and any(
+            isinstance(base, ast.Name) and base.id == "Protocol" for base in node.bases
+        )
+    ]
+    assert [node.name for node in protocol_declarations] == ["ModelClient"]
     assert not hasattr(session_adapter, "SessionRepository")
-    assert not hasattr(session_adapter, "ConversationState")
+    assert not hasattr(agent_api, "ConversationState")
     assert not hasattr(tool_adapter, "ToolRoundPort")
     assert not hasattr(tool_adapter, "ToolRoundExecutor")
     assert ToolRoundPort is DeclaredToolRoundPort
@@ -63,14 +72,13 @@ def test_agent_ports_are_the_single_authoritative_declarations() -> None:
     assert CompactorPort.__module__ == "nano_code.agent.ports.compaction"
 
 
-def test_concrete_adapters_explicitly_inherit_agent_ports() -> None:
+def test_concrete_adapters_explicitly_inherit_their_real_protocols() -> None:
     adapters = (
         (ContextPlanner, (ContextPort,)),
         (CompactionCoordinator, (CompactorPort,)),
-        (ProviderRouter, (ModelCallPort, ModelCompletionPort)),
-        (CompleteModelCallAdapter, (ModelCallPort,)),
-        (AnthropicProvider, (ModelCompletionPort,)),
-        (SessionStore, (SessionRepository,)),
+        (ProviderRouter, (ModelClient,)),
+        (AnthropicProvider, (ModelClient,)),
+        (OpenAIResponsesProvider, (ModelClient,)),
         (ToolRoundExecutor, (ToolRoundPort,)),
         (AgentEngine, (AgentInboundPort,)),
     )
@@ -111,11 +119,30 @@ def test_conversation_layer_dependency_boundaries() -> None:
         source = source_path.read_text(encoding="utf-8")
         if "sessions.records" in source and "ConversationMessage" in source:
             simultaneous.append(source_path.name)
-    assert simultaneous == ["codec.py"]
+    assert set(simultaneous) == {"codec.py", "store.py"}
+
+    assert "presentation" not in ToolResult.__dataclass_fields__
+    assert Conversation.__module__ == "nano_code.conversation.state"
+    for source_path in (_PACKAGE_ROOT / "conversation").glob("*.py"):
+        imports = _imported_modules(source_path)
+        assert not any(
+            name.startswith(
+                (
+                    "nano_code.agent",
+                    "nano_code.application",
+                    "nano_code.context",
+                    "nano_code.sessions",
+                    "nano_code.tui",
+                )
+            )
+            for name in imports
+        ), source_path
 
 
 def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> None:
-    assert ModelToolDefinition.__module__ == "nano_code.agent.contracts.model"
+    assert ModelToolDefinition.__module__ == "nano_code.model.request"
+    assert not (_AGENT_ROOT / "contracts" / "model.py").exists()
+    assert not (_AGENT_ROOT / "ports" / "model.py").exists()
     assert not (_AGENT_ROOT / "contracts" / "tool_definition.py").exists()
 
     assert not hasattr(SessionSnapshot, "full_history")
@@ -138,9 +165,10 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert not hasattr(AgentInboundPort, "message_count")
     assert not hasattr(agent_api, "AgentState")
     assert not hasattr(agent_api, "AgentContextState")
-    assert not hasattr(ConversationState, "messages")
-    assert hasattr(SessionRepository, "load")
-    assert not hasattr(SessionRepository, "snapshot")
+    assert not hasattr(Conversation, "messages")
+    assert not (_AGENT_ROOT / "contracts" / "session.py").exists()
+    assert not (_AGENT_ROOT / "ports" / "session.py").exists()
+    assert Session.__module__ == "nano_code.sessions.session"
     assert TodoWriteTool().definition.name == "TodoWrite"
 
 
@@ -193,7 +221,7 @@ def _imported_modules(source_path: Path) -> tuple[str, ...]:
 def test_application_chat_owns_frontend_neutral_contracts() -> None:
     assert ChatRuntime.__module__ == "nano_code.application.chat.contracts"
     assert RuntimeStatus.__module__ == "nano_code.application.chat.contracts"
-    assert ToolUsePresentation.__module__ == ("nano_code.application.chat.presentation")
+    assert ToolUsePresentation.__module__ == "nano_code.tools.presentation"
 
     for source_path in (_PACKAGE_ROOT / "application" / "chat").glob("*.py"):
         imports = _imported_modules(source_path)

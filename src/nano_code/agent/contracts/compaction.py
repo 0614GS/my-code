@@ -2,9 +2,12 @@
 
 from dataclasses import dataclass
 
-from nano_code.conversation import ConversationSummaryMessage, TokenUsage
-
-from .session import CompactBoundary, ContentReplacement
+from nano_code.conversation import (
+    CompactBoundary,
+    ContentReplacement,
+    ConversationSummaryMessage,
+)
+from nano_code.model import TokenUsage
 
 
 @dataclass(frozen=True, slots=True)

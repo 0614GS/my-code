@@ -3,23 +3,27 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import CompactBoundary, ContentReplacement
 from nano_code.conversation import (
     AssistantMessage,
+    CompactBoundary,
+    ContentReplacement,
     ConversationSummaryMessage,
     HumanMessage,
-    ProviderBinding,
-    ProviderContinuationState,
     ReasoningContent,
-    ReasoningPresentation,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
 )
+from nano_code.model import (
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
+    TokenUsage,
+)
 from nano_code.sessions import SessionCatalog, SessionStore
 from nano_code.sessions.codec import entry_from_json, entry_to_json, message_to_record
+from nano_code.tools import ToolResultPresentation
 
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -101,6 +105,32 @@ def test_reasoning_assistant_content_round_trips_v5(tmp_path: Path) -> None:
         entry for entry in document if entry["type"] == "assistant_message"
     )
     assert assistant_record["content"][0]["type"] == "reasoning"
+
+
+def test_tool_presentation_is_a_session_add_on_not_a_conversation_fact(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    human, assistant, results, _ = _chain()
+    presentation = ToolResultPresentation("Read x", "historical detail")
+    store.append(human)
+    store.append(assistant)
+    store.append_message(results, (("call", presentation),))
+
+    loaded = store.load()
+    restored_result = loaded.history[-1]
+    assert isinstance(restored_result, ToolResultsMessage)
+    assert not hasattr(restored_result.content[0], "presentation")
+    assert dict(loaded.tool_presentations) == {"call": presentation}
+    document = [json.loads(line) for line in store.path.read_text().splitlines()]
+    presentation_record = next(
+        entry for entry in document if entry["type"] == "tool_presentation"
+    )
+    result_record = next(
+        entry for entry in document if entry["type"] == "tool_results_message"
+    )
+    assert presentation_record["tool_use_id"] == "call"
+    assert "presentation" not in result_record["content"][0]
 
 
 @pytest.mark.parametrize(

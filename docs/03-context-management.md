@@ -187,8 +187,14 @@ microcompact 在 projected input 达到 resolved token 阈值时处理旧的 Rea
 结果，按旧到新替换并在每次替换后重新 token 化，目标为阈值的 90%。原文不改写，JSONL 追加
 `content_replacement`，每次按 tool ID 重放同一占位文本。完整 compact 使用独立、
 无工具的模型请求；摘要成功后依次追加 `compact_boundary` 和 summary message，随后
-仅释放内存中的旧工作集。摘要失败不会产生有效 boundary。Provider 明确报告上下文
-清理后仍达到阈值则执行完整 compact；Provider 明确报告超限时最多执行一次 reactive compact。
+仅释放内存中的旧工作集。摘要模型必须输出一个 `<analyze>` 草稿和一个 `<summary>`；
+本地只提取唯一非空的 `<summary>` 内容，避免分析草稿污染后续上下文。生成摘要之后还会
+确定性附加最近 3 条真实 `HumanMessage` 的原文摘录（总计最多 6,000 字符），以保留最近
+纠偏和任务措辞；assistant 与 tool result 不参与这段原文注入。`CompactionCoordinator`
+同时加入 continuation envelope，明确这是压缩后的历史状态、不是新的用户请求，并要求直接
+继续当前任务。Normalizer 只负责将整个内容包裹为 `<conversation-summary>` 并投影成
+`ModelUserMessage`。摘要失败不会产生有效 boundary。清理后仍达到阈值则执行完整 compact；
+Provider 明确报告超限时最多执行一次 reactive compact。
 
 模型有效输入上限优先使用 `max_input_tokens`，并受
 `context_window_tokens - resolved_max_output_tokens` 约束；未知模型使用保守的
@@ -196,7 +202,7 @@ microcompact 在 projected input 达到 resolved token 阈值时处理旧的 Rea
 `triggerInputTokens`。`/context` 以 `used / max`（千 token）展示当前预计输入与有效输入上限，
 并补充测量方式、compact 阈值、压缩次数与降级警告；同一 `used / max` 指标常驻 TUI 右下角。
 
-当前有意未实现 cached microcompact、preserved tail、文件/plan/skill 工作集重建和
+当前有意未实现 cached microcompact、按原消息角色回放的 preserved tail、文件/plan/skill 工作集重建和
 compact hooks。这些能力以后应接入现有 planner、boundary 和 replay 边界，而不是
 重新进入 Agent Loop 添加工具特定分支。
 

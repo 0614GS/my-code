@@ -1,15 +1,6 @@
 """ConversationMessage 到 ModelMessage 的纯投影与协议校验。"""
 
-from nano_code.agent.contracts.model import (
-    ModelAssistantMessage,
-    ModelMessage,
-    ModelReasoningBlock,
-    ModelTextBlock,
-    ModelToolResultBlock,
-    ModelToolUseBlock,
-    ModelUserMessage,
-)
-from nano_code.agent.contracts.session import AttachmentDelivery
+from nano_code.context import AttachmentDelivery
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.attachments.projection import AttachmentProjector
 from nano_code.context.documents import UserContextDocument
@@ -18,12 +9,21 @@ from nano_code.conversation import (
     AssistantMessage,
     ConversationMessage,
     HumanMessage,
-    ProviderBinding,
-    ProviderContinuationState,
     ReasoningContent,
     TextContent,
     ToolCall,
     ToolResultsMessage,
+)
+from nano_code.model import (
+    ModelAssistantMessage,
+    ModelMessage,
+    ModelReasoningBlock,
+    ModelTextBlock,
+    ModelToolResultBlock,
+    ModelToolUseBlock,
+    ModelUserMessage,
+    ProviderBinding,
+    ProviderContinuationState,
 )
 
 

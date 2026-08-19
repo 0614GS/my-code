@@ -5,21 +5,9 @@ from collections.abc import Callable
 from typing import Literal
 
 from nano_code.agent.contracts.context import ContextBudget, ContextPlan
-from nano_code.agent.contracts.model import (
-    ModelMessage,
-    ModelReasoningBlock,
-    ModelRequest,
-    ModelTextBlock,
-    ModelToolDefinition,
-    ModelToolUseBlock,
-)
-from nano_code.agent.contracts.session import (
-    AttachmentDelivery,
-    ContentReplacement,
-    ConversationSnapshot,
-)
 from nano_code.agent.errors import ContextOverflow
 from nano_code.agent.ports.context import ContextPort
+from nano_code.context import AttachmentDelivery, ContextSnapshot
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.documents import UserContextDocument
@@ -34,23 +22,31 @@ from nano_code.context.window import ContextWindow
 from nano_code.context.xml import render_context_instruction
 from nano_code.conversation import (
     AssistantMessage,
+    ContentReplacement,
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,
-    ProviderBinding,
-    ProviderContinuationState,
     ReasoningContent,
     TextContent,
     ToolCall,
     ToolResultsMessage,
 )
-from nano_code.prompts import PromptRegistry, SystemPrompt
-from nano_code.providers.catalog import (
+from nano_code.model import (
     FALLBACK_INPUT_TOKENS,
     ActiveModelState,
+    ModelMessage,
+    ModelReasoningBlock,
+    ModelRequest,
+    ModelTextBlock,
+    ModelToolDefinition,
+    ModelToolUseBlock,
+    ProviderBinding,
+    ProviderContinuationState,
+    SystemPrompt,
     fallback_descriptor,
     resolve_environment,
 )
+from nano_code.prompts import PromptRegistry
 
 
 class ContextPlanner(ContextPort):
@@ -95,7 +91,7 @@ class ContextPlanner(ContextPort):
         self.attachment_projector = self.normalizer.attachment_projector
         self._user_context_cache: tuple[UserContextDocument, ...] | None = None
 
-    def plan(self, snapshot: ConversationSnapshot) -> ContextPlan:
+    def plan(self, snapshot: ContextSnapshot) -> ContextPlan:
         effective, proposed = self._effective_messages(snapshot)
         user_context = self._get_user_context()
         attachments = self._get_attachments(snapshot)
@@ -175,7 +171,7 @@ class ContextPlanner(ContextPort):
             request_input_tokens_estimate=local_estimate,
         )
 
-    def inspect(self, snapshot: ConversationSnapshot) -> ContextBudget:
+    def inspect(self, snapshot: ContextSnapshot) -> ContextBudget:
         effective, _ = self._effective_messages(snapshot, propose=False)
         user_context = self._get_user_context()
         attachments = self._get_attachments(snapshot)
@@ -200,7 +196,7 @@ class ContextPlanner(ContextPort):
         return budget
 
     def compaction_view(
-        self, snapshot: ConversationSnapshot
+        self, snapshot: ContextSnapshot
     ) -> tuple[tuple[ModelMessage, ...], tuple[ContentReplacement, ...]]:
         effective, proposed = self._effective_messages(snapshot)
         return (
@@ -219,13 +215,13 @@ class ContextPlanner(ContextPort):
         return self._user_context_cache
 
     def _get_attachments(
-        self, snapshot: ConversationSnapshot
+        self, snapshot: ContextSnapshot
     ) -> tuple[ContextAttachment, ...]:
         return self.attachment_resolver.resolve(snapshot)
 
     @staticmethod
     def _new_deliveries(
-        snapshot: ConversationSnapshot,
+        snapshot: ContextSnapshot,
         attachments: tuple[ContextAttachment, ...],
     ) -> tuple[AttachmentDelivery, ...]:
         live = tuple(
@@ -241,7 +237,7 @@ class ContextPlanner(ContextPort):
         return tuple(AttachmentDelivery(anchor_uuid, attachment) for attachment in live)
 
     def _effective_messages(
-        self, snapshot: ConversationSnapshot, *, propose: bool = True
+        self, snapshot: ContextSnapshot, *, propose: bool = True
     ) -> tuple[tuple[ConversationMessage, ...], tuple[ContentReplacement, ...]]:
         proposed = (
             self.microcompact.propose(snapshot.messages, snapshot.content_replacements)

@@ -11,10 +11,10 @@ from nano_code.agent import (
 from nano_code.conversation import (
     AssistantMessage,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
 )
+from nano_code.model import TokenUsage
 from nano_code.permissions import PermissionMode, PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
 from nano_code.tools import ToolContext, ToolRegistry

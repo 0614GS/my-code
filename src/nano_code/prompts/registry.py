@@ -2,12 +2,8 @@
 
 from collections.abc import Iterable
 
-from nano_code.prompts.models import (
-    PromptSection,
-    PromptStability,
-    ResolvedPromptSection,
-    SystemPrompt,
-)
+from nano_code.model import PromptStability, ResolvedPromptSection, SystemPrompt
+from nano_code.prompts.models import PromptSection
 
 _STABILITY_ORDER = {
     PromptStability.STATIC: 0,

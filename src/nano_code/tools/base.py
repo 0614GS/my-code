@@ -7,13 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nano_code.agent.contracts.model import ModelToolDefinition
-from nano_code.application.chat.presentation import (
+from nano_code.model import JsonObject, ModelToolDefinition
+from nano_code.tools.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
     compact_text,
 )
-from nano_code.conversation import JsonObject
 
 if TYPE_CHECKING:
     from nano_code.permissions.models import (

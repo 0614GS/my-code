@@ -1,10 +1,9 @@
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
-from anthropic.types import TextBlockParam
 
-from nano_code.agent import (
+from nano_code.model import (
     ModelAssistantMessage,
     ModelReasoningBlock,
     ModelReasoningCompleted,
@@ -16,18 +15,14 @@ from nano_code.agent import (
     ModelTextStarted,
     ModelToolUseBlock,
     ModelUserMessage,
-)
-from nano_code.conversation import (
+    PromptStability,
     ProviderBinding,
+    ProviderCapabilities,
     ProviderContinuationState,
     ReasoningPresentation,
-)
-from nano_code.prompts import (
-    PromptStability,
     ResolvedPromptSection,
     SystemPrompt,
 )
-from nano_code.providers import ProviderCapabilities
 from nano_code.providers.anthropic import AnthropicProvider, _system_prompt_param
 from nano_code.providers.profiles import ReasoningConfig
 
@@ -69,7 +64,7 @@ def test_anthropic_cache_breakpoints_end_static_and_session_prefixes() -> None:
         ),
     )
 
-    blocks = cast(list[TextBlockParam], actual)
+    blocks = cast(list[dict[str, object]], actual)
     assert "cache_control" not in blocks[0]
     assert blocks[1]["cache_control"] == {"type": "ephemeral"}
     assert blocks[2]["cache_control"] == {"type": "ephemeral"}
@@ -87,7 +82,9 @@ def test_user_context_and_attachments_surround_conversation_messages() -> None:
         max_output_tokens=10,
     )
 
-    normalized = AnthropicProvider._messages(request.messages)
+    normalized = cast(
+        list[dict[str, Any]], AnthropicProvider._messages(request.messages)
+    )
 
     assert normalized[0]["content"][0]["text"] == "user context"
     assert normalized[1]["content"][0]["text"] == "history"
@@ -118,13 +115,21 @@ def test_anthropic_thinking_round_trips_only_for_matching_model() -> None:
         (thinking, redacted, ModelToolUseBlock("call", "Read", {"path": "x"}))
     )
 
-    matching = AnthropicProvider._messages((message,), model="claude-test")
-    mismatched = AnthropicProvider._messages((message,), model="other-model")
+    matching = cast(
+        list[dict[str, Any]],
+        AnthropicProvider._messages((message,), model="claude-test"),
+    )
+    mismatched = cast(
+        list[dict[str, Any]],
+        AnthropicProvider._messages((message,), model="other-model"),
+    )
 
+    assert thinking.continuation is not None
+    assert redacted.continuation is not None
     assert matching[0]["content"][:2] == [
         thinking.continuation.payload,
         redacted.continuation.payload,
-    ]  # type: ignore[union-attr]
+    ]
     assert [block["type"] for block in mismatched[0]["content"]] == ["tool_use"]
 
 

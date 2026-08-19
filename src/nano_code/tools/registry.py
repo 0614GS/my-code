@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from nano_code.agent.contracts.model import ModelToolDefinition
+from nano_code.model import ModelToolDefinition
 from nano_code.tools.base import Tool
 
 

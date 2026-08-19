@@ -16,12 +16,20 @@ from nano_code.context.documents import (
     ContextInstructionKind,
     UserContextDocument,
 )
+from nano_code.context.session import (
+    AttachmentDelivery,
+    ContextSession,
+    ContextSnapshot,
+)
 
 __all__ = [
     "AttachmentContent",
+    "AttachmentDelivery",
     "AttachmentRetention",
     "ContextAttachment",
     "ContextObservation",
+    "ContextSession",
+    "ContextSnapshot",
     "ContextDocumentContent",
     "ContextInstruction",
     "ContextInstructionKind",

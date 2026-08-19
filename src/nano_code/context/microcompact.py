@@ -3,9 +3,9 @@
 from collections.abc import Callable
 from dataclasses import replace
 
-from nano_code.agent.contracts.session import ContentReplacement
 from nano_code.conversation import (
     AssistantMessage,
+    ContentReplacement,
     ConversationMessage,
     ConversationSummaryMessage,
     HumanMessage,

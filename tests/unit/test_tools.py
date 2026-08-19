@@ -3,10 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import ModelToolDefinition
-from nano_code.application.chat.presentation import ToolResultPresentation
-from nano_code.conversation import JsonObject, ToolCall
+from nano_code.conversation import ToolCall
 from nano_code.core import NanoCodePaths, SettingsScope, SettingsStore
+from nano_code.model import JsonObject, ModelToolDefinition
 from nano_code.permissions import (
     PermissionBehavior,
     PermissionConfirmation,
@@ -23,7 +22,7 @@ from nano_code.permissions import (
 from nano_code.permissions.models import PermissionDecision
 from nano_code.permissions.prompt import HeadlessPrompter
 from nano_code.permissions.updates import PermissionUpdateApplier
-from nano_code.tools import Tool, ToolContext, ToolRegistry
+from nano_code.tools import Tool, ToolContext, ToolRegistry, ToolResultPresentation
 from nano_code.tools.base import ToolOutput
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
@@ -559,7 +558,7 @@ async def test_executor_runs_the_exact_input_approved_by_tool_policy(
     assert outcome.presentation == ToolResultPresentation(
         summary="Normalized the approved value"
     )
-    assert outcome.result.presentation == outcome.presentation
+    assert not hasattr(outcome.result, "presentation")
 
 
 @pytest.mark.asyncio

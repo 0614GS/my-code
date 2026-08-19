@@ -1,19 +1,22 @@
 import pytest
 
-from nano_code.agent import ModelOutput, ModelReasoningBlock
 from nano_code.context.normalization import ModelInputNormalizer
 from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
-    ProviderBinding,
-    ProviderContinuationState,
     ReasoningContent,
-    ReasoningPresentation,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
+)
+from nano_code.model import (
+    ModelOutput,
+    ModelReasoningBlock,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
+    TokenUsage,
 )
 
 

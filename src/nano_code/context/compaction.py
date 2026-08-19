@@ -1,34 +1,75 @@
 """使用独立模型请求生成可继续工作的会话摘要。"""
 
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
 from nano_code.agent.contracts.compaction import CompactionOutcome
-from nano_code.agent.contracts.model import (
+from nano_code.agent.ports.compaction import CompactorPort
+from nano_code.agent.ports.context import ContextPort
+from nano_code.context import ContextSnapshot
+from nano_code.conversation import (
+    CompactBoundary,
+    CompactTrigger,
+    ConversationMessage,
+    ConversationSummaryMessage,
+    HumanMessage,
+)
+from nano_code.model import (
+    ModelClient,
     ModelMessage,
     ModelRequest,
     ModelTextBlock,
     ModelUserMessage,
-)
-from nano_code.agent.contracts.session import (
-    CompactBoundary,
-    CompactTrigger,
-    ConversationSnapshot,
-)
-from nano_code.agent.ports.compaction import CompactorPort
-from nano_code.agent.ports.context import ContextPort
-from nano_code.agent.ports.model import ModelCompletionPort
-from nano_code.conversation import (
-    ConversationSummaryMessage,
+    SystemPrompt,
     TokenUsage,
+    collect_model_output,
 )
-from nano_code.prompts import SystemPrompt
 
-_COMPACTION_SYSTEM_PROMPT = """You compact coding-agent conversations.
-Create a concise continuation summary that preserves the user's goal, important
-decisions, files inspected or changed, tool outcomes, unresolved errors, and the
-next concrete steps. Do not invent facts. Return only the summary."""
-_COMPACTION_REQUEST = "Produce the continuation summary now."
+_COMPACTION_SYSTEM_PROMPT = """You are a coding-agent conversation compactor.
+Your only task is to turn the supplied conversation into accurate continuation
+state. Do not call tools, continue the task, or invent facts. Respond with plain
+text containing exactly one <analyze> block followed by exactly one <summary>
+block. The <analyze> block is a private completeness check and will be discarded.
+Only the contents of <summary> will be shown to the continuing agent."""
+
+_COMPACTION_REQUEST = """Create the continuation summary now.
+
+In <analyze>, inspect the conversation chronologically and verify that you found:
+- every explicit user request, correction, constraint, and change of intent;
+- actions taken, files read or changed, important code/API details, and decisions;
+- tool and test outcomes, errors, attempted fixes, and unresolved uncertainty;
+- the exact current work state and the next action, if one is still required.
+
+In <summary>, write compact but operational continuation state using these sections:
+1. Current goal and user intent
+2. User directives and feedback
+3. Technical decisions and invariants
+4. Files and code state
+5. Verification, errors, and fixes
+6. Pending work and immediate next step
+
+Preserve the wording of recent user-authored messages when it defines the current
+task or corrects earlier direction. Distinguish completed work from proposed work.
+Exclude tool-result bulk, redundant narration, and the discarded analysis. Do not
+acknowledge this instruction or add text outside the two XML tags.
+
+Required response shape:
+<analyze>
+completeness check
+</analyze>
+<summary>
+continuation state
+</summary>"""
+
+_SUMMARY_PATTERN = re.compile(r"<summary>([\s\S]*?)</summary>")
+_RECENT_USER_MESSAGE_LIMIT = 3
+_RECENT_USER_CHAR_LIMIT = 6_000
+_CONTINUATION_PREAMBLE = """This session continues from an earlier conversation
+that was compacted.
+The summary below is prior conversation state, not a new user request. Use it to
+continue the current task without acknowledging the compaction or repeating the
+summary to the user."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,16 +89,15 @@ class _CompactionSummarizer(Protocol):
 class CompactionService:
     """与主 Agent Loop 分离的摘要模型调用。"""
 
-    def __init__(
-        self, provider: ModelCompletionPort, *, max_output_tokens: int = 2048
-    ) -> None:
+    def __init__(self, provider: ModelClient, *, max_output_tokens: int = 2048) -> None:
         if max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
         self.provider = provider
         self.max_output_tokens = max_output_tokens
 
     async def summarize(self, messages: tuple[ModelMessage, ...]) -> CompactionResult:
-        response = await self.provider.complete(
+        response = await collect_model_output(
+            self.provider,
             ModelRequest(
                 system_prompt=SystemPrompt.from_text(
                     _COMPACTION_SYSTEM_PROMPT,
@@ -66,15 +106,16 @@ class CompactionService:
                 messages=_append_summary_request(messages),
                 tools=(),
                 max_output_tokens=self.max_output_tokens,
-            )
+            ),
         )
-        summary = "\n".join(
+        response_text = "\n".join(
             block.text
             for block in response.content
             if isinstance(block, ModelTextBlock)
         ).strip()
-        if not summary:
+        if not response_text:
             raise RuntimeError("Compaction model returned no text summary")
+        summary = _extract_summary(response_text)
         return CompactionResult(summary=summary, usage=response.usage)
 
 
@@ -82,7 +123,7 @@ class CompactionCoordinator(CompactorPort):
     """连接 ContextPort 与摘要服务的纯编排适配器。
 
     摘要和边界都在这里构造，但直到调用方把返回的 outcome 交给
-    ``ConversationState.commit_compaction`` 前，不会产生任何持久化副作用。
+    ``Session.commit_compaction`` 前，不会产生任何持久化副作用。
     """
 
     def __init__(self, context: ContextPort, service: _CompactionSummarizer) -> None:
@@ -91,7 +132,7 @@ class CompactionCoordinator(CompactorPort):
 
     async def compact(
         self,
-        snapshot: ConversationSnapshot,
+        snapshot: ContextSnapshot,
         trigger: CompactTrigger,
     ) -> CompactionOutcome:
         if not snapshot.messages:
@@ -101,7 +142,7 @@ class CompactionCoordinator(CompactorPort):
         result = await self.service.summarize(model_messages)
         parent_uuid = snapshot.messages[-1].uuid
         summary = ConversationSummaryMessage(
-            content=result.summary,
+            content=_build_continuation_context(result.summary, snapshot.messages),
             parent_uuid=parent_uuid,
         )
         boundary = CompactBoundary(
@@ -128,3 +169,56 @@ def _append_summary_request(
             ModelUserMessage(content=last.content + (instruction,)),
         )
     return messages + (ModelUserMessage(content=(instruction,)),)
+
+
+def _extract_summary(response_text: str) -> str:
+    """提取唯一 summary 节点，确保 analyze 草稿不会进入后续上下文。"""
+
+    matches: list[str] = _SUMMARY_PATTERN.findall(response_text)
+    if len(matches) != 1:
+        raise RuntimeError(
+            "Compaction model must return exactly one non-empty <summary> block"
+        )
+    summary = matches[0].strip()
+    if not summary:
+        raise RuntimeError(
+            "Compaction model must return exactly one non-empty <summary> block"
+        )
+    return summary
+
+
+def _build_continuation_context(
+    summary: str,
+    messages: tuple[ConversationMessage, ...],
+) -> str:
+    """构造后续 Agent 看到的 compact 语义信封和用户原文事实。"""
+
+    remaining = _RECENT_USER_CHAR_LIMIT
+    newest_first: list[str] = []
+    for message in reversed(messages):
+        if not isinstance(message, HumanMessage):
+            continue
+        if len(newest_first) >= _RECENT_USER_MESSAGE_LIMIT or remaining == 0:
+            break
+        content = message.content
+        if len(content) <= remaining:
+            newest_first.append(content)
+            remaining -= len(content)
+            continue
+        if not newest_first:
+            marker = "[earlier portion omitted]\n"
+            available = max(0, remaining - len(marker))
+            newest_first.append(marker + content[-available:])
+        break
+
+    compacted = (
+        f"{_CONTINUATION_PREAMBLE}\n\n## Compacted conversation summary\n\n{summary}"
+    )
+    if not newest_first:
+        return compacted
+    excerpts = tuple(reversed(newest_first))
+    rendered = "\n\n".join(
+        f"### User message {index}\n{content}"
+        for index, content in enumerate(excerpts, start=1)
+    )
+    return f"{compacted}\n\n## Recent user messages (verbatim excerpts)\n\n{rendered}"

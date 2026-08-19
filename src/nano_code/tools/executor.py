@@ -4,13 +4,8 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from nano_code.application.chat.presentation import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-    compact_text,
-    generic_tool_use_presentation,
-)
-from nano_code.conversation import JsonObject, ToolCall, ToolResult
+from nano_code.conversation import ToolCall, ToolResult
+from nano_code.model import JsonObject
 from nano_code.permissions import (
     PermissionBehavior,
     PermissionDecision,
@@ -31,6 +26,12 @@ from nano_code.tools.invocation import (
     ToolInvocation,
     ToolInvocationAudit,
     ToolInvocationHook,
+)
+from nano_code.tools.presentation import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+    compact_text,
+    generic_tool_use_presentation,
 )
 from nano_code.tools.registry import ToolRegistry
 from nano_code.tools.result_store import ToolResultStore
@@ -125,8 +126,6 @@ class ToolExecutor:
             return self.present_error(
                 call, "Tool result is missing from the transcript."
             )
-        if result.presentation is not None:
-            return result.presentation
         tool = self.registry.get(call.name)
         if tool is None or result.is_error:
             return self.present_error(call, result.content)
@@ -280,7 +279,6 @@ class ToolExecutor:
                 tool_use_id=call.id,
                 content=content,
                 is_error=output.is_error,
-                presentation=presentation,
             )
             for hook in self.hooks:
                 try:
@@ -337,6 +335,5 @@ class ToolExecutor:
             tool_use_id=call.id,
             content=message,
             is_error=True,
-            presentation=presentation,
         )
         return ToolExecutionOutcome(result, presentation)

@@ -3,7 +3,7 @@
 import json
 import unicodedata
 
-from nano_code.agent.contracts.model import (
+from nano_code.model import (
     ModelAssistantMessage,
     ModelReasoningBlock,
     ModelRequest,

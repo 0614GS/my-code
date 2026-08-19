@@ -7,17 +7,12 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nano_code.agent.contracts.session import (
-    CompactBoundary,
-    ContentReplacement,
-    SessionMetadata,
-    SessionSnapshot,
-    SessionStart,
-)
-from nano_code.agent.ports.session import SessionRepository
 from nano_code.conversation import (
     AssistantMessage,
+    CompactBoundary,
+    ContentReplacement,
     ConversationMessage,
+    ConversationSummaryMessage,
     HumanMessage,
     ToolCall,
     ToolResultsMessage,
@@ -29,7 +24,12 @@ from nano_code.sessions.codec import (
     encode_metadata,
     encode_replacement,
     encode_start,
+    encode_tool_presentation,
+    presentations_from_json,
 )
+from nano_code.sessions.models import SessionMetadata, SessionSnapshot, SessionStart
+from nano_code.sessions.records import ToolPresentationRecord
+from nano_code.tools import ToolResultPresentation
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -45,7 +45,7 @@ def is_session_id(value: str) -> bool:
     return _UUID_PATTERN.fullmatch(value) is not None
 
 
-class SessionStore(SessionRepository):
+class SessionStore:
     """在 Claude Code 风格的项目级目录中持久化一个会话。"""
 
     def __init__(
@@ -82,11 +82,12 @@ class SessionStore(SessionRepository):
         self._metadata: SessionMetadata | None = None
 
         # 这些索引只在显式 load 时从磁盘 hydration，之后随追加增量维护。
-        # ConversationState 不会在每次写入后重新读取它们。
+        # Session 只在打开时 hydration；之后这些索引随成功追加增量维护。
         self._known_ids: set[str] | None = None
         self._messages_by_id: dict[str, ConversationMessage] | None = None
         self._content_replacements: dict[str, ContentReplacement] | None = None
         self._boundaries: dict[str, CompactBoundary] | None = None
+        self._tool_presentations: dict[str, ToolResultPresentation] | None = None
 
     @property
     def session_id(self) -> str:
@@ -103,6 +104,7 @@ class SessionStore(SessionRepository):
             self._messages_by_id = {}
             self._content_replacements = {}
             self._boundaries = {}
+            self._tool_presentations = {}
             return SessionSnapshot(history=(), working_set=())
 
         messages: list[ConversationMessage] = []
@@ -110,6 +112,7 @@ class SessionStore(SessionRepository):
         seen: set[str] = set()
         replacements: dict[str, ContentReplacement] = {}
         boundaries: dict[str, CompactBoundary] = {}
+        presentations: dict[str, ToolResultPresentation] = {}
         contents = self.path.read_bytes()
         lines = contents.splitlines(keepends=True)
         start: SessionStart | None = None
@@ -143,6 +146,8 @@ class SessionStore(SessionRepository):
                         f"{self.path}. "
                         "Start a new session to rebuild it."
                     )
+                for tool_use_id, presentation in presentations_from_json(raw):
+                    presentations[tool_use_id] = presentation
                 entry = decode_entry(raw)
                 if line_number == 1:
                     if not isinstance(entry, SessionStart):
@@ -187,6 +192,9 @@ class SessionStore(SessionRepository):
                     if previous_boundary is not None and previous_boundary != boundary:
                         raise ValueError(f"Conflicting compact boundary: {boundary.id}")
                     boundaries[boundary.id] = boundary
+                    continue
+                if isinstance(entry, ToolPresentationRecord):
+                    presentations[entry.tool_use_id] = entry.presentation
                     continue
                 message = entry
             except (json.JSONDecodeError, ValueError, TypeError) as error:
@@ -237,6 +245,7 @@ class SessionStore(SessionRepository):
         self._messages_by_id = by_id
         self._content_replacements = replacements
         self._boundaries = boundaries
+        self._tool_presentations = presentations
         self._metadata = metadata
         active = _active_parent_chain(messages, by_id)
         active_boundaries = _active_boundaries(boundaries, active)
@@ -245,11 +254,21 @@ class SessionStore(SessionRepository):
             working_set=_working_set(active, active_boundaries),
             content_replacements=tuple(replacements.values()),
             compact_boundaries=active_boundaries,
+            tool_presentations=tuple(presentations.items()),
             metadata=metadata,
         )
 
     def append(self, message: ConversationMessage) -> bool:
         """校验幂等性和父节点顺序后追加一条消息。"""
+
+        return self.append_message(message)
+
+    def append_message(
+        self,
+        message: ConversationMessage,
+        presentations: tuple[tuple[str, ToolResultPresentation], ...] = (),
+    ) -> bool:
+        """Append a message and its optional presentation add-on records together."""
 
         self._ensure_loaded()
         assert self._known_ids is not None
@@ -282,9 +301,22 @@ class SessionStore(SessionRepository):
             if actual != expected:
                 raise ValueError("Tool results do not match source tool calls")
 
+        if presentations and not isinstance(message, ToolResultsMessage):
+            raise ValueError("Tool presentations require a tool-results message")
+        result_ids = (
+            {item.tool_use_id for item in message.content}
+            if isinstance(message, ToolResultsMessage)
+            else set()
+        )
+        if any(tool_use_id not in result_ids for tool_use_id, _ in presentations):
+            raise ValueError("Tool presentation does not match the result message")
         records: list[object] = []
         if not self.path.exists():
             records.append(encode_start(self._start))
+        records.extend(
+            encode_tool_presentation(tool_use_id, presentation)
+            for tool_use_id, presentation in presentations
+        )
         records.append(encode_message(message))
         previous = self._metadata
         metadata = SessionMetadata(
@@ -306,6 +338,8 @@ class SessionStore(SessionRepository):
         # 仅在持久化写入成功后更新内存索引。
         self._known_ids.add(message.uuid)
         self._messages_by_id[message.uuid] = message
+        assert self._tool_presentations is not None
+        self._tool_presentations.update(presentations)
         return True
 
     def set_title(self, title: str) -> bool:
@@ -364,6 +398,68 @@ class SessionStore(SessionRepository):
         self._append_record(encode_boundary(boundary))
         self._boundaries[boundary.id] = boundary
         return True
+
+    def append_compaction(
+        self,
+        replacements: tuple[ContentReplacement, ...],
+        boundary: CompactBoundary,
+        summary: ConversationSummaryMessage,
+    ) -> None:
+        """Persist one compaction decision in a single append operation."""
+
+        self._ensure_loaded()
+        assert self._known_ids is not None
+        assert self._messages_by_id is not None
+        assert self._content_replacements is not None
+        assert self._boundaries is not None
+        if boundary.parent_uuid not in self._known_ids:
+            raise ValueError(f"Unknown compact parent UUID: {boundary.parent_uuid}")
+        if summary.parent_uuid != boundary.parent_uuid:
+            raise ValueError("Compact summary parent does not match boundary")
+        if summary.uuid != boundary.summary_uuid:
+            raise ValueError("Compact summary UUID does not match boundary")
+        if summary.uuid in self._known_ids:
+            if self._messages_by_id[summary.uuid] == summary:
+                return
+            raise ValueError(f"Conflicting message UUID: {summary.uuid}")
+        pending_replacements = []
+        for replacement in replacements:
+            previous = self._content_replacements.get(replacement.tool_use_id)
+            if previous is not None:
+                if previous != replacement:
+                    raise ValueError(
+                        f"Conflicting content replacement: {replacement.tool_use_id}"
+                    )
+                continue
+            pending_replacements.append(replacement)
+        previous_boundary = self._boundaries.get(boundary.id)
+        if previous_boundary is not None and previous_boundary != boundary:
+            raise ValueError(f"Conflicting compact boundary: {boundary.id}")
+        previous_metadata = self._metadata
+        metadata = SessionMetadata(
+            created_at=(
+                previous_metadata.created_at
+                if previous_metadata is not None
+                else self._start.created_at
+            ),
+            updated_at=self._clock().isoformat(),
+            title=previous_metadata.title if previous_metadata is not None else None,
+            last_prompt=(
+                previous_metadata.last_prompt if previous_metadata is not None else None
+            ),
+        )
+        records = [encode_replacement(item) for item in pending_replacements]
+        if previous_boundary is None:
+            records.append(encode_boundary(boundary))
+        records.extend((encode_message(summary), encode_metadata(metadata)))
+        self._append_records(records)
+        self._content_replacements.update(
+            (item.tool_use_id, item) for item in pending_replacements
+        )
+        self._boundaries[boundary.id] = boundary
+        self._known_ids.add(summary.uuid)
+        self._messages_by_id[summary.uuid] = summary
+        self._metadata = metadata
 
     def _ensure_loaded(self) -> None:
         if self._known_ids is None:

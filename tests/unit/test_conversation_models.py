@@ -2,22 +2,22 @@
 
 import pytest
 
-from nano_code.agent import (
-    ModelAssistantMessage,
-    ModelTextBlock,
-    ModelToolResultBlock,
-    ModelToolUseBlock,
-    ModelUserMessage,
-)
 from nano_code.conversation import (
     AssistantMessage,
     ConversationSummaryMessage,
     HumanMessage,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
+)
+from nano_code.model import (
+    ModelAssistantMessage,
+    ModelTextBlock,
+    ModelToolResultBlock,
+    ModelToolUseBlock,
+    ModelUserMessage,
+    TokenUsage,
 )
 
 

@@ -4,8 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from nano_code.agent import AgentEngine, ConversationState
-from nano_code.agent.contracts.session import SessionStart
+from nano_code.agent import AgentEngine
 from nano_code.application.chat.permissions import DeferredPermissionPrompter
 from nano_code.application.chat.runtime import DefaultChatRuntime
 from nano_code.auth import CredentialStore
@@ -27,6 +26,7 @@ from nano_code.features.file_mentions import (
     WorkspacePathSuggester,
 )
 from nano_code.features.todos.reminder import TodoReminderAttachmentSource
+from nano_code.model import ActiveModelState, resolve_environment
 from nano_code.permissions import PermissionPolicy
 from nano_code.permissions.prompt import (
     HeadlessPrompter,
@@ -35,7 +35,6 @@ from nano_code.permissions.prompt import (
 )
 from nano_code.permissions.updates import PermissionUpdateApplier
 from nano_code.prompts import build_system_prompt_registry
-from nano_code.providers.catalog import ActiveModelState, resolve_environment
 from nano_code.providers.discovery import ModelDiscoveryService, resolve_without_network
 from nano_code.providers.manager import ProviderManager
 from nano_code.providers.model_cache import ModelCatalogCache
@@ -46,7 +45,7 @@ from nano_code.providers.profiles import (
     ProviderProfileStore,
 )
 from nano_code.providers.router import ProviderConnection, ProviderRouter
-from nano_code.sessions import SessionStore
+from nano_code.sessions import Session, SessionStart, SessionStore
 from nano_code.tools import ToolContext, ToolRegistry
 from nano_code.tools.builtin import builtin_tools
 from nano_code.tools.executor import ToolExecutor
@@ -170,7 +169,7 @@ def _assemble_agent(
             compact_trigger_tokens=model_environment.compact_trigger_tokens,
         ),
     )
-    conversation = ConversationState(repository)
+    session = Session(repository)
     registry = ToolRegistry(builtin_tools())
     prompter = permission_prompter or (
         TerminalPrompter() if settings.interactive else HeadlessPrompter()
@@ -226,7 +225,7 @@ def _assemble_agent(
     engine = AgentEngine(
         model_call=provider,
         tool_round=tool_round,
-        conversation=conversation,
+        session=session,
         context=context,
         compactor=CompactionCoordinator(context, CompactionService(provider)),
         max_steps=settings.max_steps,

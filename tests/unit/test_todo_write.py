@@ -2,8 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from nano_code.agent import ConversationSnapshot, ModelTextBlock
-from nano_code.agent.contracts.session import AttachmentDelivery
+from nano_code.context import (
+    AttachmentDelivery,
+)
+from nano_code.context import (
+    ContextSnapshot as ConversationSnapshot,
+)
 from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.documents import ContextInstruction
 from nano_code.context.planner import ContextPlanner
@@ -12,7 +16,6 @@ from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
@@ -20,9 +23,13 @@ from nano_code.conversation import (
 from nano_code.features.todos.codec import parse_todo_input
 from nano_code.features.todos.projection import project_todos
 from nano_code.features.todos.reminder import TodoReminderAttachmentSource
+from nano_code.model import ModelTextBlock, PromptStability, TokenUsage
 from nano_code.permissions import PermissionMode, PermissionPolicy
 from nano_code.permissions.prompt import HeadlessPrompter
-from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
+from nano_code.prompts import (
+    PromptRegistry,
+    PromptSection,
+)
 from nano_code.tools import ToolContext, ToolRegistry
 from nano_code.tools.builtin.todo_write import TodoWriteTool
 from nano_code.tools.executor import ToolExecutor

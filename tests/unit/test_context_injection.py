@@ -3,14 +3,13 @@ from collections.abc import Iterable
 
 import pytest
 
-from nano_code.agent import (
-    AttachmentDelivery,
-    ConversationSnapshot,
-    ModelReasoningBlock,
-    ModelTextBlock,
-    ModelUserMessage,
-)
 from nano_code.agent.errors import ContextOverflow
+from nano_code.context import (
+    AttachmentDelivery,
+)
+from nano_code.context import (
+    ContextSnapshot as ConversationSnapshot,
+)
 from nano_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
@@ -24,17 +23,26 @@ from nano_code.context.xml import render_context_instruction
 from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,
-    ProviderBinding,
-    ProviderContinuationState,
     ReasoningContent,
-    ReasoningPresentation,
     TextContent,
-    TokenUsage,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.prompts import PromptRegistry, PromptSection, PromptStability
+from nano_code.model import (
+    ModelReasoningBlock,
+    ModelTextBlock,
+    ModelUserMessage,
+    PromptStability,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
+    TokenUsage,
+)
+from nano_code.prompts import (
+    PromptRegistry,
+    PromptSection,
+)
 
 
 def _planner(*, user_resolver=None, attachment_resolver=None) -> ContextPlanner:

@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from nano_code.providers.catalog import ModelLimits
-from nano_code.providers.ids import validate_provider_id
+from nano_code.model import ModelLimits, validate_provider_id
 from nano_code.providers.validation import validate_base_url
 
 DEFAULT_PROVIDER_ID = "anthropic"

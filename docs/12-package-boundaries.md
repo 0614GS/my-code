@@ -305,21 +305,19 @@ src/nano_code/
 相同的含混依赖。Conversation 包只拥有会话事实及紧邻的内容值对象，不成为新的共享类型
 杂物包。
 
-第 4 步迁移后，`TextContent`、`ToolCall`、`ToolResult` 和 `TokenUsage` 归
-`conversation`；`JsonObject`/`JsonValue` 继续位于 `conversation.primitives`，因为它们是
-ToolCall input、ToolResult 持久化以及模型请求之间共享的 JSON 内容约束，而不是无所有者的
-全局类型。若未来出现不经过 Conversation/Tool 内容边界的第二种 JSON 领域语义，再提取独立
-contract，而不是预先建立顶层 `types`。
+当前 `TextContent`、`ToolCall` 和 `ToolResult` 归 `conversation`；`TokenUsage`、
+`JsonObject`/`JsonValue` 归 provider-neutral 的 `model`。Conversation 只引用这些值，
+不再通过 Agent 或 Provider 转发共享类型。
 
 `ContextInstruction`、`UserContextDocument` 和 XML marker 投影归 `context`；
 `ContextAttachment` 及 retention/content block 归 `context.attachments.models`。Context 和
 attachment 包入口保持轻量，source、projection、planner 等实现必须从明确子模块导入，避免
 Agent contract 只引用 attachment model 时初始化整个 Context adapter。
 
-`ConversationState` 本轮仍保留在 `agent.conversation`。它当前直接依赖 Agent-owned
-`SessionRepository`、compaction contract 和 session snapshot；在这些 port 的所有权尚未迁移
-前，仅移动文件会制造 `conversation → agent` 反向依赖。后续若要实现目标草图中的
-`conversation/state.py`，应先将上述会话事务 contract 一并下沉，而不是添加转发 import。
+阶段 3 已建立 `conversation.state.Conversation` 纯内存聚合；具体 `sessions.Session`
+持有它并执行持久化优先提交。旧 `ConversationState`、`SessionRepository` 和 Agent-owned
+session contract 已删除。live-session attachment delivery 由 `context.ContextSession` 持有，
+工具展示由 `tools` 定义并作为 Session add-on record/index 恢复。
 
 ## 9. 后续能力对边界的要求
 
@@ -455,7 +453,7 @@ deny、path deny、工作区/符号链接逃逸和工具 safety deny 不可被�
 保持轻量；调用方从明确的 `contracts`、`presentation`、`permissions` 或 `runtime` 子模块
 导入，避免只需要底层展示值对象时初始化完整的 Application runtime。
 
-每一步都必须运行 `ruff format --check .`、`ruff check .`、`mypy src` 和 `pytest`。涉及权限
+每一步都必须运行 `ruff format --check .`、`ruff check .`、`pyright` 和 `pytest`。涉及权限
 或执行管线的步骤必须额外覆盖 deny 不可绕过、ask 的显式授权语义、取消和部分失败。
 
 ## 11. 迁移期间的不变量

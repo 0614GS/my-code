@@ -1,4 +1,4 @@
-"""Frontend-neutral presentation values for chat applications."""
+"""Frontend-neutral values for presenting tool activity."""
 
 import json
 from dataclasses import dataclass
@@ -6,8 +6,6 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class ToolUsePresentation:
-    """Frontend-neutral semantics for displaying a tool invocation."""
-
     display_name: str
     summary: str
     activity: str
@@ -15,16 +13,12 @@ class ToolUsePresentation:
 
 @dataclass(frozen=True, slots=True)
 class ToolResultPresentation:
-    """Frontend-neutral semantics for displaying a tool result."""
-
     summary: str
     detail: str | None = None
     truncated: bool = False
 
 
 def compact_text(value: str, max_chars: int = 140) -> str:
-    """Normalize arbitrary text into a bounded single-line summary."""
-
     normalized = " ".join(value.split())
     if len(normalized) <= max_chars:
         return normalized
@@ -34,8 +28,6 @@ def compact_text(value: str, max_chars: int = 140) -> str:
 def generic_tool_use_presentation(
     display_name: str, tool_input: object
 ) -> ToolUsePresentation:
-    """Build a stable fallback projection for unknown or faulty tools."""
-
     try:
         serialized = json.dumps(tool_input, ensure_ascii=False, separators=(",", ":"))
     except (TypeError, ValueError):
@@ -45,3 +37,11 @@ def generic_tool_use_presentation(
         summary=compact_text(serialized),
         activity=f"Running {display_name}",
     )
+
+
+__all__ = [
+    "ToolResultPresentation",
+    "ToolUsePresentation",
+    "compact_text",
+    "generic_tool_use_presentation",
+]

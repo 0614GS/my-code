@@ -16,11 +16,6 @@ from nano_code.agent.contracts.tool import (
     ToolRoundEvent as _ToolRoundEvent,
 )
 from nano_code.agent.ports.tool import ToolRoundPort
-from nano_code.application.chat.presentation import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-    compact_text,
-)
 from nano_code.conversation import (
     AssistantMessage,
     ToolCall,
@@ -28,6 +23,10 @@ from nano_code.conversation import (
     ToolResultsMessage,
 )
 from nano_code.tools.executor import ToolExecutionOutcome, ToolExecutor
+from nano_code.tools.presentation import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
 from nano_code.tools.result_store import ToolResultStore
 
 
@@ -97,12 +96,11 @@ class ToolRoundExecutor(ToolRoundPort):
                         tool_use_id=call.id,
                         content=message,
                         is_error=True,
-                        presentation=self.executor.present_error(call, message),
                     )
+                    presentation = self.executor.present_error(call, message)
                     outcome = ToolExecutionOutcome(
                         result=result,
-                        presentation=result.presentation
-                        or ToolResultPresentation(summary=compact_text(message)),
+                        presentation=presentation,
                     )
                 results.append(outcome.result)
                 yield _ToolCallFinished(
@@ -122,14 +120,13 @@ class ToolRoundExecutor(ToolRoundPort):
                     tool_use_id=call.id,
                     content=message,
                     is_error=True,
-                    presentation=self.executor.present_error(call, message),
                 )
+                presentation = self.executor.present_error(call, message)
                 results.append(result)
                 yield _ToolCallFinished(
                     call=call,
                     result=result,
-                    presentation=result.presentation
-                    or ToolResultPresentation(summary=compact_text(message)),
+                    presentation=presentation,
                 )
             yield _ToolRoundCompleted(
                 message=_tool_result_message(assistant_message, tuple(results)),

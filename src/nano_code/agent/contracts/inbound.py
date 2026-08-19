@@ -2,13 +2,13 @@
 
 from dataclasses import dataclass
 
-from nano_code.application.chat.presentation import (
+from nano_code.context.attachments.models import ContextAttachment
+from nano_code.features.todos.models import TodoItem
+from nano_code.model import ReasoningPresentation, TokenUsage
+from nano_code.tools import (
     ToolResultPresentation,
     ToolUsePresentation,
 )
-from nano_code.context.attachments.models import ContextAttachment
-from nano_code.conversation import ReasoningPresentation, TokenUsage
-from nano_code.features.todos.models import TodoItem
 
 from .context import ContextBudget
 

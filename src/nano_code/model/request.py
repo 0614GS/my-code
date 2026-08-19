@@ -1,16 +1,60 @@
-"""完整、provider 无关的模型请求、reasoning 展示与续接协议。"""
+"""Provider-neutral model requests, messages, content blocks, and outputs."""
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Literal
 
-from nano_code.conversation import (
+from nano_code.model.primitives import (
     JsonObject,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
     to_json_object,
 )
-from nano_code.prompts import SystemPrompt
+
+
+class PromptStability(StrEnum):
+    STATIC = "static"
+    SESSION = "session"
+    REQUEST = "request"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedPromptSection:
+    key: str
+    content: str
+    stability: PromptStability
+
+    def __post_init__(self) -> None:
+        if not self.key.strip():
+            raise ValueError("Resolved prompt section key must not be empty")
+        if not self.content.strip():
+            raise ValueError(f"Prompt section {self.key!r} resolved to empty content")
+
+
+@dataclass(frozen=True, slots=True)
+class SystemPrompt:
+    """A resolved system prompt whose section boundaries remain available."""
+
+    sections: tuple[ResolvedPromptSection, ...]
+
+    def __post_init__(self) -> None:
+        if not self.sections:
+            raise ValueError("System prompt must contain at least one section")
+
+    @property
+    def text(self) -> str:
+        return "\n\n".join(section.content for section in self.sections)
+
+    @classmethod
+    def from_text(
+        cls,
+        content: str,
+        *,
+        key: str = "request",
+        stability: PromptStability = PromptStability.REQUEST,
+    ) -> "SystemPrompt":
+        return cls((ResolvedPromptSection(key, content, stability),))
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,66 +184,3 @@ class ModelOutput:
             for block in self.content
         ):
             raise ValueError("Model output contained no actionable content blocks")
-
-
-@dataclass(frozen=True, slots=True)
-class ModelTextStarted:
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class ModelTextDelta:
-    text: str
-
-
-@dataclass(frozen=True, slots=True)
-class ModelTextCompleted:
-    text: str
-
-
-@dataclass(frozen=True, slots=True)
-class ModelReasoningStarted:
-    disclosure: Literal["verbatim", "summary", "redacted", "hidden"]
-
-
-@dataclass(frozen=True, slots=True)
-class ModelReasoningDelta:
-    disclosure: Literal["verbatim", "summary", "redacted", "hidden"]
-    part_index: int
-    text: str
-
-
-@dataclass(frozen=True, slots=True)
-class ModelReasoningCompleted:
-    presentation: ReasoningPresentation
-
-
-@dataclass(frozen=True, slots=True)
-class ModelOutputCompleted:
-    output: ModelOutput
-
-
-type ModelStreamPayload = (
-    ModelTextStarted
-    | ModelTextDelta
-    | ModelTextCompleted
-    | ModelReasoningStarted
-    | ModelReasoningDelta
-    | ModelReasoningCompleted
-    | ModelOutputCompleted
-)
-
-
-@dataclass(frozen=True, slots=True)
-class ModelStreamEvent:
-    """一次 ModelCall 内、按 adapter 展示顺序编号的规范化事件。"""
-
-    sequence_number: int
-    payload: ModelStreamPayload
-
-    def __post_init__(self) -> None:
-        if self.sequence_number < 0:
-            raise ValueError("Model stream sequence number must not be negative")
-
-
-__all__ = [name for name in globals() if name.startswith("Model")]

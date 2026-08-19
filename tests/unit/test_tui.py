@@ -31,12 +31,8 @@ from nano_code.application.chat.contracts import (
     TurnOutcome,
     TurnSucceeded,
 )
-from nano_code.application.chat.presentation import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-)
-from nano_code.conversation import ReasoningPresentation
 from nano_code.features.todos.models import TodoItem
+from nano_code.model import ReasoningPresentation
 from nano_code.permissions import (
     PermissionBehavior,
     PermissionConfirmation,
@@ -47,6 +43,10 @@ from nano_code.permissions import (
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.providers.profiles import ProviderProtocol
 from nano_code.sessions import SessionSummary
+from nano_code.tools import (
+    ToolResultPresentation,
+    ToolUsePresentation,
+)
 from nano_code.tui import (
     NanoCodeApp,
     ProviderScreen,
@@ -160,6 +160,9 @@ class FakeRuntime:
                 has_stored_key=True,
             ),
         )
+
+    async def refresh_provider_models(self, provider_id: str) -> ProviderView:
+        return self.providers()[0]
 
     async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
         self.provider_updates.append(update)

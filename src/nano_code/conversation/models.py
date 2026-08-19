@@ -1,75 +1,17 @@
 """运行时会话消息；展示内容与 provider 续接状态严格分离。"""
 
-import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from nano_code.application.chat.presentation import ToolResultPresentation
-from nano_code.conversation.primitives import (
+from nano_code.conversation.primitives import new_id, utc_now
+from nano_code.model import (
     JsonObject,
+    ProviderBinding,
+    ProviderContinuationState,
+    ReasoningPresentation,
     TokenUsage,
-    new_id,
     to_json_object,
-    utc_now,
 )
-
-type ReasoningDisclosure = Literal["verbatim", "summary", "redacted", "hidden"]
-type ReplayScope = Literal["active_trajectory", "working_context"]
-
-_PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-
-
-@dataclass(frozen=True, slots=True)
-class ReasoningPresentation:
-    """唯一可越过 application/UI 边界的 reasoning 内容。"""
-
-    disclosure: ReasoningDisclosure
-    parts: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.disclosure not in {"verbatim", "summary", "redacted", "hidden"}:
-            raise ValueError("Unsupported reasoning disclosure")
-        if not all(isinstance(part, str) and bool(part) for part in self.parts):
-            raise ValueError("Reasoning presentation parts must be non-empty strings")
-        if self.disclosure in {"verbatim", "summary"} and not self.parts:
-            raise ValueError("Visible reasoning must contain presentation parts")
-        if self.disclosure in {"redacted", "hidden"} and self.parts:
-            raise ValueError("Hidden reasoning must not contain presentation parts")
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderBinding:
-    """阻止私有续接数据跨 profile、模型或 endpoint 回放。"""
-
-    protocol: str
-    provider_id: str
-    model: str
-    base_url: str | None = None
-
-    def __post_init__(self) -> None:
-        if not all(
-            isinstance(value, str) and bool(value.strip())
-            for value in (self.protocol, self.provider_id, self.model)
-        ):
-            raise ValueError("Provider binding strings must not be empty")
-        if _PROVIDER_ID.fullmatch(self.provider_id) is None:
-            raise ValueError("Provider binding provider_id is invalid")
-        if self.base_url is not None and not self.base_url.strip():
-            raise ValueError("Provider binding base_url must be non-empty or null")
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderContinuationState:
-    """不透明、只供匹配 adapter 回放的 provider 原始状态。"""
-
-    binding: ProviderBinding
-    replay_scope: ReplayScope
-    payload: JsonObject
-
-    def __post_init__(self) -> None:
-        if self.replay_scope not in {"active_trajectory", "working_context"}:
-            raise ValueError("Unsupported provider continuation replay scope")
-        object.__setattr__(self, "payload", to_json_object(self.payload))
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +52,6 @@ class ToolResult:
     tool_use_id: str
     content: str
     is_error: bool = False
-    presentation: ToolResultPresentation | None = None
     kind: Literal["tool_result"] = field(default="tool_result", init=False)
 
     def __post_init__(self) -> None:
@@ -244,12 +185,7 @@ __all__ = [
     "ConversationMessage",
     "ConversationSummaryMessage",
     "HumanMessage",
-    "ProviderBinding",
-    "ProviderContinuationState",
     "ReasoningContent",
-    "ReasoningDisclosure",
-    "ReasoningPresentation",
-    "ReplayScope",
     "TextContent",
     "ToolCall",
     "ToolResult",

@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Iterable
 from typing import Any, Literal, cast
+from uuid import uuid4
 
 from anthropic import AsyncAnthropic, BadRequestError
 from anthropic.types import (
@@ -15,7 +16,9 @@ from anthropic.types import (
     ToolUseBlockParam,
 )
 
-from nano_code.agent.contracts.model import (
+from nano_code.model import (
+    ModelClient,
+    ModelContextOverflow,
     ModelMessage,
     ModelOutput,
     ModelOutputCompleted,
@@ -25,30 +28,26 @@ from nano_code.agent.contracts.model import (
     ModelReasoningStarted,
     ModelRequest,
     ModelStreamEvent,
+    ModelStreamSequencer,
     ModelTextBlock,
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
     ModelToolResultBlock,
     ModelToolUseBlock,
-)
-from nano_code.agent.errors import ModelContextOverflow
-from nano_code.agent.ports.model import ModelCompletionPort
-from nano_code.conversation import (
+    PromptStability,
     ProviderBinding,
+    ProviderCapabilities,
     ProviderContinuationState,
     ReasoningPresentation,
+    SystemPrompt,
     TokenUsage,
     to_json_object,
 )
-from nano_code.conversation.primitives import new_id
-from nano_code.prompts import PromptStability, SystemPrompt
-from nano_code.providers.base import ProviderCapabilities
 from nano_code.providers.profiles import ReasoningConfig
-from nano_code.providers.streaming import ModelStreamSequencer
 
 
-class AnthropicProvider(ModelCompletionPort):
+class AnthropicProvider(ModelClient):
     """转换内部消息，同时不让 SDK 类型泄漏到核心层。"""
 
     def __init__(
@@ -89,23 +88,6 @@ class AnthropicProvider(ModelCompletionPort):
         """释放 SDK 底层 HTTP 客户端。"""
 
         await self.client.close()
-
-    async def complete(self, request: ModelRequest) -> ModelOutput:
-        try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=request.max_output_tokens,
-                system=self._system(request.system_prompt),
-                messages=self._messages(request.messages, binding=self.binding),
-                tools=self._tools(request),
-                **cast(Any, self._reasoning_params()),
-            )
-        except BadRequestError as error:
-            _raise_context_overflow(error)
-            raise
-        if not isinstance(response, Message):
-            raise TypeError("Expected a non-streaming Anthropic Message")
-        return self._response(response)
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """流式输出展示文本，随后发出经 SDK 校验的最终快照。"""
@@ -312,7 +294,7 @@ class AnthropicProvider(ModelCompletionPort):
                 }
                 content.append(
                     ModelReasoningBlock(
-                        new_id(),
+                        str(uuid4()),
                         (
                             ReasoningPresentation("verbatim", (block.thinking,))
                             if block.thinking
@@ -326,7 +308,7 @@ class AnthropicProvider(ModelCompletionPort):
             elif block.type == "redacted_thinking":
                 content.append(
                     ModelReasoningBlock(
-                        new_id(),
+                        str(uuid4()),
                         ReasoningPresentation("redacted"),
                         ProviderContinuationState(
                             self.binding,

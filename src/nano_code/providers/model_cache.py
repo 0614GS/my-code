@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nano_code.providers.catalog import (
+from nano_code.model import (
     CapabilitySource,
     ModelCapabilities,
     ModelDescriptor,

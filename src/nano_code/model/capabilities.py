@@ -1,8 +1,7 @@
-"""Provider-neutral model discovery and context-limit contracts."""
+"""Provider-neutral model capabilities, limits, and active environment."""
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
 
 
 class CapabilitySource(StrEnum):
@@ -58,6 +57,21 @@ class ModelCapabilities:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderCapabilities:
+    system_prompt_blocks: bool = False
+    prompt_caching: bool = False
+    max_prompt_cache_breakpoints: int = 0
+
+    def __post_init__(self) -> None:
+        if self.max_prompt_cache_breakpoints < 0:
+            raise ValueError("Cache breakpoint count must not be negative")
+        if self.prompt_caching and not self.system_prompt_blocks:
+            raise ValueError("Prompt caching requires structured system blocks")
+        if self.prompt_caching and self.max_prompt_cache_breakpoints < 1:
+            raise ValueError("Prompt caching requires at least one breakpoint")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelDescriptor:
     id: str
     display_name: str
@@ -68,12 +82,6 @@ class ModelDescriptor:
     def __post_init__(self) -> None:
         if not self.id.strip() or not self.display_name.strip():
             raise ValueError("Model id and display name must not be empty")
-
-
-class ProviderModelCatalogPort(Protocol):
-    async def list_models(self) -> tuple[ModelDescriptor, ...]: ...
-
-    async def resolve_model(self, model_id: str) -> ModelDescriptor | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +96,7 @@ class ActiveModelEnvironment:
 
 @dataclass(slots=True)
 class ActiveModelState:
-    """Shared mutable state switched atomically between model calls."""
+    """Mutable model environment switched atomically between model calls."""
 
     environment: ActiveModelEnvironment
 
@@ -141,17 +149,3 @@ def fallback_descriptor(model_id: str) -> ModelDescriptor:
         ModelLimits(max_input_tokens=FALLBACK_INPUT_TOKENS),
         source=CapabilitySource.FALLBACK,
     )
-
-
-__all__ = [
-    "ActiveModelEnvironment",
-    "ActiveModelState",
-    "CapabilitySource",
-    "FALLBACK_INPUT_TOKENS",
-    "ModelCapabilities",
-    "ModelDescriptor",
-    "ModelLimits",
-    "ProviderModelCatalogPort",
-    "fallback_descriptor",
-    "resolve_environment",
-]

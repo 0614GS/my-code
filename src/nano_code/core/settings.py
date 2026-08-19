@@ -8,14 +8,13 @@ from pathlib import Path
 from nano_code.auth import CredentialSource, CredentialStore, resolve_api_key
 from nano_code.core.paths import NanoCodePaths, SettingsScope
 from nano_code.core.settings_store import SettingsLayer, SettingsStore
+from nano_code.model import ModelDescriptor, ModelLimits, validate_provider_id
 from nano_code.permissions import (
     PermissionBehavior,
     PermissionMode,
     PermissionRule,
     validate_permission_rule,
 )
-from nano_code.providers.catalog import ModelDescriptor, ModelLimits
-from nano_code.providers.ids import validate_provider_id
 from nano_code.providers.profiles import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_ID,

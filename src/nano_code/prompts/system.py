@@ -13,7 +13,8 @@ from nano_code.constants.prompts import (
     TASK_GUIDANCE_PROMPT,
     TOOLS_PROMPT,
 )
-from nano_code.prompts.models import PromptSection, PromptStability
+from nano_code.model import PromptStability
+from nano_code.prompts.models import PromptSection
 from nano_code.prompts.registry import PromptRegistry
 
 

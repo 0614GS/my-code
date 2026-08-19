@@ -1,8 +1,6 @@
 """Bash tool adapter."""
 
-from nano_code.agent.contracts.model import ModelToolDefinition
-from nano_code.application.chat.presentation import ToolResultPresentation, compact_text
-from nano_code.conversation import JsonObject
+from nano_code.model import JsonObject, ModelToolDefinition
 from nano_code.permissions import (
     PermissionBehavior,
     PermissionDecisionKind,
@@ -12,6 +10,7 @@ from nano_code.permissions import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
+from nano_code.tools import ToolResultPresentation, compact_text
 from nano_code.tools.base import (
     Tool,
     ToolContext,
