@@ -4,10 +4,6 @@ import json
 from collections.abc import Callable
 from typing import Literal
 
-from nano_code.agent.contracts.context import ContextBudget, ContextPlan
-from nano_code.agent.errors import ContextOverflow
-from nano_code.agent.ports.context import ContextPort
-from nano_code.context import AttachmentDelivery, ContextSnapshot
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.documents import UserContextDocument
@@ -15,7 +11,13 @@ from nano_code.context.microcompact import (
     MicrocompactPolicy,
     apply_content_replacements,
 )
+from nano_code.context.models import ContextBudget, ContextOverflow, ContextPlan
 from nano_code.context.normalization import ModelInputNormalizer
+from nano_code.context.session import (
+    AttachmentDelivery,
+    ContextSession,
+    ContextSnapshot,
+)
 from nano_code.context.tokenizer import UnicodeTokenEstimator
 from nano_code.context.user_context import EmptyUserContextResolver, UserContextResolver
 from nano_code.context.window import ContextWindow
@@ -49,7 +51,7 @@ from nano_code.model import (
 from nano_code.prompts import PromptRegistry
 
 
-class ContextPlanner(ContextPort):
+class ContextBuilder:
     """集中拥有 ConversationMessage → ModelMessage 投影边界。"""
 
     def __init__(
@@ -89,11 +91,14 @@ class ContextPlanner(ContextPort):
         )
         self.token_estimator = token_estimator or UnicodeTokenEstimator()
         self.attachment_projector = self.normalizer.attachment_projector
-        self._user_context_cache: tuple[UserContextDocument, ...] | None = None
 
-    def plan(self, snapshot: ContextSnapshot) -> ContextPlan:
+    def plan(
+        self,
+        snapshot: ContextSnapshot,
+        session: ContextSession | None = None,
+    ) -> ContextPlan:
         effective, proposed = self._effective_messages(snapshot)
-        user_context = self._get_user_context()
+        user_context = self._get_user_context(session)
         attachments = self._get_attachments(snapshot)
         delivered = tuple(
             delivery.attachment for delivery in snapshot.attachment_deliveries
@@ -112,7 +117,11 @@ class ContextPlanner(ContextPort):
             snapshot.attachment_deliveries,
             active_binding=binding,
         )
-        system_prompt = self.prompt.resolve()
+        system_prompt = (
+            session.resolve_prompt(self.prompt)
+            if session is not None
+            else self.prompt.resolve()
+        )
         request = ModelRequest(
             system_prompt, model_messages, self.tools, self.max_output_tokens
         )
@@ -171,9 +180,13 @@ class ContextPlanner(ContextPort):
             request_input_tokens_estimate=local_estimate,
         )
 
-    def inspect(self, snapshot: ContextSnapshot) -> ContextBudget:
+    def inspect(
+        self,
+        snapshot: ContextSnapshot,
+        session: ContextSession | None = None,
+    ) -> ContextBudget:
         effective, _ = self._effective_messages(snapshot, propose=False)
-        user_context = self._get_user_context()
+        user_context = self._get_user_context(session)
         attachments = self._get_attachments(snapshot)
         binding = self.binding_resolver() if self.binding_resolver is not None else None
         messages = self.normalizer.normalize(
@@ -184,7 +197,14 @@ class ContextPlanner(ContextPort):
             active_binding=binding,
         )
         request = ModelRequest(
-            self.prompt.resolve(), messages, self.tools, self.max_output_tokens
+            (
+                session.resolve_prompt(self.prompt)
+                if session is not None
+                else self.prompt.resolve()
+            ),
+            messages,
+            self.tools,
+            self.max_output_tokens,
         )
         budget, _ = self._budget(
             effective,
@@ -209,10 +229,12 @@ class ContextPlanner(ContextPort):
     def measure(self, messages: tuple[ConversationMessage, ...]) -> int:
         return self.window.size(messages)
 
-    def _get_user_context(self) -> tuple[UserContextDocument, ...]:
-        if self._user_context_cache is None:
-            self._user_context_cache = tuple(self.user_context_resolver.resolve())
-        return self._user_context_cache
+    def _get_user_context(
+        self, session: ContextSession | None
+    ) -> tuple[UserContextDocument, ...]:
+        if session is None:
+            return tuple(self.user_context_resolver.resolve())
+        return session.user_context(self.user_context_resolver.resolve)
 
     def _get_attachments(
         self, snapshot: ContextSnapshot

@@ -60,14 +60,14 @@
 
 ## 5. 整理 Context 与 Features
 
-- [ ] Context 只负责 Conversation 到 ModelRequest 的投影和预算管理。
-- [ ] 分开无状态 `ContextBuilder` 与每个活动 session 的 `ContextSession`。（`ContextSession` 已在阶段 3 建立，builder 待阶段 5）
-- [ ] live-session delivery 和 session 级 cache 在 resume/switch 时清空，request 状态在调用后丢弃。
-- [ ] attachments 与 compaction 按生命周期拆分，不建立泛化 `types.py`。
-- [ ] Todo 的模型、投影、reminder 和 Tool 实现由 `features.todos` 拥有。
-- [ ] File mention 的解析、加载和建议由 `features.file_mentions` 拥有。
-- [ ] 基础模块不导入具体 feature；由 bootstrap 注册 feature 能力。
-- [ ] 尚未实现的 Subagent 和 Plan Mode 不提前搭空框架。
+- [x] Context 只负责 Conversation 到 ModelRequest 的投影和预算管理。
+- [x] 分开无状态 `ContextBuilder` 与每个活动 session 的 `ContextSession`。
+- [x] live-session delivery 和 session 级 cache 在 resume/switch 时清空，request 状态在调用后丢弃。（resume 与 cache 已覆盖；完整 bundle switch 由阶段 6 验收）
+- [x] attachments 与 compaction 按生命周期拆分，不建立泛化 `types.py`。
+- [x] Todo 的模型、投影、reminder 和 Tool 实现由 `features.todos` 拥有。
+- [x] File mention 的解析、加载和建议由 `features.file_mentions` 拥有。
+- [x] 基础模块不导入具体 feature；由 bootstrap 注册 feature 能力。
+- [x] 尚未实现的 Subagent 和 Plan Mode 不提前搭空框架。
 
 验收：每个 feature 是独立依赖节点；Context 和 Tools 不反向依赖 feature；Context 不保存第二份 Conversation history。
 

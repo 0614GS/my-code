@@ -17,9 +17,8 @@ class AgentsUserContextResolver:
 
     Discovery is intentionally limited to the configured workspace root. The
     resolver does not walk parent directories, follow additional instruction
-    conventions, or expand includes. ``ContextPlanner`` owns the session
-    lifetime cache, so each resolver call represents one direct filesystem
-    read.
+    conventions, or expand includes. Each resolver call represents one direct
+    filesystem read; callers choose its cache lifetime explicitly.
     """
 
     def __init__(self, cwd: Path) -> None:

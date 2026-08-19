@@ -3,8 +3,8 @@
 import logging
 from collections.abc import Callable, Iterable
 
-from nano_code.context import ContextSnapshot
 from nano_code.context.attachments.models import ContextAttachment
+from nano_code.context.session import ContextSnapshot
 
 logger = logging.getLogger(__name__)
 

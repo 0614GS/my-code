@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import Protocol
 
 from nano_code.agent import (
+    AgentConversationUpdated,
     AgentHistoryAssistantMessage,
     AgentHistoryReasoning,
     AgentHistorySystemMessage,
@@ -20,7 +21,6 @@ from nano_code.agent import (
     AgentTextCompleted,
     AgentTextDelta,
     AgentTextStarted,
-    AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
@@ -58,9 +58,10 @@ from nano_code.application.chat.contracts import (
     TurnSucceeded,
 )
 from nano_code.application.chat.permissions import DeferredPermissionPrompter
-from nano_code.context.attachments.models import ContextAttachment
+from nano_code.context import ContextAttachment
 from nano_code.core import AgentSettings
 from nano_code.features.file_mentions import AttachmentLoader, WorkspacePathSuggester
+from nano_code.features.todos import project_todos
 from nano_code.providers.manager import ProviderUpdate, ProviderView
 from nano_code.providers.router import ProviderConnection
 from nano_code.sessions import Session, SessionSummary
@@ -122,6 +123,7 @@ class DefaultChatRuntime:
         for item in loaded:
             yield AttachmentLoaded(item.path, item.is_directory, item.display)
         async with self._session_lock:
+            previous_todos = project_todos(self.agent.history).todos
             async for event in self.agent.stream(
                 AgentTurnInput(prompt, tuple(item.attachment for item in loaded))
             ):
@@ -145,8 +147,11 @@ class DefaultChatRuntime:
                         event.is_error,
                         event.presentation,
                     )
-                elif isinstance(event, AgentTodoListUpdated):
-                    yield TodoListUpdated(event.todos)
+                elif isinstance(event, AgentConversationUpdated):
+                    current_todos = project_todos(self.agent.history).todos
+                    if current_todos != previous_todos:
+                        previous_todos = current_todos
+                        yield TodoListUpdated(current_todos)
                 elif isinstance(event, AgentTurnCompleted):
                     result = event.result
                     yield TurnCompleted(
@@ -188,7 +193,7 @@ class DefaultChatRuntime:
             permission_mode=self.settings.permission_mode.value,
             credential_source=self.settings.credential_source.value,
             working_message_count=agent_status.working_message_count,
-            todos=agent_status.todos,
+            todos=project_todos(self.agent.history).todos,
         )
 
     def context_status(self) -> ContextStatus:
@@ -273,7 +278,7 @@ class DefaultChatRuntime:
             permission_mode=self.settings.permission_mode.value,
             credential_source=self.settings.credential_source.value,
             working_message_count=status.working_message_count,
-            todos=status.todos,
+            todos=project_todos(self.agent.history).todos,
         )
 
     @staticmethod

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nano_code.context.attachments.models import ContextAttachment
+from nano_code.context import ContextAttachment
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,3 +29,15 @@ class LoadedAttachment:
     def display(self) -> str:
         action = "Listed directory" if self.is_directory else "Read"
         return f"{action} {self.path}"
+
+
+@dataclass(frozen=True, slots=True)
+class PathSuggestion:
+    """One frontend-neutral workspace path completion."""
+
+    path: str
+    is_directory: bool
+    display: str
+
+
+__all__ = ["FileMention", "LoadedAttachment", "PathSuggestion"]

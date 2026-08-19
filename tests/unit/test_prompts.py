@@ -38,12 +38,18 @@ def test_registry_caches_stable_sections_and_recomputes_request_sections() -> No
         )
     )
 
-    first = registry.resolve()
-    second = registry.resolve()
+    session_cache = {}
+    first = registry.resolve(session_cache=session_cache)
+    second = registry.resolve(session_cache=session_cache)
 
     assert calls == {"static": 1, "session": 1, "request": 2}
     assert first.sections[:2] == second.sections[:2]
     assert first.sections[2] != second.sections[2]
+
+    next_session = registry.resolve(session_cache={})
+    assert calls == {"static": 1, "session": 2, "request": 3}
+    assert next_session.sections[0] == first.sections[0]
+    assert next_session.sections[1] != first.sections[1]
 
 
 def test_registry_rejects_unstable_prefix_order() -> None:

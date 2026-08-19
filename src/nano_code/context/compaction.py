@@ -4,10 +4,9 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-from nano_code.agent.contracts.compaction import CompactionOutcome
-from nano_code.agent.ports.compaction import CompactorPort
-from nano_code.agent.ports.context import ContextPort
-from nano_code.context import ContextSnapshot
+from nano_code.context.models import CompactionOutcome
+from nano_code.context.planner import ContextBuilder
+from nano_code.context.session import ContextSnapshot
 from nano_code.conversation import (
     CompactBoundary,
     CompactTrigger,
@@ -119,14 +118,14 @@ class CompactionService:
         return CompactionResult(summary=summary, usage=response.usage)
 
 
-class CompactionCoordinator(CompactorPort):
-    """连接 ContextPort 与摘要服务的纯编排适配器。
+class CompactionCoordinator:
+    """Coordinate Context projection with the dedicated summary model call.
 
     摘要和边界都在这里构造，但直到调用方把返回的 outcome 交给
     ``Session.commit_compaction`` 前，不会产生任何持久化副作用。
     """
 
-    def __init__(self, context: ContextPort, service: _CompactionSummarizer) -> None:
+    def __init__(self, context: ContextBuilder, service: _CompactionSummarizer) -> None:
         self.context = context
         self.service = service
 

@@ -1,10 +1,5 @@
 """智能体核心、边界契约与查询编排。"""
 
-from nano_code.agent.contracts.compaction import CompactionOutcome
-from nano_code.agent.contracts.context import (
-    ContextBudget,
-    ContextPlan,
-)
 from nano_code.agent.contracts.inbound import (
     AgentContextStatus,
     AgentHistoryAssistantMessage,
@@ -21,8 +16,8 @@ from nano_code.agent.contracts.inbound import (
     AgentTurnSucceeded,
 )
 from nano_code.agent.engine import AgentEngine
-from nano_code.agent.errors import ContextOverflow
 from nano_code.agent.events import (
+    AgentConversationUpdated,
     AgentEvent,
     AgentReasoningCompleted,
     AgentReasoningDelta,
@@ -31,13 +26,10 @@ from nano_code.agent.events import (
     AgentTextCompleted,
     AgentTextDelta,
     AgentTextStarted,
-    AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.agent.ports.compaction import CompactorPort
-from nano_code.agent.ports.context import ContextPort
 from nano_code.agent.ports.inbound import AgentInboundPort
 
 __all__ = [
@@ -60,7 +52,7 @@ __all__ = [
     "AgentReasoningCompleted",
     "AgentReasoningDelta",
     "AgentReasoningStarted",
-    "AgentTodoListUpdated",
+    "AgentConversationUpdated",
     "AgentToolFinished",
     "AgentToolStarted",
     "AgentTurnCompleted",
@@ -68,10 +60,4 @@ __all__ = [
     "AgentTurnOutcome",
     "AgentTurnInput",
     "AgentTurnSucceeded",
-    "CompactionOutcome",
-    "CompactorPort",
-    "ContextBudget",
-    "ContextPlan",
-    "ContextPort",
-    "ContextOverflow",
 ]

@@ -35,7 +35,7 @@ ALLOWED_DEPENDENCIES = {
     "providers": {"auth", "config", "model"},
     "agent": {"context", "conversation", "model", "sessions", "tools"},
     "features.file_mentions": {"context", "permissions", "tools", "workspace"},
-    "features.todos": {"context", "conversation", "model", "tools"},
+    "features.todos": {"context", "conversation", "model", "permissions", "tools"},
     "features.subagents": {"agent", "context", "tools"},
     "features.plan_mode": {"agent", "prompts", "tools"},
     "chat": {

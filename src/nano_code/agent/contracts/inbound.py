@@ -2,15 +2,12 @@
 
 from dataclasses import dataclass
 
-from nano_code.context.attachments.models import ContextAttachment
-from nano_code.features.todos.models import TodoItem
+from nano_code.context import ContextAttachment, ContextBudget
 from nano_code.model import ReasoningPresentation, TokenUsage
 from nano_code.tools import (
     ToolResultPresentation,
     ToolUsePresentation,
 )
-
-from .context import ContextBudget
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +56,6 @@ class AgentStatus:
     history_message_count: int
     content_replacement_count: int
     compact_count: int
-    todos: tuple[TodoItem, ...]
 
 
 @dataclass(frozen=True, slots=True)

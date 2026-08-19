@@ -10,12 +10,24 @@ from nano_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
 )
+from nano_code.context.compaction import (
+    CompactionCoordinator,
+    CompactionResult,
+    CompactionService,
+)
 from nano_code.context.documents import (
     ContextDocumentContent,
     ContextInstruction,
     ContextInstructionKind,
     UserContextDocument,
 )
+from nano_code.context.models import (
+    CompactionOutcome,
+    ContextBudget,
+    ContextOverflow,
+    ContextPlan,
+)
+from nano_code.context.planner import ContextBuilder
 from nano_code.context.session import (
     AttachmentDelivery,
     ContextSession,
@@ -28,6 +40,14 @@ __all__ = [
     "AttachmentRetention",
     "ContextAttachment",
     "ContextObservation",
+    "CompactionOutcome",
+    "CompactionResult",
+    "CompactionCoordinator",
+    "CompactionService",
+    "ContextBudget",
+    "ContextBuilder",
+    "ContextOverflow",
+    "ContextPlan",
     "ContextSession",
     "ContextSnapshot",
     "ContextDocumentContent",

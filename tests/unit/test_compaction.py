@@ -2,12 +2,12 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from nano_code.context import ContextSnapshot as ConversationSnapshot
-from nano_code.context.compaction import (
+from nano_code.context import (
     CompactionCoordinator,
     CompactionResult,
     CompactionService,
 )
+from nano_code.context import ContextSnapshot as ConversationSnapshot
 from nano_code.conversation import (
     AssistantMessage,
     HumanMessage,

@@ -3,9 +3,11 @@ from collections.abc import Iterable
 
 import pytest
 
-from nano_code.agent.errors import ContextOverflow
 from nano_code.context import (
     AttachmentDelivery,
+    ContextBuilder,
+    ContextOverflow,
+    ContextSession,
 )
 from nano_code.context import (
     ContextSnapshot as ConversationSnapshot,
@@ -17,7 +19,6 @@ from nano_code.context.attachments.models import (
 from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.documents import ContextInstruction, UserContextDocument
 from nano_code.context.normalization import ModelInputNormalizer
-from nano_code.context.planner import ContextPlanner
 from nano_code.context.window import ContextWindow
 from nano_code.context.xml import render_context_instruction
 from nano_code.conversation import (
@@ -45,8 +46,8 @@ from nano_code.prompts import (
 )
 
 
-def _planner(*, user_resolver=None, attachment_resolver=None) -> ContextPlanner:
-    return ContextPlanner(
+def _planner(*, user_resolver=None, attachment_resolver=None) -> ContextBuilder:
+    return ContextBuilder(
         window=ContextWindow(1_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
@@ -253,14 +254,38 @@ def test_planner_caches_user_context_and_excludes_attachments_from_compact() -> 
         attachment_resolver=DerivedAttachmentResolver((attachment,)),
     )
     snapshot = ConversationSnapshot((HumanMessage("prompt"),))
-    first = planner.plan(snapshot)
-    second = planner.plan(snapshot)
+    session = ContextSession()
+    first = planner.plan(snapshot, session)
+    second = planner.plan(snapshot, session)
     compact, replacements = planner.compaction_view(snapshot)
 
     assert resolver.calls == 1
     assert first.request.messages != second.request.messages
     assert compact == (ModelUserMessage((ModelTextBlock("prompt"),)),)
     assert replacements == ()
+
+
+def test_user_context_cache_is_owned_by_each_context_session() -> None:
+    document = UserContextDocument("memory", (TextContent("stable"),))
+
+    class Resolver:
+        calls = 0
+
+        def resolve(self) -> tuple[UserContextDocument, ...]:
+            self.calls += 1
+            return (document,)
+
+    resolver = Resolver()
+    builder = _planner(user_resolver=resolver)
+    snapshot = ConversationSnapshot((HumanMessage("prompt"),))
+
+    first_session = ContextSession()
+    builder.plan(snapshot, first_session)
+    builder.plan(snapshot, first_session)
+    builder.plan(snapshot, ContextSession())
+
+    assert resolver.calls == 2
+    assert not hasattr(builder, "_user_context_cache")
 
 
 def test_budget_separates_request_and_delivered_attachment_chars() -> None:
@@ -287,7 +312,7 @@ def test_budget_separates_request_and_delivered_attachment_chars() -> None:
 
 def test_attachment_chars_participate_in_context_window() -> None:
     attachment = ContextAttachment("large", (TextContent("x" * 20),))
-    planner = ContextPlanner(
+    planner = ContextBuilder(
         window=ContextWindow(10),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)

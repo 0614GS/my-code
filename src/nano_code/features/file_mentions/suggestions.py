@@ -8,7 +8,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 
-from nano_code.application.chat.contracts import PathSuggestion
+from nano_code.features.file_mentions.models import PathSuggestion
 
 _INDEX_LIMIT = 10_000
 _EXCLUDED_ROOTS = frozenset({".git", ".nano-code", ".venv"})

@@ -9,12 +9,12 @@ from nano_code.application.chat.permissions import DeferredPermissionPrompter
 from nano_code.application.chat.runtime import DefaultChatRuntime
 from nano_code.auth import CredentialStore
 from nano_code.cli.services import CliProviderController, ProjectSessionSource
-from nano_code.context.attachments.sources import DerivedAttachmentResolver
-from nano_code.context.compaction import (
+from nano_code.context import (
     CompactionCoordinator,
     CompactionService,
+    ContextBuilder,
 )
-from nano_code.context.planner import ContextPlanner
+from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.user_context import AgentsUserContextResolver
 from nano_code.context.window import ContextWindow
 from nano_code.core.paths import NanoCodePaths, SettingsScope
@@ -25,7 +25,7 @@ from nano_code.features.file_mentions import (
     WorkspaceAttachmentReader,
     WorkspacePathSuggester,
 )
-from nano_code.features.todos.reminder import TodoReminderAttachmentSource
+from nano_code.features.todos import TodoReminderAttachmentSource, TodoWriteTool
 from nano_code.model import ActiveModelState, resolve_environment
 from nano_code.permissions import PermissionPolicy, PermissionPrompter
 from nano_code.permissions.prompt import (
@@ -170,7 +170,7 @@ def _assemble_agent(
         ),
     )
     session = Session(repository)
-    registry = ToolRegistry(builtin_tools())
+    registry = ToolRegistry((*builtin_tools(), TodoWriteTool()))
     prompter = permission_prompter or (
         TerminalPrompter() if settings.interactive else HeadlessPrompter()
     )
@@ -205,7 +205,7 @@ def _assemble_agent(
             compact=settings.compact,
         )
     )
-    context = ContextPlanner(
+    context = ContextBuilder(
         window=ContextWindow(settings.context_chars),
         prompt=build_system_prompt_registry(settings.cwd),
         tools=registry.definitions,

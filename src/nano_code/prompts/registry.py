@@ -34,16 +34,31 @@ class PromptRegistry:
     def sections(self) -> tuple[PromptSection, ...]:
         return self._sections
 
-    def resolve(self) -> SystemPrompt:
-        """生成本次 prompt；只有 request 片段会在每次解析时重新计算。"""
+    def resolve(
+        self,
+        *,
+        session_cache: dict[str, ResolvedPromptSection] | None = None,
+    ) -> SystemPrompt:
+        """Resolve with runtime-static and caller-owned session caches."""
 
         return SystemPrompt(
-            tuple(self._resolve_section(item) for item in self._sections)
+            tuple(self._resolve_section(item, session_cache) for item in self._sections)
         )
 
-    def _resolve_section(self, section: PromptSection) -> ResolvedPromptSection:
-        if section.stability is not PromptStability.REQUEST:
-            cached = self._cache.get(section.key)
+    def _resolve_section(
+        self,
+        section: PromptSection,
+        session_cache: dict[str, ResolvedPromptSection] | None,
+    ) -> ResolvedPromptSection:
+        cache = (
+            self._cache
+            if section.stability is PromptStability.STATIC
+            else session_cache
+            if section.stability is PromptStability.SESSION
+            else None
+        )
+        if cache is not None:
+            cached = cache.get(section.key)
             if cached is not None:
                 return cached
         resolved = ResolvedPromptSection(
@@ -51,6 +66,6 @@ class PromptRegistry:
             content=section.resolve(),
             stability=section.stability,
         )
-        if section.stability is not PromptStability.REQUEST:
-            self._cache[section.key] = resolved
+        if cache is not None:
+            cache[section.key] = resolved
         return resolved

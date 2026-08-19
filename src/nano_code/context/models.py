@@ -1,16 +1,26 @@
-"""上下文规划和预算诊断值对象。"""
+"""Context build results and request-local budget diagnostics."""
 
 from dataclasses import dataclass, field
 from typing import Literal
 
-from nano_code.context import AttachmentDelivery
-from nano_code.conversation import ContentReplacement
-from nano_code.model import CapabilitySource, ModelLimits, ModelRequest, ProviderBinding
+from nano_code.context.session import AttachmentDelivery
+from nano_code.conversation import (
+    CompactBoundary,
+    ContentReplacement,
+    ConversationSummaryMessage,
+)
+from nano_code.model import (
+    CapabilitySource,
+    ModelLimits,
+    ModelRequest,
+    ProviderBinding,
+    TokenUsage,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class ContextBudget:
-    """一次请求各组成部分的可观察预算报告。"""
+    """Observable budget for one projected model request."""
 
     message_limit_chars: int
     message_chars: int
@@ -55,7 +65,7 @@ class ContextBudget:
 
 @dataclass(frozen=True, slots=True)
 class ContextPlan:
-    """上下文策略结果：完整模型请求、预算诊断和待持久化决策。"""
+    """A model request plus decisions that must be committed before use."""
 
     request: ModelRequest
     budget: ContextBudget | None = None
@@ -69,7 +79,30 @@ class ContextPlan:
     request_input_tokens_estimate: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CompactionOutcome:
+    """A compaction proposal with no persistence side effect."""
+
+    replacements: tuple[ContentReplacement, ...]
+    summary: ConversationSummaryMessage
+    boundary: CompactBoundary
+    usage: TokenUsage
+
+
+class ContextOverflow(RuntimeError):
+    """The context cannot construct a request within the active model limit."""
+
+    def __init__(self, current_size: int, maximum_size: int) -> None:
+        self.current_size = current_size
+        self.maximum_size = maximum_size
+        super().__init__(
+            f"Context requires {current_size} units but the limit is {maximum_size}"
+        )
+
+
 __all__ = [
+    "CompactionOutcome",
     "ContextBudget",
+    "ContextOverflow",
     "ContextPlan",
 ]

@@ -31,7 +31,7 @@ from nano_code.application.chat.contracts import (
     TurnOutcome,
     TurnSucceeded,
 )
-from nano_code.features.todos.models import TodoItem
+from nano_code.features.todos import TodoItem
 from nano_code.model import ReasoningPresentation
 from nano_code.permissions import (
     PermissionBehavior,

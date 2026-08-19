@@ -1,4 +1,4 @@
-"""维护当前会话结构化任务列表。"""
+"""TodoWrite tool owned and exported by the Todo feature."""
 
 from nano_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
 from nano_code.model import JsonObject, ModelToolDefinition
@@ -8,8 +8,7 @@ from nano_code.permissions import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from nano_code.tools import ToolResultPresentation
-from nano_code.tools.base import Tool, ToolContext, ToolOutput
+from nano_code.tools import Tool, ToolContext, ToolOutput, ToolResultPresentation
 
 _DESCRIPTION = """Update the structured todo list for the current coding session.
 Use it for complex multi-step work, explicit user task lists, and newly discovered

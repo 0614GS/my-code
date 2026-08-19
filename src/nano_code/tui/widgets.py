@@ -18,7 +18,7 @@ from textual.widgets.option_list import Option
 
 from nano_code import __version__
 from nano_code.application.chat.contracts import PermissionRequest, RuntimeStatus
-from nano_code.features.todos.models import TodoItem
+from nano_code.features.todos import TodoItem
 from nano_code.model import ReasoningDisclosure, ReasoningPresentation
 from nano_code.permissions import (
     PermissionBehavior,

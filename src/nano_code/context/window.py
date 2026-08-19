@@ -1,6 +1,6 @@
 """上下文消息预算的最终防线。"""
 
-from nano_code.agent.errors import ContextOverflow as _ContextOverflow
+from nano_code.context.models import ContextOverflow as _ContextOverflow
 from nano_code.conversation import (
     ConversationMessage,
     ConversationSummaryMessage,
@@ -58,7 +58,7 @@ class ContextWindow:
                     size += len(block.content)
                 elif isinstance(block, ReasoningContent):
                     # Completed provider-private reasoning is not ordinary context.
-                    # The normalized active trajectory is budgeted by ContextPlanner.
+                    # The normalized active trajectory is budgeted by ContextBuilder.
                     continue
         return size
 

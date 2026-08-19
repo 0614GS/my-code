@@ -1,6 +1,6 @@
+from nano_code.context import ContextBuilder
 from nano_code.context import ContextSnapshot as ConversationSnapshot
 from nano_code.context.microcompact import MicrocompactPolicy
-from nano_code.context.planner import ContextPlanner
 from nano_code.context.tokenizer import UnicodeTokenEstimator
 from nano_code.context.window import ContextWindow
 from nano_code.conversation import (
@@ -43,14 +43,14 @@ def _planner(
     *,
     trigger: int = 9_000,
     policy: MicrocompactPolicy | None = None,
-) -> ContextPlanner:
+) -> ContextBuilder:
     descriptor = ModelDescriptor(
         binding.model,
         binding.model,
         ModelLimits(max_input_tokens=10_000),
         source=CapabilitySource.PROFILE_OVERRIDE,
     )
-    return ContextPlanner(
+    return ContextBuilder(
         window=ContextWindow(100_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)

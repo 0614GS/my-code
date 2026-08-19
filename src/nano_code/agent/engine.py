@@ -3,7 +3,6 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from nano_code.agent.contracts.context import ContextPlan
 from nano_code.agent.contracts.inbound import (
     AgentContextStatus,
     AgentHistoryAssistantMessage,
@@ -18,8 +17,8 @@ from nano_code.agent.contracts.inbound import (
     AgentTurnOutcome,
     AgentTurnSucceeded,
 )
-from nano_code.agent.errors import ContextOverflow
 from nano_code.agent.events import (
+    AgentConversationUpdated,
     AgentEvent,
     AgentReasoningCompleted,
     AgentReasoningDelta,
@@ -28,15 +27,20 @@ from nano_code.agent.events import (
     AgentTextCompleted,
     AgentTextDelta,
     AgentTextStarted,
-    AgentTodoListUpdated,
     AgentToolFinished,
     AgentToolStarted,
     AgentTurnCompleted,
 )
-from nano_code.agent.ports.compaction import CompactorPort
-from nano_code.agent.ports.context import ContextPort
 from nano_code.agent.ports.inbound import AgentInboundPort
-from nano_code.context import AttachmentDelivery, ContextSession, ContextSnapshot
+from nano_code.context import (
+    AttachmentDelivery,
+    CompactionCoordinator,
+    ContextBuilder,
+    ContextOverflow,
+    ContextPlan,
+    ContextSession,
+    ContextSnapshot,
+)
 from nano_code.conversation import (
     AssistantMessage,
     CompactBoundary,
@@ -50,8 +54,6 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
-from nano_code.features.todos.models import TodoItem
-from nano_code.features.todos.projection import project_todos
 from nano_code.model import (
     ModelClient,
     ModelContextOverflow,
@@ -86,8 +88,8 @@ class AgentEngine(AgentInboundPort):
         model_call: ModelClient,
         tool_round: ToolRoundExecutor,
         session: Session,
-        context: ContextPort,
-        compactor: CompactorPort,
+        context: ContextBuilder,
+        compactor: CompactionCoordinator,
         max_steps: int | None = None,
     ) -> None:
         if max_steps is not None and max_steps < 1:
@@ -273,7 +275,6 @@ class AgentEngine(AgentInboundPort):
             results: list[ToolResult] = []
             tool_presentations: dict[str, ToolResultPresentation] = {}
             round_cancelled = False
-            todos_before = self._todos
             try:
                 async for tool_event in self._tool_round.run_round(
                     tool_calls, assistant_message
@@ -311,9 +312,7 @@ class AgentEngine(AgentInboundPort):
                     self._session.append(
                         result_message, presentations=tool_presentations.items()
                     )
-                todos_after = self._todos
-                if todos_after != todos_before:
-                    yield AgentTodoListUpdated(todos_after)
+                yield AgentConversationUpdated()
             except asyncio.CancelledError:
                 # ToolRoundExecutor 通常已经发出所有取消结果；Agent 只保留
                 # 最终协议兜底并持久化一次。
@@ -332,9 +331,7 @@ class AgentEngine(AgentInboundPort):
                     self._session.append(
                         result_message, presentations=tool_presentations.items()
                     )
-                todos_after = self._todos
-                if todos_after != todos_before:
-                    yield AgentTodoListUpdated(todos_after)
+                yield AgentConversationUpdated()
                 raise
             if round_cancelled:
                 raise asyncio.CancelledError
@@ -357,14 +354,13 @@ class AgentEngine(AgentInboundPort):
             history_message_count=self._session.history_message_count,
             content_replacement_count=self._session.content_replacement_count,
             compact_count=self._session.compact_count,
-            todos=self._todos,
         )
 
     def context_status(self) -> AgentContextStatus:
         """返回当前工作集的预算报告。"""
 
         return AgentContextStatus(
-            budget=self._context.inspect(self._context_snapshot),
+            budget=self._context.inspect(self._context_snapshot, self._context_session),
             working_message_count=self._session.message_count,
             replacement_count=self._session.content_replacement_count,
             compact_count=self._session.compact_count,
@@ -451,7 +447,7 @@ class AgentEngine(AgentInboundPort):
             return await self._plan_request()
 
     async def _plan_request(self) -> ContextPlan:
-        request = self._context.plan(self._context_snapshot)
+        request = self._context.plan(self._context_snapshot, self._context_session)
         for replacement in request.new_content_replacements:
             self._session.append_content_replacement(replacement)
         self._context_session.add(
@@ -469,8 +465,10 @@ class AgentEngine(AgentInboundPort):
         )
 
     @property
-    def _todos(self) -> tuple[TodoItem, ...]:
-        return project_todos(self._session.history).todos
+    def history(self) -> tuple[ConversationMessage, ...]:
+        """Read-only canonical facts for application-level feature projections."""
+
+        return self._session.history
 
     @property
     def _context_snapshot(self) -> ContextSnapshot:

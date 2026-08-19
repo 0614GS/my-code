@@ -1,14 +1,18 @@
 """Non-persistent context state scoped to one active session."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from uuid import uuid4
 
 from nano_code.context.attachments.models import ContextAttachment
+from nano_code.context.documents import UserContextDocument
 from nano_code.conversation import (
     ContentReplacement,
     ConversationMessage,
     ConversationSnapshot,
 )
+from nano_code.model import ResolvedPromptSection, SystemPrompt
+from nano_code.prompts import PromptRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +41,23 @@ class ContextSession:
 
     def __init__(self) -> None:
         self._deliveries: tuple[AttachmentDelivery, ...] = ()
+        self._user_context: tuple[UserContextDocument, ...] | None = None
+        self._prompt_cache: dict[str, ResolvedPromptSection] = {}
+
+    def resolve_prompt(self, registry: PromptRegistry) -> SystemPrompt:
+        """Resolve a prompt against this session's stable-section cache."""
+
+        return registry.resolve(session_cache=self._prompt_cache)
+
+    def user_context(
+        self,
+        resolve: Callable[[], tuple[UserContextDocument, ...]],
+    ) -> tuple[UserContextDocument, ...]:
+        """Resolve user context once and discard it when the session is replaced."""
+
+        if self._user_context is None:
+            self._user_context = tuple(resolve())
+        return self._user_context
 
     def snapshot(self, conversation: ConversationSnapshot) -> ContextSnapshot:
         working_ids = {message.uuid for message in conversation.messages}

@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 
 from nano_code.agent.contracts.inbound import AgentMaxStepsReached, AgentTurnSucceeded
-from nano_code.features.todos.models import TodoItem
 from nano_code.model import (
     JsonObject,
     ReasoningDisclosure,
@@ -64,10 +63,10 @@ class AgentToolFinished:
 
 
 @dataclass(frozen=True, slots=True)
-class AgentTodoListUpdated:
-    """已提交的会话事实产生了新的 TodoList 投影。"""
+class AgentConversationUpdated:
+    """New canonical conversation facts have been committed."""
 
-    todos: tuple[TodoItem, ...]
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +88,7 @@ type AgentEvent = (
     | AgentReasoningCompleted
     | AgentToolStarted
     | AgentToolFinished
-    | AgentTodoListUpdated
+    | AgentConversationUpdated
     | AgentTurnCompleted
     | AgentStepLimitReached
 )

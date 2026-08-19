@@ -27,7 +27,9 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "features.file_mentions": frozenset(
         {"context", "permissions", "tools", "workspace"}
     ),
-    "features.todos": frozenset({"context", "conversation", "model", "tools"}),
+    "features.todos": frozenset(
+        {"context", "conversation", "model", "permissions", "tools"}
+    ),
     "features.subagents": frozenset({"agent", "context", "tools"}),
     "features.plan_mode": frozenset({"agent", "prompts", "tools"}),
     "chat": frozenset(
@@ -147,14 +149,6 @@ def _temporary_edges(
 # until this list is tightened.
 TEMPORARY_DEPENDENCY_VIOLATIONS: tuple[TemporaryViolation, ...] = (
     *_temporary_edges(
-        "phase-5",
-        "Feature state and adapters have not moved behind feature boundaries.",
-        ("agent", "features.todos"),
-        ("features.file_mentions", "chat"),
-        ("context", "agent"),
-        ("tools", "features.todos"),
-    ),
-    *_temporary_edges(
         "phase-6",
         "Hosts and Chat still bypass the final Chat service boundary.",
         ("cli", "agent"),
@@ -189,26 +183,12 @@ TEMPORARY_DEPENDENCY_VIOLATIONS: tuple[TemporaryViolation, ...] = (
 
 TEMPORARY_DEEP_IMPORTS: tuple[TemporaryViolation, ...] = (
     *_temporary_edges(
-        "phase-5",
-        "Context and feature callers still reach into implementation modules.",
-        ("agent", "context"),
-        ("agent", "features.todos"),
-        ("chat", "context"),
-        ("chat", "features.todos"),
-        ("features.file_mentions", "context"),
-        ("context", "agent"),
-        ("features.todos", "context"),
-        ("tools", "features.todos"),
-        ("tui", "features.todos"),
-        ("tui", "permissions"),
-    ),
-    *_temporary_edges(
         "phase-6",
         "Legacy application.chat and host imports bypass final module roots.",
         ("chat", "agent"),
         ("chat", "providers"),
-        ("features.file_mentions", "chat"),
         ("tui", "chat"),
+        ("tui", "permissions"),
         ("tui", "providers"),
     ),
     *_temporary_edges(
@@ -218,7 +198,6 @@ TEMPORARY_DEEP_IMPORTS: tuple[TemporaryViolation, ...] = (
         ("bootstrap", "cli"),
         ("bootstrap", "context"),
         ("bootstrap", "core"),
-        ("bootstrap", "features.todos"),
         ("bootstrap", "permissions"),
         ("bootstrap", "providers"),
         ("bootstrap", "tools"),
@@ -251,17 +230,7 @@ TEMPORARY_TECHNICAL_LEAKS: tuple[TemporaryTechnicalLeak, ...] = (
 
 TEMPORARY_CYCLIC_COMPONENTS: frozenset[frozenset[str]] = frozenset(
     {
-        frozenset(
-            {
-                "agent",
-                "context",
-                "features.todos",
-                "sessions",
-                "tools",
-            }
-        ),
         frozenset({"core", "permissions", "providers"}),
-        frozenset({"chat", "features.file_mentions"}),
         frozenset({"bootstrap", "cli"}),
     }
 )

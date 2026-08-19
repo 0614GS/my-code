@@ -1,9 +1,9 @@
 """ConversationMessage 到 ModelMessage 的纯投影与协议校验。"""
 
-from nano_code.context import AttachmentDelivery
 from nano_code.context.attachments.models import ContextAttachment
 from nano_code.context.attachments.projection import AttachmentProjector
 from nano_code.context.documents import UserContextDocument
+from nano_code.context.session import AttachmentDelivery
 from nano_code.context.xml import render_context_instruction, wrap_xml
 from nano_code.conversation import (
     AssistantMessage,

@@ -1,6 +1,6 @@
 """工具契约、注册与执行。"""
 
-from nano_code.tools.base import Tool, ToolContext
+from nano_code.tools.base import Tool, ToolContext, ToolOutput
 from nano_code.tools.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
@@ -19,6 +19,7 @@ from nano_code.tools.round_executor import (
 __all__ = [
     "Tool",
     "ToolContext",
+    "ToolOutput",
     "ToolResultPresentation",
     "ToolUsePresentation",
     "ToolRegistry",

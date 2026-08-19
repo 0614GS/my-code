@@ -11,13 +11,16 @@ from nano_code.agent.contracts.inbound import (
     AgentTurnOutcome,
 )
 from nano_code.agent.events import AgentEvent
-from nano_code.conversation import CompactBoundary, CompactTrigger
+from nano_code.conversation import CompactBoundary, CompactTrigger, ConversationMessage
 from nano_code.sessions import Session
 
 
 @runtime_checkable
 class AgentInboundPort(Protocol):
     """CLI、TUI 或其它 driving adapter 可使用的 Agent 能力。"""
+
+    @property
+    def history(self) -> tuple[ConversationMessage, ...]: ...
 
     async def submit(self, turn_input: AgentTurnInput) -> AgentTurnOutcome:
         """运行一个用户回合并等待终态。"""

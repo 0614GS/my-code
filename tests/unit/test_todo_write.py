@@ -4,13 +4,13 @@ import pytest
 
 from nano_code.context import (
     AttachmentDelivery,
+    ContextBuilder,
 )
 from nano_code.context import (
     ContextSnapshot as ConversationSnapshot,
 )
 from nano_code.context.attachments.sources import DerivedAttachmentResolver
 from nano_code.context.documents import ContextInstruction
-from nano_code.context.planner import ContextPlanner
 from nano_code.context.window import ContextWindow
 from nano_code.conversation import (
     AssistantMessage,
@@ -20,6 +20,7 @@ from nano_code.conversation import (
     ToolResult,
     ToolResultsMessage,
 )
+from nano_code.features.todos import TodoWriteTool
 from nano_code.features.todos.codec import parse_todo_input
 from nano_code.features.todos.projection import project_todos
 from nano_code.features.todos.reminder import TodoReminderAttachmentSource
@@ -31,7 +32,6 @@ from nano_code.prompts import (
     PromptSection,
 )
 from nano_code.tools import ToolRegistry
-from nano_code.tools.builtin.todo_write import TodoWriteTool
 from nano_code.tools.executor import ToolExecutor
 from nano_code.tools.result_store import ToolResultStore
 from nano_code.workspace import Workspace
@@ -252,7 +252,7 @@ def test_todo_reminder_without_prior_write_starts_after_ten_model_calls() -> Non
 def test_context_planner_attaches_reminder_but_compaction_excludes_it() -> None:
     history = _history_after_todo(10)
     tool = TodoWriteTool()
-    planner = ContextPlanner(
+    planner = ContextBuilder(
         window=ContextWindow(20_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
@@ -293,7 +293,7 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
     delivery = AttachmentDelivery(history10[-1].uuid, attachment)
     later = _assistant(TextContent("after reminder"))
     history = history10 + (later,)
-    planner = ContextPlanner(
+    planner = ContextBuilder(
         window=ContextWindow(20_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)

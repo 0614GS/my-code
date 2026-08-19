@@ -1,8 +1,6 @@
 """Non-persistent, live-session TodoWrite reminder attachment."""
 
-from nano_code.context import ContextSnapshot
-from nano_code.context.attachments.models import ContextAttachment
-from nano_code.context.documents import ContextInstruction
+from nano_code.context import ContextAttachment, ContextInstruction, ContextSnapshot
 from nano_code.conversation import AssistantMessage, ToolCall
 from nano_code.features.todos.codec import TODO_WRITE_TOOL_NAME
 from nano_code.features.todos.projection import project_todos

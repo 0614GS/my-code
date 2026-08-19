@@ -4,7 +4,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from nano_code.features.todos.models import TodoItem
+from nano_code.features.file_mentions import PathSuggestion
+from nano_code.features.todos import TodoItem
 from nano_code.model import (
     JsonObject,
     ReasoningDisclosure,
@@ -17,13 +18,6 @@ from nano_code.tools import (
     ToolResultPresentation,
     ToolUsePresentation,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class PathSuggestion:
-    path: str
-    is_directory: bool
-    display: str
 
 
 @dataclass(frozen=True, slots=True)

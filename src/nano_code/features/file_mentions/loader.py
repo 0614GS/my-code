@@ -1,6 +1,6 @@
 """Load submitted file mentions into live context attachments."""
 
-from nano_code.context.attachments.models import (
+from nano_code.context import (
     ContextAttachment,
     ContextObservation,
 )

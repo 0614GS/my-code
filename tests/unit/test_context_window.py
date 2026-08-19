@@ -1,9 +1,8 @@
 import pytest
 
-from nano_code.agent.errors import ContextOverflow
+from nano_code.context import ContextBuilder, ContextOverflow
 from nano_code.context import ContextSnapshot as ConversationSnapshot
 from nano_code.context.microcompact import MicrocompactPolicy
-from nano_code.context.planner import ContextPlanner
 from nano_code.context.window import ContextWindow
 from nano_code.conversation import (
     AssistantMessage,
@@ -29,8 +28,8 @@ from nano_code.prompts import (
 )
 
 
-def _planner(max_chars: int = 1_000, microcompact=None) -> ContextPlanner:
-    return ContextPlanner(
+def _planner(max_chars: int = 1_000, microcompact=None) -> ContextBuilder:
+    return ContextBuilder(
         window=ContextWindow(max_chars),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)

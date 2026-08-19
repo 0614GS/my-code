@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from nano_code.agent import (
+    AgentConversationUpdated,
     AgentEngine,
     AgentMaxStepsReached,
     AgentReasoningCompleted,
@@ -13,16 +14,14 @@ from nano_code.agent import (
     AgentTextCompleted,
     AgentTextDelta,
     AgentTextStarted,
-    AgentTodoListUpdated,
     AgentTurnInput,
     AgentTurnSucceeded,
 )
+from nano_code.context import CompactionCoordinator, CompactionService, ContextBuilder
 from nano_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
 )
-from nano_code.context.compaction import CompactionCoordinator, CompactionService
-from nano_code.context.planner import ContextPlanner
 from nano_code.context.window import ContextWindow
 from nano_code.conversation import (
     AssistantMessage,
@@ -32,6 +31,7 @@ from nano_code.conversation import (
     ToolCall,
     ToolResultsMessage,
 )
+from nano_code.features.todos import TodoWriteTool, project_todos
 from nano_code.model import (
     ModelContextOverflow,
     ModelOutput,
@@ -127,7 +127,7 @@ def _engine(
     model_type: type[FakeModel] = FakeModel,
 ) -> tuple[AgentEngine, FakeModel, Session, ToolRoundExecutor]:
     store = SessionStore(tmp_path / "sessions", "11111111-1111-1111-1111-111111111111")
-    registry = ToolRegistry(builtin_tools())
+    registry = ToolRegistry((*builtin_tools(), TodoWriteTool()))
     executor = ToolExecutor(
         registry,
         PermissionPolicy(PermissionMode.BYPASS),
@@ -136,7 +136,7 @@ def _engine(
         ToolResultStore(tmp_path / "results"),
     )
     model = model_type(outputs)
-    context = ContextPlanner(
+    context = ContextBuilder(
         window=ContextWindow(10_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
@@ -228,6 +228,31 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
     delivery = engine._context_snapshot.attachment_deliveries[0]
     assert delivery.anchor_uuid == conversation.history[0].uuid
     assert conversation.store.load().history == conversation.history
+
+
+@pytest.mark.asyncio
+async def test_resume_discards_live_context_session_delivery(tmp_path: Path) -> None:
+    engine, _, _, _ = _engine(
+        tmp_path,
+        [ModelOutput((ModelTextBlock("first"),), "end_turn", TokenUsage(3, 1))],
+    )
+    attachment = ContextAttachment(
+        "file",
+        (ContextObservation("File: notes.txt", "hello"),),
+        retention="live_session",
+    )
+    await engine.submit(AgentTurnInput("inspect", (attachment,)))
+    assert engine._context_snapshot.attachment_deliveries
+
+    replacement = Session(
+        SessionStore(
+            tmp_path / "sessions",
+            "22222222-2222-2222-2222-222222222222",
+        )
+    )
+    engine.resume(replacement)
+
+    assert engine._context_snapshot.attachment_deliveries == ()
 
 
 def test_agent_turn_input_rejects_request_only_attachments() -> None:
@@ -400,7 +425,7 @@ async def test_reactive_retry_does_not_increment_completed_steps(
 
 
 @pytest.mark.asyncio
-async def test_engine_emits_todos_only_after_tool_results_are_committed(
+async def test_engine_announces_conversation_only_after_tool_results_are_committed(
     tmp_path: Path,
 ) -> None:
     engine, _, conversation, _ = _engine(
@@ -429,19 +454,20 @@ async def test_engine_emits_todos_only_after_tool_results_are_committed(
         ],
     )
 
-    updates: list[AgentTodoListUpdated] = []
+    updates: list[AgentConversationUpdated] = []
     async for event in engine.stream(AgentTurnInput("test it")):
-        if isinstance(event, AgentTodoListUpdated):
+        if isinstance(event, AgentConversationUpdated):
             assert isinstance(conversation.history[-1], ToolResultsMessage)
             updates.append(event)
 
     assert len(updates) == 1
-    assert updates[0].todos[0].content == "Run tests"
-    assert engine.status().todos == updates[0].todos
+    assert project_todos(engine.history).todos[0].content == "Run tests"
 
 
 @pytest.mark.asyncio
-async def test_failed_todo_write_does_not_emit_todo_update(tmp_path: Path) -> None:
+async def test_failed_todo_write_commits_without_changing_todo_projection(
+    tmp_path: Path,
+) -> None:
     engine, _, _, _ = _engine(
         tmp_path,
         [
@@ -457,11 +483,11 @@ async def test_failed_todo_write_does_not_emit_todo_update(tmp_path: Path) -> No
     updates = [
         event
         async for event in engine.stream(AgentTurnInput("test it"))
-        if isinstance(event, AgentTodoListUpdated)
+        if isinstance(event, AgentConversationUpdated)
     ]
 
-    assert updates == []
-    assert engine.status().todos == ()
+    assert len(updates) == 1
+    assert project_todos(engine.history).todos == ()
 
 
 @pytest.mark.asyncio
@@ -506,7 +532,7 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
         async for event in engine.stream(AgentTurnInput("test it")):
             events.append(event)
 
-    updates = [event for event in events if isinstance(event, AgentTodoListUpdated)]
+    updates = [event for event in events if isinstance(event, AgentConversationUpdated)]
     assert len(updates) == 1
-    assert updates[0].todos[0].content == "Run tests"
+    assert project_todos(engine.history).todos[0].content == "Run tests"
     assert isinstance(conversation.history[-1], ToolResultsMessage)
