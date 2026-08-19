@@ -52,16 +52,6 @@ class ToolRoundExecutor:
     ) -> None:
         self.executor = executor
 
-    def present_use(self, call: ToolCall) -> ToolUsePresentation:
-        return self.executor.present_use(call)
-
-    def present_stored_result(
-        self,
-        call: ToolCall,
-        result: ToolResult | None,
-    ) -> ToolResultPresentation:
-        return self.executor.present_stored_result(call, result)
-
     async def run_round(
         self,
         calls: tuple[ToolCall, ...],
@@ -73,7 +63,7 @@ class ToolRoundExecutor:
         try:
             # MVP 明确串行执行。每次调用完成后才开始下一个调用。
             for call in calls:
-                yield ToolCallStarted(call, self.present_use(call))
+                yield ToolCallStarted(call, self.executor.present_use(call))
                 try:
                     outcome = await self.executor.execute(
                         call, result_store=result_store

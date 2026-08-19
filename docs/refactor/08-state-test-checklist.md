@@ -32,7 +32,7 @@
 | --- | --- | --- |
 | I1 | 消息、replacement 和 boundary 都先写盘后改内存；写盘失败不推进内存 | 阶段 3 已覆盖消息与整组 compact 提交失败 |
 | I2 | 用户消息在首次模型调用前落盘，完整 assistant 在工具执行前落盘 | 已有 Agent engine 测试；阶段 6 保留 |
-| I3 | request attachment、预算、microcompact proposal 和 provider 流状态在调用后丢弃 | 阶段 5 的无状态 ContextBuilder 与逐次 attachment 测试覆盖；provider 流状态在阶段 2 验证 |
+| I3 | request attachment、预算、microcompact proposal 和 provider 流状态在调用后丢弃 | 阶段 5 的无状态 ContextPlanner 与逐次 attachment 测试覆盖；provider 流状态在阶段 2 验证 |
 | I4 | live-session delivery 跨当前 session 后续 turn 重放，锚点离开 working set 后裁剪 | 跨 turn 与 compact 裁剪已有 |
 | I5 | resume、switch 或销毁 ContextSession 时清空 live-session delivery 和 session cache | 阶段 5 覆盖 ContextSession cache；阶段 6 覆盖完整 bundle 替换 |
 | I6 | user context/prompt cache 按 runtime、session、request 生命周期分别失效 | 阶段 5 已覆盖 static、session 和 request 三种失效边界 |

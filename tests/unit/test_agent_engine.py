@@ -23,8 +23,9 @@ from my_code.context.attachments.models import (
     ContextAttachment,
     ContextObservation,
 )
-from my_code.context.compaction import CompactionCoordinator, CompactionService
-from my_code.context.planner import ContextBuilder
+from my_code.context.compaction import ContextCompactor
+from my_code.context.engine import ContextEngine
+from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextSession
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import (
@@ -179,7 +180,7 @@ def _engine(
         result_store,
     )
     model = model_type(outputs)
-    context = ContextBuilder(
+    planner = ContextPlanner(
         window=ContextWindow(10_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
@@ -187,13 +188,13 @@ def _engine(
         tools=registry.definitions,
         max_output_tokens=100,
     )
+    context = ContextEngine(planner, ContextCompactor(model))
     session = Session(store)
     tool_round = ToolRoundExecutor(executor)
     engine = AgentEngine(
         model_call=model,
         tool_round=tool_round,
         context=context,
-        compactor=CompactionCoordinator(context, CompactionService(model)),
         max_steps=max_steps,
     )
     return BoundEngine(engine, session, result_store), model, session, tool_round

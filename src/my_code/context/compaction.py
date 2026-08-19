@@ -1,11 +1,9 @@
 """使用独立模型请求生成可继续工作的会话摘要。"""
 
 import re
-from dataclasses import dataclass
-from typing import Protocol
 
 from my_code.context.models import CompactionOutcome
-from my_code.context.planner import ContextBuilder
+from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextSnapshot
 from my_code.conversation.models import (
     ConversationMessage,
@@ -69,22 +67,8 @@ continue the current task without acknowledging the compaction or repeating the
 summary to the user."""
 
 
-@dataclass(frozen=True, slots=True)
-class CompactionResult:
-    summary: str
-    usage: TokenUsage
-
-
-class _CompactionSummarizer(Protocol):
-    """CompactionCoordinator 的 adapter 内部依赖。"""
-
-    async def summarize(
-        self, messages: tuple[ModelMessage, ...]
-    ) -> CompactionResult: ...
-
-
-class CompactionService:
-    """与主 Agent Loop 分离的摘要模型调用。"""
+class ContextCompactor:
+    """生成 compact 摘要与无持久化副作用的 context outcome。"""
 
     def __init__(self, provider: ModelClient, *, max_output_tokens: int = 2048) -> None:
         if max_output_tokens < 1:
@@ -92,7 +76,9 @@ class CompactionService:
         self.provider = provider
         self.max_output_tokens = max_output_tokens
 
-    async def summarize(self, messages: tuple[ModelMessage, ...]) -> CompactionResult:
+    async def summarize(
+        self, messages: tuple[ModelMessage, ...]
+    ) -> tuple[str, TokenUsage]:
         response = await collect_model_output(
             self.provider,
             ModelRequest(
@@ -113,46 +99,35 @@ class CompactionService:
         if not response_text:
             raise RuntimeError("Compaction model returned no text summary")
         summary = _extract_summary(response_text)
-        return CompactionResult(summary=summary, usage=response.usage)
-
-
-class CompactionCoordinator:
-    """Coordinate Context projection with the dedicated summary model call.
-
-    摘要和边界都在这里构造，但直到调用方把返回的 outcome 交给
-    ``Session.commit_compaction`` 前，不会产生任何持久化副作用。
-    """
-
-    def __init__(self, context: ContextBuilder, service: _CompactionSummarizer) -> None:
-        self.context = context
-        self.service = service
+        return summary, response.usage
 
     async def compact(
         self,
+        planner: ContextPlanner,
         snapshot: ContextSnapshot,
         trigger: CompactTrigger,
     ) -> CompactionOutcome:
         if not snapshot.messages:
             raise ValueError("Cannot compact an empty conversation")
 
-        model_messages, replacements = self.context.compaction_view(snapshot)
-        result = await self.service.summarize(model_messages)
+        model_messages, replacements = planner.compaction_view(snapshot)
+        summary_text, usage = await self.summarize(model_messages)
         parent_uuid = snapshot.messages[-1].uuid
         summary = ConversationSummaryMessage(
-            content=_build_continuation_context(result.summary, snapshot.messages),
+            content=_build_continuation_context(summary_text, snapshot.messages),
             parent_uuid=parent_uuid,
         )
         boundary = CompactBoundary(
             parent_uuid=parent_uuid,
             summary_uuid=summary.uuid,
             trigger=trigger,
-            pre_compact_chars=max(1, self.context.measure(snapshot.messages)),
+            pre_compact_chars=max(1, planner.measure(snapshot.messages)),
         )
         return CompactionOutcome(
             replacements=replacements,
             summary=summary,
             boundary=boundary,
-            usage=result.usage,
+            usage=usage,
         )
 
 
@@ -222,7 +197,5 @@ def _build_continuation_context(
 
 
 __all__ = [
-    "CompactionCoordinator",
-    "CompactionResult",
-    "CompactionService",
+    "ContextCompactor",
 ]

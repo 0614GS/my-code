@@ -1,12 +1,11 @@
 from collections.abc import AsyncIterator
+from typing import cast
 
 import pytest
 
-from my_code.context.compaction import (
-    CompactionCoordinator,
-    CompactionResult,
-    CompactionService,
-)
+from my_code.context.compaction import ContextCompactor
+from my_code.context.engine import ContextEngine
+from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextSnapshot as ConversationSnapshot
 from my_code.conversation.models import AssistantMessage, HumanMessage, TextContent
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
@@ -44,14 +43,14 @@ async def test_compaction_service_extracts_summary_and_discards_analyze() -> Non
         "preface\n<analyze>draft details that must not survive</analyze>\n"
         "<summary>Continue from verified state.</summary>\ntrailer"
     )
-    service = CompactionService(model)
+    service = ContextCompactor(model)
 
-    result = await service.summarize(
+    summary, usage = await service.summarize(
         (ModelUserMessage((ModelTextBlock("Fix the parser"),)),)
     )
 
-    assert result.summary == "Continue from verified state."
-    assert result.usage.provider_reported is True
+    assert summary == "Continue from verified state."
+    assert usage.provider_reported is True
     request = model.requests[0]
     assert "<analyze>" in request.system_prompt.text
     final_block = request.messages[-1].content[-1]
@@ -72,7 +71,7 @@ async def test_compaction_service_extracts_summary_and_discards_analyze() -> Non
 async def test_compaction_service_rejects_invalid_summary_contract(
     response: str,
 ) -> None:
-    service = CompactionService(_CompletionModel(response))
+    service = ContextCompactor(_CompletionModel(response))
 
     with pytest.raises(RuntimeError, match="exactly one non-empty <summary>"):
         await service.summarize((ModelUserMessage((ModelTextBlock("Keep going"),)),))
@@ -86,13 +85,8 @@ class _Context:
         return 100
 
 
-class _Summarizer:
-    async def summarize(self, messages):  # type: ignore[no-untyped-def]
-        return CompactionResult("Generated operational state.", TokenUsage(5, 2))
-
-
 @pytest.mark.asyncio
-async def test_coordinator_appends_recent_real_user_messages_verbatim() -> None:
+async def test_context_engine_appends_recent_real_user_messages_verbatim() -> None:
     first = HumanMessage("Initial request")
     assistant = AssistantMessage(
         (TextContent("working"),),
@@ -104,9 +98,15 @@ async def test_coordinator_appends_recent_real_user_messages_verbatim() -> None:
         parent_uuid=assistant.uuid,
     )
     snapshot = ConversationSnapshot((first, assistant, latest))
-    coordinator = CompactionCoordinator(_Context(), _Summarizer())  # type: ignore[arg-type]
+    model = _CompletionModel(
+        "<analyze>complete</analyze><summary>Generated operational state.</summary>"
+    )
+    context = ContextEngine(
+        cast(ContextPlanner, _Context()),
+        ContextCompactor(model),
+    )
 
-    outcome = await coordinator.compact(snapshot, "manual")
+    outcome = await context.compact(snapshot, "manual")
 
     assert outcome.summary.content.startswith(
         "This session continues from an earlier conversation\nthat was compacted."

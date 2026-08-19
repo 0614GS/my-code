@@ -29,7 +29,7 @@ request: ModelRequest/provider stream locals
 ## 前序阶段复查
 
 - Conversation 仍是内存 canonical facts 的唯一所有者；Session 仍执行先落盘后更新内存。
-- ContextBuilder 仍不缓存会话 history；ContextSession 的 session cache 随 bundle 替换销毁。
+- ContextEngine/ContextPlanner 仍不缓存会话 history；ContextSession 的 session cache 随 bundle 替换销毁。
 - Agent、Context、Conversation、Model、Permissions、Sessions、Tools 与 Workspace 均不 import 具体 feature。
 - Todo 仍从完整 Conversation history 投影；File mention 仍只产生 Context attachment。
 - Permission 拒绝/取消、工具异常/取消、compact 失败、provider binding 和 resume 修复测试全部保留。

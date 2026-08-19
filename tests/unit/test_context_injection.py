@@ -11,7 +11,7 @@ from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.documents import ContextInstruction, UserContextDocument
 from my_code.context.models import ContextOverflow
 from my_code.context.normalization import ModelInputNormalizer
-from my_code.context.planner import ContextBuilder
+from my_code.context.planner import ContextPlanner
 from my_code.context.session import AttachmentDelivery, ContextSession
 from my_code.context.session import ContextSnapshot as ConversationSnapshot
 from my_code.context.window import ContextWindow
@@ -41,8 +41,8 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 
 
-def _planner(*, user_resolver=None, attachment_resolver=None) -> ContextBuilder:
-    return ContextBuilder(
+def _planner(*, user_resolver=None, attachment_resolver=None) -> ContextPlanner:
+    return ContextPlanner(
         window=ContextWindow(1_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
@@ -307,7 +307,7 @@ def test_budget_separates_request_and_delivered_attachment_chars() -> None:
 
 def test_attachment_chars_participate_in_context_window() -> None:
     attachment = ContextAttachment("large", (TextContent("x" * 20),))
-    planner = ContextBuilder(
+    planner = ContextPlanner(
         window=ContextWindow(10),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)

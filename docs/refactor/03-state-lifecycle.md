@@ -58,7 +58,8 @@ Session --先写 JSONL，后更新内存--> Conversation
 
 `context` 同时包含无状态投影逻辑和少量有明确生命周期的缓存，不能笼统标记为无状态。attachment delivery、user context cache 和 session-stable prompt cache 均由 `ContextSession` 持有。
 
-- `ContextBuilder`：无状态地完成 conversation → model 投影、规范化、预算和裁剪。
+- `ContextEngine`：无状态的 context 模块入口，组合规划与 compact；不保存 Session facts。
+- `ContextPlanner`：确定性地完成 conversation → model 投影、规范化、预算和裁剪。
 - `ContextSession`：每个活动 session 一个，记录已交付的 live-session attachments；锚点离开 working set 时裁剪，resume 或切换时销毁。
 - user context / prompt stable cache：static prompt 由 runtime `PromptRegistry` 缓存；session prompt 与 user context 由 `ContextSession` 缓存；request prompt 每次重新解析。
 - microcompact proposal 和 `ContextBudget`：单次 build 状态。proposal 必须由 `Session` 持久化后，才可用于实际模型请求。
@@ -89,7 +90,7 @@ Todo 等 feature 状态从完整 Conversation history 投影，不维护第二�
 
 ## Agent 与 Chat 的边界
 
-`AgentEngine` 是无状态执行内核。`submit/stream` 接收当前 `Session`、`ContextSession` 和 `ToolResultStore`，局部维护一次 turn 的 step、token usage、流式序列和工具轮。取消时必须闭合并提交已经持久化的 tool calls，随后丢弃 turn 状态。Engine 对象本身只持有模型、ContextBuilder、CompactionCoordinator、ToolRoundExecutor 和不可变配置，不保存活动 session 引用。
+`AgentEngine` 是无状态执行内核。`submit/stream` 接收当前 `Session`、`ContextSession` 和 `ToolResultStore`，局部维护一次 turn 的 step、token usage、流式序列和工具轮。取消时必须闭合并提交已经持久化的 tool calls，随后丢弃 turn 状态。Engine 对象本身只持有模型、ContextEngine、ToolRoundExecutor 和不可变配置，不保存活动 session 引用。auto/reactive compact 是内部 transition；manual compact、inspect 和历史 presentation 由 Chat 直接调用其所有者。
 
 `chat` 是长生命周期协调者，负责：
 

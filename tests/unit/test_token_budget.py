@@ -1,5 +1,5 @@
 from my_code.context.microcompact import MicrocompactPolicy
-from my_code.context.planner import ContextBuilder
+from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextSnapshot as ConversationSnapshot
 from my_code.context.tokenizer import UnicodeTokenEstimator
 from my_code.context.window import ContextWindow
@@ -40,14 +40,14 @@ def _planner(
     *,
     trigger: int = 9_000,
     policy: MicrocompactPolicy | None = None,
-) -> ContextBuilder:
+) -> ContextPlanner:
     descriptor = ModelDescriptor(
         binding.model,
         binding.model,
         ModelLimits(max_input_tokens=10_000),
         source=CapabilitySource.PROFILE_OVERRIDE,
     )
-    return ContextBuilder(
+    return ContextPlanner(
         window=ContextWindow(100_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)

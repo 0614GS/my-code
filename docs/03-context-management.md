@@ -6,7 +6,8 @@
 
 主要模块：
 
-- `context.planner`：构造请求与提交前决策。
+- `context.engine`：模块对外的 plan、inspect 和 compact 能力。
+- `context.planner`：确定性地构造请求与提交前决策。
 - `context.session`：live-session delivery 和缓存。
 - `context.models`：预算、计划与压缩结果。
 - `context.compaction`：摘要模型调用与 compact proposal。
@@ -38,7 +39,7 @@ Context 会把 Conversation 内容转换为 Model message/block，但不会修�
 
 ## Compact
 
-`CompactionCoordinator` 只返回 `CompactionOutcome`，不直接写 Session。Agent 收到 outcome 后通过 `Session.commit_compaction()` 一次提交 replacements、summary 和 boundary。
+`ContextEngine.compact()` 调用内部 `ContextCompactor` 并只返回 `CompactionOutcome`，不直接写 Session。Agent 在 auto/reactive 恢复路径提交 outcome；Chat 在 manual compact 用例中提交。两者都通过 `Session.commit_compaction()` 一次写入 replacements、summary 和 boundary。
 
 摘要不是隐藏缓存，而是新的 `ConversationSummaryMessage`。恢复时 Session 根据 compact boundary 重建工作集，因此 compact 后仍可继续对话。
 

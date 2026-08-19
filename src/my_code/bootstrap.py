@@ -26,8 +26,9 @@ from my_code.config.providers import (
 from my_code.config.settings import AgentSettings, SettingsResolver
 from my_code.config.store import SettingsLayer, SettingsStore
 from my_code.context.attachments.sources import DerivedAttachmentResolver
-from my_code.context.compaction import CompactionCoordinator, CompactionService
-from my_code.context.planner import ContextBuilder
+from my_code.context.compaction import ContextCompactor
+from my_code.context.engine import ContextEngine
+from my_code.context.planner import ContextPlanner
 from my_code.context.user_context import AgentsUserContextResolver
 from my_code.context.window import ContextWindow
 from my_code.features.file_mentions.loader import AttachmentLoader
@@ -131,6 +132,7 @@ def _assemble_agent(
     permission_prompter: PermissionPrompter | None = None,
 ) -> tuple[
     AgentEngine,
+    ContextEngine,
     ProviderRouter,
     ToolRegistry,
     PermissionPolicy,
@@ -210,7 +212,7 @@ def _assemble_agent(
             compact=settings.compact,
         )
     )
-    context = ContextBuilder(
+    planner = ContextPlanner(
         window=ContextWindow(settings.context_chars),
         prompt=build_system_prompt_registry(settings.cwd),
         tools=registry.definitions,
@@ -222,16 +224,17 @@ def _assemble_agent(
         binding_resolver=lambda: provider.binding,
         active_model_state=active_model_state,
     )
+    context = ContextEngine(planner, ContextCompactor(provider))
     tool_round = ToolRoundExecutor(tool_executor)
     engine = AgentEngine(
         model_call=provider,
         tool_round=tool_round,
         context=context,
-        compactor=CompactionCoordinator(context, CompactionService(provider)),
         max_steps=settings.max_steps,
     )
     return (
         engine,
+        context,
         provider,
         registry,
         permission_policy,
@@ -250,9 +253,21 @@ def bootstrap_chat(
 
     prompter = DeferredPermissionPrompter()
     assembled = _assemble_agent(settings, session_id, permission_prompter=prompter)
-    engine, provider, _, _, _, tool_executor, active_model_state, session = assembled
+    (
+        engine,
+        context,
+        provider,
+        _,
+        _,
+        _,
+        tool_executor,
+        active_model_state,
+        session,
+    ) = assembled
     return ChatService(
         agent=engine,
+        context=context,
+        tool_executor=tool_executor,
         settings=settings,
         permission_prompter=prompter,
         provider_manager=ProviderManager(settings.paths),

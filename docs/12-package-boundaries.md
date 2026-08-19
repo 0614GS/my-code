@@ -23,7 +23,7 @@ from my_code.permissions.models import PermissionDecision
 | `prompts` | System prompt sections 与 registry |
 | `auth` | 凭据存储和解析 |
 | `config` | 路径、settings、provider profile 配置 |
-| `context` | Conversation 到 ModelRequest 的临时投影 |
+| `context` | Conversation 到 ModelRequest 的投影、预算与 compact proposal |
 | `tools` | Tool、registry、权限执行和 ToolRound |
 | `sessions` | JSONL、codec、catalog、恢复和提交 |
 | `providers` | SDK adapter、发现、缓存和 runtime router |
@@ -56,6 +56,7 @@ bootstrap
 ## 状态边界
 
 - AgentEngine 无 Session 状态。
+- ContextEngine 无 Session facts；ContextSession 保存当前会话的临时 delivery/cache。
 - ChatService 持有一个不可拆分替换的 session bundle。
 - Conversation 保存内存事实；Session 提供持久化提交。
 - ContextSession 保存非持久化 delivery 和 cache。

@@ -4,7 +4,7 @@ import pytest
 
 from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.documents import ContextInstruction
-from my_code.context.planner import ContextBuilder
+from my_code.context.planner import ContextPlanner
 from my_code.context.session import AttachmentDelivery
 from my_code.context.session import ContextSnapshot as ConversationSnapshot
 from my_code.context.window import ContextWindow
@@ -248,7 +248,7 @@ def test_todo_reminder_without_prior_write_starts_after_ten_model_calls() -> Non
 def test_context_planner_attaches_reminder_but_compaction_excludes_it() -> None:
     history = _history_after_todo(10)
     tool = TodoWriteTool()
-    planner = ContextBuilder(
+    planner = ContextPlanner(
         window=ContextWindow(20_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
@@ -289,7 +289,7 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
     delivery = AttachmentDelivery(history10[-1].uuid, attachment)
     later = _assistant(TextContent("after reminder"))
     history = history10 + (later,)
-    planner = ContextBuilder(
+    planner = ContextPlanner(
         window=ContextWindow(20_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)

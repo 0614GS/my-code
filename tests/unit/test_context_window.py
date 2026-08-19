@@ -2,7 +2,7 @@ import pytest
 
 from my_code.context.microcompact import MicrocompactPolicy
 from my_code.context.models import ContextOverflow
-from my_code.context.planner import ContextBuilder
+from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextSnapshot as ConversationSnapshot
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import (
@@ -27,8 +27,8 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 
 
-def _planner(max_chars: int = 1_000, microcompact=None) -> ContextBuilder:
-    return ContextBuilder(
+def _planner(max_chars: int = 1_000, microcompact=None) -> ContextPlanner:
+    return ContextPlanner(
         window=ContextWindow(max_chars),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)

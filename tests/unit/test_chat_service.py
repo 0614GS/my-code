@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -15,15 +16,18 @@ from my_code.chat.service import ChatService
 from my_code.config.paths import MyCodePaths
 from my_code.config.settings import AgentSettings
 from my_code.context.attachments.models import ContextAttachment, ContextObservation
+from my_code.context.models import CompactionOutcome
 from my_code.context.session import AttachmentDelivery, ContextSession
 from my_code.conversation.models import (
     AssistantMessage,
+    ConversationSummaryMessage,
     HumanMessage,
     TextContent,
     ToolCall,
     ToolResult,
     ToolResultsMessage,
 )
+from my_code.conversation.state import CompactBoundary
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
 from my_code.sessions.session import Session
@@ -88,6 +92,39 @@ async def test_runtime_loads_mentions_before_creating_turn_input(
     assert agent.turn_input.prompt == "review @context.txt"
     assert len(agent.turn_input.attachments) == 1
     assert agent.turn_input.attachments[0].retention == "live_session"
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    active = runtime._active
+    user = HumanMessage(content="compact this conversation")
+    active.session.append(user)
+    summary = ConversationSummaryMessage(
+        content="continuation state",
+        parent_uuid=user.uuid,
+    )
+    boundary = CompactBoundary(
+        parent_uuid=user.uuid,
+        summary_uuid=summary.uuid,
+        trigger="manual",
+        pre_compact_chars=10,
+    )
+    compact = AsyncMock(
+        return_value=CompactionOutcome((), summary, boundary, TokenUsage(4, 2))
+    )
+    runtime.context.compact = compact  # type: ignore[method-assign]
+
+    status = await runtime.compact()
+
+    compact.assert_awaited_once()
+    assert compact.await_args is not None
+    snapshot, trigger = compact.await_args.args
+    assert snapshot.messages == (user,)
+    assert trigger == "manual"
+    assert active.session.compact_count == 1
+    assert active.session.working_messages == (summary,)
+    assert status.compact_count == 1
 
 
 @pytest.mark.asyncio

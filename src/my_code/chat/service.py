@@ -48,6 +48,7 @@ from my_code.chat.permissions import DeferredPermissionPrompter, PermissionHandl
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.config.settings import AgentSettings
 from my_code.context.attachments.models import ContextAttachment
+from my_code.context.engine import ContextEngine
 from my_code.context.session import ContextSession
 from my_code.conversation.models import (
     AssistantMessage,
@@ -75,6 +76,7 @@ from my_code.providers.router import ProviderRouter
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
 from my_code.sessions.session import Session
 from my_code.sessions.store import SessionStore
+from my_code.tools.executor import ToolExecutor
 from my_code.tools.result_store import ToolResultStore
 
 
@@ -94,6 +96,8 @@ class ChatService:
         self,
         *,
         agent: AgentEngine,
+        context: ContextEngine,
+        tool_executor: ToolExecutor,
         settings: AgentSettings,
         permission_prompter: DeferredPermissionPrompter,
         provider_manager: ProviderManager,
@@ -105,6 +109,8 @@ class ChatService:
         path_suggester: WorkspacePathSuggester | None = None,
     ) -> None:
         self.agent = agent
+        self.context = context
+        self.tool_executor = tool_executor
         self.settings = settings
         self.permission_prompter = permission_prompter
         self.provider_manager = provider_manager
@@ -206,7 +212,10 @@ class ChatService:
 
     def context_status(self) -> ContextStatus:
         active = self._active
-        budget = self.agent.inspect(active.session, active.context)
+        budget = self.context.inspect(
+            active.context.snapshot(active.session.conversation.snapshot()),
+            active.context,
+        )
         session = active.session
         return ContextStatus(
             estimated_input_tokens=budget.estimated_input_tokens,
@@ -234,7 +243,15 @@ class ChatService:
     async def compact(self) -> ContextStatus:
         async with self._lock:
             active = self._active
-            await self.agent.compact(active.session, active.context, "manual")
+            outcome = await self.context.compact(
+                active.context.snapshot(active.session.conversation.snapshot()),
+                "manual",
+            )
+            active.session.commit_compaction(
+                outcome.replacements,
+                outcome.summary,
+                outcome.boundary,
+            )
             return self.context_status()
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:
@@ -350,10 +367,12 @@ class ChatService:
                         history.append(
                             HistoryToolCall(
                                 tool_use_id=block.id,
-                                use=self.agent.present_use(block),
+                                use=self.tool_executor.present_use(block),
                                 result=(
                                     session.tool_presentation(block.id)
-                                    or self.agent.present_stored_result(block, result)
+                                    or self.tool_executor.present_stored_result(
+                                        block, result
+                                    )
                                 ),
                                 is_error=result is None or result.is_error,
                             )

@@ -21,9 +21,8 @@ from my_code.agent.models import (
     AgentTurnOutcome,
     AgentTurnSucceeded,
 )
-from my_code.context.compaction import CompactionCoordinator
-from my_code.context.models import ContextBudget, ContextOverflow, ContextPlan
-from my_code.context.planner import ContextBuilder
+from my_code.context.engine import ContextEngine
+from my_code.context.models import ContextOverflow, ContextPlan
 from my_code.context.session import (
     AttachmentDelivery,
     ContextSession,
@@ -38,7 +37,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultsMessage,
 )
-from my_code.conversation.state import CompactBoundary, CompactTrigger
+from my_code.conversation.state import CompactTrigger
 from my_code.model.client import ModelClient
 from my_code.model.errors import ModelContextOverflow
 from my_code.model.events import (
@@ -53,7 +52,7 @@ from my_code.model.events import (
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import ModelOutput, ModelTextBlock, ModelToolUseBlock
 from my_code.sessions.session import Session
-from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from my_code.tools.presentation import ToolResultPresentation
 from my_code.tools.result_store import ToolResultStore
 from my_code.tools.round_executor import (
     ToolCallFinished,
@@ -71,8 +70,7 @@ class AgentEngine:
         *,
         model_call: ModelClient,
         tool_round: ToolRoundExecutor,
-        context: ContextBuilder,
-        compactor: CompactionCoordinator,
+        context: ContextEngine,
         max_steps: int | None = None,
     ) -> None:
         if max_steps is not None and max_steps < 1:
@@ -80,7 +78,6 @@ class AgentEngine:
         self._model_call = model_call
         self._tool_round = tool_round
         self._context = context
-        self._compactor = compactor
         self.max_steps = max_steps
 
     async def submit(
@@ -220,7 +217,7 @@ class AgentEngine:
                     if reactive_attempted:
                         raise
                     reactive_attempted = True
-                    await self.compact(session, context_session, "reactive")
+                    await self._compact_for_retry(session, context_session, "reactive")
                     request = await self._plan_request(session, context_session)
                     continue
                 break
@@ -317,7 +314,6 @@ class AgentEngine:
                 if result_message is None:
                     results = _cancelled_results(
                         tool_calls,
-                        self._tool_round,
                         results,
                     )
                     session.append_tool_results(
@@ -341,18 +337,18 @@ class AgentEngine:
                 )
                 return
 
-    async def compact(
+    async def _compact_for_retry(
         self,
         session: Session,
         context_session: ContextSession,
-        trigger: CompactTrigger = "manual",
-    ) -> CompactBoundary:
-        """生成并原子提交一次摘要边界。"""
+        trigger: CompactTrigger,
+    ) -> None:
+        """在当前 turn 内生成并提交 auto/reactive compact。"""
 
-        outcome = await self._compactor.compact(
+        outcome = await self._context.compact(
             _context_snapshot(session, context_session), trigger
         )
-        return session.commit_compaction(
+        session.commit_compaction(
             outcome.replacements, outcome.summary, outcome.boundary
         )
 
@@ -362,7 +358,7 @@ class AgentEngine:
         try:
             return await self._plan_request(session, context_session)
         except ContextOverflow:
-            await self.compact(session, context_session, "auto")
+            await self._compact_for_retry(session, context_session, "auto")
             return await self._plan_request(session, context_session)
 
     async def _plan_request(
@@ -379,25 +375,9 @@ class AgentEngine:
         )
         return request
 
-    def inspect(
-        self, session: Session, context_session: ContextSession
-    ) -> ContextBudget:
-        return self._context.inspect(
-            _context_snapshot(session, context_session), context_session
-        )
-
-    def present_use(self, call: ToolCall) -> ToolUsePresentation:
-        return self._tool_round.present_use(call)
-
-    def present_stored_result(
-        self, call: ToolCall, result: ToolResult | None
-    ) -> ToolResultPresentation:
-        return self._tool_round.present_stored_result(call, result)
-
 
 def _cancelled_results(
     calls: tuple[ToolCall, ...],
-    tool_round: ToolRoundExecutor,
     existing: list[ToolResult],
 ) -> list[ToolResult]:
     message = "Tool execution was cancelled."

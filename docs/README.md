@@ -9,18 +9,20 @@ CLI / TUI
     │
     v
 ChatService ──> Session + ContextSession + ToolResultStore
+    ├────────────> ContextEngine <──── AgentEngine
+    │                    │                 │
+    │                    ├── ContextPlanner ├── ModelClient ──> Anthropic / OpenAI Responses
+    │                    └── ContextCompactor
     │
     v
-AgentEngine ──> ContextBuilder ──> ModelRequest
-    │                 │
-    │                 └── PromptRegistry + attachments + token budget
-    ├── ModelClient ──> Anthropic / OpenAI Responses
-    └── ToolRoundExecutor ──> PermissionPolicy ──> Tool
+ToolExecutor <──── ToolRoundExecutor <──── AgentEngine
+    │
+    └── Tool presentation + PermissionPolicy + Tool
 
 Conversation facts ──codec──> Session JSONL
 ```
 
-`conversation` 是内存对话事实的权威来源，`sessions` 负责持久化与恢复，`context` 只维护发给模型的请求时投影。活动会话由 `ChatService` 持有；`AgentEngine` 不保存会话状态。
+`conversation` 是内存对话事实的权威来源，`sessions` 负责持久化与恢复，`context` 负责发给模型的请求时投影与 compact proposal。活动会话由 `ChatService` 持有；`AgentEngine` 不保存会话状态，也不代理 context inspection、手动 compact 或工具历史展示。
 
 ## 文档索引
 

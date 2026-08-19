@@ -52,7 +52,7 @@ from my_code.model.request import (
 from my_code.prompts.registry import PromptRegistry
 
 
-class ContextBuilder:
+class ContextPlanner:
     """集中拥有 ConversationMessage → ModelMessage 投影边界。"""
 
     def __init__(
@@ -545,5 +545,5 @@ def _block_continuation(block: object) -> ProviderContinuationState | None:
 
 
 __all__ = [
-    "ContextBuilder",
+    "ContextPlanner",
 ]

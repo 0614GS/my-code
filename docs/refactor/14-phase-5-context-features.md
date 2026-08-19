@@ -3,7 +3,7 @@
 ## 最终边界
 
 - `context` 拥有 Conversation 到 `ModelRequest` 的投影、预算、attachment delivery、microcompact 和 full compact 候选。
-- `ContextBuilder` 不保存 session 事实；每次 build 的 request、budget 和 proposal 用完即弃。
+- 当前实现以无状态 `ContextEngine` 作为模块入口，内部 `ContextPlanner` 不保存 session 事实；每次 plan 的 request、budget 和 proposal 用完即弃。
 - `ContextSession` 只保存当前活动 session 的 live delivery、user context cache 和 session-stable prompt cache；resume 时整体替换。
 - `features.todos` 拥有 Todo 模型、编解码、Conversation 投影、reminder 和 `TodoWriteTool`。
 - `features.file_mentions` 拥有 mention 解析、读取、attachment 加载、建议 DTO 和短期路径索引。

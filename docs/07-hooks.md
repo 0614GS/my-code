@@ -11,7 +11,7 @@ my-code 当前没有 Hooks 运行时、配置 schema 或生产 `hooks` 包。权
 如果出现真实 Hook 需求，应按事件的所有者接入：
 
 - Pre/PostToolUse 围绕 `ToolExecutor`，但不能跳过权限策略。
-- Compact 前后围绕 `CompactionCoordinator` 与 Session commit。
+- Compact 前后围绕 `ContextEngine.compact()` 与调用方的 Session commit。
 - Turn stop/complete 围绕 Chat 或 Agent 的明确终态。
 - Provider request/response 观察留在 provider-neutral Model 边界，不暴露 SDK event。
 

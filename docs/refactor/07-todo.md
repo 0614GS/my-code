@@ -61,7 +61,7 @@
 ## 5. 整理 Context 与 Features
 
 - [x] Context 只负责 Conversation 到 ModelRequest 的投影和预算管理。
-- [x] 分开无状态 `ContextBuilder` 与每个活动 session 的 `ContextSession`。
+- [x] 分开无状态 `ContextEngine`/`ContextPlanner` 与每个活动 session 的 `ContextSession`。
 - [x] live-session delivery 和 session 级 cache 在 resume/switch 时清空，request 状态在调用后丢弃。（resume 与 cache 已覆盖；完整 bundle switch 由阶段 6 验收）
 - [x] attachments 与 compaction 按生命周期拆分，不建立泛化 `types.py`。
 - [x] Todo 的模型、投影、reminder 和 Tool 实现由 `features.todos` 拥有。

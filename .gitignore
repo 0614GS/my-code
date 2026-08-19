@@ -29,5 +29,5 @@ htmlcov/
 .vscode/
 .DS_Store
 
-# 只读上游源码快照；禁止随 my-code 一同发布
 /claude-code/
+/codex/

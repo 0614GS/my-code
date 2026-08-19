@@ -58,7 +58,7 @@ class ContextWindow:
                     size += len(block.content)
                 elif isinstance(block, ReasoningContent):
                     # Completed provider-private reasoning is not ordinary context.
-                    # The normalized active trajectory is budgeted by ContextBuilder.
+                    # The normalized active trajectory is budgeted by ContextPlanner.
                     continue
         return size
 

@@ -43,7 +43,7 @@ src/my_code/
 
 把 Conversation 和临时 attachment 投影为 ModelRequest，并负责预算、规范化、microcompact 和 compact。
 
-无状态的 `ContextBuilder` 负责投影；每个活动 session 的 `ContextSession` 只保存不落盘的 live-session attachment delivery 和 session 级缓存。它不复制 Conversation history，不执行工具，不读取 TUI 状态，不解析 provider wire payload。
+无状态的 `ContextEngine` 对外提供 plan、inspect 和 compact；内部 `ContextPlanner` 负责确定性投影，`ContextCompactor` 负责摘要模型调用。每个活动 session 的 `ContextSession` 只保存不落盘的 live-session attachment delivery 和 session 级缓存。Context 不复制 Conversation history，不执行工具，不读取 TUI 状态，不解析 provider wire payload。
 
 ### `tools`
 
@@ -69,7 +69,7 @@ ToolCall 和已提交的 ToolResult 是对话事实，归 `conversation`；尚�
 
 ### `agent`
 
-拥有一次 turn 内的模型调用、工具轮、transition、终止和事件。`AgentEngine` 直接使用 ModelClient、Context、ToolExecutor 和调用方传入的 Session，不再通过 inbound/outbound port 转发。
+拥有一次 turn 内的模型调用、工具轮、transition、终止和事件。`AgentEngine` 直接使用 ModelClient、ContextEngine、ToolRoundExecutor 和调用方传入的 Session，不再通过 inbound/outbound port 转发，也不代理 inspect、manual compact 或历史 presentation。
 
 Agent 不在 turn 之间保存活动 Session，也不负责 resume。它不拥有 UI 状态、provider wire DTO、JSONL schema 或 feature-specific 状态。
 

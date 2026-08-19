@@ -11,6 +11,7 @@ from my_code.agent.engine import AgentEngine
 from my_code.chat.service import ChatService
 from my_code.chat.status import RuntimeStatus
 from my_code.context.attachments.models import ContextAttachment
+from my_code.context.engine import ContextEngine
 from my_code.context.models import CompactionOutcome, ContextPlan
 from my_code.conversation.models import ConversationMessage, ToolResult
 from my_code.conversation.state import Conversation
@@ -184,6 +185,10 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert not hasattr(AgentEngine, "state")
     assert not hasattr(AgentEngine, "context_state")
     assert not hasattr(AgentEngine, "working_messages")
+    assert not hasattr(AgentEngine, "compact")
+    assert not hasattr(AgentEngine, "inspect")
+    assert not hasattr(AgentEngine, "present_use")
+    assert not hasattr(AgentEngine, "present_stored_result")
     assert not hasattr(agent_api, "AgentState")
     assert not hasattr(agent_api, "AgentContextState")
     assert not hasattr(Conversation, "messages")
@@ -199,7 +204,9 @@ def test_root_bootstrap_is_the_only_full_application_composition_root() -> None:
 
     bootstrap = (_PACKAGE_ROOT / "bootstrap.py").read_text(encoding="utf-8")
     for dependency in (
-        "ContextBuilder",
+        "ContextEngine",
+        "ContextPlanner",
+        "ContextCompactor",
         "ProviderRouter",
         "SessionStore",
         "ToolExecutor",
@@ -208,11 +215,11 @@ def test_root_bootstrap_is_the_only_full_application_composition_root() -> None:
         assert dependency in bootstrap
 
     chat_runtime = (_PACKAGE_ROOT / "chat" / "service.py").read_text(encoding="utf-8")
-    for concrete in (
-        "ContextBuilder",
-        "ToolExecutor",
-    ):
-        assert concrete not in chat_runtime
+    assert "ContextEngine" in chat_runtime
+    assert "ToolExecutor" in chat_runtime
+    assert "ContextPlanner" not in chat_runtime
+    assert "ContextCompactor" not in chat_runtime
+    assert ContextEngine.__module__ == "my_code.context.engine"
 
     cli_arguments = (_PACKAGE_ROOT / "cli" / "arguments.py").read_text(encoding="utf-8")
     for settings_dependency in (
