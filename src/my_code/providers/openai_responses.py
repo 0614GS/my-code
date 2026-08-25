@@ -8,6 +8,7 @@ from uuid import uuid4
 from openai import AsyncOpenAI, BadRequestError
 
 from my_code.config.providers import ReasoningConfig
+from my_code.foundation.json import JsonObject, to_json_object
 from my_code.model.capabilities import ProviderCapabilities
 from my_code.model.client import ModelClient
 from my_code.model.errors import ModelContextOverflow
@@ -24,12 +25,10 @@ from my_code.model.events import (
     ModelTextStarted,
 )
 from my_code.model.primitives import (
-    JsonObject,
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
-    to_json_object,
 )
 from my_code.model.request import (
     AssistantOutput,

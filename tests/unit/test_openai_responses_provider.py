@@ -4,6 +4,7 @@ from typing import cast
 import pytest
 
 from my_code.config.providers import ReasoningConfig
+from my_code.foundation.json import JsonObject
 from my_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
@@ -13,11 +14,7 @@ from my_code.model.events import (
     ModelTextDelta,
     ModelTextStarted,
 )
-from my_code.model.primitives import (
-    JsonObject,
-    ProviderBinding,
-    ProviderContinuationState,
-)
+from my_code.model.primitives import ProviderBinding, ProviderContinuationState
 from my_code.model.request import (
     AssistantOutput,
     InputDocument,

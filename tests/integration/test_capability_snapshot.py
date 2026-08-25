@@ -13,12 +13,13 @@ from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import ToolResultBatch
+from my_code.foundation.json import JsonObject
 from my_code.model.events import (
     ModelStreamEvent,
     ModelStreamSequencer,
     completed_output_payloads,
 )
-from my_code.model.primitives import JsonObject, TokenUsage
+from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
     ModelOutput,
     ModelRequest,

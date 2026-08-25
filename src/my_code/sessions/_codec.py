@@ -32,16 +32,15 @@ from my_code.conversation.presentation import (
     generic_tool_result_presentation,
 )
 from my_code.conversation.state import CompactBoundary, ContentReplacement
+from my_code.foundation.json import JsonObject, to_json_object
 from my_code.model.capabilities import ModelLimits
 from my_code.model.primitives import (
-    JsonObject,
     ProviderBinding,
     ProviderContinuationState,
     ProviderReplayRecord,
     ReasoningPresentation,
     TokenUsage,
     replay_content_id,
-    to_json_object,
     validate_provider_id,
 )
 from my_code.sessions._records import (

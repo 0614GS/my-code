@@ -4,12 +4,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
 
+from my_code.foundation.json import JsonObject, to_json_object
 from my_code.model.primitives import (
-    JsonObject,
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
-    to_json_object,
 )
 
 

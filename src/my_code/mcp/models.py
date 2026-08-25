@@ -8,7 +8,7 @@ from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 
-from my_code.model.primitives import JsonObject, to_json_object
+from my_code.foundation.json import JsonObject, to_json_object
 
 _SERVER_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _REMOTE_TOOL_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")

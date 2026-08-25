@@ -16,6 +16,7 @@ from my_code.permissions.models import PermissionDecision
 
 | 模块 | 拥有的能力 |
 | --- | --- |
+| `foundation` | 无业务所有者的 JSON 值类型与严格规范化原语；不依赖任何项目内模块 |
 | `model` | provider-neutral 请求、响应、事件、usage 和能力 |
 | `conversation` | canonical entry/value 类型与事实不变量 |
 | `application` | AppState、活动 Session、ProviderRuntime、ToolState、AgentRunFactory 与 runtime operation lock |
@@ -40,6 +41,8 @@ from my_code.permissions.models import PermissionDecision
 ## 依赖顺序
 
 ```text
+foundation
+        ↓
 model / conversation / workspace
         ↓
 permissions / prompts / auth / config
@@ -58,6 +61,8 @@ bootstrap
 ```
 
 精确允许表以 `tests/architecture/dependency_rules.py` 为准。Feature 按 `features.<name>` 单独识别，不能互相形成隐式共享层。
+
+`foundation` 不是通用 `utils` 容器。只有跨多个领域、没有自然业务所有者且不引入项目内依赖的稳定基础值可以进入；领域 DTO 即使被频繁引用，仍保留在其语义所有者中。
 
 ## 状态边界
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Protocol
 
+from my_code.foundation.json import JsonObject
 from my_code.mcp.models import McpSearchMatch, tool_search_name
-from my_code.model.primitives import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
     PermissionDecisionKind,

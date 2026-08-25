@@ -6,6 +6,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 
+from my_code.foundation.json import JsonObject
 from my_code.mcp.models import (
     McpCallResult,
     McpConnectionInfo,
@@ -30,7 +31,6 @@ from my_code.mcp.transport import (
     McpTransportError,
     McpTransportFactory,
 )
-from my_code.model.primitives import JsonObject
 from my_code.tools.base import Tool, ToolExecutionError
 from my_code.tools.catalog import ToolCatalog, ToolSourceId
 

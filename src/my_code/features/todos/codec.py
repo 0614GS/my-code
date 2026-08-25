@@ -3,7 +3,7 @@
 from typing import cast
 
 from my_code.features.todos.models import TODO_STATUSES, TodoItem, TodoStatus
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 
 TODO_WRITE_TOOL_NAME = "TodoWrite"
 

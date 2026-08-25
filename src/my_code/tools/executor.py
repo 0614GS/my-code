@@ -11,7 +11,7 @@ from my_code.conversation.presentation import (
     ToolResultPresentation,
     generic_tool_result_presentation,
 )
-from my_code.model.primitives import JsonObject, to_json_object
+from my_code.foundation.json import JsonObject, to_json_object
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionDecision,

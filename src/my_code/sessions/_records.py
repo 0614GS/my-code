@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 from my_code.conversation.presentation import ToolResultPresentation
+from my_code.foundation.json import JsonObject
 from my_code.model.capabilities import ModelLimits
 from my_code.model.primitives import (
-    JsonObject,
     ProviderBinding,
     ProviderContinuationState,
     ReasoningPresentation,

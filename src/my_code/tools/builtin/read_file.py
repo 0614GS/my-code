@@ -4,7 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from my_code.conversation.presentation import ToolResultPresentation
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from my_code.tools.base import (

@@ -2,7 +2,7 @@
 
 from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
 from my_code.features.subagents.models import BackgroundSubagent
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 
 
 def background_subagent_payload(item: BackgroundSubagent) -> JsonObject:

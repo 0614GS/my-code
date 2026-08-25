@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from my_code.conversation.models import ToolCall
+from my_code.foundation.json import JsonObject
 from my_code.mcp.models import (
     McpCallResult,
     McpConnectionInfo,
@@ -19,7 +20,6 @@ from my_code.mcp.models import (
 )
 from my_code.mcp.runtime import McpRuntime, McpRuntimeError
 from my_code.mcp.transport import McpConnectionError, McpTransport
-from my_code.model.primitives import JsonObject
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter

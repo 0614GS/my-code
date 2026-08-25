@@ -19,6 +19,7 @@ from my_code.config.paths import MyCodePaths
 from my_code.config.providers import ProviderProfileStore
 from my_code.config.settings import AgentSettings
 from my_code.config.store import McpServerSettingsLayer
+from my_code.foundation.json import JsonObject
 from my_code.mcp.models import (
     McpCallResult,
     McpConnectionInfo,
@@ -26,7 +27,6 @@ from my_code.mcp.models import (
     McpServerSpec,
 )
 from my_code.mcp.transport import McpTransport
-from my_code.model.primitives import JsonObject
 from my_code.permissions.models import PermissionMode
 
 

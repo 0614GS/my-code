@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from my_code.model.primitives import JsonObject, to_json_object
+from my_code.foundation.json import JsonObject, to_json_object
 
 
 @dataclass(frozen=True, slots=True)

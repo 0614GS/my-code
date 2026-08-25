@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
+from my_code.foundation.json import JsonObject
 from my_code.mcp.models import (
     McpCallResult,
     McpConnectionInfo,
     McpRemoteTool,
     McpServerSpec,
 )
-from my_code.model.primitives import JsonObject
 
 
 class McpTransportError(RuntimeError):

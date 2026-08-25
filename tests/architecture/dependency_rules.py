@@ -12,6 +12,7 @@ REPOSITORY_ROOT = Path(__file__).parents[2]
 SOURCE_ROOT = REPOSITORY_ROOT / "src" / PACKAGE_NAME
 
 ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
+    "foundation": frozenset(),
     "application": frozenset(
         {
             "agent",
@@ -28,27 +29,41 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         }
     ),
     "tasks": frozenset(),
-    "model": frozenset(),
+    "model": frozenset({"foundation"}),
     "workspace": frozenset(),
-    "permissions": frozenset({"model"}),
+    "permissions": frozenset({"foundation", "model"}),
     "prompts": frozenset({"model"}),
     "auth": frozenset({"model"}),
     "config": frozenset({"auth", "model", "permissions"}),
-    "conversation": frozenset({"model"}),
+    "conversation": frozenset({"foundation", "model"}),
     "context": frozenset({"conversation", "model", "prompts"}),
-    "tools": frozenset({"conversation", "model", "permissions", "workspace"}),
-    "sessions": frozenset({"context", "conversation", "model", "prompts", "tools"}),
-    "providers": frozenset({"auth", "config", "model"}),
-    "agent": frozenset(
-        {"context", "conversation", "model", "permissions", "sessions", "tools"}
+    "tools": frozenset(
+        {"conversation", "foundation", "model", "permissions", "workspace"}
     ),
-    "mcp": frozenset({"model", "permissions", "tools"}),
-    "skills": frozenset({"context", "conversation", "model", "permissions", "tools"}),
+    "sessions": frozenset(
+        {"context", "conversation", "foundation", "model", "prompts", "tools"}
+    ),
+    "providers": frozenset({"auth", "config", "foundation", "model"}),
+    "agent": frozenset(
+        {
+            "context",
+            "conversation",
+            "foundation",
+            "model",
+            "permissions",
+            "sessions",
+            "tools",
+        }
+    ),
+    "mcp": frozenset({"foundation", "model", "permissions", "tools"}),
+    "skills": frozenset(
+        {"context", "conversation", "foundation", "model", "permissions", "tools"}
+    ),
     "features.file_mentions": frozenset(
         {"context", "conversation", "permissions", "tools", "workspace"}
     ),
     "features.todos": frozenset(
-        {"context", "conversation", "model", "permissions", "tools"}
+        {"context", "conversation", "foundation", "model", "permissions", "tools"}
     ),
     "features.subagents": frozenset(
         {
@@ -56,6 +71,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "application",
             "context",
             "conversation",
+            "foundation",
             "model",
             "permissions",
             "sessions",
@@ -74,6 +90,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "conversation",
             "features.file_mentions",
             "features.todos",
+            "foundation",
             "model",
             "permissions",
             "providers",
@@ -110,6 +127,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "features.plan_mode",
             "features.subagents",
             "features.todos",
+            "foundation",
             "model",
             "mcp",
             "permissions",

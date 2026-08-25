@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
 from my_code.conversation.models import ToolCall, ToolResult
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 
 if TYPE_CHECKING:
     from my_code.permissions.models import PermissionDecision

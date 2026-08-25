@@ -9,7 +9,7 @@ from my_code.config.permission_updates import PermissionUpdateApplier
 from my_code.config.store import SettingsStore
 from my_code.conversation.models import ToolCall, ToolResult
 from my_code.conversation.presentation import ToolResultPresentation
-from my_code.model.primitives import JsonObject, to_json_object
+from my_code.foundation.json import JsonObject, to_json_object
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
     PermissionBehavior,

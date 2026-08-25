@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 from my_code.permissions.models import (
     PermissionConfirmation,
     PermissionPrompt,

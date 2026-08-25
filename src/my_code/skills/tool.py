@@ -9,7 +9,7 @@ from my_code.conversation.attachments import (
     SkillActivationAttachment,
 )
 from my_code.conversation.models import AttachmentMessage, ConversationEntry
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
     PermissionBehavior,

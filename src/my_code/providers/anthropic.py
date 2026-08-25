@@ -13,6 +13,7 @@ from anthropic.types import (
 )
 
 from my_code.config.providers import ReasoningConfig
+from my_code.foundation.json import to_json_object
 from my_code.model.capabilities import ProviderCapabilities
 from my_code.model.client import ModelClient
 from my_code.model.errors import ModelContextOverflow
@@ -32,7 +33,6 @@ from my_code.model.primitives import (
     ProviderContinuationState,
     ReasoningPresentation,
     TokenUsage,
-    to_json_object,
 )
 from my_code.model.request import (
     AssistantOutput,

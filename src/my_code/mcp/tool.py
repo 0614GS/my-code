@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from my_code.foundation.json import JsonObject
 from my_code.mcp.models import McpCallResult, McpRemoteTool, public_tool_name
 from my_code.mcp.schema import validate_tool_input
-from my_code.model.primitives import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
     PermissionDecisionKind,

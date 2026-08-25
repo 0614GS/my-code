@@ -9,6 +9,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import cast
 
+from my_code.foundation.json import JsonObject, JsonValue, to_json_object, to_json_value
 from my_code.mcp.models import (
     McpCallResult,
     McpConnectionInfo,
@@ -20,12 +21,6 @@ from my_code.mcp.transport import (
     McpConnectionError,
     McpProtocolError,
     McpRequestError,
-)
-from my_code.model.primitives import (
-    JsonObject,
-    JsonValue,
-    to_json_object,
-    to_json_value,
 )
 
 # 2026-07-28 removes initialize and requires a distinct sessionless driver. Keeping

@@ -6,7 +6,7 @@ from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.models import SubagentParentContext
 from my_code.features.subagents.serialization import background_subagent_payload
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
     PermissionDecisionKind,

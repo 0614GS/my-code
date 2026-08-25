@@ -135,6 +135,8 @@ Agent Tool ──> SubagentController ──> foreground child run
 目标依赖保持单向：
 
 ```text
+foundation
+        ↓
 model / conversation / workspace
         ↓
 permissions / prompts / auth / config

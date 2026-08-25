@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from my_code.conversation.models import AssistantMessage, ToolCall, ToolResult
-from my_code.model.primitives import JsonObject, TokenUsage
+from my_code.foundation.json import JsonObject
+from my_code.model.primitives import TokenUsage
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
     PermissionConfirmation,

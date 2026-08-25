@@ -4,36 +4,12 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-type JsonValue = (
-    None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
-)
-type JsonObject = dict[str, JsonValue]
+from my_code.foundation.json import JsonObject, to_json_object
+
 type ReasoningDisclosure = Literal["verbatim", "summary", "redacted", "hidden"]
 type ReplayScope = Literal["active_trajectory", "working_context"]
 
 _PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-
-
-def to_json_value(value: object) -> JsonValue:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, list):
-        return [to_json_value(item) for item in value]
-    if isinstance(value, dict):
-        result: JsonObject = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise TypeError("JSON object keys must be strings")
-            result[key] = to_json_value(item)
-        return result
-    raise TypeError(f"Unsupported JSON value: {type(value).__name__}")
-
-
-def to_json_object(value: object) -> JsonObject:
-    converted = to_json_value(value)
-    if not isinstance(converted, dict):
-        raise TypeError("Expected a JSON object")
-    return converted
 
 
 def validate_provider_id(value: str) -> str:
@@ -144,8 +120,6 @@ def replay_content_id(index: int) -> str:
 
 
 __all__ = [
-    "JsonObject",
-    "JsonValue",
     "ProviderBinding",
     "ProviderContinuationState",
     "ProviderReplayRecord",
@@ -154,7 +128,5 @@ __all__ = [
     "ReasoningPresentation",
     "ReplayScope",
     "TokenUsage",
-    "to_json_object",
-    "to_json_value",
     "validate_provider_id",
 ]

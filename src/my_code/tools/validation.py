@@ -1,6 +1,6 @@
 """工具实现共用的输入读取辅助函数。"""
 
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 from my_code.tools.base import ToolInputError
 
 

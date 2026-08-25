@@ -20,6 +20,7 @@ from my_code.context.window import ContextWindow
 from my_code.conversation.models import ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.models import SubagentParentContext, SubagentSpec
+from my_code.foundation.json import JsonObject
 from my_code.model.capabilities import (
     ActiveModelEnvironment,
     fallback_descriptor,
@@ -30,7 +31,7 @@ from my_code.model.events import (
     ModelStreamSequencer,
     completed_output_payloads,
 )
-from my_code.model.primitives import JsonObject, TokenUsage
+from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
     ModelOutput,
     ModelRequest,

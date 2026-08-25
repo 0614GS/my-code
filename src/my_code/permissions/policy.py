@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionDecision,

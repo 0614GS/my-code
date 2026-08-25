@@ -6,7 +6,7 @@ import math
 import re
 from collections.abc import Mapping
 
-from my_code.model.primitives import JsonObject, JsonValue, to_json_object
+from my_code.foundation.json import JsonObject, JsonValue, to_json_object
 from my_code.tools.base import ToolInputError
 
 _JSON_TYPES = frozenset(

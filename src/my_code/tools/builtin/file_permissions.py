@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from my_code.model.primitives import JsonObject
+from my_code.foundation.json import JsonObject
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionDecisionKind,

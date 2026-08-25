@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from my_code.conversation.models import ToolCall
+from my_code.foundation.json import JsonObject
 from my_code.mcp.models import McpCallResult, McpRemoteTool
 from my_code.mcp.runtime import McpRuntimeError
 from my_code.mcp.tool import McpTool
-from my_code.model.primitives import JsonObject
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,

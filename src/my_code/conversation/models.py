@@ -6,13 +6,8 @@ from typing import Literal
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.primitives import new_id, utc_now
-from my_code.model.primitives import (
-    JsonObject,
-    ProviderBinding,
-    ReasoningPresentation,
-    TokenUsage,
-    to_json_object,
-)
+from my_code.foundation.json import JsonObject, to_json_object
+from my_code.model.primitives import ProviderBinding, ReasoningPresentation, TokenUsage
 
 
 @dataclass(frozen=True, slots=True)
