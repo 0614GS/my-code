@@ -16,7 +16,7 @@ from my_code.conversation.state import CompactBoundary, ContentReplacement
 class ConversationAggregate:
     def __init__(
         self,
-        history: Iterable[ConversationEntry] = (),
+        conversation: Iterable[ConversationEntry] = (),
         *,
         content_replacements: Iterable[ContentReplacement] = (),
         compact_boundaries: Iterable[CompactBoundary] = (),
@@ -24,7 +24,7 @@ class ConversationAggregate:
         self._history: tuple[ConversationEntry, ...] = ()
         self._replacements: dict[str, ContentReplacement] = {}
         self._boundaries: dict[str, CompactBoundary] = {}
-        for entry in history:
+        for entry in conversation:
             self.append(entry)
         for replacement in content_replacements:
             self.add_content_replacement(replacement)
@@ -39,11 +39,11 @@ class ConversationAggregate:
         )
 
     @property
-    def history(self) -> tuple[ConversationEntry, ...]:
+    def conversation(self) -> tuple[ConversationEntry, ...]:
         return self._history
 
     @property
-    def working_set(self) -> tuple[ConversationEntry, ...]:
+    def context_entries(self) -> tuple[ConversationEntry, ...]:
         boundaries = self.compact_boundaries
         if not boundaries:
             return self._history
@@ -57,7 +57,7 @@ class ConversationAggregate:
     def content_replacements(self) -> tuple[ContentReplacement, ...]:
         working_tool_ids = {
             result.tool_use_id
-            for entry in self.working_set
+            for entry in self.context_entries
             if isinstance(entry, ToolResultBatch)
             for result in entry.content
         }

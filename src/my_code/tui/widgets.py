@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Protocol
 
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown as RichMarkdown
@@ -29,7 +30,18 @@ from my_code.permissions.models import (
 )
 from my_code.permissions.rules import validate_bash_rule_content
 from my_code.permissions.updates import permission_rule_for_destination
-from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from my_code.tools.presentation import ToolUsePresentation
+
+
+class ToolResultPresentationView(Protocol):
+    @property
+    def summary(self) -> str: ...
+
+    @property
+    def detail(self) -> str | None: ...
+
+    @property
+    def truncated(self) -> bool: ...
 
 
 class WelcomePanel(Static):
@@ -178,10 +190,12 @@ class ToolCallMessage(Static):
         super().__init__(classes="message tool-call")
         self.tool_use_id = tool_use_id
         self.presentation = presentation
-        self.result: ToolResultPresentation | None = None
+        self.result: ToolResultPresentationView | None = None
         self.is_error = False
 
-    def finish(self, presentation: ToolResultPresentation, *, is_error: bool) -> None:
+    def finish(
+        self, presentation: ToolResultPresentationView, *, is_error: bool
+    ) -> None:
         self.result = presentation
         self.is_error = is_error
         self.set_class(is_error, "error")
@@ -306,7 +320,7 @@ class StatusBar(Static):
             ("  ·  ", "dim"),
             (status.permission_mode, "dim"),
             ("  ·  ", "dim"),
-            (f"{status.working_message_count} messages", "dim"),
+            (f"{status.context_entry_count} context entries", "dim"),
             (
                 "    Ctrl+T todos" if status.todos else "    / for commands",
                 "#a59c94",

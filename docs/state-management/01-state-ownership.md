@@ -25,7 +25,7 @@ AppState
 ├── SkillRuntime / SkillCatalog
 └── ProviderRuntime
 
-SessionSnapshot + request input
+ContextPlanningState + ContextRuntime + request input
     |
     v
 stateless ContextEngine
@@ -81,7 +81,7 @@ class AppState:
 | 工具展示快照与外置工具结果 | `Session` 私有持久化 | session | 是 |
 | AttachmentMessage | `Session` Conversation | session | 按 payload 类型：durable 写 transcript，listing/reminder 仅内存 |
 | session prompt/user-context cache | `Session` 的 context state | live session | 否 |
-| Provider replay sidecar | `Session` | 与关联 entry/working set 一致 | 是，opaque |
+| Provider replay sidecar | `Session` | 与关联 entry/context entries 一致 | 是，opaque |
 | runtime permission mode/rules | `AppState.permissions` | runtime | 持久规则由 config 写入 |
 | Provider connection/client/model environment | `AppState.provider` | runtime | profile/credential 由 config/auth 写入 |
 | 动态工具来源目录 | `AppState.tools` | runtime；source 原子替换 | 否；来源配置可落盘 |
@@ -100,7 +100,9 @@ Session 对外提供不可变 snapshot 和语义提交操作：
 
 ```python
 class Session:
-    def snapshot(self) -> SessionSnapshot: ...
+    @property
+    def conversation(self) -> tuple[ConversationEntry, ...]: ...
+    def context_planning_state(self) -> ContextPlanningState: ...
 
     def append_human_message(self, message: HumanMessage) -> None: ...
 
@@ -135,7 +137,7 @@ class Session:
 写入失败时：
 
 - 内存 entries 不变；
-- working set 不变；
+- context entries 不变；
 - tool presentation/replay sidecar 索引不变；
 - application service 得到明确失败；
 - 不允许后台异步写入造成“调用成功但无法恢复”的状态。
@@ -163,7 +165,7 @@ load + validate + repair candidate Session
 - `ContextEngine`、planner、normalizer、budgeter 和 attachment projector 无跨调用可变状态。
 - Attachment delivery sidecar 已删除；动态 payload 先由 Session 追加到 Conversation，再由 Context 纯投影。
 - runtime-stable prompt section 在 bootstrap 时解析为不可变 snapshot；不再由可变 `PromptRegistry` cache 隐式持有。
-- ContextEngine 只接收 `SessionSnapshot` 和 request-scoped input，输出 `ContextPlan`。
+- ContextEngine 只接收 `ContextPlanningState`、`ContextRuntime` 和 request-scoped input，输出 `ContextPlan`。
 
 ### Agent
 

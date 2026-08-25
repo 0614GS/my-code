@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from my_code.application.runs import AgentRunFactory
+from my_code.context.session import ContextRuntime
 from my_code.mcp.runtime import McpRuntime
 from my_code.model.capabilities import ActiveModelEnvironment
 from my_code.permissions.policy import PermissionPolicy
@@ -103,6 +104,7 @@ class AppState:
     ) -> None:
         self.workspace = workspace
         self._session = session
+        self._context_runtime = ContextRuntime()
         self.permissions = permissions
         self.provider = provider
         self.tools = tools
@@ -116,8 +118,13 @@ class AppState:
     def session(self) -> Session:
         return self._session
 
+    @property
+    def context_runtime(self) -> ContextRuntime:
+        return self._context_runtime
+
     def replace_session(self, candidate: Session) -> None:
         self._session = candidate
+        self._context_runtime = ContextRuntime()
 
     def operation_lock(self) -> asyncio.Lock:
         return self._operation_lock

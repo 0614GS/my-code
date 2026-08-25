@@ -10,6 +10,7 @@ from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
+from my_code.context.session import ContextRuntime
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import AssistantMessage, ToolResultBatch
 from my_code.model.events import (
@@ -110,13 +111,15 @@ async def test_foreground_turn_persists_closed_tool_round_before_next_step(
     )
     engine, session, catalog = build_runtime(tmp_path, model)
 
-    outcome = await engine.submit(session, AgentTurnInput("read hello.txt"))
+    outcome = await engine.submit(
+        session, ContextRuntime(), AgentTurnInput("read hello.txt")
+    )
 
     assert outcome == AgentTurnSucceeded("finished", 2, TokenUsage(8, 2))
     assert len(model.requests) == 2
     assert model.requests[0].tools == catalog.snapshot().definitions
     assert model.requests[1].tools == catalog.snapshot().definitions
-    history = session.snapshot().history
+    history = session.conversation
     assert [entry.kind for entry in history] == [
         "human",
         "assistant",
@@ -133,4 +136,4 @@ async def test_foreground_turn_persists_closed_tool_round_before_next_step(
         tmp_path / "sessions",
         "11111111-1111-1111-1111-111111111111",
     )
-    assert restored.snapshot().history == history
+    assert restored.conversation == history

@@ -38,11 +38,11 @@ ToolCall
   -> PermissionPolicy 合并规则和 mode
   -> 必要时 PermissionPrompter 确认
   -> Tool 执行
-  -> ToolResult + ToolResultPresentation
+  -> ToolResult(content + is_error + presentation)
   -> Session 提交完整 batch，并按需外置大结果
 ```
 
-`ToolExecutor.execute()` 只返回完整领域结果与 presentation，不绑定活动 Session 或 result store。Session 在提交 `ToolResultBatch` 时决定是否外置大结果，并保证失败回滚。
+`ToolExecutor.execute()` 只返回带内嵌 presentation 的完整领域结果，不绑定活动 Session 或 result store。`present_result()` 每次执行只调用一次，展示异常使用稳定 fallback。Session 在提交 `ToolResultBatch` 时决定是否外置大结果，并原样保留 presentation。
 
 权限检查规范化后的输入会再次校验。audit、prompter、hook、presentation 和 Tool 执行分别接收隔离的 JSON 副本；观察型扩展不能原地修改持久化 ToolCall 或真正执行的已批准输入。
 
@@ -63,4 +63,4 @@ ToolCall
 
 ## 展示与持久化
 
-模型可见 `ToolResult` 与前端使用的 presentation 是两份不同数据。Session JSONL 保存必要的 presentation 快照。大型原始输出可以写入 session 专属工具结果目录，但引用仍由 canonical ToolResult 维护；该目录和写入实现不暴露给 ToolExecutor 或 Chat。
+模型可见内容与前端 presentation 是同一个不可变 `ToolResult` 的两个投影。Session v5 JSONL 将 presentation 内嵌到 `ToolResultRecord`；旧 sidecar 仅用于恢复兼容。大型原始输出和 microcompact 只替换 `content`，presentation 保持不变；provider adapter 明确忽略 presentation。

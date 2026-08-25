@@ -19,12 +19,12 @@ session: ContextSession delivery + user context + session prompt cache
 request: ModelRequest + ContextBudget + attachment resolution + compact proposal
 ```
 
-新 `ContextSession` 不继承旧对象的 delivery 或 cache。Conversation history 仍只由 Conversation/Session 维护；ContextSnapshot 是一次投影输入，不是第二份可变消息存储。
+新 `ContextRuntime` 不继承旧对象的 cache。完整 conversation 仍只由 Session 维护；ContextPlanningState 是一次投影输入，不是第二份可变消息存储。
 
 ## 前序阶段复查
 
 - 阶段 2 的 provider continuation 仍只在 binding 匹配时回放。
-- 阶段 3 的 Conversation、持久化优先提交和 compact working set 不变量保持不变。
+- 阶段 3 的 Conversation、持久化优先提交和 compact-derived context entries 不变量保持不变。
 - 阶段 4 的 Tool → Permission/Workspace 单向依赖保持不变；Todo Tool 由 bootstrap 作为 feature 能力显式加入 Registry。
 - 未创建 Subagent 或 Plan Mode 占位目录和抽象。
 

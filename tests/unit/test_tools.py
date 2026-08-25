@@ -8,6 +8,7 @@ from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.permission_updates import PermissionUpdateApplier
 from my_code.config.store import SettingsStore
 from my_code.conversation.models import ToolCall, ToolResult
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import JsonObject, to_json_object
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
@@ -32,7 +33,6 @@ from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.invocation import ToolInvocation
 from my_code.tools.paths import resolve_workspace_path
-from my_code.tools.presentation import ToolResultPresentation
 from my_code.workspace.local import Workspace
 
 
@@ -274,7 +274,7 @@ async def test_bypass_still_requires_confirmation_for_sensitive_path(
 
     assert outcome.result.is_error is True
     assert "safety:sensitive-workspace-path" in outcome.result.content
-    assert "safety:sensitive-workspace-path" in outcome.presentation.summary
+    assert "safety:sensitive-workspace-path" in outcome.result.presentation.summary
 
 
 @pytest.mark.asyncio
@@ -347,7 +347,7 @@ async def test_unknown_tool_produces_matching_error_result(tmp_path: Path) -> No
     assert outcome.result.tool_use_id == "unknown-1"
     assert outcome.result.is_error is True
     assert "Unknown tool" in outcome.result.content
-    assert outcome.presentation.summary == "Unknown tool: Missing"
+    assert outcome.result.presentation.summary == "Unknown tool: Missing"
 
 
 @pytest.mark.asyncio
@@ -688,10 +688,9 @@ async def test_executor_runs_the_exact_input_approved_by_tool_policy(
 
     assert outcome.result.is_error is False
     assert outcome.result.content == "model:approved"
-    assert outcome.presentation == ToolResultPresentation(
+    assert outcome.result.presentation == ToolResultPresentation(
         summary="Normalized the approved value"
     )
-    assert not hasattr(outcome.result, "presentation")
 
 
 @pytest.mark.asyncio
@@ -765,7 +764,7 @@ async def test_presentation_failure_does_not_change_successful_tool_result(
 
     assert outcome.result.is_error is False
     assert outcome.result.content == "model:approved"
-    assert outcome.presentation.summary == "approved"
+    assert outcome.result.presentation.summary == "approved"
 
 
 @pytest.mark.asyncio

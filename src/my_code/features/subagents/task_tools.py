@@ -2,6 +2,7 @@
 
 import json
 
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.models import SubagentParentContext
 from my_code.features.subagents.serialization import background_subagent_payload
@@ -14,7 +15,6 @@ from my_code.permissions.models import (
     ToolPermissionResult,
 )
 from my_code.tools.base import Tool, ToolContext, ToolInputError, ToolOutput
-from my_code.tools.presentation import ToolResultPresentation
 
 
 class TaskListTool(Tool):

@@ -35,7 +35,7 @@
 
 ## 3. 收拢 Conversation 与 Session
 
-- [x] 建立独立 `Conversation` 聚合，拥有 history、working set 和内存不变量，但不做 I/O。
+- [x] 建立独立 `Conversation` 聚合，拥有 conversation、派生 context entries 和内存不变量，但不做 I/O。
 - [x] 明确 message、ToolCall、ToolResult 和 compact 事实的唯一类型；attachment/delivery 只归 Context。
 - [x] 从 Conversation 中移除 Application presentation。
 - [x] 建立具体 `Session`，持有 Conversation 并执行持久化优先提交。

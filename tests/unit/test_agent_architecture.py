@@ -6,6 +6,7 @@ import my_code.agent as agent_api
 import my_code.context as context_adapter
 import my_code.providers as provider_adapter
 import my_code.sessions as session_adapter
+import my_code.sessions.models as session_models
 import my_code.tools as tool_adapter
 from my_code.agent.engine import AgentEngine
 from my_code.chat.service import ChatService
@@ -23,7 +24,6 @@ from my_code.permissions.policy import PermissionPolicy
 from my_code.providers.anthropic import AnthropicProvider
 from my_code.providers.openai_responses import OpenAIResponsesProvider
 from my_code.providers.router import ProviderRouter
-from my_code.sessions.models import SessionSnapshot
 from my_code.sessions.session import Session
 from my_code.tools.presentation import ToolUsePresentation
 from my_code.tools.round_executor import ToolRoundCompleted, ToolRoundExecutor
@@ -121,7 +121,9 @@ def test_conversation_layer_dependency_boundaries() -> None:
             simultaneous.append(source_path.name)
     assert set(simultaneous) == {"_codec.py", "_store.py"}
 
-    assert "presentation" not in ToolResult.__dataclass_fields__
+    assert "presentation" in ToolResult.__dataclass_fields__
+    for source_path in (_PACKAGE_ROOT / "providers").glob("*.py"):
+        assert "ToolResultPresentation" not in source_path.read_text(encoding="utf-8")
     for source_path in (_PACKAGE_ROOT / "conversation").glob("*.py"):
         imports = _imported_modules(source_path)
         assert not any(
@@ -166,13 +168,10 @@ def test_contracts_expose_one_authoritative_shape_without_legacy_aliases() -> No
     assert not (_AGENT_ROOT / "ports" / "model.py").exists()
     assert not (_AGENT_ROOT / "contracts" / "tool_definition.py").exists()
 
-    assert not hasattr(SessionSnapshot, "full_history")
-    assert not hasattr(SessionSnapshot, "all_messages")
-    assert not hasattr(SessionSnapshot, "messages")
-    assert not hasattr(SessionSnapshot, "working_messages")
-    assert not hasattr(SessionSnapshot, "replacements")
-    assert not hasattr(SessionSnapshot, "boundaries")
-    assert not hasattr(SessionSnapshot, "compact_boundary")
+    assert not hasattr(session_models, "SessionSnapshot")
+    assert not hasattr(Session, "snapshot")
+    assert not hasattr(Session, "context_snapshot")
+    assert not hasattr(Session, "tool_presentation")
 
     assert not hasattr(CompactionOutcome, "summary_message")
     assert not hasattr(CompactionOutcome, "content_replacements")
@@ -342,7 +341,8 @@ def test_conversation_and_context_attachment_ownership() -> None:
 
 
 def test_session_is_the_only_public_conversation_and_persistence_boundary() -> None:
-    assert not hasattr(Session, "conversation")
+    assert isinstance(Session.conversation, property)
+    assert isinstance(Session.context_entries, property)
     assert not hasattr(Session, "store")
     assert not hasattr(Session, "append")
     for source_path in _PACKAGE_ROOT.rglob("*.py"):

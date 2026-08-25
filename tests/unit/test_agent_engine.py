@@ -22,6 +22,7 @@ from my_code.agent.models import (
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
+from my_code.context.session import ContextRuntime
 from my_code.context.window import ContextWindow
 from my_code.conversation.attachments import FileMentionAttachment
 from my_code.conversation.models import (
@@ -140,20 +141,21 @@ class BoundEngine:
     ) -> None:
         self.engine = engine
         self.session = session
+        self.runtime = ContextRuntime()
 
     async def submit(self, turn_input: AgentTurnInput):
-        return await self.engine.submit(self.session, turn_input)
+        return await self.engine.submit(self.session, self.runtime, turn_input)
 
     def stream(self, turn_input: AgentTurnInput):
-        return self.engine.stream(self.session, turn_input)
+        return self.engine.stream(self.session, self.runtime, turn_input)
 
     @property
     def history(self):
-        return self.session.snapshot().history
+        return self.session.conversation
 
     @property
-    def context_snapshot(self):
-        return self.session.context_snapshot()
+    def context_state(self):
+        return self.session.context_planning_state()
 
 
 def _engine(
@@ -219,7 +221,7 @@ async def test_native_stream_lifecycle_is_not_replayed_from_final_output(
     assert sum(isinstance(event, AgentTextStarted) for event in events) == 1
     assert sum(isinstance(event, AgentTextDelta) for event in events) == 1
     assert sum(isinstance(event, AgentTextCompleted) for event in events) == 1
-    assistant = conversation.snapshot().history[-1]
+    assistant = conversation.conversation[-1]
     assert isinstance(assistant, AssistantMessage)
     assert assistant.content[-1] == TextContent("draft corrected")
     assert sum(isinstance(block, ReasoningContent) for block in assistant.content) == 1
@@ -235,8 +237,8 @@ async def test_engine_persists_human_and_assistant_messages(tmp_path: Path) -> N
 
     assert isinstance(result, AgentTurnSucceeded)
     assert result.text == "done"
-    assert isinstance(conversation.snapshot().working_set[0], HumanMessage)
-    assert isinstance(conversation.snapshot().working_set[1], AssistantMessage)
+    assert isinstance(conversation.context_entries[0], HumanMessage)
+    assert isinstance(conversation.context_entries[1], AssistantMessage)
     first_input = model.requests[0].input[0]
     assert first_input.content[0] == InputText("hello")  # type: ignore[union-attr]
 
@@ -264,12 +266,12 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
             if hasattr(item, "content")
             for block in item.content  # type: ignore[union-attr]
         )
-    delivered = conversation.snapshot().history[1]
+    delivered = conversation.conversation[1]
     assert isinstance(delivered, AttachmentMessage)
-    assert delivered.parent_uuid == conversation.snapshot().history[0].uuid
+    assert delivered.parent_uuid == conversation.conversation[0].uuid
     assert (
-        Session(tmp_path / "sessions", conversation.session_id).snapshot().history
-        == conversation.snapshot().history
+        Session(tmp_path / "sessions", conversation.session_id).conversation
+        == conversation.conversation
     )
 
 
@@ -285,7 +287,7 @@ async def test_replacement_session_does_not_inherit_attachment(
     await engine.submit(AgentTurnInput("inspect", (attachment,)))
     assert any(
         isinstance(message, AttachmentMessage)
-        for message in engine.context_snapshot.messages
+        for message in engine.context_state.context_entries
     )
 
     replacement = Session(
@@ -296,7 +298,7 @@ async def test_replacement_session_does_not_inherit_attachment(
 
     assert not any(
         isinstance(message, AttachmentMessage)
-        for message in engine.context_snapshot.messages
+        for message in engine.context_state.context_entries
     )
 
 
@@ -325,14 +327,14 @@ async def test_one_human_turn_can_contain_multiple_steps_and_one_tool_round(
     assert result.text == "finished"
     tool_messages = [
         message
-        for message in conversation.snapshot().working_set
+        for message in conversation.context_entries
         if isinstance(message, ToolResultBatch)
     ]
     assert len(tool_messages) == 1
     assert "hello" in tool_messages[0].content[0].content
     assert len(model.requests) == 2
     assert result.completed_steps == 2
-    history = conversation.snapshot().history
+    history = conversation.conversation
     assert [message.kind for message in history] == [
         "human",
         "assistant",
@@ -381,12 +383,12 @@ async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
         if isinstance(item, AssistantOutput)
         for block in item.content
     )
-    restored = Session(tmp_path / "sessions", conversation.session_id).snapshot()
-    persisted = restored.history[1]
+    restored = Session(tmp_path / "sessions", conversation.session_id)
+    persisted = restored.conversation[1]
     assert isinstance(persisted, AssistantMessage)
     assert persisted.content[0].kind == "reasoning"
     assert not hasattr(persisted.content[0], "continuation")
-    assert len(restored.replay_records) == 1
+    assert len(restored.context_planning_state().replay_records) == 1
 
 
 @pytest.mark.asyncio
@@ -445,7 +447,7 @@ async def test_explicit_max_steps_returns_structured_terminal_outcome(
         usage=TokenUsage(5, 2),
     )
     assert len(model.requests) == 2
-    assert isinstance(conversation.snapshot().history[-1], ToolResultBatch)
+    assert isinstance(conversation.conversation[-1], ToolResultBatch)
 
     continued = await engine.submit(AgentTurnInput("continue"))
 
@@ -515,7 +517,7 @@ async def test_engine_announces_conversation_only_after_tool_results_are_committ
     updates: list[AgentConversationUpdated] = []
     async for event in engine.stream(AgentTurnInput("test it")):
         if isinstance(event, AgentConversationUpdated):
-            assert isinstance(conversation.snapshot().history[-1], ToolResultBatch)
+            assert isinstance(conversation.conversation[-1], ToolResultBatch)
             updates.append(event)
 
     assert len(updates) == 1
@@ -598,4 +600,4 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
     updates = [event for event in events if isinstance(event, AgentConversationUpdated)]
     assert len(updates) == 1
     assert project_todos(engine.history).todos[0].content == "Run tests"
-    assert isinstance(conversation.snapshot().history[-1], ToolResultBatch)
+    assert isinstance(conversation.conversation[-1], ToolResultBatch)

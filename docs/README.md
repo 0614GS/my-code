@@ -17,7 +17,7 @@ ChatService ──> AppState
                    ├── McpRuntime ──> stdio connections + MCP tool sources
                    ├── SkillRuntime ──> SkillCatalog + Skill Tool
                    ├── active Session
-                   │      ├── canonical conversation + working set
+                   │      ├── canonical conversation + derived context entries
                    │      ├── ConversationEntry[]（含 AttachmentMessage）
                    │      ├── prompt/user-context cache + replay sidecar
                    │      └── private JSONL + externalized tool results

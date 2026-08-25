@@ -37,7 +37,7 @@
 - Context 是请求时投影，不维护第二份可写历史。
 - ToolCall 在执行前已经作为完整 AssistantMessage 提交。
 - 权限拒绝和取消路径仍产生闭合结果。
-- 活动 Session 的 prompt/user-context cache、结果绑定与 replay sidecar 不会跨恢复混用；durable Attachment 可恢复。
+- 活动 Session 与其 `ContextRuntime` 原子配对；prompt/user-context cache 不会跨恢复或 child run 混用。ToolResult presentation 内嵌并可恢复，provider replay 仍以 sidecar 关联；durable Attachment 可恢复。
 
 ## 与参考实现的关系
 

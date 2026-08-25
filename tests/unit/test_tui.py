@@ -27,6 +27,7 @@ from my_code.chat.permissions import PermissionHandler, PermissionRequest
 from my_code.chat.service import ChatService
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.config.providers import ProviderProtocol
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.file_mentions.models import PathSuggestion
 from my_code.features.todos.models import TodoItem
 from my_code.model.primitives import ReasoningPresentation
@@ -39,7 +40,7 @@ from my_code.permissions.models import (
 )
 from my_code.providers.manager import ProviderUpdate, ProviderView
 from my_code.sessions.catalog import SessionSummary
-from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.app import MyCodeApp, _format_context_usage, _render_context_status
 from my_code.tui.commands import SlashCommandRegistry
 from my_code.tui.provider_screen import ProviderScreen
@@ -111,7 +112,8 @@ class FakeRuntime:
             model="test-model",
             permission_mode="default",
             credential_source="stored",
-            working_message_count=len(self.prompts) * 2,
+            context_entry_count=len(self.prompts) * 2,
+            conversation_entry_count=len(self.prompts) * 2,
             todos=self.todos,
         )
 
@@ -124,7 +126,8 @@ class FakeRuntime:
             system_chars=50,
             tool_schema_chars=75,
             message_limit_chars=1000,
-            working_message_count=2,
+            context_entry_count=2,
+            conversation_entry_count=2,
             replacement_count=1,
             compact_count=self.compact_calls,
         )

@@ -42,7 +42,7 @@ AssistantMessage       # step 2
 
 ## Session 失败基线
 
-- 写入采用 persistence-first；写失败时内存 history、working set、replacement 和 compact boundary 不变。
+- 写入采用 persistence-first；写失败时内存 conversation、context entries、replacement 和 compact boundary 不变。
 - resume 必须先完整加载、校验并修复候选 Session；空 Session 或修复写入失败时，当前 Session 引用不变。
 - tool round 取消时，为尚未完成的 call 生成 error result，先提交闭合批次，再向调用方传播取消。
 
@@ -78,7 +78,7 @@ sidecar record 初始版本固定为 `schema_version: 1`，record type 为 `prov
 - 同一 `(entry_id, content_id, binding, scope)` 同时存在 sidecar 与 legacy payload 时，v1 sidecar 优先；内容冲突应报告恢复错误，不静默选择。
 - 未知的未来 sidecar schema version 必须 fail closed，并保持当前活动 Session 不变。
 - payload 由对应 provider adapter 校验；Session codec 只验证其为 JSON object 和关联键完整。
-- compact 提交必须把 summary/boundary 与 replay 裁剪作为一个 Session 事务；不得留下指向已移出 working set 且 scope 不再需要的 replay record。
+- compact 提交必须把 summary/boundary 与 replay 裁剪作为一个 Session 事务；不得留下指向已移出 context entries 且 scope 不再需要的 replay record。
 
 ## 阶段 0 退出检查
 

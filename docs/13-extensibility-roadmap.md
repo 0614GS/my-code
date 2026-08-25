@@ -121,7 +121,7 @@ Agent Tool ──> SubagentController ──> foreground child run
 | `ToolCatalogSnapshot` | Agent run/step | Step，不可变 | 否 |
 | MCP connection/client | `McpRuntime` | Application/server connection | 否 |
 | Skill index/cache | `SkillCatalog` | Application，可原子 reload | 否 |
-| Skill activation/listing | Parent Session Conversation | session / working set | 正文持久化，listing 仅内存 |
+| Skill activation/listing | Parent Session Conversation | session / context entries | 正文持久化，listing 仅内存 |
 | foreground parent Session | `AppState` | User session | 是，唯一权威 |
 | child Session | child `AgentRun` | Subagent task | 是，仅属于 child |
 | task state/result | `TaskSupervisor` | Application，首版不跨进程 | 否 |

@@ -3,7 +3,7 @@ import pytest
 from my_code.context.microcompact import MicrocompactPolicy
 from my_code.context.models import ContextOverflow
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSnapshot as ConversationSnapshot
+from my_code.context.session import ContextPlanningState, ContextRuntime
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import (
     AssistantMessage,
@@ -14,6 +14,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
     AssistantOutput,
@@ -56,7 +57,7 @@ def test_four_conversation_variants_project_exactly() -> None:
         parent_uuid=human.uuid,
     )
     results = ToolResultBatch(
-        (ToolResult("call", "value"),),
+        (ToolResult("call", "value", ToolResultPresentation("value")),),
         assistant.uuid,
         parent_uuid=assistant.uuid,
     )
@@ -83,7 +84,12 @@ def test_four_conversation_variants_project_exactly() -> None:
 def test_projection_rejects_orphan_and_unresolved_tool_protocol() -> None:
     with pytest.raises(ValueError, match="Orphan"):
         _planner().normalizer.normalize_transcript(
-            (ToolResultBatch((ToolResult("missing", "x"),), "assistant"),)
+            (
+                ToolResultBatch(
+                    (ToolResult("missing", "x", ToolResultPresentation("x")),),
+                    "assistant",
+                ),
+            )
         )
     with pytest.raises(ValueError, match="Unresolved"):
         _planner().normalizer.normalize_transcript(
@@ -99,16 +105,19 @@ def test_microcompact_replaces_model_view_without_mutating_history() -> None:
         parent_uuid=human.uuid,
     )
     results = ToolResultBatch(
-        (ToolResult("call", "x" * 100),), assistant.uuid, parent_uuid=assistant.uuid
+        (ToolResult("call", "x" * 100, ToolResultPresentation("result")),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
     )
     policy = MicrocompactPolicy(
         trigger_chars=50, target_chars=20, min_result_chars=10, keep_recent_results=0
     )
     plan = _planner(1_000, policy).plan(
-        ConversationSnapshot((human, assistant, results)), tools=()
+        ContextPlanningState((human, assistant, results)), ContextRuntime(), tools=()
     )
     assert len(plan.new_content_replacements) == 1
     assert results.content[0].content == "x" * 100
+    assert results.content[0].presentation == ToolResultPresentation("result")
     output = plan.request.input[-1]
     assert isinstance(output, ToolOutputs)
     result_content = output.results[0].content[0]

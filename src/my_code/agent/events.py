@@ -3,12 +3,13 @@
 from dataclasses import dataclass
 
 from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import (
     JsonObject,
     ReasoningDisclosure,
     ReasoningPresentation,
 )
-from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from my_code.tools.presentation import ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)

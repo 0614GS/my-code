@@ -10,14 +10,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from my_code.conversation.attachments import AttachmentPayload
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import PermissionUpdate, PermissionUpdateDestination
-from my_code.tools.presentation import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-    compact_text,
-)
+from my_code.tools.presentation import ToolUsePresentation, compact_text
 from my_code.workspace.local import Workspace
 
 if TYPE_CHECKING:

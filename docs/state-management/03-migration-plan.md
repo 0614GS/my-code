@@ -86,7 +86,7 @@
 - [x] 保持 `HumanMessage` 是唯一 turn 起点。
 - [x] 保持每个完整模型响应生成一个 `AssistantMessage`，即一个已完成 step 的事实。
 - [x] 将 `Conversation` 变为 `Session` 私有聚合实现。
-- [x] 让所有读取通过不可变 `SessionSnapshot`。
+- [x] 按消费者拆分为 `conversation`、`ContextPlanningState` 与 `AttachmentDerivationState`。
 - [x] 让所有写入通过 Session 语义提交方法。
 - [x] 隐藏 `SessionStore`、records、codec 和 JSONL 路径。
 - [x] 保持 persistence-first、memory-after-success 原子性。

@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from my_code.context.session import ContextSnapshot
+from my_code.context.session import AttachmentDerivationState
 from my_code.conversation.attachments import SkillListingAttachment, SkillListingEntry
 from my_code.conversation.models import AttachmentMessage
 from my_code.skills.catalog import SkillCatalogSnapshot
@@ -16,7 +16,9 @@ class SkillListingAttachmentSource:
     def __init__(self, catalog: SkillSnapshotSource) -> None:
         self._catalog = catalog
 
-    def __call__(self, snapshot: ContextSnapshot) -> tuple[SkillListingAttachment, ...]:
+    def __call__(
+        self, state: AttachmentDerivationState
+    ) -> tuple[SkillListingAttachment, ...]:
         catalog = self._catalog.snapshot()
         if not catalog.entries:
             return ()
@@ -24,7 +26,7 @@ class SkillListingAttachmentSource:
             isinstance(message, AttachmentMessage)
             and isinstance(message.payload, SkillListingAttachment)
             and message.payload.catalog_version == catalog.version
-            for message in snapshot.messages
+            for message in state.context_entries
         )
         if already_listed:
             return ()

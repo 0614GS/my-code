@@ -7,12 +7,12 @@
 | 数据 | 语义所有者 | 运行时维护者 | 是否持久化 |
 | --- | --- | --- | --- |
 | `HumanMessage`、`AssistantMessage`、`ToolCall`、`ToolResult`、summary | `conversation` | 当前 `Session` 内的 `Conversation` | 由 `sessions` 编码到 JSONL |
-| 活动父链、完整 history、compact 后 working set | `conversation` | `Conversation` | 由 message、replacement、boundary 重建 |
+| 活动父链、完整 conversation、compact 后 context entries | `conversation` | `Conversation` | 由 message、replacement、boundary 重建 |
 | JSONL record、schema version、codec、catalog | `sessions` | `SessionStore` | 是 |
 | session ID、metadata、提交顺序、恢复事务 | `sessions` | `Session` | 是 |
-| 工具历史展示快照 | `tools` 定义，`sessions` 编码和索引 | `Session` | 是，但不是模型对话事实 |
+| 工具历史展示快照 | `conversation` 定义，`sessions` 内嵌编码 | `ToolResult` | 是 |
 | request attachment | `context` | 单次 context build | 否 |
-| live-session attachment delivery | `context` | `ContextSession` | 否；resume 或切换 session 后清空 |
+| prompt/user-context cache | `context` | `ContextRuntime` | 否；resume 或切换 session 后清空 |
 | `ModelMessage`、`ModelRequest`、budget | `model` 定义，`context` 构造 | 单次模型请求 | 否 |
 | provider wire payload 与流解析状态 | `providers` | 单次 provider call | 否 |
 
@@ -20,18 +20,18 @@
 
 ```text
 JSONL --sessions 恢复--> Conversation
-ConversationSnapshot + ContextSession --context 投影--> ModelRequest
+ContextPlanningState + ContextRuntime --context 投影--> ModelRequest
 ModelRequest --providers 映射--> provider wire payload
 
 模型输出 --agent 转为对话事实--> Session.commit(...)
 Session --先写 JSONL，后更新内存--> Conversation
 ```
 
-`context` 不保存第二份 conversation messages，`model` 不保存历史，Provider 不接触 JSONL。`ModelRequest` 是一次调用的不可变快照；下一次调用必须从最新 `ConversationSnapshot` 重新构建。
+`context` 不保存第二份 conversation messages，`model` 不保存历史，Provider 不接触 JSONL。`ModelRequest` 是一次调用的不可变投影；下一次调用必须从最新 `ContextPlanningState` 重新构建。
 
 ## Session 与 Conversation
 
-`Conversation` 是纯内存聚合，拥有消息顺序、父链、working set、replacement 和 compact boundary 的不变量。它不进行文件 I/O。
+`Conversation` 是纯内存聚合，拥有消息顺序、父链、派生 context entries、replacement 和 compact boundary 的不变量。它不进行文件 I/O。
 
 `Session` 为一个 `Conversation` 增加 session ID、持久化提交和恢复生命周期。运行期间只能通过 `Session` 提交可恢复事实。阶段 3 已实现以下顺序：
 
@@ -42,13 +42,13 @@ Session --先写 JSONL，后更新内存--> Conversation
 
 活动 session 只在创建或显式 resume 时完整 hydration 一次，之后不把磁盘当作 refresh API。进程存活时，`Conversation` 是当前活动状态；JSONL 是跨进程恢复依据。
 
-恢复由 `sessions` 完成解析、schema 校验、父链重建、compact working set 重建和未闭合工具轮修复。`chat` 只有在目标 session 完整恢复成功后，才原子替换当前活动状态；失败时继续使用原 session。
+恢复由 `sessions` 完成解析、schema 校验、父链重建、compact context entries 重建和未闭合工具轮修复。`chat` 只有在目标 session 完整恢复成功后，才原子替换当前活动状态；失败时继续使用原 session。
 
 `ChatService` 使用一个不可变 session bundle 引用完成切换。一次切换同时替换：
 
 - `Session` 及其 `Conversation`；
-- `ContextSession`；
-- session 对应的工具结果目录和展示索引。
+- 新的 `ContextRuntime`；
+- session 对应的工具结果目录。
 
 工具结果目录不再通过 `ToolExecutor` 的隐藏 mutable binding 切换。Chat 将当前 bundle 的 `ToolResultStore` 随每次 turn 显式传给 Agent，再传到工具轮；候选 Session hydration 或历史投影失败时，旧 bundle 的三个引用均不改变。
 
@@ -56,12 +56,12 @@ Session --先写 JSONL，后更新内存--> Conversation
 
 ## Context 状态
 
-`context` 同时包含无状态投影逻辑和少量有明确生命周期的缓存，不能笼统标记为无状态。attachment delivery、user context cache 和 session-stable prompt cache 均由 `ContextSession` 持有。
+`context` 同时包含无状态投影逻辑和少量有明确生命周期的缓存。user context cache 和 session-stable prompt cache 均由 `ContextRuntime` 持有。
 
 - `ContextEngine`：无状态的 context 模块入口，组合规划与 compact；不保存 Session facts。
 - `ContextPlanner`：确定性地完成 conversation → model 投影、规范化、预算和裁剪。
-- `ContextSession`：每个活动 session 一个，记录已交付的 live-session attachments；锚点离开 working set 时裁剪，resume 或切换时销毁。
-- user context / prompt stable cache：static prompt 由 runtime `PromptRegistry` 缓存；session prompt 与 user context 由 `ContextSession` 缓存；request prompt 每次重新解析。
+- `ContextRuntime`：每个活动 session 或 child run 一个，持有 prompt 与 user-context cache；resume 或切换时销毁。
+- user context / prompt stable cache：static prompt 由 runtime `PromptRegistry` 缓存；session prompt 与 user context 由 `ContextRuntime` 缓存；request prompt 每次重新解析。
 - microcompact proposal 和 `ContextBudget`：单次 build 状态。proposal 必须由 `Session` 持久化后，才可用于实际模型请求。
 - full compact：`context` 生成候选 summary、replacement 和 boundary，`Session` 负责按固定顺序提交；摘要失败不得改变会话。
 
@@ -74,14 +74,14 @@ Todo 等 feature 状态从完整 Conversation history 投影，不维护第二�
 | `model` | 无运行时状态 | 仅不可变 DTO、事件和 `ModelClient` 能力 |
 | `conversation` | 有状态 | 一个 `Conversation` 对应一个已打开 Session；切换时整体替换 |
 | `sessions` | 有状态且可持久化 | Transcript 跨进程；`Session` 与 store 索引随打开的 session 存活 |
-| `context` | 部分有状态 | request 数据用完即弃；`ContextSession` 随活动 session；稳定缓存按声明失效 |
+| `context` | 部分有状态 | request 数据用完即弃；`ContextRuntime` 随活动 session/run；稳定缓存按声明失效 |
 | `agent` | turn 内有状态 | step、usage、流式块和取消清理只活到一次 turn 结束；turn 之间不保存会话 |
 | `tools` | 运行时配置为主 | Registry 在 bootstrap 后只读；ToolExecutor 持有 Workspace 与 runtime policy；执行状态属于单次调用；外置结果跟随 session 持久化 |
 | `permissions` | 有状态 | 当前 runtime 的 mode/rules 可变；持久规则由 `config` 落盘；结构化 request/decision 属于单次调用，pending approval 完成或取消即销毁 |
 | `providers` | 有状态 | 活动连接、SDK client、model capabilities 和切换锁活到 runtime 关闭或 provider 切换 |
 | `prompts` | 部分有状态 | static/runtime、session、request 三种缓存必须分别失效 |
 | `features` | 默认无独立状态 | Todos 等从 Conversation 投影；确需状态时必须在 feature 内声明生命周期 |
-| `chat` | 有状态 | 拥有当前活动 Session 引用、ContextSession、session/turn 互斥和前端 permission handler |
+| `chat` | 有状态 | 拥有当前活动 Session 与 ContextRuntime、session/turn 互斥和前端 permission handler |
 | `workspace` | 无会话状态 | 路径与 I/O service 可复用，操作状态只活到一次调用 |
 | `config`、`auth` | 可持久化 | 文件跨进程；解析后的快照在显式更新时替换 |
 | `tui`、`cli` | host 状态 | TUI widget/task 随界面；CLI 参数随进程，不成为核心事实 |
@@ -108,7 +108,7 @@ Todo 等 feature 状态从完整 Conversation history 投影，不维护第二�
 - 用户消息在首次模型调用前落盘；完整 assistant 响应在工具执行前落盘；
 - 工具取消、异常或进程中断后，恢复时能够补齐协议所需的错误结果；
 - resume 严格校验目标日志，失败不污染当前 session；
-- microcompact 与 full compact 可持久化并重建同一 working set；
+- microcompact 与 full compact 可持久化并重建同一 context entries；
 - live-session attachments 跨当前进程内的后续请求重放，但 resume 后不重放；
 - Todo 从完整会话事实恢复，reminder delivery 不进入 Transcript；
 - 历史工具展示优先使用持久快照，旧记录可退回当前 Tool 投影；

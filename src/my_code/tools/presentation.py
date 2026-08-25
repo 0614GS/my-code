@@ -11,13 +11,6 @@ class ToolUsePresentation:
     activity: str
 
 
-@dataclass(frozen=True, slots=True)
-class ToolResultPresentation:
-    summary: str
-    detail: str | None = None
-    truncated: bool = False
-
-
 def compact_text(value: str, max_chars: int = 140) -> str:
     normalized = " ".join(value.split())
     if len(normalized) <= max_chars:
@@ -40,7 +33,6 @@ def generic_tool_use_presentation(
 
 
 __all__ = [
-    "ToolResultPresentation",
     "ToolUsePresentation",
     "compact_text",
     "generic_tool_use_presentation",

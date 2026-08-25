@@ -11,13 +11,11 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.permissions.models import PermissionUpdate
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
-from my_code.tools.presentation import (
-    ToolResultPresentation,
-    ToolUsePresentation,
-)
+from my_code.tools.presentation import ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +90,7 @@ class ToolRoundExecutor:
                     yield ToolCallFinished(
                         call=call,
                         result=outcome.result,
-                        presentation=outcome.presentation,
+                        presentation=outcome.result.presentation,
                         new_attachments=outcome.new_attachments,
                         permission_updates=outcome.permission_updates,
                     )
@@ -107,16 +105,16 @@ class ToolRoundExecutor:
                 result = ToolResult(
                     tool_use_id=call.id,
                     content=message,
+                    presentation=self.executor.present_error(
+                        call, message, tools=active_tools
+                    ),
                     is_error=True,
-                )
-                presentation = self.executor.present_error(
-                    call, message, tools=active_tools
                 )
                 results.append(result)
                 yield ToolCallFinished(
                     call=call,
                     result=result,
-                    presentation=presentation,
+                    presentation=result.presentation,
                 )
             yield ToolRoundCompleted(
                 message=_tool_result_message(assistant_message, tuple(results)),
@@ -164,10 +162,10 @@ class ToolRoundExecutor:
                         result=ToolResult(
                             tool_use_id=call.id,
                             content=message,
+                            presentation=self.executor.present_error(
+                                call, message, tools=tools
+                            ),
                             is_error=True,
-                        ),
-                        presentation=self.executor.present_error(
-                            call, message, tools=tools
                         ),
                     )
 

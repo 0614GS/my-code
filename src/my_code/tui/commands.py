@@ -174,7 +174,8 @@ def _render_status(status: RuntimeStatus) -> str:
             f"Model: {status.model}",
             f"Permission mode: {status.permission_mode}",
             f"Authentication: {status.credential_source}",
-            f"Working messages: {status.working_message_count}",
+            f"Context entries: {status.context_entry_count}",
+            f"Conversation entries: {status.conversation_entry_count}",
         )
     )
 

@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 from my_code.chat.status import RuntimeStatus
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import ReasoningPresentation
-from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from my_code.tools.presentation import ToolUsePresentation
 
 type HistoryTextRole = Literal["user", "assistant", "system"]
 

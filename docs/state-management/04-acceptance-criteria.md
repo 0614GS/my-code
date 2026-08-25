@@ -20,7 +20,7 @@
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
 | O1 | 已验收 | AppState 是 workspace、active Session、runtime permissions 和 ProviderRuntime 的唯一活动入口。 |
-| O2 | 已验收 | Session 是 canonical conversation、working set、session context state、工具结果绑定和 replay sidecar 的唯一所有者。 |
+| O2 | 已验收 | Session 是 canonical conversation、派生 context entries、工具结果和 replay sidecar 的唯一所有者。 |
 | O3 | 已验收 | ChatService 不持有与 AppState 重复的 session/provider/permission 可变状态。 |
 | O4 | 已验收 | AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 均不持有 AppState。 |
 | O5 | 已验收 | Context、Agent、Chat 和 TUI 不保存第二份可写 conversation entries。 |
@@ -57,7 +57,7 @@
 
 | ID | 状态 | 验收行为 |
 | --- | --- | --- |
-| X1 | 已验收 | ContextEngine 对相同 SessionSnapshot、RequestContext 和 ModelEnvironment 产生确定性 ContextPlan。 |
+| X1 | 已验收 | ContextEngine 对相同 ContextPlanningState、ContextRuntime cache 和 ModelEnvironment 产生确定性 ContextPlan。 |
 | X2 | 已验收 | ContextEngine 不修改 Session，也不缓存 conversation history。 |
 | X3 | 已验收 | attachment、Todo reminder 和 user context 以 provider-neutral input item 注入。 |
 | X4 | 已验收 | Todo reminder 不写 canonical transcript；失败 TodoWrite 不覆盖最后成功的 Todo 状态。 |

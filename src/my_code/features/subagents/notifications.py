@@ -1,6 +1,6 @@
 """Single-delivery background task completion attachments."""
 
-from my_code.context.session import ContextSnapshot
+from my_code.context.session import AttachmentDerivationState
 from my_code.conversation.attachments import (
     AttachmentPayload,
     BackgroundTaskCompletionAttachment,
@@ -17,14 +17,12 @@ class BackgroundTaskNotificationSource:
         self.controller = controller
 
     def __call__(
-        self, snapshot: ContextSnapshot
+        self, state: AttachmentDerivationState
     ) -> tuple[BackgroundTaskCompletionAttachment, ...]:
-        owner_run_id = snapshot.session_id
-        if owner_run_id is None:
-            return ()
+        owner_run_id = state.session_id
         already_in_session = {
             message.payload.task_id
-            for message in (snapshot.session_history or snapshot.messages)
+            for message in state.conversation
             if isinstance(message, AttachmentMessage)
             and isinstance(message.payload, BackgroundTaskCompletionAttachment)
             and message.payload.owner_run_id == owner_run_id

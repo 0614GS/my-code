@@ -17,6 +17,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.state import CompactBoundary
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import ToolOutputs, UserInput
@@ -51,24 +52,28 @@ def test_tool_round_commits_results_before_durable_attachment(tmp_path: Path) ->
         allowed_tools=("Read",),
     )
     batch = ToolResultBatch(
-        (ToolResult("skill", "Launching skill: focused"),),
+        (
+            ToolResult(
+                "skill",
+                "Launching skill: focused",
+                ToolResultPresentation("Launching skill: focused"),
+            ),
+        ),
         assistant.uuid,
         parent_uuid=assistant.uuid,
     )
 
     _, attachments = session.commit_tool_round(batch, (activation,))
 
-    assert [entry.kind for entry in session.snapshot().history] == [
+    assert [entry.kind for entry in session.conversation] == [
         "human",
         "assistant",
         "tool_result_batch",
         "attachment",
     ]
     assert attachments[0].parent_uuid == batch.uuid
-    assert (
-        Session(tmp_path, SESSION_ID).snapshot().history == session.snapshot().history
-    )
-    model_input = ModelInputNormalizer().normalize((), session.snapshot().history)
+    assert Session(tmp_path, SESSION_ID).conversation == session.conversation
+    model_input = ModelInputNormalizer().normalize((), session.conversation)
     assert isinstance(model_input[-2], ToolOutputs)
     assert isinstance(model_input[-1], UserInput)
 
@@ -78,9 +83,11 @@ def test_tool_round_store_failure_leaves_memory_unchanged(
 ) -> None:
     session = Session(tmp_path, SESSION_ID)
     _, assistant = _tool_chain(session)
-    before = session.snapshot().history
+    before = session.conversation
     batch = ToolResultBatch(
-        (ToolResult("skill", "ok"),), assistant.uuid, parent_uuid=assistant.uuid
+        (ToolResult("skill", "ok", ToolResultPresentation("ok")),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
     )
 
     def fail(_: object) -> None:
@@ -89,7 +96,7 @@ def test_tool_round_store_failure_leaves_memory_unchanged(
     monkeypatch.setattr(session._store, "_append_records", fail)  # type: ignore[attr-defined]
     with pytest.raises(OSError, match="write failed"):
         session.commit_tool_round(batch, (FileMentionAttachment("a.txt", "content"),))
-    assert session.snapshot().history == before
+    assert session.conversation == before
 
 
 def test_compact_rebuilds_latest_invoked_skills_and_restores_grants(
@@ -121,13 +128,13 @@ def test_compact_rebuilds_latest_invoked_skills_and_restores_grants(
 
     session.commit_compaction((), summary, boundary)
 
-    invoked_message = session.snapshot().working_set[-1]
+    invoked_message = session.context_entries[-1]
     assert isinstance(invoked_message, AttachmentMessage)
     assert isinstance(invoked_message.payload, InvokedSkillsAttachment)
     assert invoked_message.payload.skills[0].instructions == "version two"
     restored = Session(tmp_path, SESSION_ID)
     policy = PermissionPolicy()
-    restore_skill_permissions(policy, restored.snapshot().history)
+    restore_skill_permissions(policy, restored.conversation)
     assert any(
         rule.tool_name == "Bash"
         and rule.rule_content == "git status"

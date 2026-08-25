@@ -16,6 +16,7 @@ from my_code.chat.service import ChatService
 from my_code.config.paths import MyCodePaths
 from my_code.config.settings import AgentSettings
 from my_code.context.models import CompactionOutcome
+from my_code.context.session import ContextRuntime
 from my_code.conversation.attachments import TodoReminderAttachment
 from my_code.conversation.models import (
     AssistantMessage,
@@ -27,13 +28,14 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.state import CompactBoundary
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
 from my_code.providers.manager import ProviderUpdate
 from my_code.sessions._store import SessionStore
 from my_code.sessions.session import Session
-from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from my_code.tools.presentation import ToolUsePresentation
 
 _CURRENT_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 _TARGET_SESSION_ID = "22222222-2222-2222-2222-222222222222"
@@ -46,9 +48,10 @@ class CapturingAgent:
     async def submit(
         self,
         session: Session,
+        runtime: ContextRuntime,
         turn_input: AgentTurnInput,
     ) -> AgentTurnSucceeded:
-        del session
+        del session, runtime
         self.turn_input = turn_input
         return AgentTurnSucceeded("done", 1, TokenUsage())
 
@@ -129,11 +132,11 @@ async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> 
 
     compact.assert_awaited_once()
     assert compact.await_args is not None
-    snapshot, trigger = compact.await_args.args
-    assert snapshot.messages == (user,)
+    state, trigger = compact.await_args.args
+    assert state.context_entries == (user,)
     assert trigger == "manual"
     assert active.compact_count == 1
-    assert active.snapshot().working_set == (summary,)
+    assert active.context_entries == (summary,)
     assert status.compact_count == 1
 
 
@@ -161,7 +164,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
 
     assert [session.session_id for session in sessions] == [_TARGET_SESSION_ID]
     assert resumed.status.session_id == _TARGET_SESSION_ID
-    assert resumed.status.working_message_count == 2
+    assert resumed.status.context_entry_count == 2
     assert resumed.history == (
         HistoryText("user", "historical question"),
         HistoryText("assistant", "historical answer"),
@@ -170,7 +173,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     assert runtime.state.session is not previous
     assert not any(
         isinstance(message, AttachmentMessage)
-        for message in runtime.state.session.context_snapshot().messages
+        for message in runtime.state.session.context_entries
     )
     assert runtime.state.session.session_id == _TARGET_SESSION_ID
 
@@ -180,14 +183,14 @@ async def test_provider_switch_does_not_modify_session_facts(tmp_path: Path) -> 
     runtime = _bootstrap_runtime(tmp_path)
     session = runtime.state.session
     session.append_human_message(HumanMessage("keep canonical facts"))
-    before = session.snapshot()
+    before = session.conversation
 
     status = await runtime.configure_provider(
         ProviderUpdate("other", "other-model", None)
     )
 
     assert runtime.state.session is session
-    assert session.snapshot() == before
+    assert session.conversation == before
     assert status.provider_id == "other"
     assert status.model == "other-model"
     assert runtime.state.provider.environment().descriptor.id == "other-model"
@@ -215,6 +218,7 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
             ToolResult(
                 "read-1",
                 "model-visible historical content",
+                snapshot,
             ),
         ),
         parent_uuid=assistant.uuid,
@@ -222,7 +226,7 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
     )
     store.append(user)
     store.append(assistant)
-    store.append_message(result, (("read-1", snapshot),))
+    store.append_message(result)
 
     resumed = await runtime.resume_session(_TARGET_SESSION_ID)
 
@@ -269,7 +273,7 @@ async def test_resume_projects_todos_into_runtime_status(tmp_path: Path) -> None
         parent_uuid=user.uuid,
     )
     result = ToolResultBatch(
-        content=(ToolResult("todo-1", "updated"),),
+        content=(ToolResult("todo-1", "updated", ToolResultPresentation("updated")),),
         parent_uuid=assistant.uuid,
         source_assistant_id=assistant.uuid,
     )
@@ -301,7 +305,7 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
     assert runtime.status().session_id == _CURRENT_SESSION_ID
     assert any(
         isinstance(message, AttachmentMessage)
-        for message in runtime.state.session.context_snapshot().messages
+        for message in runtime.state.session.context_entries
     )
 
 
@@ -319,9 +323,10 @@ async def test_stream_prevents_session_switch_until_turn_finishes(
         async def stream(
             self,
             session: Session,
+            context_runtime: ContextRuntime,
             turn_input: AgentTurnInput,
         ) -> AsyncIterator[AgentEvent]:
-            del session, turn_input
+            del session, context_runtime, turn_input
             started.set()
             await release.wait()
             yield AgentTurnSucceeded("done", 1, TokenUsage())

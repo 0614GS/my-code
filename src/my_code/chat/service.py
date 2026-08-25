@@ -108,6 +108,7 @@ class ChatService:
             attachments = await self._load_attachments(prompt)
             result = await self.agent.submit(
                 self.state.session,
+                self.state.context_runtime,
                 AgentTurnInput(prompt, attachments),
             )
         return _project_turn_outcome(result)
@@ -123,9 +124,10 @@ class ChatService:
             for item in loaded:
                 yield AttachmentLoaded(item.path, item.is_directory, item.display)
             session = self.state.session
-            previous_todos = project_todos(session.snapshot().history).todos
+            previous_todos = project_todos(session.conversation).todos
             async for event in self.agent.stream(
                 session,
+                self.state.context_runtime,
                 AgentTurnInput(prompt, tuple(item.attachment for item in loaded)),
             ):
                 if isinstance(event, AgentTextStarted):
@@ -147,7 +149,7 @@ class ChatService:
                         event.tool_use_id, event.is_error, event.presentation
                     )
                 elif isinstance(event, AgentConversationUpdated):
-                    current_todos = project_todos(session.snapshot().history).todos
+                    current_todos = project_todos(session.conversation).todos
                     if current_todos != previous_todos:
                         previous_todos = current_todos
                         yield TodoListUpdated(current_todos)
@@ -180,16 +182,17 @@ class ChatService:
             model=connection.model,
             permission_mode=self.state.permissions.policy.mode.value,
             credential_source=connection.credential_source.value,
-            working_message_count=session.message_count,
-            todos=project_todos(session.snapshot().history).todos,
+            context_entry_count=session.context_entry_count,
+            conversation_entry_count=session.conversation_entry_count,
+            todos=project_todos(session.conversation).todos,
         )
 
     def context_status(self) -> ContextStatus:
         session = self.state.session
         tools = self.state.tools.snapshot()
         budget = self.context.inspect(
-            session.context_snapshot(),
-            session,
+            session.context_planning_state(),
+            self.state.context_runtime,
             tools=tools.definitions,
         )
         return ContextStatus(
@@ -202,7 +205,8 @@ class ChatService:
             user_context_chars=budget.user_context_chars,
             attachment_chars=budget.attachment_chars,
             message_limit_chars=budget.message_limit_chars,
-            working_message_count=session.message_count,
+            context_entry_count=session.context_entry_count,
+            conversation_entry_count=session.conversation_entry_count,
             replacement_count=session.content_replacement_count,
             compact_count=session.compact_count,
             input_tokens=budget.input_tokens,
@@ -219,7 +223,7 @@ class ChatService:
         async with self.state.operation_lock():
             session = self.state.session
             outcome = await self.context.compact(
-                session.context_snapshot(),
+                session.context_planning_state(),
                 "manual",
             )
             session.commit_compaction(
@@ -293,7 +297,7 @@ class ChatService:
             session = Session.restore(self._project_state_dir, session_id)
             history = self._project_history(session)
             restore_skill_permissions(
-                self.state.permissions.policy, session.snapshot().history
+                self.state.permissions.policy, session.conversation
             )
             self.state.replace_session(session)
             return ResumedSession(status=self.status(), history=history)
@@ -312,13 +316,13 @@ class ChatService:
         tools = self.state.tools.snapshot()
         results = {
             block.tool_use_id: block
-            for message in session.snapshot().history
+            for message in session.conversation
             if isinstance(message, ToolResultBatch)
             for block in message.content
             if isinstance(block, ToolResult)
         }
         history: list[HistoryEntry] = []
-        for message in session.snapshot().history:
+        for message in session.conversation:
             if isinstance(message, HumanMessage):
                 history.append(HistoryText("user", message.content))
             elif isinstance(message, ConversationSummaryMessage):
@@ -336,9 +340,12 @@ class ChatService:
                                 tool_use_id=block.id,
                                 use=self.tool_executor.present_use(block, tools=tools),
                                 result=(
-                                    session.tool_presentation(block.id)
-                                    or self.tool_executor.present_stored_result(
-                                        block, result, tools=tools
+                                    result.presentation
+                                    if result is not None
+                                    else self.tool_executor.present_error(
+                                        block,
+                                        "Tool result is missing from the transcript.",
+                                        tools=tools,
                                     )
                                 ),
                                 is_error=result is None or result.is_error,

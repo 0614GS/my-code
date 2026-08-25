@@ -35,7 +35,7 @@ src/my_code/
 
 ### `conversation`
 
-拥有已发生的对话事实及内存中的 `Conversation` 聚合：消息、内容块、ToolCall、ToolResult、父链、working set、compact boundary 和 content replacement。
+拥有已发生的对话事实及内存中的 `Conversation` 聚合：消息、内容块、ToolCall、ToolResult、父链、派生 context entries、compact boundary 和 content replacement。
 
 它不读写 JSONL，不调用模型，不执行工具，也不包含 UI presentation 或临时 attachment delivery。
 

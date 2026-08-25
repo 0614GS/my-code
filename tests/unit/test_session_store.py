@@ -14,6 +14,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.primitives import (
     ProviderBinding,
@@ -31,7 +32,7 @@ from my_code.sessions._codec import (
 )
 from my_code.sessions._store import SessionStore
 from my_code.sessions.catalog import SessionCatalog
-from my_code.tools.presentation import ToolResultPresentation
+from my_code.sessions.session import Session
 
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -48,7 +49,9 @@ def _chain():
         parent_uuid=human.uuid,
     )
     results = ToolResultBatch(
-        (ToolResult("call", "value"),), assistant.uuid, parent_uuid=assistant.uuid
+        (ToolResult("call", "value", ToolResultPresentation("value")),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
     )
     summary = ConversationSummaryMessage("state", parent_uuid=results.uuid)
     return human, assistant, results, summary
@@ -60,7 +63,7 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
     for message in messages:
         store.append(message)
 
-    assert store.load().history == messages
+    assert store.load().conversation == messages
     entries = [json.loads(line) for line in store.path.read_text().splitlines()]
     assert [entry["type"] for entry in entries] == [
         "session_started",
@@ -124,7 +127,7 @@ def test_reasoning_assistant_content_round_trips_v5(tmp_path: Path) -> None:
     )
 
     loaded = store.load()
-    restored = loaded.history[1]
+    restored = loaded.conversation[1]
     assert isinstance(restored, AssistantMessage)
     assert not any(hasattr(block, "continuation") for block in restored.content)
     assert len(loaded.replay_records) == 1
@@ -197,7 +200,7 @@ def test_legacy_embedded_continuation_is_projected_to_replay_sidecar(
 
     loaded = SessionStore(tmp_path, SESSION_ID).load()
 
-    assert not hasattr(loaded.history[1].content[0], "continuation")  # type: ignore[union-attr]
+    assert not hasattr(loaded.conversation[1].content[0], "continuation")  # type: ignore[union-attr]
     assert loaded.replay_records[0].entry_id == assistant.uuid
     assert loaded.replay_records[0].state.payload["signature"] == "signed"
 
@@ -237,7 +240,7 @@ def test_restore_rejects_invalid_replay_association(
         SessionStore(tmp_path, SESSION_ID).load()
 
 
-def test_tool_presentation_is_a_session_add_on_not_a_conversation_fact(
+def test_tool_presentation_is_embedded_in_the_conversation_result(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -245,22 +248,113 @@ def test_tool_presentation_is_a_session_add_on_not_a_conversation_fact(
     presentation = ToolResultPresentation("Read x", "historical detail")
     store.append(human)
     store.append(assistant)
-    store.append_message(results, (("call", presentation),))
+    results = ToolResultBatch(
+        (ToolResult("call", "value", presentation),),
+        assistant.uuid,
+        uuid=results.uuid,
+        parent_uuid=assistant.uuid,
+        timestamp=results.timestamp,
+    )
+    store.append_message(results)
 
     loaded = store.load()
-    restored_result = loaded.history[-1]
+    restored_result = loaded.conversation[-1]
     assert isinstance(restored_result, ToolResultBatch)
-    assert not hasattr(restored_result.content[0], "presentation")
-    assert dict(loaded.tool_presentations) == {"call": presentation}
+    assert restored_result.content[0].presentation == presentation
     document = [json.loads(line) for line in store.path.read_text().splitlines()]
-    presentation_record = next(
-        entry for entry in document if entry["type"] == "tool_presentation"
-    )
     result_record = next(
         entry for entry in document if entry["type"] == "tool_result_batch"
     )
-    assert presentation_record["tool_use_id"] == "call"
-    assert "presentation" not in result_record["content"][0]
+    assert not any(entry["type"] == "tool_presentation" for entry in document)
+    assert result_record["content"][0]["presentation"]["summary"] == "Read x"
+
+
+def test_legacy_tool_presentation_sidecar_is_hydrated_into_result(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    human, assistant, results, _ = _chain()
+    store.append(human)
+    store.append(assistant)
+    store.append(results)
+    documents = [json.loads(line) for line in store.path.read_text().splitlines()]
+    result_index = next(
+        index
+        for index, item in enumerate(documents)
+        if item["type"] == "tool_result_batch"
+    )
+    del documents[result_index]["content"][0]["presentation"]
+    documents.insert(
+        result_index,
+        {
+            "type": "tool_presentation",
+            "schema_version": 5,
+            "tool_use_id": "call",
+            "presentation": {
+                "summary": "legacy summary",
+                "detail": None,
+                "truncated": False,
+            },
+        },
+    )
+    store.path.write_text(
+        "".join(json.dumps(item) + "\n" for item in documents), encoding="utf-8"
+    )
+
+    restored = SessionStore(tmp_path, SESSION_ID).load().conversation[-1]
+    assert isinstance(restored, ToolResultBatch)
+    assert restored.content[0].presentation.summary == "legacy summary"
+
+
+def test_missing_tool_presentation_uses_catalog_independent_fallback(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    human, assistant, results, _ = _chain()
+    store.append(human)
+    store.append(assistant)
+    store.append(results)
+    documents = [json.loads(line) for line in store.path.read_text().splitlines()]
+    result = next(item for item in documents if item["type"] == "tool_result_batch")
+    result["content"][0]["content"] = "\nfirst line\nsecond line"
+    del result["content"][0]["presentation"]
+    store.path.write_text(
+        "".join(json.dumps(item) + "\n" for item in documents), encoding="utf-8"
+    )
+
+    restored = SessionStore(tmp_path, SESSION_ID).load().conversation[-1]
+    assert isinstance(restored, ToolResultBatch)
+    assert restored.content[0].presentation.summary == "first line"
+
+
+def test_conflicting_embedded_and_sidecar_tool_presentations_are_rejected(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    human, assistant, results, _ = _chain()
+    store.append(human)
+    store.append(assistant)
+    store.append(results)
+    documents = [json.loads(line) for line in store.path.read_text().splitlines()]
+    documents.insert(
+        -1,
+        {
+            "type": "tool_presentation",
+            "schema_version": 5,
+            "tool_use_id": "call",
+            "presentation": {
+                "summary": "conflict",
+                "detail": None,
+                "truncated": False,
+            },
+        },
+    )
+    store.path.write_text(
+        "".join(json.dumps(item) + "\n" for item in documents), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="Conflicting embedded and sidecar"):
+        SessionStore(tmp_path, SESSION_ID).load()
 
 
 @pytest.mark.parametrize(
@@ -297,7 +391,7 @@ def test_parent_chain_idempotency_and_active_branch(tmp_path: Path) -> None:
     assert store.append(first) is True
     assert store.append(branch) is True
     assert store.append(branch) is False
-    assert store.load().history == (root, branch)
+    assert store.load().conversation == (root, branch)
     with pytest.raises(ValueError, match="Unknown parent"):
         store.append(HumanMessage("bad", parent_uuid="missing"))
 
@@ -317,7 +411,7 @@ def test_structured_records_and_compact_boundary_are_atomic(tmp_path: Path) -> N
     after_summary = store.load()
     assert after_summary.content_replacements == (replacement,)
     assert after_summary.compact_boundaries == (boundary,)
-    assert after_summary.working_set == (summary,)
+    assert Session(tmp_path, SESSION_ID).context_entries == (summary,)
 
 
 @pytest.mark.parametrize(

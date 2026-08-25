@@ -4,7 +4,7 @@ import re
 
 from my_code.context.models import CompactionOutcome
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSnapshot
+from my_code.context.session import ContextPlanningState
 from my_code.conversation.attachments import is_durable_attachment
 from my_code.conversation.models import (
     AttachmentMessage,
@@ -107,18 +107,18 @@ class ContextCompactor:
     async def compact(
         self,
         planner: ContextPlanner,
-        snapshot: ContextSnapshot,
+        state: ContextPlanningState,
         trigger: CompactTrigger,
     ) -> CompactionOutcome:
-        if not snapshot.messages:
+        if not state.context_entries:
             raise ValueError("Cannot compact an empty conversation")
 
-        model_messages, replacements = planner.compaction_view(snapshot)
+        model_messages, replacements = planner.compaction_view(state)
         summary_text, usage = await self.summarize(model_messages)
         parent_uuid = next(
             (
                 message.uuid
-                for message in reversed(snapshot.messages)
+                for message in reversed(state.context_entries)
                 if not isinstance(message, AttachmentMessage)
                 or is_durable_attachment(message.payload)
             ),
@@ -127,14 +127,14 @@ class ContextCompactor:
         if parent_uuid is None:
             raise ValueError("Compaction requires a durable causal parent")
         summary = ConversationSummaryMessage(
-            content=_build_continuation_context(summary_text, snapshot.messages),
+            content=_build_continuation_context(summary_text, state.context_entries),
             parent_uuid=parent_uuid,
         )
         boundary = CompactBoundary(
             parent_uuid=parent_uuid,
             summary_uuid=summary.uuid,
             trigger=trigger,
-            pre_compact_chars=max(1, planner.measure(snapshot.messages)),
+            pre_compact_chars=max(1, planner.measure(state.context_entries)),
         )
         return CompactionOutcome(
             replacements=replacements,

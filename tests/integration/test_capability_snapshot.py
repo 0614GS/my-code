@@ -10,6 +10,7 @@ from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
+from my_code.context.session import ContextRuntime
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import ToolResultBatch
 from my_code.model.events import (
@@ -161,13 +162,15 @@ async def test_catalog_update_during_step_waits_until_next_step(
         max_steps=3,
     )
 
-    outcome = await engine.submit(session, AgentTurnInput("use Dynamic"))
+    outcome = await engine.submit(
+        session, ContextRuntime(), AgentTurnInput("use Dynamic")
+    )
 
     assert outcome == AgentTurnSucceeded("finished", 2, TokenUsage(5, 2))
     assert original.executions == 1
     assert replacement.executions == 0
     assert model.requests[0].tools[0].description == "original definition"
     assert model.requests[1].tools[0].description == "replacement definition"
-    result_batch = session.snapshot().history[2]
+    result_batch = session.conversation[2]
     assert isinstance(result_batch, ToolResultBatch)
     assert result_batch.content[0].content == "executed:original"

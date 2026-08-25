@@ -10,6 +10,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
@@ -83,7 +84,9 @@ def test_scoped_continuations_are_selected_and_compaction_strips_them() -> None:
         parent_uuid=human.uuid,
     )
     results = ToolResultBatch(
-        (ToolResult("call", "ok"),), assistant.uuid, parent_uuid=assistant.uuid
+        (ToolResult("call", "ok", ToolResultPresentation("ok")),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
     )
     normalizer = ModelInputNormalizer()
     replay = (

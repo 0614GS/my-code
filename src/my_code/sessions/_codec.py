@@ -27,6 +27,10 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import (
+    ToolResultPresentation,
+    generic_tool_result_presentation,
+)
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.capabilities import ModelLimits
 from my_code.model.primitives import (
@@ -61,7 +65,6 @@ from my_code.sessions._records import (
     TranscriptEntry,
 )
 from my_code.sessions.models import SessionMetadata, SessionStart
-from my_code.tools.presentation import ToolResultPresentation
 
 
 class TranscriptDecodeError(ValueError):
@@ -183,12 +186,6 @@ def encode_metadata(metadata: SessionMetadata) -> JsonObject:
     )
 
 
-def encode_tool_presentation(
-    tool_use_id: str, presentation: ToolResultPresentation
-) -> JsonObject:
-    return entry_to_json(ToolPresentationRecord(tool_use_id, presentation))
-
-
 def encode_replay(record: ProviderReplayRecord) -> JsonObject:
     return entry_to_json(
         ProviderReplaySidecarRecord(record.entry_id, record.content_id, record.state)
@@ -256,7 +253,7 @@ def message_to_record(message: ConversationEntry) -> MessageRecord:
         )
     if isinstance(message, ToolResultBatch):
         result_content: tuple[ToolResultRecord, ...] = tuple(
-            ToolResultRecord(b.tool_use_id, b.content, b.is_error)
+            ToolResultRecord(b.tool_use_id, b.content, b.is_error, b.presentation)
             for b in message.content
         )
         return ToolResultBatchRecord(
@@ -305,7 +302,14 @@ def record_to_message(record: MessageRecord) -> ConversationEntry:
         )
     if isinstance(record, (LegacyToolResultBatchRecord, ToolResultBatchRecord)):
         result_content: tuple[ToolResult, ...] = tuple(
-            ToolResult(b.tool_use_id, b.content, b.is_error) for b in record.content
+            ToolResult(
+                b.tool_use_id,
+                b.content,
+                b.presentation
+                or generic_tool_result_presentation(b.content, b.is_error),
+                b.is_error,
+            )
+            for b in record.content
         )
         return ToolResultBatch(
             result_content,

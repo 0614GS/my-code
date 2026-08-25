@@ -1,5 +1,6 @@
 """TodoWrite tool owned and exported by the Todo feature."""
 
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
 from my_code.model.primitives import JsonObject
 from my_code.model.request import ModelToolDefinition
@@ -10,7 +11,6 @@ from my_code.permissions.models import (
     ToolPermissionResult,
 )
 from my_code.tools.base import Tool, ToolContext, ToolOutput
-from my_code.tools.presentation import ToolResultPresentation
 
 _DESCRIPTION = """Update the structured todo list for the current coding session.
 Use it for complex multi-step work, explicit user task lists, and newly discovered

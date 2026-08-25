@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,8 +16,10 @@ from my_code.conversation.models import (
     ConversationSummaryMessage,
     HumanMessage,
     ToolCall,
+    ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.primitives import ProviderReplayRecord, replay_content_id
 from my_code.sessions._codec import (
@@ -27,13 +30,11 @@ from my_code.sessions._codec import (
     encode_replacement,
     encode_replay,
     encode_start,
-    encode_tool_presentation,
     presentations_from_json,
     replay_from_json,
 )
 from my_code.sessions._records import ToolPresentationRecord
-from my_code.sessions.models import SessionMetadata, SessionSnapshot, SessionStart
-from my_code.tools.presentation import ToolResultPresentation
+from my_code.sessions.models import SessionMetadata, SessionStart
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -41,6 +42,14 @@ _UUID_PATTERN = re.compile(
 )
 
 __all__: list[str] = []
+
+
+@dataclass(frozen=True, slots=True)
+class _HydratedSession:
+    conversation: tuple[ConversationEntry, ...]
+    content_replacements: tuple[ContentReplacement, ...] = ()
+    compact_boundaries: tuple[CompactBoundary, ...] = ()
+    replay_records: tuple[ProviderReplayRecord, ...] = ()
 
 
 def is_session_id(value: str) -> bool:
@@ -91,14 +100,13 @@ class SessionStore:
         self._messages_by_id: dict[str, ConversationEntry] | None = None
         self._content_replacements: dict[str, ContentReplacement] | None = None
         self._boundaries: dict[str, CompactBoundary] | None = None
-        self._tool_presentations: dict[str, ToolResultPresentation] | None = None
         self._replay_records: dict[tuple[str, str], ProviderReplayRecord] | None = None
 
     @property
     def session_id(self) -> str:
         return self._session_id
 
-    def load(self) -> SessionSnapshot:
+    def load(self) -> _HydratedSession:
         """从 Transcript 完整恢复一次会话。
 
         这是初始化和显式 resume 边界，不是运行期 refresh API。
@@ -109,16 +117,16 @@ class SessionStore:
             self._messages_by_id = {}
             self._content_replacements = {}
             self._boundaries = {}
-            self._tool_presentations = {}
             self._replay_records = {}
-            return SessionSnapshot(history=(), working_set=())
+            return _HydratedSession(conversation=())
 
         messages: list[ConversationEntry] = []
         by_id: dict[str, ConversationEntry] = {}
         seen: set[str] = set()
         replacements: dict[str, ContentReplacement] = {}
         boundaries: dict[str, CompactBoundary] = {}
-        presentations: dict[str, ToolResultPresentation] = {}
+        embedded_presentations: dict[str, ToolResultPresentation] = {}
+        legacy_presentations: dict[str, ToolResultPresentation] = {}
         replay_records: dict[tuple[str, str], ProviderReplayRecord] = {}
         contents = self.path.read_bytes()
         lines = contents.splitlines(keepends=True)
@@ -154,7 +162,15 @@ class SessionStore:
                         "Start a new session to rebuild it."
                     )
                 for tool_use_id, presentation in presentations_from_json(raw):
-                    presentations[tool_use_id] = presentation
+                    previous_presentation = embedded_presentations.get(tool_use_id)
+                    if (
+                        previous_presentation is not None
+                        and previous_presentation != presentation
+                    ):
+                        raise ValueError(
+                            f"Conflicting embedded tool presentation: {tool_use_id}"
+                        )
+                    embedded_presentations[tool_use_id] = presentation
                 for replay in replay_from_json(raw):
                     key = (replay.entry_id, replay.content_id)
                     previous_replay = replay_records.get(key)
@@ -210,7 +226,15 @@ class SessionStore:
                     boundaries[boundary.id] = boundary
                     continue
                 if isinstance(entry, ToolPresentationRecord):
-                    presentations[entry.tool_use_id] = entry.presentation
+                    previous_presentation = legacy_presentations.get(entry.tool_use_id)
+                    if (
+                        previous_presentation is not None
+                        and previous_presentation != entry.presentation
+                    ):
+                        raise ValueError(
+                            f"Conflicting legacy tool presentation: {entry.tool_use_id}"
+                        )
+                    legacy_presentations[entry.tool_use_id] = entry.presentation
                     continue
                 if isinstance(entry, ProviderReplayRecord):
                     key = (entry.entry_id, entry.content_id)
@@ -275,23 +299,25 @@ class SessionStore:
             by_id[message.uuid] = message
         if start is None:
             raise ValueError(f"Transcript has no session_started entry: {self.path}")
+        messages = list(
+            _merge_tool_presentations(
+                tuple(messages), embedded_presentations, legacy_presentations
+            )
+        )
+        by_id = {message.uuid: message for message in messages}
         self._known_ids = seen
         self._messages_by_id = by_id
         self._content_replacements = replacements
         self._boundaries = boundaries
-        self._tool_presentations = presentations
         self._replay_records = replay_records
         self._metadata = metadata
         active = _active_parent_chain(messages, by_id)
         active_boundaries = _active_boundaries(boundaries, active)
-        return SessionSnapshot(
-            history=active,
-            working_set=_working_set(active, active_boundaries),
+        return _HydratedSession(
+            conversation=active,
             content_replacements=tuple(replacements.values()),
             compact_boundaries=active_boundaries,
-            tool_presentations=tuple(presentations.items()),
             replay_records=_validated_replay_records(replay_records, by_id),
-            metadata=metadata,
         )
 
     def append(self, message: ConversationEntry) -> bool:
@@ -302,10 +328,9 @@ class SessionStore:
     def append_message(
         self,
         message: ConversationEntry,
-        presentations: tuple[tuple[str, ToolResultPresentation], ...] = (),
         replay_records: tuple[ProviderReplayRecord, ...] = (),
     ) -> bool:
-        """Append a message and its optional presentation add-on records together."""
+        """Append a message and its provider replay records together."""
 
         self._ensure_loaded()
         assert self._known_ids is not None
@@ -345,15 +370,6 @@ class SessionStore:
         ):
             raise ValueError("Attachment cannot precede an assistant's tool results")
 
-        if presentations and not isinstance(message, ToolResultBatch):
-            raise ValueError("Tool presentations require a tool-results message")
-        result_ids = (
-            {item.tool_use_id for item in message.content}
-            if isinstance(message, ToolResultBatch)
-            else set()
-        )
-        if any(tool_use_id not in result_ids for tool_use_id, _ in presentations):
-            raise ValueError("Tool presentation does not match the result message")
         expected_content_ids = (
             {replay_content_id(index) for index, _ in enumerate(message.content)}
             if isinstance(message, AssistantMessage)
@@ -371,10 +387,6 @@ class SessionStore:
         records: list[object] = []
         if not self.path.exists():
             records.append(encode_start(self._start))
-        records.extend(
-            encode_tool_presentation(tool_use_id, presentation)
-            for tool_use_id, presentation in presentations
-        )
         records.extend(encode_replay(record) for record in replay_records)
         records.append(encode_message(message))
         previous = self._metadata
@@ -397,8 +409,6 @@ class SessionStore:
         # 仅在持久化写入成功后更新内存索引。
         self._known_ids.add(message.uuid)
         self._messages_by_id[message.uuid] = message
-        assert self._tool_presentations is not None
-        self._tool_presentations.update(presentations)
         assert self._replay_records is not None
         self._replay_records.update(
             ((record.entry_id, record.content_id), record) for record in replay_records
@@ -408,7 +418,6 @@ class SessionStore:
     def append_message_batch(
         self,
         messages: tuple[ConversationEntry, ...],
-        presentations: tuple[tuple[str, ToolResultPresentation], ...] = (),
     ) -> None:
         """Atomically append one protocol batch and its durable follow-up entries."""
 
@@ -446,24 +455,9 @@ class SessionStore:
             known.add(message.uuid)
             by_id[message.uuid] = message
 
-        first = messages[0]
-        if presentations and not isinstance(first, ToolResultBatch):
-            raise ValueError("Tool presentations require a leading result batch")
-        result_ids = (
-            {item.tool_use_id for item in first.content}
-            if isinstance(first, ToolResultBatch)
-            else set()
-        )
-        if any(tool_use_id not in result_ids for tool_use_id, _ in presentations):
-            raise ValueError("Tool presentation does not match the result message")
-
         records: list[object] = []
         if not self.path.exists():
             records.append(encode_start(self._start))
-        records.extend(
-            encode_tool_presentation(tool_use_id, presentation)
-            for tool_use_id, presentation in presentations
-        )
         records.extend(encode_message(message) for message in messages)
         previous = self._metadata
         metadata = SessionMetadata(
@@ -478,8 +472,6 @@ class SessionStore:
         self._known_ids = known
         self._messages_by_id = by_id
         self._metadata = metadata
-        assert self._tool_presentations is not None
-        self._tool_presentations.update(presentations)
 
     def set_title(self, title: str) -> bool:
         """Append last-wins explicit display metadata."""
@@ -694,19 +686,67 @@ def _active_boundaries(
     )
 
 
-def _working_set(
-    history: tuple[ConversationEntry, ...],
+def _context_entries(
+    conversation: tuple[ConversationEntry, ...],
     boundaries: tuple[CompactBoundary, ...],
 ) -> tuple[ConversationEntry, ...]:
     """从最后一个有效 compact summary 开始构造模型工作集。"""
 
     if not boundaries:
-        return history
+        return conversation
     summary_uuid = boundaries[-1].summary_uuid
-    for index, message in enumerate(history):
+    for index, message in enumerate(conversation):
         if message.uuid == summary_uuid:
-            return history[index:]
-    return history
+            return conversation[index:]
+    return conversation
+
+
+def _merge_tool_presentations(
+    conversation: tuple[ConversationEntry, ...],
+    embedded: dict[str, ToolResultPresentation],
+    legacy: dict[str, ToolResultPresentation],
+) -> tuple[ConversationEntry, ...]:
+    result_ids = {
+        result.tool_use_id
+        for entry in conversation
+        if isinstance(entry, ToolResultBatch)
+        for result in entry.content
+    }
+    orphaned = (embedded.keys() | legacy.keys()) - result_ids
+    if orphaned:
+        raise ValueError(
+            f"Tool presentation references missing result: {sorted(orphaned)[0]}"
+        )
+    for tool_use_id in embedded.keys() & legacy.keys():
+        if embedded[tool_use_id] != legacy[tool_use_id]:
+            raise ValueError(
+                f"Conflicting embedded and sidecar tool presentation: {tool_use_id}"
+            )
+    merged = embedded | legacy
+    hydrated: list[ConversationEntry] = []
+    for entry in conversation:
+        if not isinstance(entry, ToolResultBatch):
+            hydrated.append(entry)
+            continue
+        results = tuple(
+            ToolResult(
+                result.tool_use_id,
+                result.content,
+                merged.get(result.tool_use_id, result.presentation),
+                result.is_error,
+            )
+            for result in entry.content
+        )
+        hydrated.append(
+            ToolResultBatch(
+                results,
+                entry.source_assistant_id,
+                entry.uuid,
+                entry.parent_uuid,
+                entry.timestamp,
+            )
+        )
+    return tuple(hydrated)
 
 
 def _validated_replay_records(

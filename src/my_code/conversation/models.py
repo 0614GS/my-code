@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from my_code.conversation.attachments import AttachmentPayload
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.primitives import new_id, utc_now
 from my_code.model.primitives import (
     JsonObject,
@@ -48,12 +49,15 @@ class ReasoningContent:
 class ToolResult:
     tool_use_id: str
     content: str
+    presentation: ToolResultPresentation
     is_error: bool = False
     kind: Literal["tool_result"] = field(default="tool_result", init=False)
 
     def __post_init__(self) -> None:
         if not self.tool_use_id:
             raise ValueError("Tool result id must not be empty")
+        if not isinstance(self.presentation, ToolResultPresentation):
+            raise TypeError("Tool results require a presentation")
 
 
 @dataclass(frozen=True, slots=True)

@@ -13,6 +13,7 @@ from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
+from my_code.context.session import ContextRuntime
 from my_code.context.window import ContextWindow
 from my_code.model.events import (
     ModelStreamEvent,
@@ -213,7 +214,9 @@ async def test_activation_adds_durable_body_without_narrowing_tools(
     )
     engine, session, runtime, echo, other = await _engine(tmp_path, model)
 
-    outcome = await engine.submit(session, AgentTurnInput("use a focused skill"))
+    outcome = await engine.submit(
+        session, ContextRuntime(), AgentTurnInput("use a focused skill")
+    )
 
     assert isinstance(outcome, AgentTurnSucceeded)
     assert body not in model.requests[0].system_prompt.text
@@ -255,7 +258,7 @@ async def test_reload_during_request_only_changes_next_step(tmp_path: Path) -> N
     engine, session, runtime, echo, _ = await _engine(tmp_path, model)
     runtime_ref.append(runtime)
 
-    await engine.submit(session, AgentTurnInput("reload safely"))
+    await engine.submit(session, ContextRuntime(), AgentTurnInput("reload safely"))
 
     first_skill = next(tool for tool in model.requests[0].tools if tool.name == "Skill")
     second_skill = next(

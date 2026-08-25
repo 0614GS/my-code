@@ -6,7 +6,7 @@ import pytest
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSnapshot as ConversationSnapshot
+from my_code.context.session import ContextPlanningState
 from my_code.conversation.models import AssistantMessage, HumanMessage, TextContent
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
 from my_code.model.primitives import TokenUsage
@@ -79,7 +79,7 @@ async def test_compaction_service_rejects_invalid_summary_contract(
 
 
 class _Context:
-    def compaction_view(self, snapshot: ConversationSnapshot):  # type: ignore[no-untyped-def]
+    def compaction_view(self, state: ContextPlanningState):  # type: ignore[no-untyped-def]
         return (UserInput((InputText("model view"),)),), ()
 
     def measure(self, messages):  # type: ignore[no-untyped-def]
@@ -98,7 +98,7 @@ async def test_context_engine_appends_recent_real_user_messages_verbatim() -> No
         "Correction: preserve this wording exactly.",
         parent_uuid=assistant.uuid,
     )
-    snapshot = ConversationSnapshot((first, assistant, latest))
+    state = ContextPlanningState((first, assistant, latest))
     model = _CompletionModel(
         "<analyze>complete</analyze><summary>Generated operational state.</summary>"
     )
@@ -107,7 +107,7 @@ async def test_context_engine_appends_recent_real_user_messages_verbatim() -> No
         ContextCompactor(model),
     )
 
-    outcome = await context.compact(snapshot, "manual")
+    outcome = await context.compact(state, "manual")
 
     assert outcome.summary.content.startswith(
         "This session continues from an earlier conversation\nthat was compacted."

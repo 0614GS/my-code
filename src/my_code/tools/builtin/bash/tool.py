@@ -1,5 +1,6 @@
 """Bash tool adapter."""
 
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
@@ -22,7 +23,7 @@ from my_code.tools.builtin.bash.permissions import (
     matching_rule,
 )
 from my_code.tools.builtin.bash.process import execute_bash
-from my_code.tools.presentation import ToolResultPresentation, compact_text
+from my_code.tools.presentation import compact_text
 from my_code.tools.validation import optional_int, required_string
 
 

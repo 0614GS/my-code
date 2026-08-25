@@ -1,15 +1,11 @@
 """Session identity, metadata, and hydrated persistence state."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-from my_code.conversation.models import ConversationEntry
-from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.capabilities import ModelLimits
-from my_code.model.primitives import ProviderReplayRecord
-from my_code.tools.presentation import ToolResultPresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,19 +60,6 @@ class SessionMetadata:
                 raise ValueError(f"{name} must be non-empty or null")
 
 
-@dataclass(frozen=True, slots=True)
-class SessionSnapshot:
-    history: tuple[ConversationEntry, ...]
-    working_set: tuple[ConversationEntry, ...]
-    content_replacements: tuple[ContentReplacement, ...] = field(default_factory=tuple)
-    compact_boundaries: tuple[CompactBoundary, ...] = field(default_factory=tuple)
-    tool_presentations: tuple[tuple[str, ToolResultPresentation], ...] = field(
-        default_factory=tuple
-    )
-    replay_records: tuple[ProviderReplayRecord, ...] = field(default_factory=tuple)
-    metadata: SessionMetadata | None = None
-
-
 def _timestamp(value: str, name: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value)
@@ -89,6 +72,5 @@ def _timestamp(value: str, name: str) -> datetime:
 
 __all__ = [
     "SessionMetadata",
-    "SessionSnapshot",
     "SessionStart",
 ]

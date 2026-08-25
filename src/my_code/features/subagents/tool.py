@@ -3,6 +3,7 @@
 import json
 
 from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.models import SubagentParentContext, SubagentSpec
 from my_code.model.primitives import JsonObject
@@ -21,7 +22,6 @@ from my_code.tools.base import (
     ToolInputError,
     ToolOutput,
 )
-from my_code.tools.presentation import ToolResultPresentation
 
 
 class SubagentTool(Tool):

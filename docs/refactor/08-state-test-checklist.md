@@ -7,7 +7,7 @@
 | ID | 必须验证的行为 | 当前证据或落地阶段 |
 | --- | --- | --- |
 | R1 | JSONL 严格校验 schema、首记录、UUID、父链和重复项 | 已有 `test_session_store.py`；阶段 3 迁入 Session 测试 |
-| R2 | 恢复重建完整 history、活动父链、replacement、compact boundary 和同一 working set | 阶段 3 已由 Conversation/Session 组合测试覆盖 |
+| R2 | 恢复重建完整 conversation、活动父链、replacement、compact boundary 和同一 context entries | 阶段 3 已由 Conversation/Session 组合测试覆盖 |
 | R3 | 尾部未闭合 ToolCall 恢复为错误 ToolResult，且修复先落盘 | 已有 `test_resume_repairs_trailing_tool_calls` |
 | R4 | 目标为空、损坏或修复写入失败时，当前 Session bundle 不变 | 阶段 3 覆盖 Session 恢复失败；阶段 6 覆盖 Chat 完整 bundle 不变 |
 | R5 | Todo 从完整 history 投影，compact 前的最后有效状态仍可恢复 | 已有 Todo history/compact 投影测试 |
@@ -33,10 +33,10 @@
 | I1 | 消息、replacement 和 boundary 都先写盘后改内存；写盘失败不推进内存 | 阶段 3 已覆盖消息与整组 compact 提交失败 |
 | I2 | 用户消息在首次模型调用前落盘，完整 assistant 在工具执行前落盘 | 已有 Agent engine 测试；阶段 6 保留 |
 | I3 | request attachment、预算、microcompact proposal 和 provider 流状态在调用后丢弃 | 阶段 5 的无状态 ContextPlanner 与逐次 attachment 测试覆盖；provider 流状态在阶段 2 验证 |
-| I4 | live-session delivery 跨当前 session 后续 turn 重放，锚点离开 working set 后裁剪 | 跨 turn 与 compact 裁剪已有 |
+| I4 | live-session delivery 跨当前 session 后续 turn 重放，锚点离开 context entries 后裁剪 | 跨 turn 与 compact 裁剪已有 |
 | I5 | resume、switch 或销毁 ContextSession 时清空 live-session delivery 和 session cache | 阶段 5 覆盖 ContextSession cache；阶段 6 覆盖完整 bundle 替换 |
 | I6 | user context/prompt cache 按 runtime、session、request 生命周期分别失效 | 阶段 5 已覆盖 static、session 和 request 三种失效边界 |
-| I7 | full compact 摘要失败不改变 Session；成功后重新计算 working set 与派生状态 | 阶段 3–5 已覆盖失败无提交、成功重建与 reminder 派生 |
+| I7 | full compact 摘要失败不改变 Session；成功后重新计算 context entries 与派生状态 | 阶段 3–5 已覆盖失败无提交、成功重建与 reminder 派生 |
 | I8 | 工具取消、异常和进程恢复都闭合已提交 ToolCall，不留下非法模型协议 | 阶段 4 取消/异常与阶段 3/6 恢复组合测试覆盖 |
 | I9 | pending approval 与 turn 状态在完成或取消后销毁；runtime permission policy 继续存活 | 阶段 4 permission 取消与阶段 6 无状态 Agent 边界覆盖 |
 | I10 | Todo reminder delivery 不写 Transcript，失败 TodoWrite 不覆盖最后成功状态 | 已有直接测试 |

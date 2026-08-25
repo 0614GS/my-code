@@ -17,6 +17,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.primitives import (
     ProviderBinding,
@@ -28,7 +29,6 @@ from my_code.model.primitives import (
 )
 from my_code.model.request import AssistantOutput, ModelReasoningBlock
 from my_code.sessions._store import SessionStore
-from my_code.sessions.models import SessionSnapshot
 from my_code.sessions.session import Session
 
 
@@ -46,7 +46,7 @@ def test_append_is_persisted_then_applied_without_runtime_reload(
     load = SessionStore.load
     calls = 0
 
-    def count(store: SessionStore) -> SessionSnapshot:
+    def count(store: SessionStore):  # type: ignore[no-untyped-def]
         nonlocal calls
         calls += 1
         return load(store)
@@ -55,8 +55,8 @@ def test_append_is_persisted_then_applied_without_runtime_reload(
     session = _session(tmp_path, "1")
     message = HumanMessage("hello")
     session.append_human_message(message)
-    assert session.snapshot().history == (message,)
-    assert session.snapshot().working_set == (message,)
+    assert session.conversation == (message,)
+    assert session.context_entries == (message,)
     assert calls == 1
 
 
@@ -86,7 +86,12 @@ def test_session_externalizes_large_tool_result_during_commit(tmp_path: Path) ->
     session.append_assistant_message(assistant)
 
     persisted = session.append_tool_results(
-        (ToolResult("large-call", "x" * 20_001),), assistant
+        (
+            ToolResult(
+                "large-call", "x" * 20_001, ToolResultPresentation("large result")
+            ),
+        ),
+        assistant,
     )
 
     result = persisted.content[0]
@@ -94,10 +99,7 @@ def test_session_externalizes_large_tool_result_during_commit(tmp_path: Path) ->
     result_files = tuple((tmp_path / session.session_id / "tool-results").iterdir())
     assert len(result_files) == 1
     assert result_files[0].read_text(encoding="utf-8") == "x" * 20_001
-    assert (
-        Session.restore(tmp_path, session.session_id).snapshot().history[-1]
-        == persisted
-    )
+    assert Session.restore(tmp_path, session.session_id).conversation[-1] == persisted
 
 
 def test_failed_tool_result_commit_rolls_back_externalized_file_and_memory(
@@ -112,7 +114,7 @@ def test_failed_tool_result_commit_rolls_back_externalized_file_and_memory(
     )
     session.append_human_message(human)
     session.append_assistant_message(assistant)
-    before = session.snapshot()
+    before = session.conversation
 
     def fail(_store: SessionStore, _records: object) -> None:
         raise OSError("disk full")
@@ -120,10 +122,17 @@ def test_failed_tool_result_commit_rolls_back_externalized_file_and_memory(
     monkeypatch.setattr(SessionStore, "_append_records", fail)
     with pytest.raises(OSError, match="disk full"):
         session.append_tool_results(
-            (ToolResult("large-call", "x" * 20_001),), assistant
+            (
+                ToolResult(
+                    "large-call",
+                    "x" * 20_001,
+                    ToolResultPresentation("large result"),
+                ),
+            ),
+            assistant,
         )
 
-    assert session.snapshot() == before
+    assert session.conversation == before
     result_dir = tmp_path / session.session_id / "tool-results"
     assert not result_dir.exists() or not tuple(result_dir.iterdir())
 
@@ -156,12 +165,12 @@ def test_restore_repairs_trailing_tool_calls_before_returning(tmp_path: Path) ->
         ),
     )
     resumed = Session.restore(tmp_path, target.session_id)
-    history = resumed.snapshot().history
+    history = resumed.conversation
     assert isinstance(history[-1], ToolResultBatch)
     assert history[-1].content[0].is_error is True
-    snapshot = resumed.context_snapshot()
+    state = resumed.context_planning_state()
     request_messages = ModelInputNormalizer().normalize(
-        (), history, snapshot.replay_records
+        (), history, state.replay_records
     )
     assert any(
         isinstance(block, ModelReasoningBlock)
@@ -199,7 +208,7 @@ def test_empty_or_repair_failure_does_not_replace_current_session(
     with pytest.raises(OSError, match="disk full"):
         Session.restore(tmp_path, target.session_id)
     assert active is current
-    assert active.snapshot().history[-1] == current.snapshot().history[-1]
+    assert active.conversation[-1] == current.conversation[-1]
 
 
 def test_failed_persistence_does_not_change_conversation(
@@ -214,7 +223,7 @@ def test_failed_persistence_does_not_change_conversation(
     monkeypatch.setattr(SessionStore, "_append_records", fail)
     with pytest.raises(OSError, match="disk full"):
         session.append_human_message(HumanMessage("not durable"))
-    assert session.snapshot().history == ()
+    assert session.conversation == ()
 
 
 def test_compaction_is_persisted_before_conversation_changes(
@@ -234,21 +243,20 @@ def test_compaction_is_persisted_before_conversation_changes(
     monkeypatch.setattr(SessionStore, "_append_records", fail)
     with pytest.raises(OSError, match="disk full"):
         session.commit_compaction((replacement,), summary, boundary)
-    snapshot = session.snapshot()
-    assert snapshot.history == (human,)
-    assert snapshot.content_replacements == ()
-    assert snapshot.compact_boundaries == ()
+    assert session.conversation == (human,)
+    assert session.context_planning_state().content_replacements == ()
+    assert session.compact_count == 0
 
 
-def test_compaction_updates_working_set_without_reload(tmp_path: Path) -> None:
+def test_compaction_updates_context_entries_without_reload(tmp_path: Path) -> None:
     session = _session(tmp_path, "9")
     human = HumanMessage("hello")
     session.append_human_message(human)
     summary = ConversationSummaryMessage("summary", parent_uuid=human.uuid)
     boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5)
     session.commit_compaction((), summary, boundary)
-    assert session.snapshot().history == (human, summary)
-    assert session.snapshot().working_set == (summary,)
+    assert session.conversation == (human, summary)
+    assert session.context_entries == (summary,)
 
 
 def test_compaction_prunes_replay_from_context_but_preserves_recoverable_sidecar(
@@ -275,8 +283,8 @@ def test_compaction_prunes_replay_from_context_but_preserves_recoverable_sidecar
 
     session.commit_compaction((), summary, boundary)
 
-    assert session.snapshot().replay_records == (replay,)
-    assert session.context_snapshot().replay_records == ()
+    assert SessionStore(tmp_path, session.session_id).load().replay_records == (replay,)
+    assert session.context_planning_state().replay_records == ()
 
 
 def test_transient_attachment_is_memory_only_and_skips_parent_chain(
@@ -290,9 +298,9 @@ def test_transient_attachment_is_memory_only_and_skips_parent_chain(
         (TextContent("done"),), TokenUsage(), parent_uuid=session.causal_head_uuid
     )
     session.append_assistant_message(assistant)
-    assert session.snapshot().history == (human, reminder, assistant)
+    assert session.conversation == (human, reminder, assistant)
     assert assistant.parent_uuid == human.uuid
-    assert Session(tmp_path, session.session_id).snapshot().history == (
+    assert Session(tmp_path, session.session_id).conversation == (
         human,
         assistant,
     )
@@ -309,8 +317,8 @@ def test_external_transcript_append_is_visible_only_after_new_session(
         (TextContent("external"),), TokenUsage(), parent_uuid=human.uuid
     )
     SessionStore(tmp_path, session_id).append(external)
-    assert session.snapshot().history == (human,)
-    assert Session(tmp_path, session_id).snapshot().history == (human, external)
+    assert session.conversation == (human,)
+    assert Session(tmp_path, session_id).conversation == (human, external)
 
 
 def test_durable_attachment_round_trips_in_parent_chain(tmp_path: Path) -> None:
@@ -319,7 +327,7 @@ def test_durable_attachment_round_trips_in_parent_chain(tmp_path: Path) -> None:
     session.append_human_message(human)
     attachment = session.append_attachment(FileMentionAttachment("a.txt", "first"))
     assert attachment.parent_uuid == human.uuid
-    assert Session(tmp_path, session.session_id).snapshot().history == (
+    assert Session(tmp_path, session.session_id).conversation == (
         human,
         attachment,
     )

@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSnapshot as ConversationSnapshot
+from my_code.context.session import (
+    AttachmentDerivationState,
+    ContextPlanningState,
+    ContextRuntime,
+)
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import (
     AssistantMessage,
@@ -14,6 +18,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.codec import parse_todo_input
 from my_code.features.todos.projection import project_todos
 from my_code.features.todos.reminder import TodoReminderAttachmentSource
@@ -77,7 +82,9 @@ def _history_after_todo(
         HumanMessage("work"),
         assistant,
         ToolResultBatch(
-            content=(ToolResult("todo-1", "updated"),),
+            content=(
+                ToolResult("todo-1", "updated", ToolResultPresentation("updated")),
+            ),
             source_assistant_id=assistant.uuid,
         ),
     ]
@@ -130,7 +137,7 @@ async def test_todo_write_executes_without_permission_prompt(tmp_path: Path) -> 
 
     assert not outcome.result.is_error
     assert "modified successfully" in outcome.result.content
-    assert outcome.presentation.summary == "Updated 1 todo(s)"
+    assert outcome.result.presentation.summary == "Updated 1 todo(s)"
 
 
 @pytest.mark.asyncio
@@ -168,7 +175,14 @@ def test_failed_todo_write_does_not_replace_last_successful_state() -> None:
         (
             failed,
             ToolResultBatch(
-                content=(ToolResult("todo-failed", "invalid", is_error=True),),
+                content=(
+                    ToolResult(
+                        "todo-failed",
+                        "invalid",
+                        ToolResultPresentation("invalid"),
+                        is_error=True,
+                    ),
+                ),
                 source_assistant_id=failed.uuid,
             ),
         )
@@ -183,43 +197,41 @@ def test_failed_todo_write_does_not_replace_last_successful_state() -> None:
 def test_todo_reminder_uses_independent_write_and_delivery_thresholds() -> None:
     source = TodoReminderAttachmentSource()
     history10 = _history_after_todo(10)
-    assert source(ConversationSnapshot(_history_after_todo(9))) == ()
+    history9 = _history_after_todo(9)
+    assert source(AttachmentDerivationState("session", history9, history9)) == ()
 
-    attachments = source(ConversationSnapshot(history10, session_history=history10))
+    attachments = source(AttachmentDerivationState("session", history10, history10))
     assert len(attachments) == 1
     assert "1. [in_progress] Run tests" in attachments[0].content
     assert "NEVER mention this reminder" in attachments[0].content
 
     reminder = AttachmentMessage(attachments[0], parent_uuid=history10[-1].uuid)
     history11 = history10 + (reminder, _assistant(TextContent("call 11")))
-    assert source(ConversationSnapshot(history11, session_history=history11)) == ()
+    assert source(AttachmentDerivationState("session", history11, history11)) == ()
 
     history20 = (
         history10
         + (reminder,)
         + tuple(_assistant(TextContent(f"later {index}")) for index in range(10))
     )
-    assert len(source(ConversationSnapshot(history20, session_history=history20))) == 1
+    assert len(source(AttachmentDerivationState("session", history20, history20))) == 1
 
     # reminder 不持久化：恢复时没有 delivery history，已经超过阈值会立即提醒，
     # 而不是等到 turns_since_write 恰好能被 10 整除。
     history15 = history10 + tuple(
         _assistant(TextContent(f"resumed {index}")) for index in range(5)
     )
-    assert len(source(ConversationSnapshot(history15, session_history=history15))) == 1
+    assert len(source(AttachmentDerivationState("session", history15, history15))) == 1
 
 
 def test_todo_reminder_uses_full_session_history_after_compaction() -> None:
     history = _history_after_todo(10)
-    compact_working_set = tuple(
+    compact_entries = tuple(
         _assistant(TextContent(f"post-compact {index}")) for index in range(10)
     )
 
     attachments = TodoReminderAttachmentSource()(
-        ConversationSnapshot(
-            compact_working_set,
-            session_history=history,
-        )
+        AttachmentDerivationState("session", history, compact_entries)
     )
 
     assert len(attachments) == 1
@@ -230,7 +242,7 @@ def test_todo_reminder_without_prior_write_starts_after_ten_model_calls() -> Non
     history = tuple(_assistant(TextContent(str(index))) for index in range(10))
 
     attachments = TodoReminderAttachmentSource()(
-        ConversationSnapshot(history, session_history=history)
+        AttachmentDerivationState("session", history, history)
     )
 
     assert len(attachments) == 1
@@ -248,16 +260,14 @@ def test_context_planner_projects_reminder_from_conversation_for_compaction() ->
         max_output_tokens=100,
     )
     attachment = TodoReminderAttachmentSource()(
-        ConversationSnapshot(history, session_history=history)
+        AttachmentDerivationState("session", history, history)
     )[0]
     reminder = AttachmentMessage(attachment, parent_uuid=history[-1].uuid)
-    snapshot = ConversationSnapshot(
-        history + (reminder,), session_history=history + (reminder,)
-    )
+    state = ContextPlanningState(history + (reminder,))
 
-    plan = planner.plan(snapshot, tools=(tool.definition,))
+    plan = planner.plan(state, ContextRuntime(), tools=(tool.definition,))
     request_text = _input_texts(plan.request.input)
-    compact_messages, _ = planner.compaction_view(snapshot)
+    compact_messages, _ = planner.compaction_view(state)
     compact_text = _input_texts(compact_messages)
 
     assert any("<system-reminder>" in text for text in request_text)
@@ -267,7 +277,7 @@ def test_context_planner_projects_reminder_from_conversation_for_compaction() ->
 def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
     history10 = _history_after_todo(10)
     attachment = TodoReminderAttachmentSource()(
-        ConversationSnapshot(history10, session_history=history10)
+        AttachmentDerivationState("session", history10, history10)
     )[0]
     reminder = AttachmentMessage(attachment, parent_uuid=history10[-1].uuid)
     later = _assistant(TextContent("after reminder"))
@@ -280,11 +290,10 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
         max_output_tokens=100,
     )
 
-    snapshot = ConversationSnapshot(
-        history,
-        session_history=history,
-    )
-    items = planner.plan(snapshot, tools=(TodoWriteTool().definition,)).request.input
+    state = ContextPlanningState(history)
+    items = planner.plan(
+        state, ContextRuntime(), tools=(TodoWriteTool().definition,)
+    ).request.input
 
     reminder_index = next(
         index
@@ -298,7 +307,7 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
     )
     assert reminder_index < later_index
 
-    compact_messages, _ = planner.compaction_view(snapshot)
+    compact_messages, _ = planner.compaction_view(state)
     assert any(
         "TodoWrite tool hasn't been used" in text
         for text in _input_texts(compact_messages)

@@ -1,6 +1,6 @@
 from my_code.context.microcompact import MicrocompactPolicy
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSnapshot as ConversationSnapshot
+from my_code.context.session import ContextPlanningState, ContextRuntime
 from my_code.context.tokenizer import UnicodeTokenEstimator
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import (
@@ -11,6 +11,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.capabilities import (
     CapabilitySource,
     ModelDescriptor,
@@ -85,7 +86,7 @@ def test_matching_reported_usage_calibrates_full_request_delta() -> None:
     latest = HumanMessage("new material", parent_uuid=anchor.uuid)
 
     plan = _planner(binding).plan(
-        ConversationSnapshot((first, anchor, latest)), tools=()
+        ContextPlanningState((first, anchor, latest)), ContextRuntime(), tools=()
     )
 
     assert plan.budget is not None
@@ -109,7 +110,7 @@ def test_binding_mismatch_uses_local_tokenizer() -> None:
     )
 
     budget = _planner(active).inspect(
-        ConversationSnapshot((human, assistant)), tools=()
+        ContextPlanningState((human, assistant)), ContextRuntime(), tools=()
     )
 
     assert budget.measurement == "tokenizer_estimate"
@@ -125,7 +126,9 @@ def test_token_trigger_microcompacts_and_retokenizes() -> None:
         parent_uuid=human.uuid,
     )
     results = ToolResultBatch(
-        (ToolResult("call", "中" * 500),), assistant.uuid, parent_uuid=assistant.uuid
+        (ToolResult("call", "中" * 500, ToolResultPresentation("result")),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
     )
     policy = MicrocompactPolicy(
         trigger_chars=100_000,
@@ -135,7 +138,7 @@ def test_token_trigger_microcompacts_and_retokenizes() -> None:
     )
 
     plan = _planner(binding, trigger=300, policy=policy).plan(
-        ConversationSnapshot((human, assistant, results)), tools=()
+        ContextPlanningState((human, assistant, results)), ContextRuntime(), tools=()
     )
 
     assert len(plan.new_content_replacements) == 1

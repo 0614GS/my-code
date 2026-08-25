@@ -119,7 +119,7 @@ def test_session_start_metadata_catalog_and_interrupted_tail(tmp_path: Path) -> 
 
     with store.path.open("ab") as handle:
         handle.write(b'{"type":')
-    assert store.load().history == (message,)
+    assert store.load().conversation == (message,)
 
 
 def test_complete_bad_transcript_line_is_not_ignored(tmp_path: Path) -> None:

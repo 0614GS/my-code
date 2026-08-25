@@ -4,12 +4,14 @@ import logging
 from collections.abc import Callable, Iterable
 from typing import Protocol, runtime_checkable
 
-from my_code.context.session import ContextSnapshot
+from my_code.context.session import AttachmentDerivationState
 from my_code.conversation.attachments import AttachmentPayload
 
 logger = logging.getLogger(__name__)
 
-type DerivedAttachmentSource = Callable[[ContextSnapshot], Iterable[AttachmentPayload]]
+type DerivedAttachmentSource = Callable[
+    [AttachmentDerivationState], Iterable[AttachmentPayload]
+]
 
 
 @runtime_checkable
@@ -23,13 +25,15 @@ class DerivedAttachmentResolver:
     def __init__(self, sources: Iterable[DerivedAttachmentSource] = ()) -> None:
         self._sources = tuple(sources)
 
-    def resolve(self, snapshot: ContextSnapshot) -> tuple[AttachmentPayload, ...]:
+    def resolve(
+        self, state: AttachmentDerivationState
+    ) -> tuple[AttachmentPayload, ...]:
         """在不保留 resolver 内部状态的前提下解析一次快照。"""
 
         attachments: list[AttachmentPayload] = []
         for source in self._sources:
             try:
-                source_attachments = tuple(source(snapshot))
+                source_attachments = tuple(source(state))
             except Exception:
                 logger.exception("Attachment source failed; skipping it")
                 continue

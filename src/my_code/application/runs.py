@@ -11,6 +11,7 @@ from my_code.agent.engine import AgentEngine
 from my_code.agent.events import AgentEvent
 from my_code.agent.models import AgentTurnInput, AgentTurnOutcome
 from my_code.context.engine import ContextEngine
+from my_code.context.session import ContextRuntime
 from my_code.model.capabilities import ActiveModelEnvironment
 from my_code.permissions.policy import PermissionPolicy
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
@@ -78,6 +79,7 @@ class AgentRun:
         self.session = spec.session
         self.agent = components.agent
         self.context = components.context
+        self.context_runtime = ContextRuntime()
         self.tool_executor = components.tool_executor
         self.provider = provider
         self.environment = environment
@@ -91,12 +93,12 @@ class AgentRun:
     async def submit(self, turn_input: AgentTurnInput) -> AgentTurnOutcome:
         if self._closed:
             raise RuntimeError("Agent run is closed")
-        return await self.agent.submit(self.session, turn_input)
+        return await self.agent.submit(self.session, self.context_runtime, turn_input)
 
     def stream(self, turn_input: AgentTurnInput) -> AsyncIterator[AgentEvent]:
         if self._closed:
             raise RuntimeError("Agent run is closed")
-        return self.agent.stream(self.session, turn_input)
+        return self.agent.stream(self.session, self.context_runtime, turn_input)
 
     async def close(self) -> None:
         if self._closed:

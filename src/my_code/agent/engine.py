@@ -23,6 +23,7 @@ from my_code.agent.models import (
 )
 from my_code.context.engine import ContextEngine
 from my_code.context.models import ContextOverflow, ContextPlan
+from my_code.context.session import ContextRuntime
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import (
     AssistantMessage,
@@ -33,6 +34,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import generic_tool_result_presentation
 from my_code.conversation.state import CompactTrigger
 from my_code.model.client import ModelClient
 from my_code.model.errors import ModelContextOverflow
@@ -54,7 +56,6 @@ from my_code.model.request import ModelOutput, ModelTextBlock, ModelToolUseBlock
 from my_code.permissions.models import PermissionUpdate
 from my_code.sessions.session import Session
 from my_code.tools.catalog import ToolCatalog, ToolCatalogSnapshot
-from my_code.tools.presentation import ToolResultPresentation
 from my_code.tools.round_executor import (
     ToolCallFinished,
     ToolCallStarted,
@@ -86,12 +87,13 @@ class AgentEngine:
     async def submit(
         self,
         session: Session,
+        runtime: ContextRuntime,
         turn_input: AgentTurnInput,
     ) -> AgentTurnOutcome:
         """消费可观察循环并返回终态值。"""
 
         completed: AgentTurnOutcome | None = None
-        async for event in self.stream(session, turn_input):
+        async for event in self.stream(session, runtime, turn_input):
             if isinstance(event, (AgentTurnSucceeded, AgentMaxStepsReached)):
                 completed = event
         if completed is None:
@@ -101,15 +103,17 @@ class AgentEngine:
     def stream(
         self,
         session: Session,
+        runtime: ContextRuntime,
         turn_input: AgentTurnInput,
     ) -> AsyncIterator[AgentEvent]:
         """运行一个用户回合，同时暴露文本和工具生命周期事件。"""
 
-        return self._stream(session, turn_input)
+        return self._stream(session, runtime, turn_input)
 
     async def _stream(
         self,
         session: Session,
+        runtime: ContextRuntime,
         turn_input: AgentTurnInput,
     ) -> AsyncIterator[AgentEvent]:
         user_message = HumanMessage(
@@ -127,7 +131,7 @@ class AgentEngine:
         while True:
             step_count += 1
             tools = self._tool_catalog.snapshot()
-            request = await self._plan_with_proactive_compact(session, tools)
+            request = await self._plan_with_proactive_compact(session, runtime, tools)
             reactive_attempted = False
             while True:
                 response: ModelOutput | None = None
@@ -208,8 +212,8 @@ class AgentEngine:
                     if reactive_attempted:
                         raise
                     reactive_attempted = True
-                    await self._compact_for_retry(session, "reactive")
-                    request = await self._plan_request(session, tools)
+                    await self._compact_for_retry(session, runtime, "reactive")
+                    request = await self._plan_request(session, runtime, tools)
                     continue
                 break
 
@@ -265,7 +269,6 @@ class AgentEngine:
 
             result_message: ToolResultBatch | None = None
             results: list[ToolResult] = []
-            tool_presentations: dict[str, ToolResultPresentation] = {}
             round_cancelled = False
             round_attachments: tuple[AttachmentPayload, ...] = ()
             round_permission_updates: tuple[PermissionUpdate, ...] = ()
@@ -285,7 +288,6 @@ class AgentEngine:
                         )
                     elif isinstance(tool_event, ToolCallFinished):
                         results.append(tool_event.result)
-                        tool_presentations[tool_event.call.id] = tool_event.presentation
                         yield AgentToolFinished(
                             tool_event.call.id,
                             tool_event.call.name,
@@ -310,7 +312,6 @@ class AgentEngine:
                 session.commit_tool_round(
                     result_message,
                     round_attachments,
-                    presentations=tool_presentations.items(),
                 )
                 if round_permission_updates:
                     self._tool_round.apply_permission_updates(round_permission_updates)
@@ -331,7 +332,6 @@ class AgentEngine:
                 session.commit_tool_round(
                     result_message,
                     round_attachments,
-                    presentations=tool_presentations.items(),
                 )
                 if round_permission_updates:
                     self._tool_round.apply_permission_updates(round_permission_updates)
@@ -350,11 +350,12 @@ class AgentEngine:
     async def _compact_for_retry(
         self,
         session: Session,
+        runtime: ContextRuntime,
         trigger: CompactTrigger,
     ) -> None:
         """在当前 turn 内生成并提交 auto/reactive compact。"""
 
-        outcome = await self._context.compact(session.context_snapshot(), trigger)
+        outcome = await self._context.compact(session.context_planning_state(), trigger)
         session.commit_compaction(
             outcome.replacements, outcome.summary, outcome.boundary
         )
@@ -362,26 +363,30 @@ class AgentEngine:
     async def _plan_with_proactive_compact(
         self,
         session: Session,
+        runtime: ContextRuntime,
         tools: ToolCatalogSnapshot,
     ) -> ContextPlan:
         try:
-            return await self._plan_request(session, tools)
+            return await self._plan_request(session, runtime, tools)
         except ContextOverflow:
-            await self._compact_for_retry(session, "auto")
-            return await self._plan_request(session, tools)
+            await self._compact_for_retry(session, runtime, "auto")
+            return await self._plan_request(session, runtime, tools)
 
     async def _plan_request(
         self,
         session: Session,
+        runtime: ContextRuntime,
         tools: ToolCatalogSnapshot,
     ) -> ContextPlan:
-        derived = self._context.derive_attachments(session.context_snapshot())
+        derived = self._context.derive_attachments(
+            session.attachment_derivation_state()
+        )
         for attachment in derived:
             session.append_attachment(attachment)
             self._context.acknowledge_attachments((attachment,))
         request = self._context.plan(
-            session.context_snapshot(),
-            session,
+            session.context_planning_state(),
+            runtime,
             tools=tools.definitions,
         )
         for replacement in request.new_content_replacements:
@@ -403,6 +408,7 @@ def _cancelled_results(
         result = ToolResult(
             tool_use_id=call.id,
             content=message,
+            presentation=generic_tool_result_presentation(message, True),
             is_error=True,
         )
         results.append(result)

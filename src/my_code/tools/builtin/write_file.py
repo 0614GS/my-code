@@ -1,12 +1,12 @@
 """在工作区内写入完整文本文件。"""
 
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from my_code.tools.base import Tool, ToolContext, ToolOutput
 from my_code.tools.builtin.file_permissions import check_write_permission
 from my_code.tools.paths import relative_display_path, resolve_workspace_path
-from my_code.tools.presentation import ToolResultPresentation
 from my_code.tools.validation import required_string
 
 

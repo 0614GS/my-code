@@ -20,6 +20,7 @@ from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
+from my_code.context.session import ContextRuntime
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
@@ -247,9 +248,12 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
         max_steps=3,
     )
     parent_session = Session(tmp_path / "sessions", parent_id)
+    parent_runtime = ContextRuntime()
 
     first_turn = asyncio.create_task(
-        parent.submit(parent_session, AgentTurnInput("start background"))
+        parent.submit(
+            parent_session, parent_runtime, AgentTurnInput("start background")
+        )
     )
     await child_model.entered.wait()
     first = await asyncio.wait_for(first_turn, timeout=1)
@@ -257,7 +261,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
     assert isinstance(first, AgentTurnSucceeded)
     assert first.text == "parent kept going"
     assert child_model.release.is_set() is False
-    batch = parent_session.snapshot().history[2]
+    batch = parent_session.conversation[2]
     assert isinstance(batch, ToolResultBatch)
     started = json.loads(batch.content[0].content)
     assert started["status"] == "started"
@@ -270,23 +274,27 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
     assert runs.active_count == 0
     assert leases.active_count == 0
 
-    second = await parent.submit(parent_session, AgentTurnInput("check completion"))
+    second = await parent.submit(
+        parent_session, parent_runtime, AgentTurnInput("check completion")
+    )
     assert isinstance(second, AgentTurnSucceeded)
     assert "Background task completed" in request_text(parent_model.requests[2])
     assert task_id in request_text(parent_model.requests[2])
     delivered = tuple(
         message
-        for message in parent_session.snapshot().history
+        for message in parent_session.conversation
         if message.kind == "attachment"
     )
     assert len(delivered) == 1
     assert controller.pending_notifications(parent_id) == ()
 
-    third = await parent.submit(parent_session, AgentTurnInput("check again"))
+    third = await parent.submit(
+        parent_session, parent_runtime, AgentTurnInput("check again")
+    )
     assert isinstance(third, AgentTurnSucceeded)
     delivered_after_next_turn = tuple(
         message
-        for message in parent_session.snapshot().history
+        for message in parent_session.conversation
         if message.kind == "attachment"
     )
     assert delivered_after_next_turn == delivered

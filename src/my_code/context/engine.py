@@ -3,7 +3,11 @@
 from my_code.context.compaction import ContextCompactor
 from my_code.context.models import CompactionOutcome, ContextBudget, ContextPlan
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSnapshot, SessionContextAccess
+from my_code.context.session import (
+    AttachmentDerivationState,
+    ContextPlanningState,
+    ContextRuntime,
+)
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.state import CompactTrigger
 from my_code.model.request import ModelToolDefinition
@@ -22,27 +26,27 @@ class ContextEngine:
 
     def plan(
         self,
-        snapshot: ContextSnapshot,
-        session: SessionContextAccess | None = None,
+        state: ContextPlanningState,
+        runtime: ContextRuntime,
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextPlan:
         return self._planner.plan(
-            snapshot,
-            session,
+            state,
+            runtime,
             tools=tools,
         )
 
     def inspect(
         self,
-        snapshot: ContextSnapshot,
-        session: SessionContextAccess | None = None,
+        state: ContextPlanningState,
+        runtime: ContextRuntime,
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextBudget:
         return self._planner.inspect(
-            snapshot,
-            session,
+            state,
+            runtime,
             tools=tools,
         )
 
@@ -53,16 +57,16 @@ class ContextEngine:
         self._planner.acknowledge_attachments(attachments)
 
     def derive_attachments(
-        self, snapshot: ContextSnapshot
+        self, state: AttachmentDerivationState
     ) -> tuple[AttachmentPayload, ...]:
-        return self._planner.derive_attachments(snapshot)
+        return self._planner.derive_attachments(state)
 
     async def compact(
         self,
-        snapshot: ContextSnapshot,
+        state: ContextPlanningState,
         trigger: CompactTrigger,
     ) -> CompactionOutcome:
-        return await self._compactor.compact(self._planner, snapshot, trigger)
+        return await self._compactor.compact(self._planner, state, trigger)
 
 
 __all__ = ["ContextEngine"]

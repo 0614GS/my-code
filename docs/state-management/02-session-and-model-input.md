@@ -31,10 +31,9 @@ Session 持有全部 session-scoped 模型无关数据，但需要区分持久�
 
 ```python
 @dataclass(frozen=True, slots=True)
-class SessionSnapshot:
-    conversation: tuple[ConversationEntry, ...]
-    working_set: tuple[ConversationEntry, ...]
-    replacements: tuple[ContentReplacement, ...]
+class ContextPlanningState:
+    context_entries: tuple[ConversationEntry, ...]
+    content_replacements: tuple[ContentReplacement, ...]
     replay_records: tuple[ProviderReplayRecord, ...]
 ```
 
@@ -42,7 +41,10 @@ class SessionSnapshot:
 
 ```python
 type ConversationEntry = (
-    HumanMessage | AssistantMessage | ToolResultBatch | ConversationSummary
+    HumanMessage
+    | AssistantMessage
+    | ToolResultBatch
+    | ConversationSummary
     | AttachmentMessage
 )
 ```
@@ -180,7 +182,8 @@ OpenAI Responses adapter 负责：
 class ContextEngine:
     def plan(
         self,
-        session: SessionSnapshot,
+        state: ContextPlanningState,
+        runtime: ContextRuntime,
         request: RequestContext,
         model: ModelEnvironment,
     ) -> ContextPlan: ...
@@ -188,7 +191,7 @@ class ContextEngine:
 
 ContextEngine 负责：
 
-- 选择 Session working set；
+- 消费 Session 派生的 context entries；
 - 应用 content replacement；
 - 投影 ConversationEntry 为 ModelInputItem；
 - 将 Conversation 中的 Attachment 原位投影为标准 UserInput，并插入 user context；

@@ -1,6 +1,6 @@
 """Non-persistent, live-session TodoWrite reminder attachment."""
 
-from my_code.context.session import ContextSnapshot
+from my_code.context.session import AttachmentDerivationState
 from my_code.conversation.attachments import TodoReminderAttachment
 from my_code.conversation.models import AssistantMessage, AttachmentMessage, ToolCall
 from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME
@@ -21,10 +21,12 @@ _REMINDER = (
 class TodoReminderAttachmentSource:
     """Inject a reminder every ten completed model calls without TodoWrite."""
 
-    def __call__(self, snapshot: ContextSnapshot) -> tuple[TodoReminderAttachment, ...]:
-        projection = project_todos(snapshot.session_history or snapshot.messages)
-        calls_since_write = _completed_model_calls_since_todo_write(snapshot)
-        calls_since_reminder = _completed_model_calls_since_reminder(snapshot)
+    def __call__(
+        self, state: AttachmentDerivationState
+    ) -> tuple[TodoReminderAttachment, ...]:
+        projection = project_todos(state.conversation)
+        calls_since_write = _completed_model_calls_since_todo_write(state)
+        calls_since_reminder = _completed_model_calls_since_reminder(state)
         if (
             calls_since_write < TODO_REMINDER_MODEL_CALL_INTERVAL
             or calls_since_reminder < TODO_REMINDER_MODEL_CALL_INTERVAL
@@ -43,9 +45,9 @@ class TodoReminderAttachmentSource:
         return (TodoReminderAttachment(content),)
 
 
-def _completed_model_calls_since_todo_write(snapshot: ContextSnapshot) -> int:
+def _completed_model_calls_since_todo_write(state: AttachmentDerivationState) -> int:
     completed_calls = 0
-    for message in reversed(snapshot.messages):
+    for message in reversed(state.context_entries):
         if not isinstance(message, AssistantMessage):
             continue
         if any(
@@ -57,9 +59,9 @@ def _completed_model_calls_since_todo_write(snapshot: ContextSnapshot) -> int:
     return completed_calls
 
 
-def _completed_model_calls_since_reminder(snapshot: ContextSnapshot) -> int:
+def _completed_model_calls_since_reminder(state: AttachmentDerivationState) -> int:
     completed_calls = 0
-    for message in reversed(snapshot.messages):
+    for message in reversed(state.context_entries):
         if isinstance(message, AttachmentMessage) and isinstance(
             message.payload, TodoReminderAttachment
         ):

@@ -8,7 +8,11 @@ from my_code.context.documents import ContextInstruction, UserContextDocument
 from my_code.context.models import ContextOverflow
 from my_code.context.normalization import ModelInputNormalizer
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSnapshot
+from my_code.context.session import (
+    AttachmentDerivationState,
+    ContextPlanningState,
+    ContextRuntime,
+)
 from my_code.context.window import ContextWindow
 from my_code.context.xml import render_context_instruction
 from my_code.conversation.attachments import (
@@ -23,6 +27,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import InputText, PromptStability, ToolOutputs, UserInput
 from my_code.prompts.models import PromptSection
@@ -62,7 +67,9 @@ def test_attachment_keeps_original_position_after_tool_results() -> None:
         parent_uuid=human.uuid,
     )
     results = ToolResultBatch(
-        (ToolResult("call", "value"),), assistant.uuid, parent_uuid=assistant.uuid
+        (ToolResult("call", "value", ToolResultPresentation("value")),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
     )
     reminder = AttachmentMessage(
         TodoReminderAttachment("check todos"), parent_uuid=results.uuid
@@ -95,14 +102,14 @@ def test_attachment_resolver_runs_sources_in_order() -> None:
     first = TodoReminderAttachment("one")
     second = TodoReminderAttachment("two")
 
-    def first_source(_: ContextSnapshot) -> Iterable[TodoReminderAttachment]:
+    def first_source(_: AttachmentDerivationState) -> Iterable[TodoReminderAttachment]:
         return (first,)
 
-    def second_source(_: ContextSnapshot) -> Iterable[TodoReminderAttachment]:
+    def second_source(_: AttachmentDerivationState) -> Iterable[TodoReminderAttachment]:
         return (second,)
 
     assert DerivedAttachmentResolver((first_source, second_source)).resolve(
-        ContextSnapshot(())
+        AttachmentDerivationState("session", (), ())
     ) == (first, second)
 
 
@@ -112,15 +119,17 @@ def test_attachment_resolver_discards_partial_failed_source(
     partial = TodoReminderAttachment("discarded")
     healthy = TodoReminderAttachment("kept")
 
-    def broken(_: ContextSnapshot) -> Iterable[TodoReminderAttachment]:
+    def broken(_: AttachmentDerivationState) -> Iterable[TodoReminderAttachment]:
         yield partial
         raise RuntimeError("failed")
 
-    def good(_: ContextSnapshot) -> Iterable[TodoReminderAttachment]:
+    def good(_: AttachmentDerivationState) -> Iterable[TodoReminderAttachment]:
         return (healthy,)
 
     with caplog.at_level(logging.ERROR):
-        result = DerivedAttachmentResolver((broken, good)).resolve(ContextSnapshot(()))
+        result = DerivedAttachmentResolver((broken, good)).resolve(
+            AttachmentDerivationState("session", (), ())
+        )
     assert result == (healthy,)
 
 
@@ -129,7 +138,9 @@ def test_budget_reports_attachment_chars_separately() -> None:
     attachment = AttachmentMessage(
         FileMentionAttachment("a.txt", "old"), parent_uuid=human.uuid
     )
-    plan = _planner().plan(ContextSnapshot((human, attachment)), tools=())
+    plan = _planner().plan(
+        ContextPlanningState((human, attachment)), ContextRuntime(), tools=()
+    )
     assert plan.budget is not None
     assert plan.budget.message_chars == len("prompt")
     assert plan.budget.attachment_chars > len("old")
@@ -148,4 +159,6 @@ def test_attachment_chars_participate_in_context_window() -> None:
         max_output_tokens=10,
     )
     with pytest.raises(ContextOverflow):
-        planner.plan(ContextSnapshot((human, attachment)), tools=())
+        planner.plan(
+            ContextPlanningState((human, attachment)), ContextRuntime(), tools=()
+        )

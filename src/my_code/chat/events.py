@@ -2,9 +2,10 @@
 
 from dataclasses import dataclass
 
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
 from my_code.model.primitives import ReasoningDisclosure, ReasoningPresentation
-from my_code.tools.presentation import ToolResultPresentation, ToolUsePresentation
+from my_code.tools.presentation import ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)

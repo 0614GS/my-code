@@ -1,5 +1,7 @@
 """Conversation fact model tests."""
 
+from typing import Any, cast
+
 import pytest
 
 from my_code.conversation.models import (
@@ -11,6 +13,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
     AssistantOutput,
@@ -28,7 +31,10 @@ from my_code.model.request import (
 def test_conversation_union_has_four_semantic_variants() -> None:
     human = HumanMessage("hello")
     assistant = AssistantMessage((TextContent("answer"),), TokenUsage())
-    results = ToolResultBatch((ToolResult("call", "value"),), assistant.uuid)
+    results = ToolResultBatch(
+        (ToolResult("call", "value", ToolResultPresentation("value")),),
+        assistant.uuid,
+    )
     summary = ConversationSummaryMessage("state")
 
     assert (human.kind, assistant.kind, results.kind, summary.kind) == (
@@ -43,7 +49,13 @@ def test_conversation_union_has_four_semantic_variants() -> None:
 
 def test_conversation_variants_reject_cross_layer_content() -> None:
     with pytest.raises(TypeError, match="only text and tool calls"):
-        AssistantMessage((ToolResult("call", "bad"),), TokenUsage())  # type: ignore[arg-type]
+        AssistantMessage(
+            cast(
+                Any,
+                (ToolResult("call", "bad", ToolResultPresentation("bad")),),
+            ),
+            TokenUsage(),
+        )
     with pytest.raises(TypeError, match="only tool results"):
         ToolResultBatch((ToolCall("call", "Read", {}),), "source")  # type: ignore[arg-type]
 
@@ -59,7 +71,10 @@ def test_conversation_rejects_duplicate_tool_protocol_ids() -> None:
         )
     with pytest.raises(ValueError, match="duplicate result"):
         ToolResultBatch(
-            (ToolResult("call", "first"), ToolResult("call", "second")),
+            (
+                ToolResult("call", "first", ToolResultPresentation("first")),
+                ToolResult("call", "second", ToolResultPresentation("second")),
+            ),
             "assistant",
         )
 

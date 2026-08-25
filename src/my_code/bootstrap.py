@@ -340,7 +340,7 @@ def _assemble_agent(
         mode=settings.permission_mode,
         rules=settings.permission_rules,
     )
-    restore_skill_permissions(permission_policy, session.snapshot().history)
+    restore_skill_permissions(permission_policy, session.conversation)
     workspace = Workspace(settings.cwd)
     connection = ProviderConnection(
         id=settings.provider_id,

@@ -251,7 +251,7 @@ async def test_child_cannot_promote_parent_ask_or_deny(
     assert completed.outcome is not None
     assert probe.executions == 0
     assert [definition.name for definition in provider.requests[0].tools] == ["Probe"]
-    history = Session(tmp_path / "sessions", completed.run_id).snapshot().history
+    history = Session(tmp_path / "sessions", completed.run_id).conversation
     result_batch = history[2]
     assert isinstance(result_batch, ToolResultBatch)
     assert result_batch.content[0].is_error is True
@@ -307,7 +307,7 @@ async def test_child_cannot_escape_parent_workspace_in_bypass_mode(
 
     assert completed.outcome is not None
     assert not (tmp_path.parent / "escaped.txt").exists()
-    history = Session(tmp_path / "sessions", completed.run_id).snapshot().history
+    history = Session(tmp_path / "sessions", completed.run_id).conversation
     result_batch = history[2]
     assert isinstance(result_batch, ToolResultBatch)
     assert result_batch.content[0].is_error is True

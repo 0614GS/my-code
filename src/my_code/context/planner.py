@@ -12,7 +12,11 @@ from my_code.context.microcompact import (
 )
 from my_code.context.models import ContextBudget, ContextOverflow, ContextPlan
 from my_code.context.normalization import ModelInputNormalizer
-from my_code.context.session import ContextSnapshot, SessionContextAccess
+from my_code.context.session import (
+    AttachmentDerivationState,
+    ContextPlanningState,
+    ContextRuntime,
+)
 from my_code.context.tokenizer import UnicodeTokenEstimator
 from my_code.context.user_context import EmptyUserContextResolver, UserContextResolver
 from my_code.context.window import ContextWindow
@@ -97,31 +101,27 @@ class ContextPlanner:
 
     def plan(
         self,
-        snapshot: ContextSnapshot,
-        session: SessionContextAccess | None = None,
+        state: ContextPlanningState,
+        runtime: ContextRuntime,
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextPlan:
-        effective, proposed = self._effective_messages(snapshot)
-        user_context = self._get_user_context(session)
+        effective, proposed = self._effective_messages(state)
+        user_context = runtime.user_context(self.user_context_resolver.resolve)
         binding = self.binding_resolver() if self.binding_resolver is not None else None
         selected = self.window.ensure_fits(
             effective,
             additional_chars=_replayed_continuation_chars(
-                effective, snapshot.replay_records, binding
+                effective, state.replay_records, binding
             ),
         )
         model_messages = self.normalizer.normalize(
             user_context,
             selected,
-            snapshot.replay_records,
+            state.replay_records,
             active_binding=binding,
         )
-        system_prompt = (
-            session.resolve_prompt(self.prompt)
-            if session is not None
-            else self.prompt.resolve()
-        )
+        system_prompt = runtime.resolve_prompt(self.prompt)
         request = ModelRequest(
             system_prompt, model_messages, tools, self.max_output_tokens
         )
@@ -132,14 +132,14 @@ class ContextPlanner:
         )
         if budget.input_tokens >= budget.compact_trigger_tokens:
             token_proposed = self.microcompact.propose_tokens(
-                snapshot.messages,
-                snapshot.content_replacements + proposed,
+                state.context_entries,
+                state.content_replacements + proposed,
                 current_tokens=budget.input_tokens,
                 trigger_tokens=budget.compact_trigger_tokens,
                 estimate=lambda view: self._projected_tokens_for(
                     view,
                     user_context,
-                    snapshot.replay_records,
+                    state.replay_records,
                     system_prompt,
                     tools,
                 ),
@@ -147,13 +147,13 @@ class ContextPlanner:
             if token_proposed:
                 proposed += token_proposed
                 selected = apply_content_replacements(
-                    snapshot.messages,
-                    snapshot.content_replacements + proposed,
+                    state.context_entries,
+                    state.content_replacements + proposed,
                 )
                 model_messages = self.normalizer.normalize(
                     user_context,
                     selected,
-                    snapshot.replay_records,
+                    state.replay_records,
                     active_binding=binding,
                 )
                 request = ModelRequest(
@@ -176,25 +176,21 @@ class ContextPlanner:
 
     def inspect(
         self,
-        snapshot: ContextSnapshot,
-        session: SessionContextAccess | None = None,
+        state: ContextPlanningState,
+        runtime: ContextRuntime,
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextBudget:
-        effective, _ = self._effective_messages(snapshot, propose=False)
-        user_context = self._get_user_context(session)
+        effective, _ = self._effective_messages(state, propose=False)
+        user_context = runtime.user_context(self.user_context_resolver.resolve)
         binding = self.binding_resolver() if self.binding_resolver is not None else None
         messages = self.normalizer.normalize(
             user_context,
             effective,
-            snapshot.replay_records,
+            state.replay_records,
             active_binding=binding,
         )
-        system_prompt = (
-            session.resolve_prompt(self.prompt)
-            if session is not None
-            else self.prompt.resolve()
-        )
+        system_prompt = runtime.resolve_prompt(self.prompt)
         request = ModelRequest(
             system_prompt,
             messages,
@@ -209,9 +205,9 @@ class ContextPlanner:
         return budget
 
     def compaction_view(
-        self, snapshot: ContextSnapshot
+        self, state: ContextPlanningState
     ) -> tuple[tuple[ModelInputItem, ...], tuple[ContentReplacement, ...]]:
-        effective, proposed = self._effective_messages(snapshot)
+        effective, proposed = self._effective_messages(state)
         return (
             self.normalizer.normalize_transcript(effective),
             proposed,
@@ -220,17 +216,10 @@ class ContextPlanner:
     def measure(self, messages: tuple[ConversationEntry, ...]) -> int:
         return self.window.size(messages)
 
-    def _get_user_context(
-        self, session: SessionContextAccess | None
-    ) -> tuple[UserContextDocument, ...]:
-        if session is None:
-            return tuple(self.user_context_resolver.resolve())
-        return session.user_context(self.user_context_resolver.resolve)
-
     def derive_attachments(
-        self, snapshot: ContextSnapshot
+        self, state: AttachmentDerivationState
     ) -> tuple[AttachmentPayload, ...]:
-        return self.attachment_resolver.resolve(snapshot)
+        return self.attachment_resolver.resolve(state)
 
     def acknowledge_attachments(
         self,
@@ -239,15 +228,15 @@ class ContextPlanner:
         self.attachment_resolver.acknowledge(attachments)
 
     def _effective_messages(
-        self, snapshot: ContextSnapshot, *, propose: bool = True
+        self, state: ContextPlanningState, *, propose: bool = True
     ) -> tuple[tuple[ConversationEntry, ...], tuple[ContentReplacement, ...]]:
         proposed = (
-            self.microcompact.propose(snapshot.messages, snapshot.content_replacements)
+            self.microcompact.propose(state.context_entries, state.content_replacements)
             if propose
             else ()
         )
         return apply_content_replacements(
-            snapshot.messages, snapshot.content_replacements + proposed
+            state.context_entries, state.content_replacements + proposed
         ), proposed
 
     def _budget(

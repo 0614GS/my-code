@@ -26,7 +26,7 @@ from my_code.permissions.models import PermissionDecision
 | `config` | 路径、settings、provider profile 配置 |
 | `context` | Conversation 到 ModelRequest 的投影、预算与 compact proposal |
 | `tools` | Tool、versioned catalog/snapshot、权限执行和 ToolRound |
-| `sessions` | canonical conversation/working set、session context state、私有 JSONL、恢复和提交 |
+| `sessions` | canonical conversation/context entries、session context state、私有 JSONL、恢复和提交 |
 | `providers` | SDK adapter、发现、缓存和 runtime router |
 | `tasks` | 进程内任务状态机、父子取消树、终态快照和 runtime events |
 | `mcp` | server/transport 生命周期、静态发现、schema 校验、诊断和标准 Tool adapter |
@@ -68,7 +68,7 @@ bootstrap
 - McpRuntime 持有唯一 MCP connection registry；每个 server 只通过独立 ToolCatalog source 发布工具，wire 类型不离开 `mcp`。
 - SkillRuntime/SkillCatalog 持有唯一 Skill index 与诊断；文件和规范化 MCP 数据来源使用同一模型，Skill 目录永远不作为 Python/plugin 导入。
 - `features.subagents` 只组合 AgentRunFactory、TaskSupervisor、child-local ToolCatalog 和复制后只能收窄的 PermissionPolicy，不构造 provider adapter。
-- Session 是 canonical conversation（含 AttachmentMessage）、working set、prompt/user-context cache、工具结果绑定与 replay sidecar 的唯一所有者。
+- Session 是 canonical conversation（含 AttachmentMessage）、派生 context entries、工具结果与 replay sidecar 的唯一所有者；prompt/user-context cache 属于配对的 ContextRuntime。
 - AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 不持有 AppState 或第二份 conversation。
 - ChatService 只协调 AppState operation，不复制其状态字段。
 - ProviderRuntime 原子切换前台 connection/client/capabilities/environment 和新 lease 的连接；已创建 lease 保持原 binding。

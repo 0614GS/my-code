@@ -7,6 +7,10 @@ from dataclasses import dataclass
 
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import ToolCall, ToolResult
+from my_code.conversation.presentation import (
+    ToolResultPresentation,
+    generic_tool_result_presentation,
+)
 from my_code.model.primitives import JsonObject, to_json_object
 from my_code.permissions.models import (
     PermissionBehavior,
@@ -35,9 +39,7 @@ from my_code.tools.invocation import (
     ToolInvocationHook,
 )
 from my_code.tools.presentation import (
-    ToolResultPresentation,
     ToolUsePresentation,
-    compact_text,
     generic_tool_use_presentation,
 )
 from my_code.workspace.local import Workspace
@@ -47,10 +49,9 @@ logger = logging.getLogger("my_code.permissions")
 
 @dataclass(frozen=True, slots=True)
 class ToolExecutionOutcome:
-    """一次执行产生的模型结果和用户展示结果。"""
+    """一次执行产生的完整结果和后续状态。"""
 
     result: ToolResult
-    presentation: ToolResultPresentation
     new_attachments: tuple[AttachmentPayload, ...] = ()
     permission_updates: tuple[PermissionUpdate, ...] = ()
 
@@ -136,32 +137,7 @@ class ToolExecutor:
                 return tool.present_error(tool_input, message)
             except Exception:
                 pass
-        return ToolResultPresentation(summary=compact_text(message))
-
-    def present_stored_result(
-        self,
-        call: ToolCall,
-        result: ToolResult | None,
-        *,
-        tools: ToolCatalogSnapshot | None = None,
-    ) -> ToolResultPresentation:
-        """投影历史结果，并兼容尚未保存展示快照的旧 Transcript。"""
-
-        if result is None:
-            return self.present_error(
-                call,
-                "Tool result is missing from the transcript.",
-                tools=tools,
-            )
-        active_tools = self.tools if tools is None else tools
-        tool = active_tools.get(call.name)
-        if tool is None or result.is_error:
-            return self.present_error(call, result.content, tools=active_tools)
-        return self._present_result(
-            tool,
-            to_json_object(call.input),
-            ToolOutput(content=result.content, is_error=False),
-        )
+        return generic_tool_result_presentation(message, True)
 
     async def execute(
         self,
@@ -368,6 +344,7 @@ class ToolExecutor:
             result = ToolResult(
                 tool_use_id=submitted_call.id,
                 content=model_content,
+                presentation=presentation,
                 is_error=output.is_error,
             )
             for hook in self.hooks:
@@ -386,7 +363,6 @@ class ToolExecutor:
                     )
             return ToolExecutionOutcome(
                 result,
-                presentation,
                 output.new_attachments,
                 output.permission_updates,
             )
@@ -417,7 +393,7 @@ class ToolExecutor:
             return tool.present_result(to_json_object(tool_input), output)
         except Exception:
             # Tool 已经执行成功；展示层错误不能把成功改写成失败并诱发模型重试。
-            return Tool.present_result(tool, to_json_object(tool_input), output)
+            return generic_tool_result_presentation(output.content, output.is_error)
 
     @staticmethod
     def _error(
@@ -433,16 +409,17 @@ class ToolExecutor:
             presentation = (
                 tool.present_error(actual_input, message)
                 if tool is not None
-                else ToolResultPresentation(summary=compact_text(message))
+                else generic_tool_result_presentation(message, True)
             )
         except Exception:
-            presentation = ToolResultPresentation(summary=compact_text(message))
+            presentation = generic_tool_result_presentation(message, True)
         result = ToolResult(
             tool_use_id=call.id,
             content=message,
+            presentation=presentation,
             is_error=True,
         )
-        return ToolExecutionOutcome(result, presentation)
+        return ToolExecutionOutcome(result)
 
     def apply_session_updates(self, updates: tuple[PermissionUpdate, ...]) -> None:
         if any(

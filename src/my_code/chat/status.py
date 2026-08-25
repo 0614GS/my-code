@@ -14,7 +14,8 @@ class RuntimeStatus:
     model: str
     permission_mode: str
     credential_source: str
-    working_message_count: int
+    context_entry_count: int
+    conversation_entry_count: int
     todos: tuple[TodoItem, ...]
 
 
@@ -27,7 +28,8 @@ class ContextStatus:
     system_chars: int
     tool_schema_chars: int
     message_limit_chars: int
-    working_message_count: int
+    context_entry_count: int
+    conversation_entry_count: int
     replacement_count: int
     compact_count: int
     user_context_chars: int = 0

@@ -14,7 +14,7 @@ flowchart TB
     end
 
     subgraph Runtime["Application runtime：AppState 唯一持有"]
-        AppState["AppState<br/>operation lock + active Session"]
+        AppState["AppState<br/>operation lock + active Session + ContextRuntime"]
         Workspace["WorkspaceState<br/>工作区安全边界"]
         Permissions["PermissionState<br/>PermissionPolicy"]
         ToolState["ToolState<br/>versioned ToolCatalog"]
@@ -37,7 +37,7 @@ flowchart TB
     subgraph Foreground["前台 Agent turn"]
         Agent["AgentEngine<br/>turn / step 状态机"]
         Snapshot["ToolCatalogSnapshot<br/>不可变 step 工具快照"]
-        Context["ContextEngine<br/>SessionSnapshot → ModelRequest"]
+        Context["ContextEngine<br/>ContextPlanningState → ModelRequest"]
         Model["ModelClient<br/>provider-neutral stream"]
         Provider["Anthropic / OpenAI Responses adapters"]
         Round["ToolRoundExecutor<br/>安全并行组 + 不安全屏障"]
@@ -88,7 +88,7 @@ flowchart TB
     Agent -->|"每个 step 捕获"| Snapshot
     ToolState -->|"snapshot"| Snapshot
     Snapshot --> Context
-    ParentSession -->|"immutable snapshot"| Context
+    ParentSession -->|"context_entries + replacements + replay"| Context
     Context --> Model
     Model --> Provider
     Provider -->|"AssistantMessage / ToolCalls"| Agent
@@ -135,6 +135,7 @@ flowchart TB
 - 实线表示主要调用或数据流；虚线表示组装、所有权或 Tool source 注册关系。
 - `AppState` 是 application-lifetime runtime 的唯一入口，但不是可被任意模块反向查找的全局 service locator。
 - `Session` 拥有有序 Conversation facts，包括结构化 `AttachmentMessage`；MCP 连接、Skill 索引、任务状态和 provider stream 不进入 Conversation。
+- `session.conversation` 是当前分支的完整事实序列；`session.context_entries` 是从最新 compact summary 开始派生的规划后缀。`ContextRuntime` 缓存 prompt section 与用户上下文，切换 Session 或创建 child run 时重建。
 - 每个 step 只捕获一次不可变 `ToolCatalogSnapshot`。模型请求里的工具定义和随后执行 ToolCall 的实例来自同一快照。
 - 所有工具来源最终都发布为标准 `Tool`，并经过同一个 `ToolExecutor` 权限、取消与错误归一化流水线。
 - Subagent 使用独立 child Session、AgentEngine 和 provider lease；foreground 返回一个 ToolResult，background 先返回 task ID，完成后只在安全 step 边界通知。
