@@ -1,9 +1,8 @@
 """Non-persistent, live-session TodoWrite reminder attachment."""
 
-from my_code.context.attachments.models import ContextAttachment
-from my_code.context.documents import ContextInstruction
 from my_code.context.session import ContextSnapshot
-from my_code.conversation.models import AssistantMessage, ToolCall
+from my_code.conversation.attachments import TodoReminderAttachment
+from my_code.conversation.models import AssistantMessage, AttachmentMessage, ToolCall
 from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME
 from my_code.features.todos.projection import project_todos
 
@@ -22,7 +21,7 @@ _REMINDER = (
 class TodoReminderAttachmentSource:
     """Inject a reminder every ten completed model calls without TodoWrite."""
 
-    def __call__(self, snapshot: ContextSnapshot) -> tuple[ContextAttachment, ...]:
+    def __call__(self, snapshot: ContextSnapshot) -> tuple[TodoReminderAttachment, ...]:
         projection = project_todos(snapshot.session_history or snapshot.messages)
         calls_since_write = _completed_model_calls_since_todo_write(snapshot)
         calls_since_reminder = _completed_model_calls_since_reminder(snapshot)
@@ -41,13 +40,7 @@ class TodoReminderAttachmentSource:
             content += (
                 f"\n\nHere are the existing contents of your todo list:\n\n[{items}]"
             )
-        return (
-            ContextAttachment(
-                source="todo_reminder",
-                content=(ContextInstruction(content),),
-                retention="live_session",
-            ),
-        )
+        return (TodoReminderAttachment(content),)
 
 
 def _completed_model_calls_since_todo_write(snapshot: ContextSnapshot) -> int:
@@ -65,14 +58,11 @@ def _completed_model_calls_since_todo_write(snapshot: ContextSnapshot) -> int:
 
 
 def _completed_model_calls_since_reminder(snapshot: ContextSnapshot) -> int:
-    anchors = {
-        delivery.anchor_uuid
-        for delivery in snapshot.attachment_deliveries
-        if delivery.attachment.source == "todo_reminder"
-    }
     completed_calls = 0
     for message in reversed(snapshot.messages):
-        if message.uuid in anchors:
+        if isinstance(message, AttachmentMessage) and isinstance(
+            message.payload, TodoReminderAttachment
+        ):
             return completed_calls
         if isinstance(message, AssistantMessage):
             completed_calls += 1

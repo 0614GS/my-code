@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from my_code.agent.models import AgentTurnOutcome
-from my_code.context.attachments.models import ContextAttachment
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.tasks.models import TaskSnapshot
 
 
@@ -59,7 +59,7 @@ class SubagentSpec:
     prompt: str
     description: str
     allowed_tools: tuple[str, ...] | None = None
-    attachments: tuple[ContextAttachment, ...] = ()
+    attachments: tuple[AttachmentPayload, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.prompt.strip() or not self.description.strip():

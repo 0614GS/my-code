@@ -79,8 +79,7 @@ class AppState:
 | 对话事实与工作集 | `Session` | session | 是 |
 | compact replacement 与 boundary | `Session` | session | 是 |
 | 工具展示快照与外置工具结果 | `Session` 私有持久化 | session | 是 |
-| attachment delivery | `Session` 的 context state | live session | 默认否；显式用户附件事实另行持久化 |
-| Todo reminder delivery | `Session` 的 context state | live session 或 request | 否；Todo 事实来自已提交工具结果 |
+| AttachmentMessage | `Session` Conversation | session | 按 payload 类型：durable 写 transcript，listing/reminder 仅内存 |
 | session prompt/user-context cache | `Session` 的 context state | live session | 否 |
 | Provider replay sidecar | `Session` | 与关联 entry/working set 一致 | 是，opaque |
 | runtime permission mode/rules | `AppState.permissions` | runtime | 持久规则由 config 写入 |
@@ -88,7 +87,7 @@ class AppState:
 | 动态工具来源目录 | `AppState.tools` | runtime；source 原子替换 | 否；来源配置可落盘 |
 | task tree 与终态快照 | `AppState.tasks` | runtime | 否 |
 | MCP connections、诊断与 server tool source | `AppState.mcp` | runtime | 否；server spec 来自 settings |
-| Skill index、诊断与 pending activation | `AppState.skills` | runtime / per-run next step | 否；SKILL.md 是外部配置数据 |
+| Skill index与诊断 | `AppState.skills` | runtime | 否；SKILL.md 是外部配置数据 |
 | child Session/conversation | 对应 `AgentRun` | 单次 child task | 是，独立 JSONL |
 | turn、step、usage accumulator | Agent 调用栈 | 单次 turn | 否 |
 | Provider streaming parser/delta | Provider 调用栈 | 单次 step | 否 |
@@ -162,7 +161,7 @@ load + validate + repair candidate Session
 ### Context
 
 - `ContextEngine`、planner、normalizer、budgeter 和 attachment projector 无跨调用可变状态。
-- 原 `ContextSession` 的 delivery/cache 状态迁入 `Session` 内部的 session context state。
+- Attachment delivery sidecar 已删除；动态 payload 先由 Session 追加到 Conversation，再由 Context 纯投影。
 - runtime-stable prompt section 在 bootstrap 时解析为不可变 snapshot；不再由可变 `PromptRegistry` cache 隐式持有。
 - ContextEngine 只接收 `SessionSnapshot` 和 request-scoped input，输出 `ContextPlan`。
 
@@ -179,7 +178,7 @@ load + validate + repair candidate Session
 - `AppState.tasks` 是唯一进程内 TaskSupervisor，拥有有限状态机、父子取消树、终态快照和 runtime events。
 - Task progress/result 不进入 Session canonical conversation；后续 Feature 必须显式投递结构化结果。
 - runtime close 先停止接收并取消全部 task，确认终态后才回收 AgentRun/provider lease。
-- background Subagent 的查询与通知记录由 SubagentController 按 root run owner 保存；Session 只保存非持久化 delivery/cursor，不把 TaskSnapshot 写成 conversation fact。
+- background Subagent 的查询状态由 SubagentController 按 root run owner 保存；完成结果以 durable、按 task ID 幂等的 AttachmentMessage 交付，UI progress 不进入 Conversation。
 
 ### MCP
 
@@ -190,11 +189,11 @@ load + validate + repair candidate Session
 
 ### Skills
 
-- `AppState.skills` 是唯一 SkillRuntime；其中的 SkillCatalog 原子替换分层索引，pending activation 按 run ID 隔离。
+- `AppState.skills` 是唯一 SkillRuntime；其中的 SkillCatalog 原子替换分层索引。
 - discovery 只索引选择所需元数据与 fingerprint；`Skill` 标准 Tool 执行时才读取并复验正文，目录中的其他代码文件不会被导入或执行。
-- 激活内容只通过下一次不可变 RunCapabilitySnapshot 进入 ModelRequest；Assistant 提交后 acknowledgement 删除对应 activation，不写入 Session context cache。
-- allowed-tools 只对当前 run 的下一 step ToolCatalogSnapshot 做交集；reload 或 source 替换不修改已经捕获的 step。
-- runtime close 在 run 清理后、MCP transport 关闭前撤销 Skill Tool source 并清空 pending activation。
+- 激活内容在完整 ToolResultBatch 后作为 durable AttachmentMessage 提交，不修改 system prompt；compact/resume 会恢复最新正文。
+- allowed-tools 由通用 permission-rule parser 转为 additive session allow rules，不隐藏工具；deny/ask 仍优先。
+- runtime close 在 run 清理后、MCP transport 关闭前撤销 Skill Tool source。
 
 ### Tools
 

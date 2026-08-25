@@ -1,7 +1,9 @@
 """上下文消息预算的最终防线。"""
 
+from my_code.context.attachments.projection import AttachmentProjector
 from my_code.context.models import ContextOverflow as _ContextOverflow
 from my_code.conversation.models import (
+    AttachmentMessage,
     ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
@@ -46,6 +48,9 @@ class ContextWindow:
 
         size = 0
         for message in messages:
+            if isinstance(message, AttachmentMessage):
+                size += AttachmentProjector().measure((message.payload,))
+                continue
             if isinstance(message, (HumanMessage, ConversationSummaryMessage)):
                 size += len(message.content)
                 continue

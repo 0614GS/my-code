@@ -66,9 +66,9 @@ bootstrap
 - TaskSupervisor 持有唯一进程内 task registry；`tasks` 不依赖 Agent、Session、Provider 或 Feature。
 - AgentRunFactory 创建独立 Session/Agent/provider lease 胶囊，并由 AppState 统一关闭。
 - McpRuntime 持有唯一 MCP connection registry；每个 server 只通过独立 ToolCatalog source 发布工具，wire 类型不离开 `mcp`。
-- SkillRuntime/SkillCatalog 持有唯一 Skill index、诊断与按 run pending activation；文件和规范化 MCP 数据来源使用同一模型，Skill 目录永远不作为 Python/plugin 导入。
+- SkillRuntime/SkillCatalog 持有唯一 Skill index 与诊断；文件和规范化 MCP 数据来源使用同一模型，Skill 目录永远不作为 Python/plugin 导入。
 - `features.subagents` 只组合 AgentRunFactory、TaskSupervisor、child-local ToolCatalog 和复制后只能收窄的 PermissionPolicy，不构造 provider adapter。
-- Session 是 canonical conversation、working set、非持久化 delivery/cache、工具结果绑定与 replay sidecar 的唯一所有者。
+- Session 是 canonical conversation（含 AttachmentMessage）、working set、prompt/user-context cache、工具结果绑定与 replay sidecar 的唯一所有者。
 - AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 不持有 AppState 或第二份 conversation。
 - ChatService 只协调 AppState operation，不复制其状态字段。
 - ProviderRuntime 原子切换前台 connection/client/capabilities/environment 和新 lease 的连接；已创建 lease 保持原 binding。

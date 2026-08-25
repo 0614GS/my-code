@@ -27,7 +27,7 @@ Subagent 属于 `features.subagents`，但仍实现同一 Tool 协议并经过�
 
 `backgroundTasks.enabled=true` 时，同一 feature source 额外注册 TaskList、TaskOutput 和 TaskCancel。它们通过 ToolContext 的当前 run identity 做 owner 隔离；CLI/TUI 继续消费普通 Tool presentation 来显示 task ID/status，不直接访问 TaskSupervisor。
 
-`skills.enabled=true` 时，`SkillRuntime` 在 application 启动阶段把当前 `SkillCatalogSnapshot` 适配为一个标准 `Skill` Tool。调用只选择并校验索引项，完整 Markdown 正文延迟到执行时读取，并在下一 step 作为 request-scoped prompt section 出现一次。`allowed-tools` 使用当前 step catalog 的选择操作，只能取交集、不能扩大能力。旧 Tool adapter 持有旧 Skill snapshot，因此 reload 不会让当前 ToolRound 漂移。
+`skills.enabled=true` 时，`SkillRuntime` 在 application 启动阶段把当前 `SkillCatalogSnapshot` 适配为一个标准 `Skill` Tool。Tool description/schema 保持静态，可用列表由临时 `SkillListingAttachment` 提供。调用延迟读取 Markdown，并在完整 ToolResultBatch 后产生 durable `SkillActivationAttachment`。`allowed-tools` 转为 additive session allow rules，不收窄工具目录，且含权限请求的激活默认需要用户授权。旧 Tool adapter 持有旧 Skill snapshot，因此 reload 不会让当前 ToolRound 漂移。
 
 ## 执行管线
 

@@ -5,8 +5,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from my_code.conversation.attachments import (
+    AttachmentPayload,
+    BackgroundTaskCompletionAttachment,
+    FileMentionAttachment,
+    InvokedSkillsAttachment,
+    SkillActivationAttachment,
+    SkillListingAttachment,
+    SkillListingEntry,
+    TodoReminderAttachment,
+)
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
@@ -31,6 +42,7 @@ from my_code.model.primitives import (
 )
 from my_code.sessions._records import (
     AssistantMessageRecord,
+    AttachmentMessageRecord,
     CompactBoundaryRecord,
     ContentReplacementRecord,
     ConversationSummaryMessageRecord,
@@ -254,6 +266,13 @@ def message_to_record(message: ConversationEntry) -> MessageRecord:
             result_content,
             message.source_assistant_id,
         )
+    if isinstance(message, AttachmentMessage):
+        return AttachmentMessageRecord(
+            message.uuid,
+            message.parent_uuid,
+            message.timestamp,
+            _attachment_to_json(message.payload),
+        )
     return ConversationSummaryMessageRecord(
         message.uuid, message.parent_uuid, message.timestamp, message.content
     )
@@ -295,6 +314,13 @@ def record_to_message(record: MessageRecord) -> ConversationEntry:
                 if isinstance(record, LegacyToolResultBatchRecord)
                 else record.source_assistant_id
             ),
+            record.uuid,
+            record.parent_uuid,
+            record.timestamp,
+        )
+    if isinstance(record, AttachmentMessageRecord):
+        return AttachmentMessage(
+            _attachment_from_json(record.payload),
             record.uuid,
             record.parent_uuid,
             record.timestamp,
@@ -349,6 +375,7 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             LegacyToolResultBatchRecord,
             ToolResultBatchRecord,
             ConversationSummaryMessageRecord,
+            AttachmentMessageRecord,
         ),
     ):
         base.update(
@@ -356,6 +383,8 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
         )
     if isinstance(entry, HumanMessageRecord | ConversationSummaryMessageRecord):
         base["content"] = entry.content
+    elif isinstance(entry, AttachmentMessageRecord):
+        base["payload"] = entry.payload
     elif isinstance(entry, AssistantMessageRecord):
         base["content"] = [_assistant_block_json(b) for b in entry.content]
         base["usage"] = _usage_json(entry.usage)
@@ -519,6 +548,13 @@ def entry_from_json(value: object) -> TranscriptEntry:
             timestamp,
             _string(data, "content"),
         )
+    if kind == "attachment_message":
+        try:
+            payload = to_json_object(data.get("payload"))
+            _attachment_from_json(payload)
+        except (TypeError, ValueError) as error:
+            raise TranscriptDecodeError(str(error)) from error
+        return AttachmentMessageRecord(uuid, parent_uuid, timestamp, payload)
     if kind == "assistant_message":
         raw = _list(data, "content")
         assistant_content = tuple(_assistant_block(item) for item in raw)
@@ -636,6 +672,150 @@ def _usage_json(usage: TokenUsage) -> JsonObject:
         "cache_read_input_tokens": usage.cache_read_input_tokens,
         "provider_reported": usage.provider_reported,
     }
+
+
+def _skill_activation_json(payload: SkillActivationAttachment) -> JsonObject:
+    return {
+        "kind": payload.kind,
+        "name": payload.name,
+        "instructions": payload.instructions,
+        "source": payload.source,
+        "locator": payload.locator,
+        "compatibility": payload.compatibility,
+        "allowed_tools": list(payload.allowed_tools),
+    }
+
+
+def _attachment_to_json(payload: AttachmentPayload) -> JsonObject:
+    if isinstance(payload, FileMentionAttachment):
+        return {
+            "kind": payload.kind,
+            "path": payload.path,
+            "body": payload.body,
+            "is_directory": payload.is_directory,
+        }
+    if isinstance(payload, TodoReminderAttachment):
+        return {"kind": payload.kind, "content": payload.content}
+    if isinstance(payload, BackgroundTaskCompletionAttachment):
+        return {
+            "kind": payload.kind,
+            "owner_run_id": payload.owner_run_id,
+            "task_id": payload.task_id,
+            "result": payload.result,
+        }
+    if isinstance(payload, SkillListingAttachment):
+        return {
+            "kind": payload.kind,
+            "catalog_version": payload.catalog_version,
+            "skills": [
+                {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "source": skill.source,
+                }
+                for skill in payload.skills
+            ],
+        }
+    if isinstance(payload, SkillActivationAttachment):
+        return _skill_activation_json(payload)
+    return {
+        "kind": payload.kind,
+        "skills": [_skill_activation_json(skill) for skill in payload.skills],
+    }
+
+
+def _attachment_from_json(value: object) -> AttachmentPayload:
+    data = _object(value)
+    kind = _string(data, "kind")
+    try:
+        if kind == "file_mention":
+            _require_exact_fields(
+                data, frozenset({"kind", "path", "body", "is_directory"})
+            )
+            is_directory = data.get("is_directory")
+            if not isinstance(is_directory, bool):
+                raise TranscriptDecodeError("is_directory must be boolean")
+            return FileMentionAttachment(
+                _string(data, "path"), _string(data, "body"), is_directory
+            )
+        if kind == "todo_reminder":
+            _require_exact_fields(data, frozenset({"kind", "content"}))
+            return TodoReminderAttachment(_string(data, "content"))
+        if kind == "background_task_completion":
+            _require_exact_fields(
+                data,
+                frozenset({"kind", "owner_run_id", "task_id", "result"}),
+            )
+            return BackgroundTaskCompletionAttachment(
+                _string(data, "owner_run_id"),
+                _string(data, "task_id"),
+                to_json_object(data.get("result")),
+            )
+        if kind == "skill_listing":
+            _require_exact_fields(
+                data, frozenset({"kind", "catalog_version", "skills"})
+            )
+            version = data.get("catalog_version")
+            if not isinstance(version, int) or isinstance(version, bool) or version < 0:
+                raise TranscriptDecodeError("catalog_version must not be negative")
+            return SkillListingAttachment(
+                version,
+                tuple(_skill_listing_entry(item) for item in _list(data, "skills")),
+            )
+        if kind == "skill_activation":
+            return _skill_activation(data)
+        if kind == "invoked_skills":
+            _require_exact_fields(data, frozenset({"kind", "skills"}))
+            return InvokedSkillsAttachment(
+                tuple(
+                    _skill_activation(_object(item)) for item in _list(data, "skills")
+                )
+            )
+    except (TypeError, ValueError) as error:
+        if isinstance(error, TranscriptDecodeError):
+            raise
+        raise TranscriptDecodeError(str(error)) from error
+    raise TranscriptDecodeError(f"Unsupported attachment payload: {kind}")
+
+
+def _skill_listing_entry(value: object) -> SkillListingEntry:
+    data = _object(value)
+    _require_exact_fields(data, frozenset({"name", "description", "source"}))
+    return SkillListingEntry(
+        _string(data, "name"),
+        _string(data, "description"),
+        _string(data, "source"),
+    )
+
+
+def _skill_activation(data: Mapping[str, object]) -> SkillActivationAttachment:
+    _require_exact_fields(
+        data,
+        frozenset(
+            {
+                "kind",
+                "name",
+                "instructions",
+                "source",
+                "locator",
+                "compatibility",
+                "allowed_tools",
+            }
+        ),
+    )
+    if _string(data, "kind") != "skill_activation":
+        raise TranscriptDecodeError("Invoked Skill must contain skill_activation")
+    allowed = _list(data, "allowed_tools")
+    if not all(isinstance(item, str) and item for item in allowed):
+        raise TranscriptDecodeError("allowed_tools must contain non-empty strings")
+    return SkillActivationAttachment(
+        _string(data, "name"),
+        _string(data, "instructions"),
+        _string(data, "source"),
+        _string(data, "locator"),
+        _optional_non_empty_string(data, "compatibility"),
+        tuple(item for item in allowed if isinstance(item, str)),
+    )
 
 
 def _object(value: object) -> Mapping[str, object]:
@@ -890,6 +1070,9 @@ def _usage(value: object) -> TokenUsage:
 _MESSAGE_COMMON = frozenset(
     {"type", "schema_version", "uuid", "parent_uuid", "timestamp", "content"}
 )
+_ATTACHMENT_MESSAGE_FIELDS = frozenset(
+    {"type", "schema_version", "uuid", "parent_uuid", "timestamp", "payload"}
+)
 _ENTRY_FIELDS: dict[str, frozenset[str]] = {
     "session_started": frozenset(
         {
@@ -921,6 +1104,7 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
     "tool_results_message": _MESSAGE_COMMON | {"source_assistant_uuid"},
     "tool_result_batch": _MESSAGE_COMMON | {"source_assistant_id"},
     "conversation_summary_message": _MESSAGE_COMMON,
+    "attachment_message": _ATTACHMENT_MESSAGE_FIELDS,
     "content_replacement": frozenset(
         {
             "type",

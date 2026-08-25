@@ -3,8 +3,10 @@
 from collections.abc import Callable
 from dataclasses import replace
 
+from my_code.context.attachments.projection import AttachmentProjector
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
@@ -167,6 +169,9 @@ def _effective_message_chars(
 ) -> int:
     size = 0
     for message in messages:
+        if isinstance(message, AttachmentMessage):
+            size += AttachmentProjector().measure((message.payload,))
+            continue
         if isinstance(message, (HumanMessage, ConversationSummaryMessage)):
             size += len(message.content)
             continue

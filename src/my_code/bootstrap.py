@@ -11,7 +11,6 @@ from typing import Any
 from uuid import uuid4
 
 from my_code.agent.budget import TokenBudgetModelClient
-from my_code.agent.capabilities import StepCapabilitySource
 from my_code.agent.engine import AgentEngine
 from my_code.application.runs import (
     AgentRunComponents,
@@ -82,9 +81,11 @@ from my_code.providers.model_cache import ModelCatalogCache
 from my_code.providers.router import ProviderConnection, ProviderRouter
 from my_code.sessions.models import SessionStart
 from my_code.sessions.session import Session
+from my_code.skills.attachments import SkillListingAttachmentSource
 from my_code.skills.discovery import SkillSearchRoot
 from my_code.skills.models import SkillSourceId, SkillSourceKind
 from my_code.skills.runtime import SkillRuntime
+from my_code.skills.tool import restore_skill_permissions
 from my_code.tasks.supervisor import TaskSupervisor
 from my_code.tools.base import Tool, ToolContext
 from my_code.tools.builtin import builtin_tools
@@ -196,7 +197,6 @@ def _build_agent_components(
     permission_policy: PermissionPolicy,
     permission_prompter: PermissionPrompter,
     workspace: Workspace,
-    capability_source: StepCapabilitySource | None = None,
     max_steps: int | None = None,
     allow_permission_updates: bool = True,
     attachment_sources: tuple[DerivedAttachmentSource, ...] = (),
@@ -236,7 +236,6 @@ def _build_agent_components(
             tool_round=tool_round,
             context=context,
             tool_catalog=tool_catalog,
-            capability_source=capability_source,
             max_steps=settings.max_steps if max_steps is None else max_steps,
         ),
         context=context,
@@ -341,6 +340,7 @@ def _assemble_agent(
         mode=settings.permission_mode,
         rules=settings.permission_rules,
     )
+    restore_skill_permissions(permission_policy, session.snapshot().history)
     workspace = Workspace(settings.cwd)
     connection = ProviderConnection(
         id=settings.provider_id,
@@ -384,10 +384,12 @@ def _assemble_agent(
             permission_policy=spec.permission_policy or permission_policy,
             permission_prompter=prompter,
             workspace=workspace,
-            capability_source=skills,
             max_steps=spec.max_steps,
             allow_permission_updates=spec.allow_permission_updates,
-            attachment_sources=extra_attachment_sources(),
+            attachment_sources=(
+                SkillListingAttachmentSource(skills.catalog),
+                *extra_attachment_sources(),
+            ),
         )
 
     run_factory = AgentRunFactory(
@@ -442,8 +444,10 @@ def _assemble_agent(
         permission_policy=permission_policy,
         permission_prompter=prompter,
         workspace=workspace,
-        capability_source=skills,
-        attachment_sources=extra_attachment_sources(),
+        attachment_sources=(
+            SkillListingAttachmentSource(skills.catalog),
+            *extra_attachment_sources(),
+        ),
     )
     return ApplicationAssembly(
         agent=components.agent,

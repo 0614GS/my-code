@@ -7,7 +7,7 @@
 - 多 step Agent loop、带安全屏障和并发上限的 ToolRound，以及 step 上限。
 - 默认关闭的 Subagent：独立 child Session/run/provider lease、foreground/background、Task 查询/取消/单次通知、权限收窄与多维预算。
 - 默认关闭的 MCP stdio server：分层配置、保守 project trust、连接/重连/关闭、增量发现、deferred ToolSearch 与标准权限执行。
-- 默认关闭的 Skill：project/user/builtin 分层发现、严格 frontmatter、lazy load、原子 reload、单步激活与工具 allowlist 收窄。
+- 默认关闭的 Skill：project/user/builtin 分层发现、严格 frontmatter、lazy load、原子 reload、Conversation attachment 激活与 additive session 权限规则。
 - Read、Write、Edit、Glob、Grep、Bash 与 TodoWrite。
 - allow/ask/deny 规则、交互确认、dontAsk 和 bypassPermissions。
 - 工作区边界、受保护路径和 Bash 静态权限分析。
@@ -37,7 +37,7 @@
 - Context 是请求时投影，不维护第二份可写历史。
 - ToolCall 在执行前已经作为完整 AssistantMessage 提交。
 - 权限拒绝和取消路径仍产生闭合结果。
-- 活动 Session 的 context cache/delivery、结果绑定与 replay sidecar 不会跨恢复混用。
+- 活动 Session 的 prompt/user-context cache、结果绑定与 replay sidecar 不会跨恢复混用；durable Attachment 可恢复。
 
 ## 与参考实现的关系
 
@@ -45,4 +45,4 @@
 
 参考实现的 Agent Tool 主要用 `maxTurns` 限制 child，且全局 token-budget continuation 不用于 subagent。my-code 有意保留等价的 `max_steps`，并额外在 child run 上设置累计 token ceiling；已完成的 provider 响应会保留，预算在下一次请求前阻止继续消费。
 
-并行工具、foreground/background Subagent、MCP 与 Skill 已分别按路线图 M2、M4a/M4b、M5、M6 实现。Skill 首版有意使用严格平面 frontmatter、只把 Markdown 作为数据加载，并不复刻参考实现中动态命令、脚本执行或完整 YAML 语义；MCP resources/prompts transport 也仍延后。边界与验收证据见 [13-extensibility-roadmap.md](13-extensibility-roadmap.md)。
+并行工具、foreground/background Subagent、MCP 与 Skill 已分别按路线图 M2、M4a/M4b、M5、M6 实现。Skill 首版有意使用严格平面 frontmatter、只把 Markdown 作为数据加载，并不复刻参考实现中动态命令、脚本执行或完整 YAML 语义；MCP resources/prompts transport 也仍延后。参考实现将 Skill 正文表示为 meta UserMessage；本项目有意统一表示为 `AttachmentMessage`，但投影后的模型输入语义相同。边界与验收证据见 [13-extensibility-roadmap.md](13-extensibility-roadmap.md)。

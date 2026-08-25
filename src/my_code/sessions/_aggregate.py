@@ -2,8 +2,10 @@
 
 from collections.abc import Iterable
 
+from my_code.conversation.attachments import is_durable_attachment
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     ConversationEntry,
     ToolCall,
     ToolResultBatch,
@@ -97,7 +99,18 @@ class ConversationAggregate:
                 raise ValueError(
                     f"Parent is not in the active conversation: {entry.parent_uuid}"
                 )
-            candidate = self._history[: parent_index + 1] + (entry,)
+            suffix = self._history[parent_index + 1 :]
+            transient_suffix = bool(suffix) and all(
+                isinstance(item, AttachmentMessage)
+                and not is_durable_attachment(item.payload)
+                for item in suffix
+            )
+            candidate = (
+                self._history + (entry,)
+                if transient_suffix
+                else self._history[: parent_index + 1] + (entry,)
+            )
+        _validate_protocol_transition(entry, self._history)
         _validate_tool_result(entry, candidate)
         self._history = candidate
         return True
@@ -145,6 +158,23 @@ def _validate_tool_result(
     actual = {block.tool_use_id for block in entry.content}
     if actual != expected:
         raise ValueError("Tool results do not match source tool calls")
+
+
+def _validate_protocol_transition(
+    entry: ConversationEntry, history: tuple[ConversationEntry, ...]
+) -> None:
+    if not history:
+        return
+    previous = history[-1]
+    if entry.parent_uuid != previous.uuid:
+        return
+    if not isinstance(previous, AssistantMessage):
+        return
+    has_calls = any(isinstance(block, ToolCall) for block in previous.content)
+    if has_calls and not isinstance(entry, ToolResultBatch):
+        raise ValueError(
+            "Nothing may be inserted between assistant tool calls and their results"
+        )
 
 
 __all__: list[str] = []

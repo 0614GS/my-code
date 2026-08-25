@@ -5,7 +5,9 @@ import re
 from my_code.context.models import CompactionOutcome
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextSnapshot
+from my_code.conversation.attachments import is_durable_attachment
 from my_code.conversation.models import (
+    AttachmentMessage,
     ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
@@ -113,7 +115,17 @@ class ContextCompactor:
 
         model_messages, replacements = planner.compaction_view(snapshot)
         summary_text, usage = await self.summarize(model_messages)
-        parent_uuid = snapshot.messages[-1].uuid
+        parent_uuid = next(
+            (
+                message.uuid
+                for message in reversed(snapshot.messages)
+                if not isinstance(message, AttachmentMessage)
+                or is_durable_attachment(message.payload)
+            ),
+            None,
+        )
+        if parent_uuid is None:
+            raise ValueError("Compaction requires a durable causal parent")
         summary = ConversationSummaryMessage(
             content=_build_continuation_context(summary_text, snapshot.messages),
             parent_uuid=parent_uuid,

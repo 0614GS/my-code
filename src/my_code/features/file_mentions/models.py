@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from my_code.context.attachments.models import ContextAttachment
+from my_code.conversation.attachments import FileMentionAttachment
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,7 +21,7 @@ class FileMention:
 class LoadedAttachment:
     """A successfully loaded mention and its model-visible attachment."""
 
-    attachment: ContextAttachment
+    attachment: FileMentionAttachment
     path: str
     is_directory: bool
 

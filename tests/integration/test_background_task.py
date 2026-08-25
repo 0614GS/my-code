@@ -274,22 +274,22 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
     assert isinstance(second, AgentTurnSucceeded)
     assert "Background task completed" in request_text(parent_model.requests[2])
     assert task_id in request_text(parent_model.requests[2])
-    sources_after_delivery = tuple(
-        source
-        for source in parent_session.context_snapshot().delivered_attachment_sources
-        if source.startswith("background_task/")
+    delivered = tuple(
+        message
+        for message in parent_session.snapshot().history
+        if message.kind == "attachment"
     )
-    assert len(sources_after_delivery) == 1
+    assert len(delivered) == 1
     assert controller.pending_notifications(parent_id) == ()
 
     third = await parent.submit(parent_session, AgentTurnInput("check again"))
     assert isinstance(third, AgentTurnSucceeded)
-    sources_after_next_turn = tuple(
-        source
-        for source in parent_session.context_snapshot().delivered_attachment_sources
-        if source.startswith("background_task/")
+    delivered_after_next_turn = tuple(
+        message
+        for message in parent_session.snapshot().history
+        if message.kind == "attachment"
     )
-    assert sources_after_next_turn == sources_after_delivery
+    assert delivered_after_next_turn == delivered
 
     await tasks.close()
     await runs.close()

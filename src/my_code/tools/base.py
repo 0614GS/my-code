@@ -9,8 +9,10 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.model.primitives import JsonObject
 from my_code.model.request import ModelToolDefinition
+from my_code.permissions.models import PermissionUpdate, PermissionUpdateDestination
 from my_code.tools.presentation import (
     ToolResultPresentation,
     ToolUsePresentation,
@@ -87,6 +89,17 @@ class ToolOutput:
     content: str
     is_error: bool = False
     metadata: JsonObject = field(default_factory=dict)
+    new_attachments: tuple[AttachmentPayload, ...] = ()
+    permission_updates: tuple[PermissionUpdate, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.is_error and (self.new_attachments or self.permission_updates):
+            raise ValueError("Failed tools cannot produce follow-up state")
+        if any(
+            update.destination is not PermissionUpdateDestination.SESSION
+            for update in self.permission_updates
+        ):
+            raise ValueError("Tool outputs may update session permissions only")
 
 
 class ToolInputError(ValueError):

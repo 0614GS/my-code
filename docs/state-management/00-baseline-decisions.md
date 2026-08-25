@@ -58,15 +58,15 @@ AssistantMessage       # step 2
 
 新增 `application/` 作为用例编排边界，最终路径为 `src/my_code/application/state.py`。不得放到顶层通用 `state.py`，不得提供进程全局 singleton 或 `get_app_state()`。现有 `chat/` 可以在迁移期调用 application 层，完成后只保留面向交互产品的 facade/projection。
 
-### D0-3：显式用户附件持久化不可变内容快照
+### D0-3：显式用户附件使用 durable AttachmentMessage
 
-显式用户附件作为该次 `HumanMessage` 的内容事实持久化，至少包含：稳定 attachment/content ID、提交时解析后的 provider-neutral 内容、来源显示名和可选 workspace-relative source reference。
+显式用户附件作为紧随该次 `HumanMessage` 的 `AttachmentMessage` 持久化，包含稳定 message ID、父链、提交时解析后的 provider-neutral 内容快照和 workspace-relative path。
 
 - source reference 只用于展示、审计和显式刷新，不是恢复所需数据；不得持久化 workspace 外绝对路径。
 - resume 使用提交时的内容快照，不重新读取源文件，避免内容随文件变化而漂移。
 - 源文件缺失、移动或变更不阻止恢复；仍使用快照，并可向 UI 暴露“来源当前不可用/已变化”的诊断。
 - 若旧记录只有引用而没有快照，恢复时尝试在当前 workspace 安全边界内读取一次并立即升级为快照；不可读取时保留 Human 文本事实和缺失附件占位，不静默丢弃整个消息。
-- live-session attachment delivery 仍是派生投递状态，默认不持久化为 canonical entry。
+- 不再维护 live-session delivery；是否落盘由 Session 按 payload 类型统一决定。
 
 ### D0-4：replay sidecar 使用独立 JSONL schema v1
 

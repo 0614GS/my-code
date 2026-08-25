@@ -10,10 +10,9 @@ import my_code.tools as tool_adapter
 from my_code.agent.engine import AgentEngine
 from my_code.chat.service import ChatService
 from my_code.chat.status import RuntimeStatus
-from my_code.context.attachments.models import ContextAttachment
 from my_code.context.engine import ContextEngine
 from my_code.context.models import CompactionOutcome, ContextPlan
-from my_code.conversation.models import ConversationEntry, ToolResult
+from my_code.conversation.models import AttachmentMessage, ConversationEntry, ToolResult
 from my_code.features.file_mentions.models import FileMention, PathSuggestion
 from my_code.features.todos.models import TodoItem
 from my_code.features.todos.tool import TodoWriteTool
@@ -313,7 +312,9 @@ def test_file_mentions_are_a_feature_not_a_top_level_or_tui_domain() -> None:
 
 def test_conversation_and_context_attachment_ownership() -> None:
     assert "HumanMessage" in str(ConversationEntry.__value__)
-    assert ContextAttachment.__module__ == "my_code.context.attachments.models"
+    assert "AttachmentMessage" in str(ConversationEntry.__value__)
+    assert AttachmentMessage.__module__ == "my_code.conversation.models"
+    assert not (_PACKAGE_ROOT / "context" / "attachments" / "models.py").exists()
     assert not tuple((_PACKAGE_ROOT / "messages").glob("*.py"))
     assert not (_PACKAGE_ROOT / "context" / "attachment_projection.py").exists()
     assert not (_PACKAGE_ROOT / "context" / "attachments.py").exists()
@@ -326,12 +327,6 @@ def test_conversation_and_context_attachment_ownership() -> None:
             for name in imports
         ), source_path
 
-    attachment_models = _PACKAGE_ROOT / "context" / "attachments" / "models.py"
-    assert not any(
-        name == "my_code.agent" or name.startswith("my_code.agent.")
-        for name in _imported_modules(attachment_models)
-    )
-
     projection = (
         _PACKAGE_ROOT / "context" / "attachments" / "projection.py"
     ).read_text(encoding="utf-8")
@@ -341,7 +336,9 @@ def test_conversation_and_context_attachment_ownership() -> None:
 
     for source_path in (_PACKAGE_ROOT / "providers").glob("*.py"):
         imports = _imported_modules(source_path)
-        assert "my_code.context.attachments.models" not in imports, source_path
+        assert not any(
+            name.startswith("my_code.conversation.attachments") for name in imports
+        ), source_path
 
 
 def test_session_is_the_only_public_conversation_and_persistence_boundary() -> None:

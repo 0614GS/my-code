@@ -2,17 +2,28 @@
 
 from __future__ import annotations
 
-import json
 from typing import Protocol
 
+from my_code.conversation.attachments import (
+    InvokedSkillsAttachment,
+    SkillActivationAttachment,
+)
+from my_code.conversation.models import AttachmentMessage, ConversationEntry
 from my_code.model.primitives import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
+    PermissionBehavior,
     PermissionDecisionKind,
     PermissionDecisionReason,
+    PermissionRule,
+    PermissionUpdate,
+    PermissionUpdateDestination,
+    PermissionUpdateType,
     ToolPermissionContext,
     ToolPermissionResult,
 )
+from my_code.permissions.policy import PermissionPolicy
+from my_code.permissions.rules import parse_permission_rule
 from my_code.skills.catalog import SkillCatalogSnapshot
 from my_code.skills.models import SkillDefinition, SkillLoadError
 from my_code.tools.base import (
@@ -29,7 +40,6 @@ SKILL_TOOL_NAME = "Skill"
 class SkillActivator(Protocol):
     def activate(
         self,
-        run_id: str,
         snapshot: SkillCatalogSnapshot,
         name: str,
     ) -> SkillDefinition: ...
@@ -47,23 +57,17 @@ class SkillTool(Tool):
             raise ValueError("Skill tool requires at least one indexed Skill")
         self.snapshot = snapshot
         self._activator = activator
-        choices = "\n".join(
-            f"- {entry.name}: {entry.description} (source: {entry.source})"
-            for entry in snapshot.entries
-        )
         self._definition = ModelToolDefinition(
             name=SKILL_TOOL_NAME,
             description=(
-                "Activate one indexed Skill. Its validated instructions and optional "
-                "tool restriction become available on the next model step only.\n"
-                f"Available Skills:\n{choices}"
+                "Activate an available Skill by its stable name. The Skill listing "
+                "is provided separately in conversation context."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "skill": {
                         "type": "string",
-                        "enum": [entry.name for entry in snapshot.entries],
                         "description": "Stable Skill name to activate",
                     }
                 },
@@ -92,6 +96,17 @@ class SkillTool(Tool):
         context: ToolPermissionContext,
     ) -> ToolPermissionResult:
         del context
+        name = required_string(tool_input, "skill")
+        entry = self.snapshot.get(name)
+        if entry is not None and entry.allowed_tools:
+            return ToolPermissionResult.ask(
+                message=(f"Skill {name} requests additive session tool permissions."),
+                reason=PermissionDecisionReason(
+                    PermissionDecisionKind.TOOL, "skill-session-permissions"
+                ),
+                bypass_immune=True,
+                updated_input=tool_input,
+            )
         return ToolPermissionResult.allow(
             tool_input,
             message="Activating a validated local Skill is allowed.",
@@ -109,30 +124,82 @@ class SkillTool(Tool):
             raise ValueError(f"Unknown Skill: {name}")
 
     async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
-        if context.run_id is None:
-            raise ToolExecutionError("Skill activation requires a run identity")
+        del context
         name = required_string(tool_input, "skill")
         try:
-            definition = self._activator.activate(context.run_id, self.snapshot, name)
+            definition = self._activator.activate(self.snapshot, name)
         except SkillLoadError as error:
             raise ToolExecutionError(str(error)) from error
-        return ToolOutput(
-            json.dumps(
-                {
-                    "skill": definition.name,
-                    "source": str(definition.source),
-                    "locator": definition.locator,
-                    "availableFrom": "next_step",
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            metadata={"skill": definition.name},
+        attachment = SkillActivationAttachment(
+            definition.name,
+            definition.instructions,
+            str(definition.source),
+            definition.locator,
+            definition.compatibility,
+            definition.allowed_tools or (),
         )
+        updates = _permission_updates(attachment)
+        return ToolOutput(
+            f"Launching skill: {definition.name}",
+            metadata={"skill": definition.name},
+            new_attachments=(attachment,),
+            permission_updates=updates,
+        )
+
+
+def _permission_updates(
+    attachment: SkillActivationAttachment,
+) -> tuple[PermissionUpdate, ...]:
+    if not attachment.allowed_tools:
+        return ()
+    rules = tuple(
+        PermissionRule(
+            tool_name,
+            PermissionBehavior.ALLOW,
+            content,
+            source=PermissionUpdateDestination.SESSION.value,
+        )
+        for rule in attachment.allowed_tools
+        for tool_name, content in (parse_permission_rule(rule),)
+    )
+    return (
+        PermissionUpdate(
+            PermissionUpdateType.ADD_RULES,
+            PermissionUpdateDestination.SESSION,
+            rules=rules,
+            behavior=PermissionBehavior.ALLOW,
+        ),
+    )
+
+
+def restore_skill_permissions(
+    policy: PermissionPolicy, history: tuple[ConversationEntry, ...]
+) -> None:
+    """Rebuild additive Skill grants from durable conversation facts."""
+
+    policy.rules = tuple(
+        rule
+        for rule in policy.rules
+        if rule.source != PermissionUpdateDestination.SESSION.value
+    )
+    latest: dict[str, SkillActivationAttachment] = {}
+    for message in history:
+        if not isinstance(message, AttachmentMessage):
+            continue
+        payload = message.payload
+        if isinstance(payload, SkillActivationAttachment):
+            latest[payload.name] = payload
+        elif isinstance(payload, InvokedSkillsAttachment):
+            for skill in payload.skills:
+                latest[skill.name] = skill
+    for attachment in latest.values():
+        for update in _permission_updates(attachment):
+            policy.apply_update(update)
 
 
 __all__ = [
     "SKILL_TOOL_NAME",
     "SkillActivator",
     "SkillTool",
+    "restore_skill_permissions",
 ]

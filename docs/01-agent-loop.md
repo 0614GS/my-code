@@ -12,7 +12,7 @@
 
 foreground Subagent 由模型可见的标准 Tool 启动。`SubagentController` 只把显式 prompt/attachments 交给 child，不复制父 transcript；child 结束后关闭 run/lease，并把一个结构化终态作为父 ToolResult 返回。调用方取消 foreground 等待时，TaskSupervisor 会取消 child task，child run 的 `finally` 负责关闭 lease。
 
-启用 background gate 后，同一 Tool 可立即返回 task ID；父 Agent 不等待 child。TaskList/TaskOutput/TaskCancel 通过 root run owner 访问 task，完成通知由 attachment source 在后续 step 规划时产生。只有 Session 接受 delivery 后 cursor 才推进，所以 context inspect 或 compact retry 不会吞掉通知。
+启用 background gate 后，同一 Tool 可立即返回 task ID；父 Agent 不等待 child。TaskList/TaskOutput/TaskCancel 通过 root run owner 访问 task，完成通知由 attachment source 在后续 step 规划前产生。Session 接受 durable payload 后才 acknowledge controller；Conversation 按 task ID 去重，所以 inspect、失败规划、compact retry 或 resume 不会吞掉或重复通知。
 
 ## 一次 Turn
 
@@ -21,14 +21,16 @@ ChatService.stream(prompt)
   -> 加载显式 attachment
   -> AgentEngine.stream(active_session, input)
      -> 先提交 HumanMessage
-     -> Step 1: 捕获 RunCapabilitySnapshot
-        -> 合并该 run 待消费的 Skill prompt section/tool allowlist
+     -> Step 1: 捕获一次 ToolCatalogSnapshot
+        -> 运行动态 attachment sources，并由 Session 排入 Conversation
      -> ContextEngine.plan(Session snapshot, 同版本 tool definitions)
      -> ModelClient.stream()
      -> 提交完整 AssistantMessage
      -> 无工具：产生 AgentTurnSucceeded
      -> 有工具：ToolRoundExecutor 使用同一 tool snapshot
-        -> Session 提交 ToolResultBatch
+        -> Session 原子提交 ToolResultBatch
+        -> 按 ToolCall 顺序提交成功调用的 Attachment
+        -> 最后应用 session permission updates
      -> Step 2..N: 重新投影 Context 并调用模型
      -> 达到上限：产生 AgentMaxStepsReached
   -> 投影为 Chat events
@@ -53,7 +55,7 @@ ChatService.stream(prompt)
 - AssistantMessage 必须先持久化，工具才可以执行。
 - 同一 step 的 ModelRequest 和 ToolRound 必须使用同一 ToolCatalogSnapshot。
 - Catalog 更新只影响下一个 step，不改变正在运行的 ToolRound。
-- Skill activation 只进入下一 step；完整 AssistantMessage 提交后 acknowledgement 删除一次性激活。
+- Skill activation 在 ToolResultBatch 后成为 durable Attachment；正文不修改 system prompt，并在 compact/resume 后继续存在。
 - 每个 ToolCall 最终都有一个 ToolResult。
 - 一个 AppState 同一时刻只运行一个会改变状态的 application operation。
 - runtime 关闭先取消 TaskSupervisor 中的任务，再回收 AgentRun、Skill runtime、MCP transport，最后关闭 provider clients。

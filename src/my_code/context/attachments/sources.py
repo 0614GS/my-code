@@ -4,17 +4,17 @@ import logging
 from collections.abc import Callable, Iterable
 from typing import Protocol, runtime_checkable
 
-from my_code.context.attachments.models import ContextAttachment
-from my_code.context.session import AttachmentDelivery, ContextSnapshot
+from my_code.context.session import ContextSnapshot
+from my_code.conversation.attachments import AttachmentPayload
 
 logger = logging.getLogger(__name__)
 
-type DerivedAttachmentSource = Callable[[ContextSnapshot], Iterable[ContextAttachment]]
+type DerivedAttachmentSource = Callable[[ContextSnapshot], Iterable[AttachmentPayload]]
 
 
 @runtime_checkable
-class AttachmentDeliveryObserver(Protocol):
-    def acknowledge(self, deliveries: tuple[AttachmentDelivery, ...]) -> None: ...
+class AttachmentObserver(Protocol):
+    def acknowledge(self, attachments: tuple[AttachmentPayload, ...]) -> None: ...
 
 
 class DerivedAttachmentResolver:
@@ -23,10 +23,10 @@ class DerivedAttachmentResolver:
     def __init__(self, sources: Iterable[DerivedAttachmentSource] = ()) -> None:
         self._sources = tuple(sources)
 
-    def resolve(self, snapshot: ContextSnapshot) -> tuple[ContextAttachment, ...]:
+    def resolve(self, snapshot: ContextSnapshot) -> tuple[AttachmentPayload, ...]:
         """在不保留 resolver 内部状态的前提下解析一次快照。"""
 
-        attachments: list[ContextAttachment] = []
+        attachments: list[AttachmentPayload] = []
         for source in self._sources:
             try:
                 source_attachments = tuple(source(snapshot))
@@ -36,14 +36,14 @@ class DerivedAttachmentResolver:
             attachments.extend(source_attachments)
         return tuple(attachments)
 
-    def acknowledge(self, deliveries: tuple[AttachmentDelivery, ...]) -> None:
-        """Notify stateful sources only after Session accepted deliveries."""
+    def acknowledge(self, attachments: tuple[AttachmentPayload, ...]) -> None:
+        """Notify stateful sources only after Session accepted attachments."""
 
         for source in self._sources:
-            if not isinstance(source, AttachmentDeliveryObserver):
+            if not isinstance(source, AttachmentObserver):
                 continue
             try:
-                source.acknowledge(deliveries)
+                source.acknowledge(attachments)
             except Exception:
                 logger.exception("Attachment delivery acknowledgement failed")
 
@@ -51,5 +51,5 @@ class DerivedAttachmentResolver:
 __all__ = [
     "DerivedAttachmentResolver",
     "DerivedAttachmentSource",
-    "AttachmentDeliveryObserver",
+    "AttachmentObserver",
 ]

@@ -11,7 +11,7 @@
 - `context.session`：不可变 context view 与 Session 的窄访问协议。
 - `context.models`：预算、计划与压缩结果。
 - `context.compaction`：摘要模型调用与 compact proposal。
-- `context.attachments`：不写 Transcript 的临时上下文。
+- `context.attachments`：Conversation attachment payload 到 `UserInput` 的纯投影与动态 source 协议。
 
 ## 请求组成
 
@@ -19,12 +19,12 @@
 SystemPrompt
 + User context
 + Conversation working set
-+ request/live-session attachments
++ ordered AttachmentMessage entries
 + Tool definitions
 => ModelRequest
 ```
 
-Context 会把 Conversation entries 转换为有序 `ModelInputItem`，不会修改 canonical facts。`ContextPlan` 中明确列出的 content replacement 或 attachment delivery 由 Agent 在请求使用前交给 Session 原子提交。相同 snapshot、session cache 与 model environment 产生确定性 plan。
+Context 会把 Conversation entries 转换为有序 `ModelInputItem`，不会修改 canonical facts。动态 attachment source 先由 Agent 解析并交给 Session，随后 Context 对包含这些事实的新 snapshot 进行纯规划。`ContextPlan` 中只有 content replacement 等请求决策；相同 snapshot、session cache 与 model environment 产生确定性 plan。
 
 ## 预算
 
@@ -47,8 +47,8 @@ Context 会把 Conversation entries 转换为有序 `ModelInputItem`，不会修
 
 每个活动 Session 私有持有：
 
-- 已交付 attachment 及其 anchor。
+- working set 中 Attachment 的原位投影。
 - 首次解析后复用的用户上下文。
 - 当前 session 的稳定 prompt section cache。
 
-这些状态不由 ContextEngine 缓存，也不写 canonical transcript。切换或恢复会创建新的 Session，因此不能跨 Session 复用；Todo reminder 也是 attachment delivery，不是对话事实。
+prompt/user-context cache 不由 ContextEngine 持有。Todo reminder 与 Skill listing 是内存 Conversation entries，恢复后按类型化历史重新派生；durable Attachment 则从 transcript 恢复。

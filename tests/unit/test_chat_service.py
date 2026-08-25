@@ -15,11 +15,11 @@ from my_code.chat.history import HistoryText, HistoryToolCall
 from my_code.chat.service import ChatService
 from my_code.config.paths import MyCodePaths
 from my_code.config.settings import AgentSettings
-from my_code.context.attachments.models import ContextAttachment, ContextObservation
 from my_code.context.models import CompactionOutcome
-from my_code.context.session import AttachmentDelivery
+from my_code.conversation.attachments import TodoReminderAttachment
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     ConversationSummaryMessage,
     HumanMessage,
     TextContent,
@@ -101,7 +101,7 @@ async def test_runtime_loads_mentions_before_creating_turn_input(
     assert agent.turn_input is not None
     assert agent.turn_input.prompt == "review @context.txt"
     assert len(agent.turn_input.attachments) == 1
-    assert agent.turn_input.attachments[0].retention == "live_session"
+    assert agent.turn_input.attachments[0].kind == "file_mention"
 
 
 @pytest.mark.asyncio
@@ -168,7 +168,10 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     )
     assert runtime.status().session_id == _TARGET_SESSION_ID
     assert runtime.state.session is not previous
-    assert runtime.state.session.context_snapshot().attachment_deliveries == ()
+    assert not any(
+        isinstance(message, AttachmentMessage)
+        for message in runtime.state.session.context_snapshot().messages
+    )
     assert runtime.state.session.session_id == _TARGET_SESSION_ID
 
 
@@ -287,18 +290,7 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
     active = runtime.state.session
     anchor = HumanMessage(content="keep this session")
     active.append_human_message(anchor)
-    active.add_context_deliveries(
-        (
-            AttachmentDelivery(
-                anchor.uuid,
-                ContextAttachment(
-                    "file",
-                    (ContextObservation("File: keep.txt", "keep"),),
-                    retention="live_session",
-                ),
-            ),
-        ),
-    )
+    active.append_attachment(TodoReminderAttachment("keep"))
     empty_id = "33333333-3333-3333-3333-333333333333"
     SessionStore(runtime.settings.paths.project_state_dir, empty_id).load()
 
@@ -307,7 +299,10 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
 
     assert runtime.state.session is active
     assert runtime.status().session_id == _CURRENT_SESSION_ID
-    assert runtime.state.session.context_snapshot().attachment_deliveries
+    assert any(
+        isinstance(message, AttachmentMessage)
+        for message in runtime.state.session.context_snapshot().messages
+    )
 
 
 @pytest.mark.asyncio

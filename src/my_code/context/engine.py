@@ -3,13 +3,10 @@
 from my_code.context.compaction import ContextCompactor
 from my_code.context.models import CompactionOutcome, ContextBudget, ContextPlan
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import (
-    AttachmentDelivery,
-    ContextSnapshot,
-    SessionContextAccess,
-)
+from my_code.context.session import ContextSnapshot, SessionContextAccess
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.state import CompactTrigger
-from my_code.model.request import ModelToolDefinition, ResolvedPromptSection
+from my_code.model.request import ModelToolDefinition
 
 
 class ContextEngine:
@@ -29,13 +26,11 @@ class ContextEngine:
         session: SessionContextAccess | None = None,
         *,
         tools: tuple[ModelToolDefinition, ...],
-        prompt_sections: tuple[ResolvedPromptSection, ...] = (),
     ) -> ContextPlan:
         return self._planner.plan(
             snapshot,
             session,
             tools=tools,
-            prompt_sections=prompt_sections,
         )
 
     def inspect(
@@ -44,20 +39,23 @@ class ContextEngine:
         session: SessionContextAccess | None = None,
         *,
         tools: tuple[ModelToolDefinition, ...],
-        prompt_sections: tuple[ResolvedPromptSection, ...] = (),
     ) -> ContextBudget:
         return self._planner.inspect(
             snapshot,
             session,
             tools=tools,
-            prompt_sections=prompt_sections,
         )
 
     def acknowledge_attachments(
         self,
-        deliveries: tuple[AttachmentDelivery, ...],
+        attachments: tuple[AttachmentPayload, ...],
     ) -> None:
-        self._planner.acknowledge_attachments(deliveries)
+        self._planner.acknowledge_attachments(attachments)
+
+    def derive_attachments(
+        self, snapshot: ContextSnapshot
+    ) -> tuple[AttachmentPayload, ...]:
+        return self._planner.derive_attachments(snapshot)
 
     async def compact(
         self,

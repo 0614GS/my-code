@@ -41,10 +41,7 @@
 
 ### D1：动态能力只在 step 边界生效
 
-每个 step 开始前创建一个 `RunCapabilitySnapshot`。当前实现包含：
-
-- `tool_snapshot`：工具实例、模型 definitions、来源及版本。
-- 已激活 Skill 产生的 request-scoped prompt sections 与 acknowledgement IDs。
+每个 step 开始前捕获一次 `ToolCatalogSnapshot`，其中包含工具实例、模型 definitions、来源及版本。Skill 正文和列表通过 Conversation Attachment 进入模型输入，不建立第二份 capability contribution。
 
 provider binding/model environment 由对应 AgentRun 捕获；Subagent 的 permission/tool 收窄在创建 child-local catalog/policy 时完成，不重复塞入 step 快照。
 
@@ -90,7 +87,7 @@ bootstrap (唯一组装入口)
     └── AgentRunFactory ──> one run capsule
                                ├── own Session
                                ├── own ModelClient lease
-                               ├── immutable RunCapabilitySnapshot
+                               ├── immutable ToolCatalogSnapshot
                                ├── AgentEngine + ContextEngine
                                └── ToolRoundExecutor + cancellation scope
 
@@ -124,14 +121,14 @@ Agent Tool ──> SubagentController ──> foreground child run
 | `ToolCatalogSnapshot` | Agent run/step | Step，不可变 | 否 |
 | MCP connection/client | `McpRuntime` | Application/server connection | 否 |
 | Skill index/cache | `SkillCatalog` | Application，可原子 reload | 否 |
-| pending Skill activation | `SkillRuntime` | Run/下一 step，acknowledge 后删除 | 否 |
+| Skill activation/listing | Parent Session Conversation | session / working set | 正文持久化，listing 仅内存 |
 | foreground parent Session | `AppState` | User session | 是，唯一权威 |
 | child Session | child `AgentRun` | Subagent task | 是，仅属于 child |
 | task state/result | `TaskSupervisor` | Application，首版不跨进程 | 否 |
-| task notification delivery cursor | parent Session 的 runtime sidecar | Parent session runtime | 否 |
+| task completion attachment | parent Session Conversation | Parent session | 是，按 task ID 幂等 |
 | Subagent 最终结果 | child Session + `TaskSnapshot` | Task | 只有作为 ToolResult/attachment 交付后才对父上下文可见 |
 
-后台任务完成时，`TaskSupervisor` 保存唯一终态。`TaskCompletionAttachmentSource` 在父 Agent 的下一个安全 step 边界投递一次通知；如果当前 turn 已结束，则在下一个 turn 投递。模型也可以通过 `TaskOutput` 主动查询。通知进度和 stream delta 不直接追加到父 Session 的 canonical conversation。
+后台任务完成时，`TaskSupervisor` 保存唯一终态。`BackgroundTaskNotificationSource` 在父 Agent 的下一个安全 step 边界生成 durable Attachment；如果当前 turn 已结束，则在下一个 turn 投递。模型也可以通过 `TaskOutput` 主动查询。通知进度和 stream delta 不进入 Conversation。
 
 ### 4.3 依赖方向
 
@@ -160,7 +157,7 @@ bootstrap
 - `tools` 不得依赖 `mcp`、`skills`、`tasks` 或 `features.*`。
 - `tasks` 不得依赖 `agent`、`application`、`sessions`、`providers` 或 `features.*`。
 - `mcp` 可以依赖 provider-neutral `model`、`tools`、`config`，不得让 MCP SDK 类型离开 `mcp`。
-- `skills` 可以依赖通用 `agent` capability、`model`、`permissions` 和 `tools`，不得依赖 application、Session、TUI/CLI。
+- `skills` 可以依赖 provider-neutral `conversation`/`context`、`model`、`permissions` 和 `tools`，不得依赖 application、Session 实现、TUI/CLI。
 - `agent` 不感知 MCP/Skill 来源，只消费快照和标准接口。
 - `features.subagents` 依赖 `application` 的窄 run/task API，不直接构造 provider adapter。
 
@@ -174,7 +171,6 @@ bootstrap
 ToolSourceId(kind, name)
 ToolRegistration(source, tool)
 ToolCatalogSnapshot(version, tools_by_name, definitions, sources)
-RunCapabilitySnapshot(tool_snapshot, request_prompt_sections, activation_ids)
 ```
 
 规则：
@@ -281,7 +277,7 @@ PENDING ──> RUNNING ──> SUCCEEDED
 
 交付物：
 
-- 实现 `ToolCatalog`、`ToolCatalogSnapshot` 和 `RunCapabilitySnapshot`。
+- 实现 `ToolCatalog` 和 `ToolCatalogSnapshot`。
 - 内置工具和 Feature 工具改为带来源注册；bootstrap 不再直接拼接最终 tuple。
 - `ContextPlanner` 按 step 接收 definitions；`ToolRoundExecutor` 接收同一个 tool snapshot。
 - 实现原子注册/撤销、冲突诊断和版本递增。
@@ -298,7 +294,7 @@ PENDING ──> RUNNING ──> SUCCEEDED
 
 - `tools.catalog` 已实现 `ToolSourceId`、`ToolRegistration`、`ToolCatalog` 和不可变 `ToolCatalogSnapshot`；原静态 `tools.registry` 已移除。
 - `AppState.tools` 持有唯一 application-lifetime catalog；builtin 与 Todo Feature 使用独立来源注册。
-- `AgentEngine` 在 step 开始捕获 `RunCapabilitySnapshot`，ContextPlanner 不再持有固定 definitions，ToolRoundExecutor 显式接收同一 snapshot。
+- `AgentEngine` 在 step 开始捕获一次 `ToolCatalogSnapshot`，ContextPlanner 不再持有固定 definitions，ToolRoundExecutor 显式接收同一 snapshot。
 - SNAP-01 由 `tests/integration/test_capability_snapshot.py` 验证：stream 中替换 source 后，当前 step 仍执行旧实例，下一 step 才看到新 definition。
 - SNAP-02 由 `tests/unit/test_tool_catalog.py` 验证：冲突注册原子失败，版本和内容不变；replace/unregister 不修改旧 snapshot。
 - M1 完成时第 10 节五条命令全部通过，完整测试结果为 `403 passed`；架构临时豁免仍为空。
@@ -403,7 +399,7 @@ PENDING ──> RUNNING ──> SUCCEEDED
 
 - `Subagent(background=true)` 通过同一 SubagentController/TaskSupervisor 提交 child 后立即返回 `task_id`/`run_id`；foreground 默认行为不变。
 - `TaskList`、`TaskOutput`、`TaskCancel` 是标准 Tool，只能按 root owner run 查询或取消本 agent tree 的 background task；取消继续经过 PermissionPolicy。
-- `BackgroundTaskNotificationSource` 只在 Context plan 的 step 边界读取终态。Session 接受 delivery 后由通用 attachment acknowledgement 回写 controller cursor；`inspect`、compact retry 和跨多个 step/turn 不会提前消费或重复创建 delivery。
+- `BackgroundTaskNotificationSource` 只在模型规划前的 step 边界读取终态。Session 接受 durable Attachment 后由通用 acknowledgement 回写 controller；Conversation 按 task ID 去重，`inspect`、compact retry 和跨多个 step/turn 不会提前消费或重复投影。
 - main/child ToolContext 都携带当前 run ID；session resume 后 main Tool 不依赖 bootstrap 时的旧 Session ID，嵌套 background task 的查询/通知归属 root agent tree。
 - `backgroundTasks.enabled=false` 为默认值；只有它与 `subagents.enabled` 同时开启时，Subagent schema 才暴露 background 参数并注册三个 Task tools。关闭后退回纯 foreground M4a。
 - BG-01/BG-02 由 `tests/integration/test_background_task.py` 使用 Event barrier 验证 submit 不等待、turn 后完成、后续 step 单次通知、run/lease 回收；不依赖耗时阈值。
@@ -483,14 +479,14 @@ PENDING ──> RUNNING ──> SUCCEEDED
 - 实现三个基础搜索层，优先级固定为 project `.my-code/skills` > user config skills > builtin；同层重名报错，不按文件遍历顺序覆盖。
 - frontmatter 和正文分阶段加载：索引只载入模型选择需要的元数据，选中后才读取完整指令。
 - reload 原子替换 Skill catalog；无效 Skill 隔离并生成可定位诊断，不使其他 Skill 消失。
-- 将激活结果放入下一个 `RunCapabilitySnapshot`。需要工具化/隔离执行时复用标准 Tool/Subagent 路径。
+- Skill listing 与激活正文分别使用临时/durable AttachmentMessage；需要工具化/隔离执行时复用标准 Tool/Subagent 路径。
 - MCP Skill source 使用同一规范化模型和冲突规则，不建立第二套 Skill 类型。
 
 退出条件：
 
 - 临时目录测试覆盖优先级、同层冲突、非法 frontmatter、缺失正文、符号链接/路径越界和 reload。
-- 未激活 Skill 的完整正文不会进入 ModelRequest；激活后只出现一次且来源可追踪。
-- Skill tool allowlist 只能收窄当前 run 工具集。
+- 未激活 Skill 的完整正文不会进入 ModelRequest；激活后作为 Conversation fact 持续存在且来源可追踪。
+- Skill `allowed-tools` 使用通用 parser 形成 additive session allow rules；工具目录保持完整可见，deny/ask 优先。
 - Skill 目录中的 Python/shell 不会因 discovery/load 自动执行。
 - Skill 增删改只影响下一 step，当前 step 的 prompt/tool snapshot 不漂移。
 
@@ -500,11 +496,12 @@ PENDING ──> RUNNING ──> SUCCEEDED
 - `skills.discovery` 按 project（300）> user（200）> builtin（100）扫描 `<root>/<skill>/SKILL.md`。索引只保留 name、description、可选 `allowed-tools`/compatibility、locator 与 fingerprint；激活才读取正文。首版 frontmatter 是无新增 YAML 依赖的严格平面 `key: value` 子集，未知/嵌套/重复字段均产生隔离诊断。
 - 同优先级同名候选全部排除并报告 `same_layer_conflict`，随后允许较低层确定性接管；无效 frontmatter、缺失文件/正文、超限文件、symlink 和 path escape 不会使其他 Skill 消失。
 - `SkillRuntime` 先 stage 完整 discovery 结果，再原子发布 `feature:skills` Tool source 并 commit catalog。旧 `SkillTool` 持有旧 `SkillCatalogSnapshot`；reload、增删改只对下一 step 可见，索引后被修改的正文必须先 reload，不能绕过 fingerprint。
-- `Skill` 是标准 Tool，继续经过 input validation、PermissionPolicy、ToolExecutor、取消与 ToolResult 闭合路径。它只把已校验正文放入下一次 `RunCapabilitySnapshot` 的 request prompt section，AssistantMessage 提交后按 activation ID acknowledge，因此来源可追踪且只消费一次。
-- `allowed-tools` 只对激活所在 run 的下一 step 做当前 `ToolCatalogSnapshot.select()` 交集；未声明不改变现有集合，显式 `[]` 收窄为空，多个激活取交集，不能加入当前 run 原本没有的工具。
+- `Skill` 是标准 Tool，继续经过 input validation、PermissionPolicy、ToolExecutor、取消与 ToolResult 闭合路径。结果保持简短；完整正文在结果 batch 后作为 durable `SkillActivationAttachment` 提交，不进入 system prompt。
+- `allowed-tools` 由现有 permission-rule parser 转为 additive session allow rules。含规则的激活默认要求用户授权；失败、拒绝或取消不产生 Attachment 或 grant。多个 Skill 取规则并集，显式 deny/ask 仍优先，完整 ToolCatalog 不被隐藏。
+- resume 从 durable Skill attachments 重建 session grants；compact 按 Skill 名称保留最新正文并生成 `InvokedSkillsAttachment`。
 - `skills.enabled=false` 为默认值；关闭时不扫描目录、不注册 Skill Tool。启动顺序为 MCP → Skills，关闭顺序为 tasks → runs → Skills → MCP → provider，便于后续 MCP Skill source 先获得连接、后释放依赖。
 - SKILL-01 由 `tests/unit/skills/test_discovery.py` 覆盖三层优先级、同层冲突、非法 frontmatter、空正文、symlink/path escape、stale index 与 Python/shell data-only；`test_skill_runtime.py` 覆盖原子 tool snapshot reload 和规范化 MCP source。
-- SKILL-02 由 `tests/integration/test_skill_activation.py` 验证未激活正文不进入请求、激活正文下一 step 只出现一次、source trace、allowlist 只收窄、reload 不改变当前 request/tool snapshot。失败由 stale/非法文档测试覆盖；取消继续使用已验证的通用 ToolRound/ToolExecutor 路径，SkillRuntime 不创建后台 task。
+- SKILL-02 由 `tests/integration/test_skill_activation.py` 验证未激活正文不进入请求、激活正文不进入 system prompt、正文持续存在、工具目录不收窄以及 reload 只影响下一 step 的 listing/tool snapshot。失败与取消继续使用通用 ToolRound/ToolExecutor 路径。
 - M6 完成时第 10 节五条命令全部通过，完整测试结果为 `487 passed`；`pyproject.toml`/`uv.lock` 未变化，没有新增第三方依赖，架构临时豁免仍为空。
 
 ## 7. 推荐的提交拆分
@@ -553,7 +550,7 @@ Feature gate 只控制能力注册，不在 AgentEngine 中增加五个条件分
 | SUB-01 | child Session 与父级隔离 | 比较两份 transcript/JSONL 和 result binding | `tests/integration/test_subagent_lifecycle.py` |
 | SUB-02 | child 权限/工具只能收窄 | 尝试越权工具、提权模式和路径越界 | `tests/integration/test_subagent_permissions.py` |
 | BG-01 | background submit 不等待完成 | submit 返回 task ID 时 child 被 barrier 阻塞 | `tests/integration/test_background_task.py` |
-| BG-02 | 完成只通知一次 | 跨多个 step/turn 轮询 delivery cursor | `tests/integration/test_background_task.py` |
+| BG-02 | 完成只通知一次 | 跨多个 step/turn 以 conversation task ID 去重 | `tests/integration/test_background_task.py` |
 | MCP-01 | server 生命周期可回收 | fake connect/discover/reconnect/close | `tests/unit/mcp/test_runtime.py` |
 | MCP-02 | MCP tool 不绕过本地安全流水线 | allow/ask/deny、取消、schema 错误 | `tests/integration/test_mcp_tool_round.py` |
 | MCP-03 | discovery 更新只在下一 step 生效 | tools-changed 前后比较 snapshot version | `tests/integration/test_mcp_discovery.py` |

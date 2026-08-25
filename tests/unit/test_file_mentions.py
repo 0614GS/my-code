@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from my_code.context.attachments.models import ContextObservation
 from my_code.features.file_mentions.loader import AttachmentLoader
 from my_code.features.file_mentions.parser import parse_file_mentions
 from my_code.features.file_mentions.reader import (
@@ -50,13 +49,8 @@ async def test_loader_reads_file_range_and_lists_directory(tmp_path: Path) -> No
         "Read sample.txt",
         "Listed directory docs",
     ]
-    observations = [item.attachment.content[0] for item in loaded]
-    assert all(isinstance(item, ContextObservation) for item in observations)
-    assert isinstance(observations[0], ContextObservation)
-    assert isinstance(observations[1], ContextObservation)
-    assert "     2\ttwo" in observations[0].body
-    assert "docs/a.txt" in observations[1].body
-    assert all(item.attachment.retention == "live_session" for item in loaded)
+    assert "     2\ttwo" in loaded[0].attachment.body
+    assert "docs/a.txt" in loaded[1].attachment.body
 
 
 @pytest.mark.asyncio
@@ -128,14 +122,12 @@ async def test_directory_listing_is_sorted_bounded_and_skips_external_symlinks(
     (directory / "escape.txt").symlink_to(outside)
 
     loaded = await _loader(tmp_path).load("@many")
-    observation = loaded[0].attachment.content[0]
-
-    assert isinstance(observation, ContextObservation)
-    lines = observation.body.splitlines()
+    attachment = loaded[0].attachment
+    lines = attachment.body.splitlines()
     assert lines[:2] == ["many/000.txt", "many/001.txt"]
     assert len(lines) == 501
     assert lines[-1] == "<directory listing truncated at 500 entries>"
-    assert "escape" not in observation.body
+    assert "escape" not in attachment.body
 
 
 @pytest.mark.asyncio
@@ -145,12 +137,10 @@ async def test_default_file_read_is_truncated_at_2000_lines(tmp_path: Path) -> N
     )
 
     loaded = await _loader(tmp_path).load("@long.txt")
-    observation = loaded[0].attachment.content[0]
-
-    assert isinstance(observation, ContextObservation)
-    assert "  2000\t1999" in observation.body
-    assert "  2001\t2000" not in observation.body
-    assert "truncated at 2000 lines" in observation.body
+    attachment = loaded[0].attachment
+    assert "  2000\t1999" in attachment.body
+    assert "  2001\t2000" not in attachment.body
+    assert "truncated at 2000 lines" in attachment.body
 
 
 @pytest.mark.asyncio

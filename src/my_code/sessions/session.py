@@ -4,9 +4,16 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from my_code.context.documents import UserContextDocument
-from my_code.context.session import AttachmentDelivery, ContextSnapshot
+from my_code.context.session import ContextSnapshot
+from my_code.conversation.attachments import (
+    AttachmentPayload,
+    InvokedSkillsAttachment,
+    SkillActivationAttachment,
+    is_durable_attachment,
+)
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
@@ -50,7 +57,6 @@ class Session:
         self._tool_results = ToolResultStore(
             project_state_dir / session_id / "tool-results"
         )
-        self._context_deliveries: tuple[AttachmentDelivery, ...] = ()
         self._user_context: tuple[UserContextDocument, ...] | None = None
         self._prompt_cache: dict[str, ResolvedPromptSection] = {}
         self._repair_trailing_tool_calls()
@@ -79,25 +85,16 @@ class Session:
     def context_snapshot(self) -> ContextSnapshot:
         snapshot = self.snapshot()
         working_ids = {entry.uuid for entry in snapshot.working_set}
-        deliveries = tuple(
-            item for item in self._context_deliveries if item.anchor_uuid in working_ids
-        )
         return ContextSnapshot(
             messages=snapshot.working_set,
             content_replacements=snapshot.content_replacements,
             session_history=snapshot.history,
-            attachment_deliveries=deliveries,
             replay_records=tuple(
                 record
                 for record in self._replay_records.values()
                 if record.entry_id in working_ids
             ),
             session_id=self.session_id,
-            delivered_attachment_sources=tuple(
-                dict.fromkeys(
-                    item.attachment.source for item in self._context_deliveries
-                )
-            ),
         )
 
     def resolve_prompt(self, registry: PromptRegistry) -> SystemPrompt:
@@ -111,28 +108,22 @@ class Session:
             self._user_context = tuple(resolve())
         return self._user_context
 
-    def add_context_deliveries(
-        self, deliveries: tuple[AttachmentDelivery, ...]
-    ) -> None:
-        working_ids = {entry.uuid for entry in self._conversation.working_set}
-        existing = {item.delivery_id: item for item in self._context_deliveries}
-        pending: list[AttachmentDelivery] = []
-        for delivery in deliveries:
-            if delivery.anchor_uuid not in working_ids:
-                raise ValueError(
-                    "Attachment delivery anchor is not in the working set: "
-                    f"{delivery.anchor_uuid}"
-                )
-            previous = existing.get(delivery.delivery_id)
-            if previous is not None:
-                if previous != delivery:
-                    raise ValueError(
-                        f"Conflicting attachment delivery: {delivery.delivery_id}"
-                    )
-                continue
-            existing[delivery.delivery_id] = delivery
-            pending.append(delivery)
-        self._context_deliveries += tuple(pending)
+    @property
+    def causal_head_uuid(self) -> str | None:
+        return next(
+            (
+                entry.uuid
+                for entry in reversed(self._conversation.history)
+                if not isinstance(entry, AttachmentMessage)
+                or is_durable_attachment(entry.payload)
+            ),
+            None,
+        )
+
+    def append_attachment(self, payload: AttachmentPayload) -> AttachmentMessage:
+        message = AttachmentMessage(payload, parent_uuid=self.causal_head_uuid)
+        self._commit_entry(message)
+        return message
 
     @property
     def message_count(self) -> int:
@@ -182,6 +173,43 @@ class Session:
             raise
         return persisted
 
+    def commit_tool_round(
+        self,
+        batch: ToolResultBatch,
+        attachments: tuple[AttachmentPayload, ...] = (),
+        *,
+        presentations: Iterable[tuple[str, ToolResultPresentation]] = (),
+    ) -> tuple[ToolResultBatch, tuple[AttachmentMessage, ...]]:
+        """Commit a closed result batch before all ordered tool follow-ups."""
+
+        if not isinstance(batch, ToolResultBatch):
+            raise TypeError("commit_tool_round requires ToolResultBatch")
+        existing_files = self._tool_result_files()
+        try:
+            persisted = self._externalize_tool_result_batch(batch)
+            candidate = self._conversation.clone()
+            candidate.append(persisted)
+            messages: list[AttachmentMessage] = []
+            for payload in attachments:
+                attachment = AttachmentMessage(
+                    payload, parent_uuid=_causal_head(candidate.history)
+                )
+                candidate.append(attachment)
+                messages.append(attachment)
+            presentation_items = tuple(presentations)
+            durable = tuple(
+                message
+                for message in messages
+                if is_durable_attachment(message.payload)
+            )
+            self._store.append_message_batch((persisted, *durable), presentation_items)
+        except BaseException:
+            self._rollback_tool_result_files(existing_files)
+            raise
+        self._conversation = candidate
+        self._tool_presentations.update(presentation_items)
+        return persisted, tuple(messages)
+
     def _tool_result_files(self) -> frozenset[Path]:
         root = self._tool_results.root
         if not root.exists():
@@ -229,11 +257,17 @@ class Session:
         if not changed:
             return
         presentation_items = tuple(presentations)
-        if not self._store.append_message(entry, presentation_items, replay_records):
-            raise ValueError(
-                f"Entry UUID already exists outside the active conversation: "
-                f"{entry.uuid}"
-            )
+        durable = not isinstance(entry, AttachmentMessage) or is_durable_attachment(
+            entry.payload
+        )
+        if durable:
+            if not self._store.append_message(
+                entry, presentation_items, replay_records
+            ):
+                raise ValueError(
+                    "Entry UUID already exists outside the active conversation: "
+                    f"{entry.uuid}"
+                )
         self._conversation = candidate
         self._tool_presentations.update(presentation_items)
         self._replay_records.update(
@@ -275,7 +309,13 @@ class Session:
             candidate.add_content_replacement(replacement)
         candidate.add_compact_boundary(boundary)
         candidate.append(summary)
-        self._store.append_compaction(replacements, boundary, summary)
+        invoked = _latest_invoked_skills(candidate.history[:-1])
+        attachments: tuple[AttachmentMessage, ...] = ()
+        if invoked is not None:
+            attachment = AttachmentMessage(invoked, parent_uuid=summary.uuid)
+            candidate.append(attachment)
+            attachments = (attachment,)
+        self._store.append_compaction(replacements, boundary, summary, attachments)
         self._conversation = candidate
         return boundary
 
@@ -309,6 +349,36 @@ def _trailing_tool_repairs(
             is_error=True,
         )
         for call in calls
+    )
+
+
+def _latest_invoked_skills(
+    history: tuple[ConversationEntry, ...],
+) -> InvokedSkillsAttachment | None:
+    by_name: dict[str, SkillActivationAttachment] = {}
+    for entry in history:
+        if not isinstance(entry, AttachmentMessage):
+            continue
+        payload = entry.payload
+        if isinstance(payload, SkillActivationAttachment):
+            by_name[payload.name] = payload
+        elif isinstance(payload, InvokedSkillsAttachment):
+            for skill in payload.skills:
+                by_name[skill.name] = skill
+    if not by_name:
+        return None
+    return InvokedSkillsAttachment(tuple(by_name.values()))
+
+
+def _causal_head(history: tuple[ConversationEntry, ...]) -> str | None:
+    return next(
+        (
+            entry.uuid
+            for entry in reversed(history)
+            if not isinstance(entry, AttachmentMessage)
+            or is_durable_attachment(entry.payload)
+        ),
+        None,
     )
 
 

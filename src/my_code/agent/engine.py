@@ -3,10 +3,6 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from my_code.agent.capabilities import (
-    RunCapabilitySnapshot,
-    StepCapabilitySource,
-)
 from my_code.agent.events import (
     AgentConversationUpdated,
     AgentEvent,
@@ -27,9 +23,7 @@ from my_code.agent.models import (
 )
 from my_code.context.engine import ContextEngine
 from my_code.context.models import ContextOverflow, ContextPlan
-from my_code.context.session import (
-    AttachmentDelivery,
-)
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
@@ -57,8 +51,9 @@ from my_code.model.primitives import (
     replay_content_id,
 )
 from my_code.model.request import ModelOutput, ModelTextBlock, ModelToolUseBlock
+from my_code.permissions.models import PermissionUpdate
 from my_code.sessions.session import Session
-from my_code.tools.catalog import ToolCatalog
+from my_code.tools.catalog import ToolCatalog, ToolCatalogSnapshot
 from my_code.tools.presentation import ToolResultPresentation
 from my_code.tools.round_executor import (
     ToolCallFinished,
@@ -78,7 +73,6 @@ class AgentEngine:
         tool_round: ToolRoundExecutor,
         context: ContextEngine,
         tool_catalog: ToolCatalog,
-        capability_source: StepCapabilitySource | None = None,
         max_steps: int | None = None,
     ) -> None:
         if max_steps is not None and max_steps < 1:
@@ -87,7 +81,6 @@ class AgentEngine:
         self._tool_round = tool_round
         self._context = context
         self._tool_catalog = tool_catalog
-        self._capability_source = capability_source
         self.max_steps = max_steps
 
     async def submit(
@@ -125,27 +118,16 @@ class AgentEngine:
         )
         # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
         session.append_human_message(user_message)
-        session.add_context_deliveries(
-            tuple(
-                AttachmentDelivery(user_message.uuid, attachment)
-                for attachment in turn_input.attachments
-            ),
-        )
+        for attachment in turn_input.attachments:
+            session.append_attachment(attachment)
 
         input_tokens = 0
         output_tokens = 0
         step_count = 0
         while True:
             step_count += 1
-            contribution = (
-                self._capability_source.capture(session.session_id)
-                if self._capability_source is not None
-                else None
-            )
-            capabilities = RunCapabilitySnapshot.capture(
-                self._tool_catalog.snapshot(), contribution
-            )
-            request = await self._plan_with_proactive_compact(session, capabilities)
+            tools = self._tool_catalog.snapshot()
+            request = await self._plan_with_proactive_compact(session, tools)
             reactive_attempted = False
             while True:
                 response: ModelOutput | None = None
@@ -227,7 +209,7 @@ class AgentEngine:
                         raise
                     reactive_attempted = True
                     await self._compact_for_retry(session, "reactive")
-                    request = await self._plan_request(session, capabilities)
+                    request = await self._plan_request(session, tools)
                     continue
                 break
 
@@ -263,11 +245,6 @@ class AgentEngine:
             session.append_assistant_message(
                 assistant_message, replay_records=replay_records
             )
-            if self._capability_source is not None and capabilities.activation_ids:
-                self._capability_source.acknowledge(
-                    session.session_id, capabilities.activation_ids
-                )
-
             final_text = "\n".join(
                 block.text
                 for block in response.content
@@ -290,11 +267,13 @@ class AgentEngine:
             results: list[ToolResult] = []
             tool_presentations: dict[str, ToolResultPresentation] = {}
             round_cancelled = False
+            round_attachments: tuple[AttachmentPayload, ...] = ()
+            round_permission_updates: tuple[PermissionUpdate, ...] = ()
             try:
                 async for tool_event in self._tool_round.run_round(
                     tool_calls,
                     assistant_message,
-                    tools=capabilities.tools,
+                    tools=tools,
                     run_id=session.session_id,
                 ):
                     if isinstance(tool_event, ToolCallStarted):
@@ -317,19 +296,24 @@ class AgentEngine:
                         result_message = tool_event.message
                         results = list(tool_event.message.content)
                         round_cancelled = tool_event.cancelled
+                        round_attachments = tool_event.new_attachments
+                        round_permission_updates = tool_event.permission_updates
 
                 if result_message is None:
                     if not results:
                         raise RuntimeError("Tool round ended without results")
-                    session.append_tool_results(
-                        results,
-                        assistant_message,
-                        presentations=tool_presentations.items(),
+                    result_message = ToolResultBatch(
+                        tuple(results),
+                        assistant_message.uuid,
+                        parent_uuid=assistant_message.uuid,
                     )
-                else:
-                    session.append_tool_result_batch(
-                        result_message, presentations=tool_presentations.items()
-                    )
+                session.commit_tool_round(
+                    result_message,
+                    round_attachments,
+                    presentations=tool_presentations.items(),
+                )
+                if round_permission_updates:
+                    self._tool_round.apply_permission_updates(round_permission_updates)
                 yield AgentConversationUpdated()
             except asyncio.CancelledError:
                 # ToolRoundExecutor 通常已经发出所有取消结果；Agent 只保留
@@ -339,15 +323,18 @@ class AgentEngine:
                         tool_calls,
                         results,
                     )
-                    session.append_tool_results(
-                        results,
-                        assistant_message,
-                        presentations=tool_presentations.items(),
+                    result_message = ToolResultBatch(
+                        tuple(results),
+                        assistant_message.uuid,
+                        parent_uuid=assistant_message.uuid,
                     )
-                else:
-                    session.append_tool_result_batch(
-                        result_message, presentations=tool_presentations.items()
-                    )
+                session.commit_tool_round(
+                    result_message,
+                    round_attachments,
+                    presentations=tool_presentations.items(),
+                )
+                if round_permission_updates:
+                    self._tool_round.apply_permission_updates(round_permission_updates)
                 yield AgentConversationUpdated()
                 raise
             if round_cancelled:
@@ -375,29 +362,30 @@ class AgentEngine:
     async def _plan_with_proactive_compact(
         self,
         session: Session,
-        capabilities: RunCapabilitySnapshot,
+        tools: ToolCatalogSnapshot,
     ) -> ContextPlan:
         try:
-            return await self._plan_request(session, capabilities)
+            return await self._plan_request(session, tools)
         except ContextOverflow:
             await self._compact_for_retry(session, "auto")
-            return await self._plan_request(session, capabilities)
+            return await self._plan_request(session, tools)
 
     async def _plan_request(
         self,
         session: Session,
-        capabilities: RunCapabilitySnapshot,
+        tools: ToolCatalogSnapshot,
     ) -> ContextPlan:
+        derived = self._context.derive_attachments(session.context_snapshot())
+        for attachment in derived:
+            session.append_attachment(attachment)
+            self._context.acknowledge_attachments((attachment,))
         request = self._context.plan(
             session.context_snapshot(),
             session,
-            tools=capabilities.tools.definitions,
-            prompt_sections=capabilities.prompt_sections,
+            tools=tools.definitions,
         )
         for replacement in request.new_content_replacements:
             session.commit_content_replacement(replacement)
-        session.add_context_deliveries(request.new_attachment_deliveries)
-        self._context.acknowledge_attachments(request.new_attachment_deliveries)
         return request
 
 
@@ -422,8 +410,7 @@ def _cancelled_results(
 
 
 def _last_uuid(session: Session) -> str | None:
-    working_set = session.snapshot().working_set
-    return working_set[-1].uuid if working_set else None
+    return session.causal_head_uuid
 
 
 __all__ = [

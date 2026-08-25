@@ -1,43 +1,31 @@
-"""ContextAttachment 到 provider-neutral 用户输入的唯一投影边界。"""
+"""Conversation attachment payload 到标准用户输入的唯一投影边界。"""
 
-from my_code.context.attachments.models import (
-    ContextAttachment,
-    ContextObservation,
+import json
+
+from my_code.context.xml import wrap_xml
+from my_code.conversation.attachments import (
+    AttachmentPayload,
+    BackgroundTaskCompletionAttachment,
+    FileMentionAttachment,
+    SkillActivationAttachment,
+    SkillListingAttachment,
+    TodoReminderAttachment,
 )
-from my_code.context.documents import ContextInstruction
-from my_code.context.xml import render_context_instruction, wrap_xml
-from my_code.conversation.models import TextContent
 from my_code.model.request import InputText, UserInput
 
 
 class AttachmentProjector:
     """把可信 attachment payload 投影为合法的模型角色序列。"""
 
-    def project(self, attachment: ContextAttachment) -> UserInput:
-        content: list[InputText] = []
-        for block in attachment.content:
-            if isinstance(block, TextContent):
-                content.append(InputText(block.text))
-            elif isinstance(block, ContextInstruction):
-                content.append(InputText(render_context_instruction(block)))
-            elif isinstance(block, ContextObservation):
-                content.append(
-                    InputText(
-                        wrap_xml(
-                            "system-reminder",
-                            "The user explicitly attached the following context: "
-                            f"{block.title}\n\n{block.body}",
-                        )
-                    )
-                )
-        return UserInput(tuple(content))
+    def project(self, attachment: AttachmentPayload) -> UserInput:
+        return UserInput((InputText(_render(attachment)),))
 
     def project_many(
-        self, attachments: tuple[ContextAttachment, ...]
+        self, attachments: tuple[AttachmentPayload, ...]
     ) -> tuple[UserInput, ...]:
         return tuple(self.project(attachment) for attachment in attachments)
 
-    def measure(self, attachments: tuple[ContextAttachment, ...]) -> int:
+    def measure(self, attachments: tuple[AttachmentPayload, ...]) -> int:
         return sum(
             sum(
                 len(block.text)
@@ -46,6 +34,57 @@ class AttachmentProjector:
             )
             for message in self.project_many(attachments)
         )
+
+
+def _render(attachment: AttachmentPayload) -> str:
+    if isinstance(attachment, FileMentionAttachment):
+        title = (
+            ("Directory" if attachment.is_directory else "File")
+            + ": "
+            + attachment.path
+        )
+        return wrap_xml(
+            "system-reminder",
+            "The user explicitly attached the following context: "
+            f"{title}\n\n{attachment.body}",
+        )
+    if isinstance(attachment, TodoReminderAttachment):
+        return wrap_xml("system-reminder", attachment.content)
+    if isinstance(attachment, BackgroundTaskCompletionAttachment):
+        return wrap_xml(
+            "system-reminder",
+            "Background task completed\n\n"
+            + json.dumps(attachment.result, ensure_ascii=False, sort_keys=True),
+        )
+    if isinstance(attachment, SkillListingAttachment):
+        lines = "\n".join(
+            f"- {skill.name}: {skill.description} (source: {skill.source})"
+            for skill in attachment.skills
+        )
+        return wrap_xml(
+            "system-reminder",
+            "The following skills are available for use with the Skill tool:\n\n"
+            + lines,
+        )
+    if isinstance(attachment, SkillActivationAttachment):
+        return _render_skill(attachment)
+    return wrap_xml(
+        "system-reminder",
+        "The following skills were invoked in this session. Continue to follow "
+        "these guidelines:\n\n"
+        + "\n\n".join(_render_skill(skill) for skill in attachment.skills),
+    )
+
+
+def _render_skill(skill: SkillActivationAttachment) -> str:
+    compatibility = (
+        f"\nCompatibility: {skill.compatibility}" if skill.compatibility else ""
+    )
+    return (
+        f'<skill name="{skill.name}">\n'
+        f"Source: {skill.source}\nLocator: {skill.locator}{compatibility}\n\n"
+        f"{skill.instructions}\n</skill>"
+    )
 
 
 __all__ = ["AttachmentProjector"]

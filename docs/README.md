@@ -15,10 +15,11 @@ ChatService ──> AppState
                    ├── TaskSupervisor ──> task tree + terminal snapshots
                    ├── AgentRunFactory ──> isolated child run capsules
                    ├── McpRuntime ──> stdio connections + MCP tool sources
-                   ├── SkillRuntime ──> SkillCatalog + one-shot activations
+                   ├── SkillRuntime ──> SkillCatalog + Skill Tool
                    ├── active Session
                    │      ├── canonical conversation + working set
-                   │      ├── context delivery/cache + replay sidecar
+                   │      ├── ConversationEntry[]（含 AttachmentMessage）
+                   │      ├── prompt/user-context cache + replay sidecar
                    │      └── private JSONL + externalized tool results
                    └── ProviderRuntime ──> foreground ProviderRouter
                                           └── ProviderLeaseRegistry
@@ -39,6 +40,7 @@ AgentRunFactory ──> child Session + AgentEngine + independent provider lease
 
 | 文档 | 内容 |
 | --- | --- |
+| [00-architecture.md](00-architecture.md) | 当前总体架构图、运行时所有权与关键生命周期 |
 | [01-agent-loop.md](01-agent-loop.md) | 一次用户输入如何运行到终态 |
 | [02-messages-and-sessions.md](02-messages-and-sessions.md) | 对话事实、持久化和恢复 |
 | [03-context-management.md](03-context-management.md) | 模型上下文、预算和压缩 |
@@ -68,4 +70,4 @@ AgentRunFactory ──> child Session + AgentEngine + independent provider lease
 - **AgentRun**：独立 Session、Agent 组件和 provider lease 构成的可关闭运行胶囊。
 - **Subagent**：由标准 Tool 启动、在 child AgentRun 中运行并向父级只返回结构化结果的纵向能力。
 - **MCP source**：一个 server 完整发现并原子发布到 ToolCatalog 的标准 Tool 集合。
-- **Skill activation**：通过标准 Tool 选择索引项，并只在下一 step 注入一次正文与可选工具收窄。
+- **Skill activation**：通过标准 Tool 选择索引项；正文作为 durable Attachment 持续存在，`allowed-tools` 转成 additive session allow rules。

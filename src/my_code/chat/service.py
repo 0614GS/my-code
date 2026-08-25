@@ -46,8 +46,8 @@ from my_code.chat.history import (
 from my_code.chat.permissions import DeferredPermissionPrompter, PermissionHandler
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.config.settings import AgentSettings
-from my_code.context.attachments.models import ContextAttachment
 from my_code.context.engine import ContextEngine
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import (
     AssistantMessage,
     ConversationSummaryMessage,
@@ -71,6 +71,7 @@ from my_code.providers.discovery import resolve_without_network
 from my_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
 from my_code.sessions.session import Session
+from my_code.skills.tool import restore_skill_permissions
 from my_code.tools.executor import ToolExecutor
 
 
@@ -291,6 +292,9 @@ class ChatService:
             # Fully hydrate and repair every candidate component before publishing it.
             session = Session.restore(self._project_state_dir, session_id)
             history = self._project_history(session)
+            restore_skill_permissions(
+                self.state.permissions.policy, session.snapshot().history
+            )
             self.state.replace_session(session)
             return ResumedSession(status=self.status(), history=history)
 
@@ -298,7 +302,7 @@ class ChatService:
         await self.permission_prompter.close()
         await self.state.close()
 
-    async def _load_attachments(self, prompt: str) -> tuple[ContextAttachment, ...]:
+    async def _load_attachments(self, prompt: str) -> tuple[AttachmentPayload, ...]:
         if self.attachment_loader is None:
             return ()
         loaded = await self.attachment_loader.load(prompt)

@@ -47,13 +47,8 @@ async def test_reload_atomically_replaces_skill_tool_snapshot(tmp_path: Path) ->
     new_tool = tools.snapshot().get("Skill")
 
     assert new_tool is not None and new_tool is not old_tool
-    assert old_tool.definition.input_schema["properties"]["skill"]["enum"] == [  # type: ignore[index]
-        "alpha"
-    ]
-    assert new_tool.definition.input_schema["properties"]["skill"]["enum"] == [  # type: ignore[index]
-        "alpha",
-        "beta",
-    ]
+    assert old_tool.definition.input_schema == new_tool.definition.input_schema
+    assert "enum" not in old_tool.definition.input_schema["properties"]["skill"]  # type: ignore[index]
     await runtime.close()
     assert tools.snapshot().get("Skill") is None
 

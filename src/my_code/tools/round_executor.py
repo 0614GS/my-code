@@ -4,12 +4,14 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import (
     AssistantMessage,
     ToolCall,
     ToolResult,
     ToolResultBatch,
 )
+from my_code.permissions.models import PermissionUpdate
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from my_code.tools.presentation import (
@@ -29,11 +31,15 @@ class ToolCallFinished:
     call: ToolCall
     result: ToolResult
     presentation: ToolResultPresentation
+    new_attachments: tuple[AttachmentPayload, ...] = ()
+    permission_updates: tuple[PermissionUpdate, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class ToolRoundCompleted:
     message: ToolResultBatch
+    new_attachments: tuple[AttachmentPayload, ...] = ()
+    permission_updates: tuple[PermissionUpdate, ...] = ()
     cancelled: bool = False
 
 
@@ -64,6 +70,8 @@ class ToolRoundExecutor:
     ) -> AsyncIterator[ToolRoundEvent]:
         active_tools = self.executor.tools if tools is None else tools
         results: list[ToolResult] = []
+        attachments: list[AttachmentPayload] = []
+        permission_updates: list[PermissionUpdate] = []
         try:
             for group in _execution_groups(calls, active_tools):
                 for call in group:
@@ -78,10 +86,15 @@ class ToolRoundExecutor:
                 )
                 for call, outcome in zip(group, outcomes, strict=True):
                     results.append(outcome.result)
+                    if not outcome.result.is_error:
+                        attachments.extend(outcome.new_attachments)
+                        permission_updates.extend(outcome.permission_updates)
                     yield ToolCallFinished(
                         call=call,
                         result=outcome.result,
                         presentation=outcome.presentation,
+                        new_attachments=outcome.new_attachments,
+                        permission_updates=outcome.permission_updates,
                     )
         except asyncio.CancelledError:
             # 对尚未产生结果的调用逐一补齐稳定错误。先发出事件，Agent 可以
@@ -107,13 +120,20 @@ class ToolRoundExecutor:
                 )
             yield ToolRoundCompleted(
                 message=_tool_result_message(assistant_message, tuple(results)),
+                new_attachments=tuple(attachments),
+                permission_updates=tuple(permission_updates),
                 cancelled=True,
             )
             raise
 
         yield ToolRoundCompleted(
             message=_tool_result_message(assistant_message, tuple(results)),
+            new_attachments=tuple(attachments),
+            permission_updates=tuple(permission_updates),
         )
+
+    def apply_permission_updates(self, updates: tuple[PermissionUpdate, ...]) -> None:
+        self.executor.apply_session_updates(updates)
 
     async def _execute_group(
         self,

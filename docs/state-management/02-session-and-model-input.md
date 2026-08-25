@@ -34,7 +34,6 @@ Session 持有全部 session-scoped 模型无关数据，但需要区分持久�
 class SessionSnapshot:
     conversation: tuple[ConversationEntry, ...]
     working_set: tuple[ConversationEntry, ...]
-    context_entries: tuple[SessionContextEntry, ...]
     replacements: tuple[ContentReplacement, ...]
     replay_records: tuple[ProviderReplayRecord, ...]
 ```
@@ -44,6 +43,7 @@ class SessionSnapshot:
 ```python
 type ConversationEntry = (
     HumanMessage | AssistantMessage | ToolResultBatch | ConversationSummary
+    | AttachmentMessage
 )
 ```
 
@@ -51,24 +51,11 @@ type ConversationEntry = (
 - `AssistantMessage`：一次成功完成的 step 输出，可包含 text、reasoning 和 tool calls。
 - `ToolResultBatch`：一个 assistant message 发起的工具调用结果，不属于 human 或 assistant role。
 - `ConversationSummary`：full compact 产生的可恢复事实和 working-set 锚点。
+- `AttachmentMessage`：原位结构化辅助上下文；Context 只把它投影为 `UserInput`。
 
 当前实现使用 `ToolResultBatch`；名称和领域归属都不包含 user/human role。
 
-### SessionContextEntry
-
-```python
-type SessionContextEntry = (
-    AttachmentDelivery | TodoReminderDelivery | SessionInstruction
-)
-```
-
-这些条目同样由 Session 持有，因此切换或 resume 时不会与旧 Session 混用，但默认不属于 canonical transcript：
-
-- 显式用户附件引用可以作为 `HumanMessage` 内容持久化；其 live-session 重放记录是 `AttachmentDelivery`；
-- Todo 的真实状态来自已提交的 ToolResult；`TodoReminderDelivery` 是派生输入和投递状态；
-- prompt/user-context cache 属于 Session 的内部 context state，不进入 snapshot 的 canonical conversation。
-
-ContextEngine 可以把这些条目插入本次模型输入，但不得把一次投影结果写回 Session。确需改变 delivery 状态时，由 application service 在成功边界调用 Session 的专用方法。
+Attachment payload 不声明 retention。Session 按类型持久化文件上下文、Skill 正文、invoked skills 与后台结果；Skill listing 和 Todo reminder 仅进入内存 Conversation。非持久化 Attachment 不成为 durable entry 的父节点，因此 transcript 恢复不会断链。prompt/user-context cache 仍是 Session 内部非 Conversation 状态。
 
 ## Provider replay sidecar
 
@@ -204,7 +191,7 @@ ContextEngine 负责：
 - 选择 Session working set；
 - 应用 content replacement；
 - 投影 ConversationEntry 为 ModelInputItem；
-- 插入 attachment、Todo reminder 和 user context；
+- 将 Conversation 中的 Attachment 原位投影为标准 UserInput，并插入 user context；
 - 选择可用于当前 binding 的 replay sidecar；
 - 校验 tool call/result 配对；
 - 预算、microcompact 和 full compact proposal；
@@ -214,7 +201,7 @@ ContextEngine 不负责：
 
 - 保存或修改 Session entries；
 - 决定 Session 的持久化格式；
-- 持有 attachment/reminder delivery cache；
+- 运行动态 attachment source 或持有其状态；
 - 合并 Anthropic role message；
 - 生成 OpenAI/Anthropic SDK 类型。
 

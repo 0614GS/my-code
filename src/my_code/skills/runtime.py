@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from uuid import uuid4
-
-from my_code.agent.capabilities import StepCapabilityContribution
-from my_code.model.request import PromptStability, ResolvedPromptSection
 from my_code.skills.catalog import (
     SkillCatalog,
     SkillCatalogSnapshot,
@@ -18,12 +13,6 @@ from my_code.skills.tool import SkillTool
 from my_code.tools.catalog import ToolCatalog, ToolSourceId
 
 _TOOL_SOURCE = ToolSourceId("feature", "skills")
-
-
-@dataclass(frozen=True, slots=True)
-class SkillActivation:
-    id: str
-    definition: SkillDefinition
 
 
 class SkillRuntime:
@@ -41,7 +30,6 @@ class SkillRuntime:
         self.roots = roots
         self.tool_catalog = tool_catalog
         self.catalog = catalog or SkillCatalog()
-        self._pending: dict[str, dict[str, SkillActivation]] = {}
         self._started = False
         self._closed = False
         self._published = False
@@ -88,61 +76,17 @@ class SkillRuntime:
 
     def activate(
         self,
-        run_id: str,
         snapshot: SkillCatalogSnapshot,
         name: str,
     ) -> SkillDefinition:
         if self._closed:
             raise RuntimeError("Skill runtime is closed")
-        active = self._pending.setdefault(run_id, {})
-        previous = active.get(name)
-        if previous is not None:
-            return previous.definition
-        definition = snapshot.load(name)
-        active[name] = SkillActivation(str(uuid4()), definition)
-        return definition
-
-    def capture(self, run_id: str) -> StepCapabilityContribution:
-        activations = tuple(self._pending.get(run_id, {}).values())
-        if not activations:
-            return StepCapabilityContribution()
-        restrictions = [
-            frozenset(activation.definition.allowed_tools)
-            for activation in activations
-            if activation.definition.allowed_tools is not None
-        ]
-        allowlist = (
-            restrictions[0].intersection(*restrictions[1:]) if restrictions else None
-        )
-        return StepCapabilityContribution(
-            prompt_sections=tuple(
-                ResolvedPromptSection(
-                    key=f"skill:{activation.id}",
-                    content=_render_activation(activation.definition),
-                    stability=PromptStability.REQUEST,
-                )
-                for activation in activations
-            ),
-            tool_allowlist=allowlist,
-            activation_ids=tuple(activation.id for activation in activations),
-        )
-
-    def acknowledge(self, run_id: str, activation_ids: tuple[str, ...]) -> None:
-        active = self._pending.get(run_id)
-        if active is None:
-            return
-        acknowledged = set(activation_ids)
-        for name, activation in tuple(active.items()):
-            if activation.id in acknowledged:
-                del active[name]
-        if not active:
-            self._pending.pop(run_id, None)
+        return snapshot.load(name)
 
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        self._pending.clear()
         if self._published:
             self.tool_catalog.unregister_source(_TOOL_SOURCE)
             self._published = False
@@ -162,21 +106,6 @@ class SkillRuntime:
         return self.catalog.commit(update)
 
 
-def _render_activation(definition: SkillDefinition) -> str:
-    compatibility = (
-        f"\nCompatibility: {definition.compatibility}"
-        if definition.compatibility is not None
-        else ""
-    )
-    return (
-        f"## Activated Skill: {definition.name}\n"
-        f"Source: {definition.source}\n"
-        f"Locator: {definition.locator}{compatibility}\n\n"
-        f"{definition.instructions}"
-    )
-
-
 __all__ = [
-    "SkillActivation",
     "SkillRuntime",
 ]

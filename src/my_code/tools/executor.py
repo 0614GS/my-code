@@ -5,6 +5,7 @@ import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import ToolCall, ToolResult
 from my_code.model.primitives import JsonObject, to_json_object
 from my_code.permissions.models import (
@@ -16,6 +17,7 @@ from my_code.permissions.models import (
     PermissionPrompter,
     PermissionRequest,
     PermissionUpdate,
+    PermissionUpdateDestination,
     ToolPermissionContext,
 )
 from my_code.permissions.policy import PermissionPolicy
@@ -49,6 +51,8 @@ class ToolExecutionOutcome:
 
     result: ToolResult
     presentation: ToolResultPresentation
+    new_attachments: tuple[AttachmentPayload, ...] = ()
+    permission_updates: tuple[PermissionUpdate, ...] = ()
 
 
 class LoggingToolInvocationAudit:
@@ -380,7 +384,12 @@ class ToolExecutor:
                         call.name,
                         actual_invocation.origin.value,
                     )
-            return ToolExecutionOutcome(result, presentation)
+            return ToolExecutionOutcome(
+                result,
+                presentation,
+                output.new_attachments,
+                output.permission_updates,
+            )
         except (ToolInputError, ToolExecutionError, OSError, UnicodeError) as error:
             return self._error(
                 submitted_call,
@@ -434,6 +443,14 @@ class ToolExecutor:
             is_error=True,
         )
         return ToolExecutionOutcome(result, presentation)
+
+    def apply_session_updates(self, updates: tuple[PermissionUpdate, ...]) -> None:
+        if any(
+            update.destination is not PermissionUpdateDestination.SESSION
+            for update in updates
+        ):
+            raise ValueError("Tool follow-ups may update session permissions only")
+        self.update_applier(updates)
 
 
 def _copy_call(

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
@@ -260,6 +261,15 @@ class SessionStore:
                 actual = {block.tool_use_id for block in message.content}
                 if actual != expected:
                     raise ValueError("Tool results do not match source tool calls")
+            parent = by_id.get(message.parent_uuid or "")
+            if (
+                isinstance(message, AttachmentMessage)
+                and isinstance(parent, AssistantMessage)
+                and any(isinstance(block, ToolCall) for block in parent.content)
+            ):
+                raise ValueError(
+                    "Attachment cannot precede an assistant's tool results"
+                )
             seen.add(message.uuid)
             messages.append(message)
             by_id[message.uuid] = message
@@ -327,6 +337,13 @@ class SessionStore:
             actual = {block.tool_use_id for block in message.content}
             if actual != expected:
                 raise ValueError("Tool results do not match source tool calls")
+        parent = self._messages_by_id.get(message.parent_uuid or "")
+        if (
+            isinstance(message, AttachmentMessage)
+            and isinstance(parent, AssistantMessage)
+            and any(isinstance(block, ToolCall) for block in parent.content)
+        ):
+            raise ValueError("Attachment cannot precede an assistant's tool results")
 
         if presentations and not isinstance(message, ToolResultBatch):
             raise ValueError("Tool presentations require a tool-results message")
@@ -387,6 +404,82 @@ class SessionStore:
             ((record.entry_id, record.content_id), record) for record in replay_records
         )
         return True
+
+    def append_message_batch(
+        self,
+        messages: tuple[ConversationEntry, ...],
+        presentations: tuple[tuple[str, ToolResultPresentation], ...] = (),
+    ) -> None:
+        """Atomically append one protocol batch and its durable follow-up entries."""
+
+        if not messages:
+            raise ValueError("Message batch must not be empty")
+        self._ensure_loaded()
+        assert self._known_ids is not None
+        assert self._messages_by_id is not None
+        known = set(self._known_ids)
+        by_id = dict(self._messages_by_id)
+        for message in messages:
+            if message.uuid in known:
+                raise ValueError(f"Duplicate message UUID: {message.uuid}")
+            if message.parent_uuid is not None and message.parent_uuid not in known:
+                raise ValueError(f"Unknown parent UUID: {message.parent_uuid}")
+            if not is_session_id(message.uuid) or (
+                message.parent_uuid is not None
+                and not is_session_id(message.parent_uuid)
+            ):
+                raise ValueError("Message and parent UUIDs must be UUIDs")
+            if isinstance(message, ToolResultBatch):
+                source = by_id.get(message.source_assistant_id)
+                if message.parent_uuid != message.source_assistant_id or not isinstance(
+                    source, AssistantMessage
+                ):
+                    raise ValueError(
+                        "Tool results must directly follow their source assistant"
+                    )
+                expected = {
+                    block.id for block in source.content if isinstance(block, ToolCall)
+                }
+                actual = {block.tool_use_id for block in message.content}
+                if actual != expected:
+                    raise ValueError("Tool results do not match source tool calls")
+            known.add(message.uuid)
+            by_id[message.uuid] = message
+
+        first = messages[0]
+        if presentations and not isinstance(first, ToolResultBatch):
+            raise ValueError("Tool presentations require a leading result batch")
+        result_ids = (
+            {item.tool_use_id for item in first.content}
+            if isinstance(first, ToolResultBatch)
+            else set()
+        )
+        if any(tool_use_id not in result_ids for tool_use_id, _ in presentations):
+            raise ValueError("Tool presentation does not match the result message")
+
+        records: list[object] = []
+        if not self.path.exists():
+            records.append(encode_start(self._start))
+        records.extend(
+            encode_tool_presentation(tool_use_id, presentation)
+            for tool_use_id, presentation in presentations
+        )
+        records.extend(encode_message(message) for message in messages)
+        previous = self._metadata
+        metadata = SessionMetadata(
+            created_at=previous.created_at if previous else self._start.created_at,
+            updated_at=self._clock().isoformat(),
+            title=previous.title if previous else None,
+            last_prompt=previous.last_prompt if previous else None,
+        )
+        records.append(encode_metadata(metadata))
+        self._append_records(records)
+
+        self._known_ids = known
+        self._messages_by_id = by_id
+        self._metadata = metadata
+        assert self._tool_presentations is not None
+        self._tool_presentations.update(presentations)
 
     def set_title(self, title: str) -> bool:
         """Append last-wins explicit display metadata."""
@@ -450,6 +543,7 @@ class SessionStore:
         replacements: tuple[ContentReplacement, ...],
         boundary: CompactBoundary,
         summary: ConversationSummaryMessage,
+        attachments: tuple[AttachmentMessage, ...] = (),
     ) -> None:
         """Persist one compaction decision in a single append operation."""
 
@@ -468,6 +562,15 @@ class SessionStore:
             if self._messages_by_id[summary.uuid] == summary:
                 return
             raise ValueError(f"Conflicting message UUID: {summary.uuid}")
+        parent_uuid = summary.uuid
+        attachment_ids: set[str] = set()
+        for attachment in attachments:
+            if attachment.uuid in self._known_ids or attachment.uuid in attachment_ids:
+                raise ValueError(f"Duplicate message UUID: {attachment.uuid}")
+            if attachment.parent_uuid != parent_uuid:
+                raise ValueError("Compact attachments must form a durable parent chain")
+            attachment_ids.add(attachment.uuid)
+            parent_uuid = attachment.uuid
         pending_replacements = []
         for replacement in replacements:
             previous = self._content_replacements.get(replacement.tool_use_id)
@@ -497,7 +600,9 @@ class SessionStore:
         records = [encode_replacement(item) for item in pending_replacements]
         if previous_boundary is None:
             records.append(encode_boundary(boundary))
-        records.extend((encode_message(summary), encode_metadata(metadata)))
+        records.append(encode_message(summary))
+        records.extend(encode_message(attachment) for attachment in attachments)
+        records.append(encode_metadata(metadata))
         self._append_records(records)
         self._content_replacements.update(
             (item.tool_use_id, item) for item in pending_replacements
@@ -505,6 +610,9 @@ class SessionStore:
         self._boundaries[boundary.id] = boundary
         self._known_ids.add(summary.uuid)
         self._messages_by_id[summary.uuid] = summary
+        for attachment in attachments:
+            self._known_ids.add(attachment.uuid)
+            self._messages_by_id[attachment.uuid] = attachment
         self._metadata = metadata
 
     def _ensure_loaded(self) -> None:

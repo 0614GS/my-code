@@ -2,10 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from my_code.context.attachments.models import ContextAttachment
-from my_code.context.documents import ContextInstruction
 from my_code.context.normalization import ModelInputNormalizer
-from my_code.context.session import AttachmentDelivery
+from my_code.conversation.attachments import (
+    FileMentionAttachment,
+    TodoReminderAttachment,
+)
 from my_code.conversation.models import (
     AssistantMessage,
     ConversationSummaryMessage,
@@ -160,7 +161,7 @@ def test_restore_repairs_trailing_tool_calls_before_returning(tmp_path: Path) ->
     assert history[-1].content[0].is_error is True
     snapshot = resumed.context_snapshot()
     request_messages = ModelInputNormalizer().normalize(
-        (), history, (), (), snapshot.replay_records
+        (), history, snapshot.replay_records
     )
     assert any(
         isinstance(block, ModelReasoningBlock)
@@ -278,20 +279,23 @@ def test_compaction_prunes_replay_from_context_but_preserves_recoverable_sidecar
     assert session.context_snapshot().replay_records == ()
 
 
-def test_session_owns_ephemeral_attachment_delivery(tmp_path: Path) -> None:
+def test_transient_attachment_is_memory_only_and_skips_parent_chain(
+    tmp_path: Path,
+) -> None:
     session = _session(tmp_path, "10")
     human = HumanMessage("current")
     session.append_human_message(human)
-    reminder = ContextAttachment(
-        "todo_reminder",
-        (ContextInstruction("remember todos"),),
-        retention="live_session",
+    reminder = session.append_attachment(TodoReminderAttachment("remember todos"))
+    assistant = AssistantMessage(
+        (TextContent("done"),), TokenUsage(), parent_uuid=session.causal_head_uuid
     )
-    delivery = AttachmentDelivery(human.uuid, reminder, delivery_id="fixed")
-    session.add_context_deliveries((delivery, delivery))
-    assert session.context_snapshot().attachment_deliveries == (delivery,)
-    assert _store(tmp_path, "10").load().history == (human,)
-    assert _session(tmp_path, "12").context_snapshot().attachment_deliveries == ()
+    session.append_assistant_message(assistant)
+    assert session.snapshot().history == (human, reminder, assistant)
+    assert assistant.parent_uuid == human.uuid
+    assert Session(tmp_path, session.session_id).snapshot().history == (
+        human,
+        assistant,
+    )
 
 
 def test_external_transcript_append_is_visible_only_after_new_session(
@@ -309,36 +313,27 @@ def test_external_transcript_append_is_visible_only_after_new_session(
     assert Session(tmp_path, session_id).snapshot().history == (human, external)
 
 
-def test_session_rejects_conflicting_context_delivery_id(tmp_path: Path) -> None:
+def test_durable_attachment_round_trips_in_parent_chain(tmp_path: Path) -> None:
     session = _session(tmp_path, "13")
     human = HumanMessage("current")
     session.append_human_message(human)
-    first = AttachmentDelivery(
-        human.uuid,
-        ContextAttachment("event", (TextContent("first"),), retention="live_session"),
-        delivery_id="fixed",
+    attachment = session.append_attachment(FileMentionAttachment("a.txt", "first"))
+    assert attachment.parent_uuid == human.uuid
+    assert Session(tmp_path, session.session_id).snapshot().history == (
+        human,
+        attachment,
     )
-    session.add_context_deliveries((first,))
-    conflict = AttachmentDelivery(
-        human.uuid,
-        ContextAttachment("event", (TextContent("second"),), retention="live_session"),
-        delivery_id="fixed",
-    )
-    with pytest.raises(ValueError, match="Conflicting attachment delivery"):
-        session.add_context_deliveries((conflict,))
-    assert session.context_snapshot().attachment_deliveries == (first,)
 
 
-def test_attachment_delivery_rejects_bad_anchor_and_retention(tmp_path: Path) -> None:
+def test_attachment_cannot_split_tool_call_and_result(tmp_path: Path) -> None:
     session = _session(tmp_path, "11")
-    session.append_human_message(HumanMessage("current"))
-    delivery = AttachmentDelivery(
-        "missing",
-        ContextAttachment("event", (TextContent("content"),), retention="live_session"),
+    human = HumanMessage("current")
+    assistant = AssistantMessage(
+        (ToolCall("call", "Read", {"path": "a"}),),
+        TokenUsage(),
+        parent_uuid=human.uuid,
     )
-    with pytest.raises(ValueError, match="not in the working set"):
-        session.add_context_deliveries((delivery,))
-    with pytest.raises(ValueError, match="live_session"):
-        AttachmentDelivery(
-            "anchor", ContextAttachment("temporary", (TextContent("content"),))
-        )
+    session.append_human_message(human)
+    session.append_assistant_message(assistant)
+    with pytest.raises(ValueError, match="between assistant tool calls"):
+        session.append_attachment(FileMentionAttachment("a", "content"))

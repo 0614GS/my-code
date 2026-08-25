@@ -19,7 +19,7 @@ from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.window import ContextWindow
-from my_code.conversation.models import ToolResultBatch
+from my_code.conversation.models import HumanMessage, ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.models import SubagentParentContext
 from my_code.features.subagents.tool import SubagentTool
@@ -223,6 +223,7 @@ async def test_foreground_subagent_uses_child_session_and_returns_one_result(
     child_session = Session(tmp_path / "sessions", payload["run_id"])
     child_history = child_session.snapshot().history
     assert [entry.kind for entry in child_history] == ["human", "assistant"]
+    assert isinstance(child_history[0], HumanMessage)
     assert child_history[0].content == "answer independently"
     assert "delegate this" not in str(child_history)
     assert tasks.snapshots()[0].status is TaskStatus.SUCCEEDED

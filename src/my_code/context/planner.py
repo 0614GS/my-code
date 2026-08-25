@@ -3,9 +3,7 @@
 import json
 from collections.abc import Callable
 from typing import Literal
-from uuid import NAMESPACE_URL, uuid5
 
-from my_code.context.attachments.models import ContextAttachment
 from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.documents import UserContextDocument
 from my_code.context.microcompact import (
@@ -14,17 +12,15 @@ from my_code.context.microcompact import (
 )
 from my_code.context.models import ContextBudget, ContextOverflow, ContextPlan
 from my_code.context.normalization import ModelInputNormalizer
-from my_code.context.session import (
-    AttachmentDelivery,
-    ContextSnapshot,
-    SessionContextAccess,
-)
+from my_code.context.session import ContextSnapshot, SessionContextAccess
 from my_code.context.tokenizer import UnicodeTokenEstimator
 from my_code.context.user_context import EmptyUserContextResolver, UserContextResolver
 from my_code.context.window import ContextWindow
 from my_code.context.xml import render_context_instruction
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
@@ -53,7 +49,6 @@ from my_code.model.request import (
     ModelTextBlock,
     ModelToolDefinition,
     ModelToolUseBlock,
-    ResolvedPromptSection,
     SystemPrompt,
     ToolOutputs,
     ToolOutputText,
@@ -106,26 +101,19 @@ class ContextPlanner:
         session: SessionContextAccess | None = None,
         *,
         tools: tuple[ModelToolDefinition, ...],
-        prompt_sections: tuple[ResolvedPromptSection, ...] = (),
     ) -> ContextPlan:
         effective, proposed = self._effective_messages(snapshot)
         user_context = self._get_user_context(session)
-        attachments = self._get_attachments(snapshot)
-        delivered = tuple(
-            delivery.attachment for delivery in snapshot.attachment_deliveries
-        )
-        attachment_chars = self.attachment_projector.measure(delivered + attachments)
         binding = self.binding_resolver() if self.binding_resolver is not None else None
         selected = self.window.ensure_fits(
             effective,
-            additional_chars=attachment_chars
-            + _replayed_continuation_chars(effective, snapshot.replay_records, binding),
+            additional_chars=_replayed_continuation_chars(
+                effective, snapshot.replay_records, binding
+            ),
         )
         model_messages = self.normalizer.normalize(
             user_context,
             selected,
-            attachments,
-            snapshot.attachment_deliveries,
             snapshot.replay_records,
             active_binding=binding,
         )
@@ -134,8 +122,6 @@ class ContextPlanner:
             if session is not None
             else self.prompt.resolve()
         )
-        if prompt_sections:
-            system_prompt = SystemPrompt((*system_prompt.sections, *prompt_sections))
         request = ModelRequest(
             system_prompt, model_messages, tools, self.max_output_tokens
         )
@@ -143,8 +129,6 @@ class ContextPlanner:
             selected,
             request,
             user_context,
-            attachments,
-            snapshot.attachment_deliveries,
         )
         if budget.input_tokens >= budget.compact_trigger_tokens:
             token_proposed = self.microcompact.propose_tokens(
@@ -155,8 +139,6 @@ class ContextPlanner:
                 estimate=lambda view: self._projected_tokens_for(
                     view,
                     user_context,
-                    attachments,
-                    snapshot.attachment_deliveries,
                     snapshot.replay_records,
                     system_prompt,
                     tools,
@@ -171,8 +153,6 @@ class ContextPlanner:
                 model_messages = self.normalizer.normalize(
                     user_context,
                     selected,
-                    attachments,
-                    snapshot.attachment_deliveries,
                     snapshot.replay_records,
                     active_binding=binding,
                 )
@@ -183,8 +163,6 @@ class ContextPlanner:
                     selected,
                     request,
                     user_context,
-                    attachments,
-                    snapshot.attachment_deliveries,
                 )
         if budget.input_tokens >= budget.compact_trigger_tokens:
             raise ContextOverflow(budget.input_tokens, budget.input_limit_tokens)
@@ -192,7 +170,6 @@ class ContextPlanner:
             request=request,
             budget=budget,
             new_content_replacements=proposed,
-            new_attachment_deliveries=self._new_deliveries(snapshot, attachments),
             request_binding=binding,
             request_input_tokens_estimate=local_estimate,
         )
@@ -203,17 +180,13 @@ class ContextPlanner:
         session: SessionContextAccess | None = None,
         *,
         tools: tuple[ModelToolDefinition, ...],
-        prompt_sections: tuple[ResolvedPromptSection, ...] = (),
     ) -> ContextBudget:
         effective, _ = self._effective_messages(snapshot, propose=False)
         user_context = self._get_user_context(session)
-        attachments = self._get_attachments(snapshot)
         binding = self.binding_resolver() if self.binding_resolver is not None else None
         messages = self.normalizer.normalize(
             user_context,
             effective,
-            attachments,
-            snapshot.attachment_deliveries,
             snapshot.replay_records,
             active_binding=binding,
         )
@@ -222,8 +195,6 @@ class ContextPlanner:
             if session is not None
             else self.prompt.resolve()
         )
-        if prompt_sections:
-            system_prompt = SystemPrompt((*system_prompt.sections, *prompt_sections))
         request = ModelRequest(
             system_prompt,
             messages,
@@ -234,8 +205,6 @@ class ContextPlanner:
             effective,
             request,
             user_context,
-            attachments,
-            snapshot.attachment_deliveries,
         )
         return budget
 
@@ -244,9 +213,7 @@ class ContextPlanner:
     ) -> tuple[tuple[ModelInputItem, ...], tuple[ContentReplacement, ...]]:
         effective, proposed = self._effective_messages(snapshot)
         return (
-            self.normalizer.normalize_transcript(
-                effective, snapshot.attachment_deliveries
-            ),
+            self.normalizer.normalize_transcript(effective),
             proposed,
         )
 
@@ -260,45 +227,16 @@ class ContextPlanner:
             return tuple(self.user_context_resolver.resolve())
         return session.user_context(self.user_context_resolver.resolve)
 
-    def _get_attachments(
+    def derive_attachments(
         self, snapshot: ContextSnapshot
-    ) -> tuple[ContextAttachment, ...]:
+    ) -> tuple[AttachmentPayload, ...]:
         return self.attachment_resolver.resolve(snapshot)
 
     def acknowledge_attachments(
         self,
-        deliveries: tuple[AttachmentDelivery, ...],
+        attachments: tuple[AttachmentPayload, ...],
     ) -> None:
-        self.attachment_resolver.acknowledge(deliveries)
-
-    @staticmethod
-    def _new_deliveries(
-        snapshot: ContextSnapshot,
-        attachments: tuple[ContextAttachment, ...],
-    ) -> tuple[AttachmentDelivery, ...]:
-        live = tuple(
-            attachment
-            for attachment in attachments
-            if attachment.retention == "live_session"
-        )
-        if not live:
-            return ()
-        if not snapshot.messages:
-            raise ValueError("Live-session attachments require a working-set anchor")
-        anchor_uuid = snapshot.messages[-1].uuid
-        return tuple(
-            AttachmentDelivery(
-                anchor_uuid,
-                attachment,
-                delivery_id=str(
-                    uuid5(
-                        NAMESPACE_URL,
-                        f"my-code:{anchor_uuid}:{index}:{attachment!r}",
-                    )
-                ),
-            )
-            for index, attachment in enumerate(live)
-        )
+        self.attachment_resolver.acknowledge(attachments)
 
     def _effective_messages(
         self, snapshot: ContextSnapshot, *, propose: bool = True
@@ -317,12 +255,15 @@ class ContextPlanner:
         conversation: tuple[ConversationEntry, ...],
         request: ModelRequest,
         user_context: tuple[UserContextDocument, ...],
-        attachments: tuple[ContextAttachment, ...],
-        deliveries: tuple[AttachmentDelivery, ...],
     ) -> tuple[ContextBudget, int]:
         user_chars = _context_chars(user_context)
-        delivered = tuple(delivery.attachment for delivery in deliveries)
-        attachment_chars = self.attachment_projector.measure(delivered + attachments)
+        attachment_chars = self.attachment_projector.measure(
+            tuple(
+                message.payload
+                for message in conversation
+                if isinstance(message, AttachmentMessage)
+            )
+        )
         local_estimate = self.token_estimator.count_request(request)
         binding = self.binding_resolver() if self.binding_resolver is not None else None
         anchor = _usage_anchor(conversation, binding)
@@ -375,8 +316,6 @@ class ContextPlanner:
         self,
         conversation: tuple[ConversationEntry, ...],
         user_context: tuple[UserContextDocument, ...],
-        attachments: tuple[ContextAttachment, ...],
-        deliveries: tuple[AttachmentDelivery, ...],
         replay_records: tuple[ProviderReplayRecord, ...],
         prompt: SystemPrompt,
         tools: tuple[ModelToolDefinition, ...],
@@ -385,15 +324,11 @@ class ContextPlanner:
         messages = self.normalizer.normalize(
             user_context,
             conversation,
-            attachments,
-            deliveries,
             replay_records,
             active_binding=binding,
         )
         request = ModelRequest(prompt, messages, tools, self.max_output_tokens)
-        budget, _ = self._budget(
-            conversation, request, user_context, attachments, deliveries
-        )
+        budget, _ = self._budget(conversation, request, user_context)
         return budget.input_tokens
 
 
@@ -446,34 +381,22 @@ def _context_chars(items: tuple[UserContextDocument, ...]) -> int:
     )
 
 
-def _deliveries_after_last_assistant(
-    conversation: tuple[ConversationEntry, ...],
-    deliveries: tuple[AttachmentDelivery, ...],
-) -> tuple[ContextAttachment, ...]:
-    last_assistant = next(
-        (
-            index
-            for index in range(len(conversation) - 1, -1, -1)
-            if isinstance(conversation[index], AssistantMessage)
-        ),
-        -1,
-    )
-    positions = {message.uuid: index for index, message in enumerate(conversation)}
-    return tuple(
-        delivery.attachment
-        for delivery in deliveries
-        if positions.get(delivery.anchor_uuid, -1) >= last_assistant
-    )
-
-
 def _replayed_continuation_chars(
     conversation: tuple[ConversationEntry, ...],
     replay_records: tuple[ProviderReplayRecord, ...],
     binding: ProviderBinding | None,
 ) -> int:
+    last_protocol_entry = next(
+        (
+            item
+            for item in reversed(conversation)
+            if not isinstance(item, AttachmentMessage)
+        ),
+        None,
+    )
     source_uuid = (
-        conversation[-1].source_assistant_id
-        if conversation and isinstance(conversation[-1], ToolResultBatch)
+        last_protocol_entry.source_assistant_id
+        if isinstance(last_protocol_entry, ToolResultBatch)
         else None
     )
     by_id = {message.uuid: message for message in conversation}
@@ -531,7 +454,9 @@ def _tool_schema_chars(tools: tuple[ModelToolDefinition, ...]) -> int:
 def _conversation_chars(messages: tuple[ConversationEntry, ...]) -> int:
     size = 0
     for message in messages:
-        if isinstance(message, (HumanMessage, ConversationSummaryMessage)):
+        if isinstance(message, AttachmentMessage):
+            size += len(str(message.payload))
+        elif isinstance(message, (HumanMessage, ConversationSummaryMessage)):
             size += len(message.content)
         elif isinstance(message, AssistantMessage):
             for block in message.content:

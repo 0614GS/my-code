@@ -9,6 +9,7 @@ import pytest
 
 from my_code.agent.engine import AgentEngine
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
@@ -28,6 +29,7 @@ from my_code.model.request import (
     PromptStability,
 )
 from my_code.permissions.models import (
+    PermissionConfirmation,
     PermissionDecisionKind,
     PermissionDecisionReason,
     PermissionMode,
@@ -35,10 +37,10 @@ from my_code.permissions.models import (
     ToolPermissionResult,
 )
 from my_code.permissions.policy import PermissionPolicy
-from my_code.permissions.prompt import HeadlessPrompter
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.sessions.session import Session
+from my_code.skills.attachments import SkillListingAttachmentSource
 from my_code.skills.discovery import SkillSearchRoot
 from my_code.skills.models import SkillSourceId, SkillSourceKind
 from my_code.skills.runtime import SkillRuntime
@@ -106,6 +108,12 @@ class ScriptedModel:
             yield sequencer.emit(payload)
 
 
+class ApprovingPrompter:
+    async def confirm(self, request):
+        del request
+        return PermissionConfirmation(True)
+
+
 def _write_skill(
     root: Path,
     name: str,
@@ -144,7 +152,7 @@ async def _engine(
     executor = ToolExecutor(
         tools.snapshot(),
         PermissionPolicy(PermissionMode.BYPASS),
-        HeadlessPrompter(),
+        ApprovingPrompter(),
         Workspace(tmp_path),
     )
     context = ContextEngine(
@@ -154,6 +162,9 @@ async def _engine(
                 (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
             ),
             max_output_tokens=100,
+            attachment_resolver=DerivedAttachmentResolver(
+                (SkillListingAttachmentSource(runtime.catalog),)
+            ),
         ),
         ContextCompactor(model),
     )
@@ -167,7 +178,6 @@ async def _engine(
             tool_round=ToolRoundExecutor(executor),
             context=context,
             tool_catalog=tools,
-            capability_source=runtime,
             max_steps=4,
         ),
         session,
@@ -178,7 +188,7 @@ async def _engine(
 
 
 @pytest.mark.asyncio
-async def test_activation_loads_body_once_and_only_narrows_next_step(
+async def test_activation_adds_durable_body_without_narrowing_tools(
     tmp_path: Path,
 ) -> None:
     body = "PRIVATE ACTIVATED INSTRUCTION"
@@ -207,11 +217,10 @@ async def test_activation_loads_body_once_and_only_narrows_next_step(
 
     assert isinstance(outcome, AgentTurnSucceeded)
     assert body not in model.requests[0].system_prompt.text
-    assert body in model.requests[1].system_prompt.text
-    assert "Source: project:workspace" in model.requests[1].system_prompt.text
-    assert body not in model.requests[2].system_prompt.text
-    assert [tool.name for tool in model.requests[1].tools] == ["Echo"]
-    assert {tool.name for tool in model.requests[2].tools} == {
+    assert body not in model.requests[1].system_prompt.text
+    assert any(body in str(item) for item in model.requests[1].input)
+    assert any(body in str(item) for item in model.requests[2].input)
+    assert {tool.name for tool in model.requests[1].tools} == {
         "Echo",
         "Other",
         "Skill",
@@ -252,10 +261,9 @@ async def test_reload_during_request_only_changes_next_step(tmp_path: Path) -> N
     second_skill = next(
         tool for tool in model.requests[1].tools if tool.name == "Skill"
     )
-    assert first_skill.input_schema["properties"]["skill"]["enum"] == ["alpha"]  # type: ignore[index]
-    assert second_skill.input_schema["properties"]["skill"]["enum"] == [  # type: ignore[index]
-        "alpha",
-        "beta",
-    ]
+    assert first_skill.input_schema == second_skill.input_schema
+    assert "enum" not in first_skill.input_schema["properties"]["skill"]  # type: ignore[index]
+    assert "alpha" in str(model.requests[0].input)
+    assert "beta" in str(model.requests[1].input)
     assert echo.executions == 1
     await runtime.close()

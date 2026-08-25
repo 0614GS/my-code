@@ -1,6 +1,6 @@
 """Load submitted file mentions into live context attachments."""
 
-from my_code.context.attachments.models import ContextAttachment, ContextObservation
+from my_code.conversation.attachments import FileMentionAttachment
 from my_code.features.file_mentions.models import FileMention, LoadedAttachment
 from my_code.features.file_mentions.parser import parse_file_mentions
 from my_code.features.file_mentions.reader import WorkspaceAttachmentReader
@@ -28,16 +28,10 @@ class AttachmentLoader:
                 line_end=mention.line_end,
             )
             return LoadedAttachment(
-                ContextAttachment(
-                    source=f"file-mention:{loaded.path}",
-                    content=(
-                        ContextObservation(
-                            ("Directory" if loaded.is_directory else "File")
-                            + f": {loaded.path}",
-                            loaded.body,
-                        ),
-                    ),
-                    retention="live_session",
+                FileMentionAttachment(
+                    path=loaded.path,
+                    body=loaded.body,
+                    is_directory=loaded.is_directory,
                 ),
                 loaded.path,
                 loaded.is_directory,

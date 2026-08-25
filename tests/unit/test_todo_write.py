@@ -2,14 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from my_code.context.attachments.sources import DerivedAttachmentResolver
-from my_code.context.documents import ContextInstruction
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import AttachmentDelivery
 from my_code.context.session import ContextSnapshot as ConversationSnapshot
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     HumanMessage,
     TextContent,
     ToolCall,
@@ -189,41 +187,19 @@ def test_todo_reminder_uses_independent_write_and_delivery_thresholds() -> None:
 
     attachments = source(ConversationSnapshot(history10, session_history=history10))
     assert len(attachments) == 1
-    assert attachments[0].source == "todo_reminder"
-    instruction = attachments[0].content[0]
-    assert isinstance(instruction, ContextInstruction)
-    assert "1. [in_progress] Run tests" in instruction.content
-    assert "NEVER mention this reminder" in instruction.content
-    assert attachments[0].retention == "live_session"
+    assert "1. [in_progress] Run tests" in attachments[0].content
+    assert "NEVER mention this reminder" in attachments[0].content
 
-    delivery = AttachmentDelivery(history10[-1].uuid, attachments[0])
-    history11 = history10 + (_assistant(TextContent("call 11")),)
-    assert (
-        source(
-            ConversationSnapshot(
-                history11,
-                session_history=history11,
-                attachment_deliveries=(delivery,),
-            )
-        )
-        == ()
-    )
+    reminder = AttachmentMessage(attachments[0], parent_uuid=history10[-1].uuid)
+    history11 = history10 + (reminder, _assistant(TextContent("call 11")))
+    assert source(ConversationSnapshot(history11, session_history=history11)) == ()
 
-    history20 = history10 + tuple(
-        _assistant(TextContent(f"later {index}")) for index in range(10)
+    history20 = (
+        history10
+        + (reminder,)
+        + tuple(_assistant(TextContent(f"later {index}")) for index in range(10))
     )
-    assert (
-        len(
-            source(
-                ConversationSnapshot(
-                    history20,
-                    session_history=history20,
-                    attachment_deliveries=(delivery,),
-                )
-            )
-        )
-        == 1
-    )
+    assert len(source(ConversationSnapshot(history20, session_history=history20))) == 1
 
     # reminder 不持久化：恢复时没有 delivery history，已经超过阈值会立即提醒，
     # 而不是等到 turns_since_write 恰好能被 10 整除。
@@ -247,9 +223,7 @@ def test_todo_reminder_uses_full_session_history_after_compaction() -> None:
     )
 
     assert len(attachments) == 1
-    instruction = attachments[0].content[0]
-    assert isinstance(instruction, ContextInstruction)
-    assert "Run tests" in instruction.content
+    assert "Run tests" in attachments[0].content
 
 
 def test_todo_reminder_without_prior_write_starts_after_ten_model_calls() -> None:
@@ -260,12 +234,10 @@ def test_todo_reminder_without_prior_write_starts_after_ten_model_calls() -> Non
     )
 
     assert len(attachments) == 1
-    instruction = attachments[0].content[0]
-    assert isinstance(instruction, ContextInstruction)
-    assert "existing contents" not in instruction.content
+    assert "existing contents" not in attachments[0].content
 
 
-def test_context_planner_attaches_reminder_but_compaction_excludes_it() -> None:
+def test_context_planner_projects_reminder_from_conversation_for_compaction() -> None:
     history = _history_after_todo(10)
     tool = TodoWriteTool()
     planner = ContextPlanner(
@@ -274,11 +246,14 @@ def test_context_planner_attaches_reminder_but_compaction_excludes_it() -> None:
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
         max_output_tokens=100,
-        attachment_resolver=DerivedAttachmentResolver(
-            (TodoReminderAttachmentSource(),)
-        ),
     )
-    snapshot = ConversationSnapshot(history, session_history=history)
+    attachment = TodoReminderAttachmentSource()(
+        ConversationSnapshot(history, session_history=history)
+    )[0]
+    reminder = AttachmentMessage(attachment, parent_uuid=history[-1].uuid)
+    snapshot = ConversationSnapshot(
+        history + (reminder,), session_history=history + (reminder,)
+    )
 
     plan = planner.plan(snapshot, tools=(tool.definition,))
     request_text = _input_texts(plan.request.input)
@@ -286,8 +261,7 @@ def test_context_planner_attaches_reminder_but_compaction_excludes_it() -> None:
     compact_text = _input_texts(compact_messages)
 
     assert any("<system-reminder>" in text for text in request_text)
-    assert len(plan.new_attachment_deliveries) == 1
-    assert not any("TodoWrite tool hasn't been used" in text for text in compact_text)
+    assert any("TodoWrite tool hasn't been used" in text for text in compact_text)
 
 
 def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
@@ -295,24 +269,20 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
     attachment = TodoReminderAttachmentSource()(
         ConversationSnapshot(history10, session_history=history10)
     )[0]
-    delivery = AttachmentDelivery(history10[-1].uuid, attachment)
+    reminder = AttachmentMessage(attachment, parent_uuid=history10[-1].uuid)
     later = _assistant(TextContent("after reminder"))
-    history = history10 + (later,)
+    history = history10 + (reminder, later)
     planner = ContextPlanner(
         window=ContextWindow(20_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
         max_output_tokens=100,
-        attachment_resolver=DerivedAttachmentResolver(
-            (TodoReminderAttachmentSource(),)
-        ),
     )
 
     snapshot = ConversationSnapshot(
         history,
         session_history=history,
-        attachment_deliveries=(delivery,),
     )
     items = planner.plan(snapshot, tools=(TodoWriteTool().definition,)).request.input
 

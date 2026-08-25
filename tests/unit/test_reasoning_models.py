@@ -91,13 +91,11 @@ def test_scoped_continuations_are_selected_and_compaction_strips_them() -> None:
         ProviderReplayRecord(assistant.uuid, replay_content_id(1), working),
     )
 
-    active_view = normalizer.normalize((), (human, assistant, results), (), (), replay)
+    active_view = normalizer.normalize((), (human, assistant, results), replay)
     compact_view = normalizer.normalize_transcript((human, assistant, results))
     mismatched_view = normalizer.normalize(
         (),
         (human, assistant, results),
-        (),
-        (),
         replay,
         active_binding=ProviderBinding("openai-responses", "other", "gpt-test"),
     )

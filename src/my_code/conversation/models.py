@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.primitives import new_id, utc_now
 from my_code.model.primitives import (
     JsonObject,
@@ -176,14 +177,38 @@ class ConversationSummaryMessage:
         return True
 
 
+@dataclass(frozen=True, slots=True)
+class AttachmentMessage:
+    """Structured auxiliary context at an exact conversation position."""
+
+    payload: AttachmentPayload
+    uuid: str = field(default_factory=new_id)
+    parent_uuid: str | None = None
+    timestamp: str = field(default_factory=utc_now)
+    kind: Literal["attachment"] = field(default="attachment", init=False)
+
+    @property
+    def starts_human_turn(self) -> bool:
+        return False
+
+    @property
+    def starts_context_segment(self) -> bool:
+        return False
+
+
 type ConversationEntry = (
-    HumanMessage | AssistantMessage | ToolResultBatch | ConversationSummaryMessage
+    HumanMessage
+    | AssistantMessage
+    | ToolResultBatch
+    | ConversationSummaryMessage
+    | AttachmentMessage
 )
 type AssistantContent = TextContent | ToolCall | ReasoningContent
 
 __all__ = [
     "AssistantContent",
     "AssistantMessage",
+    "AttachmentMessage",
     "ConversationEntry",
     "ConversationSummaryMessage",
     "HumanMessage",

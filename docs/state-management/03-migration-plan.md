@@ -99,12 +99,11 @@
 
 ### Context state
 
-- [x] 将 attachment delivery 移入 Session 私有 context state。
-- [x] 将 Todo reminder delivery 移入 Session 私有 context state。
+- [x] 以 `AttachmentMessage` 取代 attachment/Todo delivery sidecar，并由 Session 统一排序与持久化策略。
 - [x] 将 session prompt cache 和 user-context cache 移入 Session。
 - [x] 将 runtime-stable prompt section 改为 bootstrap 时生成的不可变 snapshot，删除 `PromptRegistry` 的隐式 runtime cache。
 - [x] 删除或降级 `ContextSession`；ContextEngine 不再持有 session 生命周期状态。
-- [x] 明确 resume/switch 后每类 cache 和 delivery 的重建或清空规则。
+- [x] 明确 resume/switch 后 durable Attachment 恢复和 transient Attachment 重新派生规则。
 
 ### Tool result state
 

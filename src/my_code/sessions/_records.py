@@ -148,6 +148,16 @@ class ConversationSummaryMessageRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class AttachmentMessageRecord:
+    uuid: str
+    parent_uuid: str | None
+    timestamp: str
+    payload: JsonObject
+    type: Literal["attachment_message"] = "attachment_message"
+    schema_version: Literal[5] = 5
+
+
+@dataclass(frozen=True, slots=True)
 class ContentReplacementRecord:
     tool_use_id: str
     tool_name: str
@@ -174,6 +184,7 @@ type MessageRecord = (
     | LegacyToolResultBatchRecord
     | ToolResultBatchRecord
     | ConversationSummaryMessageRecord
+    | AttachmentMessageRecord
 )
 type TranscriptEntry = (
     SessionStartedRecord

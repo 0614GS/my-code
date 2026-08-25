@@ -76,7 +76,7 @@ MCP 配置位于 `mcp` 域，`enabled` 默认 `false`。每个 `servers.<name>` 
 - PermissionUpdate 先写目标配置，再修改活动 PermissionPolicy。
 - Session 通过同目录临时文件与原子替换提交 JSONL 事务；恢复时严格校验 schema、父链、tool pairing、compact boundary 和 replay 关联。
 - MCP server 配置只生成不可变运行 spec；连接、诊断和远端工具目录不写入 Session。
-- Skill index、诊断和 pending activation 只存在于 application runtime；SKILL.md 正文不会写入 Session，只有普通 `Skill` ToolCall/ToolResult 作为 conversation fact 保存。
+- Skill index和诊断只存在于 application runtime；成功激活的 SKILL.md 正文作为 durable AttachmentMessage 写入 Session，供 resume/compact 恢复。
 - 大型工具结果按 session ID 分目录，由 Session 在 tool batch 提交内创建或回滚；调用方不接触 store/path。
 
 ## 版本控制

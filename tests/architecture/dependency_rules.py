@@ -39,11 +39,13 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "tools": frozenset({"conversation", "model", "permissions", "workspace"}),
     "sessions": frozenset({"context", "conversation", "model", "prompts", "tools"}),
     "providers": frozenset({"auth", "config", "model"}),
-    "agent": frozenset({"context", "conversation", "model", "sessions", "tools"}),
+    "agent": frozenset(
+        {"context", "conversation", "model", "permissions", "sessions", "tools"}
+    ),
     "mcp": frozenset({"model", "permissions", "tools"}),
-    "skills": frozenset({"agent", "model", "permissions", "tools"}),
+    "skills": frozenset({"context", "conversation", "model", "permissions", "tools"}),
     "features.file_mentions": frozenset(
-        {"context", "permissions", "tools", "workspace"}
+        {"context", "conversation", "permissions", "tools", "workspace"}
     ),
     "features.todos": frozenset(
         {"context", "conversation", "model", "permissions", "tools"}
@@ -53,9 +55,11 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "agent",
             "application",
             "context",
+            "conversation",
             "model",
             "permissions",
             "sessions",
+            "skills",
             "tasks",
             "tools",
         }
@@ -74,6 +78,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "permissions",
             "providers",
             "sessions",
+            "skills",
             "tools",
         }
     ),

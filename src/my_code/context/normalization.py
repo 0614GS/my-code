@@ -1,12 +1,11 @@
 """ConversationEntry 到 ModelInputItem 的纯投影与协议校验。"""
 
-from my_code.context.attachments.models import ContextAttachment
 from my_code.context.attachments.projection import AttachmentProjector
 from my_code.context.documents import UserContextDocument
-from my_code.context.session import AttachmentDelivery
 from my_code.context.xml import render_context_instruction, wrap_xml
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     ConversationEntry,
     HumanMessage,
     ReasoningContent,
@@ -45,8 +44,6 @@ class ModelInputNormalizer:
         self,
         user_context: tuple[UserContextDocument, ...],
         history: tuple[ConversationEntry, ...],
-        attachments: tuple[ContextAttachment, ...],
-        attachment_deliveries: tuple[AttachmentDelivery, ...] = (),
         replay_records: tuple[ProviderReplayRecord, ...] = (),
         active_binding: ProviderBinding | None = None,
     ) -> tuple[ModelInputItem, ...]:
@@ -54,13 +51,11 @@ class ModelInputNormalizer:
             *(_context_message(item) for item in user_context),
             *_conversation_history(
                 history,
-                attachment_deliveries,
                 self.attachment_projector,
                 replay_continuation=True,
                 replay_records=replay_records,
                 active_binding=active_binding,
             ),
-            *self.attachment_projector.project_many(attachments),
         ]
         result = tuple(candidates)
         validate_model_input(result)
@@ -69,14 +64,12 @@ class ModelInputNormalizer:
     def normalize_transcript(
         self,
         messages: tuple[ConversationEntry, ...],
-        attachment_deliveries: tuple[AttachmentDelivery, ...] = (),
     ) -> tuple[ModelInputItem, ...]:
         """Compact 使用的 history-only 视图。"""
 
         result = tuple(
             _conversation_history(
                 messages,
-                attachment_deliveries,
                 self.attachment_projector,
                 replay_continuation=False,
             )
@@ -93,6 +86,8 @@ def _conversation_message(
     replay_records: dict[str, ProviderContinuationState] | None = None,
     active_binding: ProviderBinding | None = None,
 ) -> ModelInputItem:
+    if isinstance(message, AttachmentMessage):
+        raise TypeError("Attachment messages require AttachmentProjector")
     if isinstance(message, HumanMessage):
         return UserInput((InputText(message.content),))
     if isinstance(message, AssistantMessage):
@@ -171,21 +166,23 @@ def _context_message(message: UserContextDocument) -> UserInput:
 
 def _conversation_history(
     messages: tuple[ConversationEntry, ...],
-    attachment_deliveries: tuple[AttachmentDelivery, ...],
     attachment_projector: AttachmentProjector,
     *,
     replay_continuation: bool,
     replay_records: tuple[ProviderReplayRecord, ...] = (),
     active_binding: ProviderBinding | None = None,
 ) -> list[ModelInputItem]:
-    by_anchor: dict[str, list[ContextAttachment]] = {}
-    for delivery in attachment_deliveries:
-        by_anchor.setdefault(delivery.anchor_uuid, []).append(delivery.attachment)
+    last_protocol_entry = next(
+        (
+            item
+            for item in reversed(messages)
+            if not isinstance(item, AttachmentMessage)
+        ),
+        None,
+    )
     active_trajectory_uuid = (
-        messages[-1].source_assistant_id
-        if replay_continuation
-        and messages
-        and isinstance(messages[-1], ToolResultBatch)
+        last_protocol_entry.source_assistant_id
+        if replay_continuation and isinstance(last_protocol_entry, ToolResultBatch)
         else None
     )
     projected: list[ModelInputItem] = []
@@ -195,6 +192,9 @@ def _conversation_history(
             record.state
         )
     for message in messages:
+        if isinstance(message, AttachmentMessage):
+            projected.append(attachment_projector.project(message.payload))
+            continue
         projected.append(
             _conversation_message(
                 message,
@@ -206,9 +206,6 @@ def _conversation_history(
                 replay_records=replay_by_entry.get(message.uuid),
                 active_binding=active_binding,
             )
-        )
-        projected.extend(
-            attachment_projector.project_many(tuple(by_anchor.get(message.uuid, ())))
         )
     return projected
 

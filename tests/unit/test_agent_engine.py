@@ -19,16 +19,14 @@ from my_code.agent.models import (
     AgentTurnInput,
     AgentTurnSucceeded,
 )
-from my_code.context.attachments.models import (
-    ContextAttachment,
-    ContextObservation,
-)
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.window import ContextWindow
+from my_code.conversation.attachments import FileMentionAttachment
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     HumanMessage,
     ReasoningContent,
     TextContent,
@@ -254,11 +252,7 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
             ModelOutput((ModelTextBlock("second"),), "end_turn", TokenUsage(4, 1)),
         ],
     )
-    attachment = ContextAttachment(
-        "file",
-        (ContextObservation("File: notes.txt", "     1\thello"),),
-        retention="live_session",
-    )
+    attachment = FileMentionAttachment("notes.txt", "     1\thello")
 
     await engine.submit(AgentTurnInput("inspect", (attachment,)))
     await engine.submit(AgentTurnInput("continue"))
@@ -270,8 +264,9 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
             if hasattr(item, "content")
             for block in item.content  # type: ignore[union-attr]
         )
-    delivery = engine.context_snapshot.attachment_deliveries[0]
-    assert delivery.anchor_uuid == conversation.snapshot().history[0].uuid
+    delivered = conversation.snapshot().history[1]
+    assert isinstance(delivered, AttachmentMessage)
+    assert delivered.parent_uuid == conversation.snapshot().history[0].uuid
     assert (
         Session(tmp_path / "sessions", conversation.session_id).snapshot().history
         == conversation.snapshot().history
@@ -279,20 +274,19 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
 
 
 @pytest.mark.asyncio
-async def test_replacement_session_discards_live_context_delivery(
+async def test_replacement_session_does_not_inherit_attachment(
     tmp_path: Path,
 ) -> None:
     engine, _, _, _ = _engine(
         tmp_path,
         [ModelOutput((ModelTextBlock("first"),), "end_turn", TokenUsage(3, 1))],
     )
-    attachment = ContextAttachment(
-        "file",
-        (ContextObservation("File: notes.txt", "hello"),),
-        retention="live_session",
-    )
+    attachment = FileMentionAttachment("notes.txt", "hello")
     await engine.submit(AgentTurnInput("inspect", (attachment,)))
-    assert engine.context_snapshot.attachment_deliveries
+    assert any(
+        isinstance(message, AttachmentMessage)
+        for message in engine.context_snapshot.messages
+    )
 
     replacement = Session(
         tmp_path / "sessions",
@@ -300,15 +294,10 @@ async def test_replacement_session_discards_live_context_delivery(
     )
     engine.session = replacement
 
-    assert engine.context_snapshot.attachment_deliveries == ()
-
-
-def test_agent_turn_input_rejects_request_only_attachments() -> None:
-    with pytest.raises(ValueError, match="live_session"):
-        AgentTurnInput(
-            "inspect",
-            (ContextAttachment("request", (TextContent("temporary"),)),),
-        )
+    assert not any(
+        isinstance(message, AttachmentMessage)
+        for message in engine.context_snapshot.messages
+    )
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,6 @@ from enum import StrEnum
 from pathlib import Path
 
 _SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-_TOOL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 class SkillSourceKind(StrEnum):
@@ -58,9 +57,11 @@ class SkillMetadata:
             raise ValueError("Skill description must not be blank")
         if len(self.description) > 500:
             raise ValueError("Skill description must not exceed 500 characters")
+        from my_code.permissions.rules import validate_permission_rule
+
         allowed_tools = self.allowed_tools or ()
-        if any(_TOOL_NAME.fullmatch(name) is None for name in allowed_tools):
-            raise ValueError("Skill allowed-tools contains an invalid tool name")
+        for rule in allowed_tools:
+            validate_permission_rule(rule)
         if len(allowed_tools) != len(set(allowed_tools)):
             raise ValueError("Skill allowed-tools must not contain duplicates")
         if self.compatibility is not None and not self.compatibility.strip():

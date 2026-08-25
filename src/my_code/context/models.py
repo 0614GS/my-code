@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from my_code.context.session import AttachmentDelivery
 from my_code.conversation.models import ConversationSummaryMessage
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.capabilities import CapabilitySource, ModelLimits
@@ -63,9 +62,6 @@ class ContextPlan:
     request: ModelRequest
     budget: ContextBudget | None = None
     new_content_replacements: tuple[ContentReplacement, ...] = field(
-        default_factory=tuple
-    )
-    new_attachment_deliveries: tuple[AttachmentDelivery, ...] = field(
         default_factory=tuple
     )
     request_binding: ProviderBinding | None = None

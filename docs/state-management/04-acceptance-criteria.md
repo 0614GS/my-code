@@ -39,7 +39,7 @@
 | S6 | 已验收 | 尾部未闭合 ToolCall 在恢复时得到稳定错误结果，并且修复可再次恢复。 |
 | S7 | 已验收 | 旧 transcript 可读取；格式升级不会静默丢失 message、tool result、usage、presentation 或 continuation。 |
 | S8 | 已验收 | 目标 Session 恢复失败时，当前 runtime 仍完整引用旧 Session。 |
-| S9 | 已验收 | 切换 Session 会同时切换 conversation、context delivery/cache、工具结果和 replay sidecar。 |
+| S9 | 已验收 | 切换 Session 会同时切换 conversation（含 durable Attachment）、prompt/user-context cache、工具结果和 replay sidecar。 |
 
 ## Conversation 与工具协议
 
@@ -61,7 +61,7 @@
 | X2 | 已验收 | ContextEngine 不修改 Session，也不缓存 conversation history。 |
 | X3 | 已验收 | attachment、Todo reminder 和 user context 以 provider-neutral input item 注入。 |
 | X4 | 已验收 | Todo reminder 不写 canonical transcript；失败 TodoWrite 不覆盖最后成功的 Todo 状态。 |
-| X5 | 已验收 | live-session attachment delivery 在同一 Session 可重放，resume/switch 后按声明清空或重建。 |
+| X5 | 已验收 | durable Attachment 可恢复；临时 listing/reminder 不落盘并按 conversation facts 重新派生。 |
 | X6 | 已验收 | Context 注入不会插入到 ToolCall 与对应 ToolOutput 的非法协议位置。 |
 | X7 | 已验收 | budget、trim 和 compaction 基于公共 ModelInputItem，不依赖 OpenAI/Anthropic SDK 类型。 |
 | X8 | 已验收 | full compact proposal 失败不改变 Session；成功必须通过 Session 原子提交。 |
@@ -138,7 +138,7 @@
 | O1-O7 | `test_app_state_is_the_single_runtime_owner`、`test_session_is_the_only_public_conversation_and_persistence_boundary`、Todo projection tests |
 | S1-S9 | `tests/unit/test_conversation_state.py`、`tests/unit/test_session_store.py`、Chat resume/switch tests |
 | C1-C7 | conversation model/state、Agent tool loop 与 ToolRound cancellation tests |
-| X1-X8 | `tests/unit/test_context_injection.py`、`test_session_owns_ephemeral_attachment_delivery`、Todo reminder/compaction tests |
+| X1-X8 | `tests/unit/test_context_injection.py`、transient/durable parent-chain tests、Todo reminder/compaction tests |
 | M1-M8 | model request validation、context normalization、reasoning replay 与 compaction replay tests |
 | OR1-OR8 | `tests/unit/test_openai_responses_provider.py`，以及 `test_native_stream_lifecycle_is_not_replayed_from_final_output` |
 | AM1-AM7 | `tests/unit/test_anthropic_provider.py`，以及 `test_native_stream_lifecycle_is_not_replayed_from_final_output` |
