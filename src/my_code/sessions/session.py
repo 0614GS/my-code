@@ -83,14 +83,20 @@ class Session:
             item for item in self._context_deliveries if item.anchor_uuid in working_ids
         )
         return ContextSnapshot(
-            snapshot.working_set,
-            snapshot.content_replacements,
-            snapshot.history,
-            deliveries,
-            tuple(
+            messages=snapshot.working_set,
+            content_replacements=snapshot.content_replacements,
+            session_history=snapshot.history,
+            attachment_deliveries=deliveries,
+            replay_records=tuple(
                 record
                 for record in self._replay_records.values()
                 if record.entry_id in working_ids
+            ),
+            session_id=self.session_id,
+            delivered_attachment_sources=tuple(
+                dict.fromkeys(
+                    item.attachment.source for item in self._context_deliveries
+                )
             ),
         )
 

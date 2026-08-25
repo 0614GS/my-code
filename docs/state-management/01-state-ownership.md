@@ -18,6 +18,11 @@ AppState
 │   ├── provider replay sidecars
 │   └── private persistence
 ├── PermissionState
+├── ToolState
+├── TaskSupervisor
+├── AgentRunFactory
+├── McpRuntime
+├── SkillRuntime / SkillCatalog
 └── ProviderRuntime
 
 SessionSnapshot + request input
@@ -80,6 +85,11 @@ class AppState:
 | Provider replay sidecar | `Session` | 与关联 entry/working set 一致 | 是，opaque |
 | runtime permission mode/rules | `AppState.permissions` | runtime | 持久规则由 config 写入 |
 | Provider connection/client/model environment | `AppState.provider` | runtime | profile/credential 由 config/auth 写入 |
+| 动态工具来源目录 | `AppState.tools` | runtime；source 原子替换 | 否；来源配置可落盘 |
+| task tree 与终态快照 | `AppState.tasks` | runtime | 否 |
+| MCP connections、诊断与 server tool source | `AppState.mcp` | runtime | 否；server spec 来自 settings |
+| Skill index、诊断与 pending activation | `AppState.skills` | runtime / per-run next step | 否；SKILL.md 是外部配置数据 |
+| child Session/conversation | 对应 `AgentRun` | 单次 child task | 是，独立 JSONL |
 | turn、step、usage accumulator | Agent 调用栈 | 单次 turn | 否 |
 | Provider streaming parser/delta | Provider 调用栈 | 单次 step | 否 |
 | tool round progress | Tool round 调用栈 | 单次 tool round | 否 |
@@ -161,10 +171,35 @@ load + validate + repair candidate Session
 - `AgentEngine` 不持有 AppState 或 Session。
 - turn/step 计数和 usage accumulator 只存在于一次调用。
 - Agent 通过 Session 语义方法提交事实，不访问 persistence。
+- 并发 child AgentRun 各自持有 Session、Agent 组件和 provider lease；不共享可写上下文状态。
+- foreground Subagent 只把结构化最终结果投递给父 ToolCall；child transcript 不合并进 parent Session。
+
+### Tasks
+
+- `AppState.tasks` 是唯一进程内 TaskSupervisor，拥有有限状态机、父子取消树、终态快照和 runtime events。
+- Task progress/result 不进入 Session canonical conversation；后续 Feature 必须显式投递结构化结果。
+- runtime close 先停止接收并取消全部 task，确认终态后才回收 AgentRun/provider lease。
+- background Subagent 的查询与通知记录由 SubagentController 按 root run owner 保存；Session 只保存非持久化 delivery/cursor，不把 TaskSnapshot 写成 conversation fact。
+
+### MCP
+
+- `AppState.mcp` 是唯一 McpRuntime，拥有 transport、连接状态和 server source 的注册/撤销。
+- MCP tool 只作为标准 Tool 进入 ToolCatalog；当前 step 使用的 adapter 不因 source 后续撤销而换成新实例。
+- 连接状态、诊断和 discovery cache 不进入 Session；远端 ToolCall/ToolResult 仍按普通 conversation fact 持久化。
+- runtime close 在 task/run 清理后、provider client 关闭前回收全部 MCP transport。
+
+### Skills
+
+- `AppState.skills` 是唯一 SkillRuntime；其中的 SkillCatalog 原子替换分层索引，pending activation 按 run ID 隔离。
+- discovery 只索引选择所需元数据与 fingerprint；`Skill` 标准 Tool 执行时才读取并复验正文，目录中的其他代码文件不会被导入或执行。
+- 激活内容只通过下一次不可变 RunCapabilitySnapshot 进入 ModelRequest；Assistant 提交后 acknowledgement 删除对应 activation，不写入 Session context cache。
+- allowed-tools 只对当前 run 的下一 step ToolCatalogSnapshot 做交集；reload 或 source 替换不修改已经捕获的 step。
+- runtime close 在 run 清理后、MCP transport 关闭前撤销 Skill Tool source 并清空 pending activation。
 
 ### Tools
 
-- `ToolRegistry` 构造后只读。
+- application-lifetime `ToolCatalog` 只有 `AppState.tools` 一份；来源更新原子发布新版本。
+- Agent step 使用不可变 `ToolCatalogSnapshot`，请求 definitions 与 ToolRound 执行版本一致。
 - `ToolExecutor` 不绑定活动 Session 或活动工具结果目录。
 - Tool 返回领域结果；由 Session 提交路径负责结果外置、展示快照和持久化。
 
@@ -176,7 +211,8 @@ load + validate + repair candidate Session
 
 ### Providers
 
-- `ProviderRuntime` 持有 connection、client、capabilities 和切换锁。
+- `ProviderRuntime` 持有前台 connection/client、capabilities、切换锁和 ProviderLeaseRegistry。
+- 每个 AgentRun lease 捕获创建时的 connection 并拥有独立 client/stream lock；provider switch 只影响新 lease。
 - Provider adapter 只消费 `ModelRequest`，不读取 AppState 或 Session。
 - Provider continuation 是 Session 的 opaque replay sidecar，不是 ProviderRuntime 的对话历史。
 

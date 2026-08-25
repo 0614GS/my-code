@@ -28,7 +28,11 @@ class ToolInvocation:
 
 
 class ToolInvocationHook(Protocol):
-    """Lifecycle hook run inside the controlled invocation boundary."""
+    """Observational lifecycle hook inside the controlled invocation boundary.
+
+    Calls and approved inputs are isolated snapshots. Mutating them never changes
+    the persisted ToolCall or the input subsequently passed to the Tool.
+    """
 
     async def before_execute(
         self,

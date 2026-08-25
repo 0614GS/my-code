@@ -1,11 +1,12 @@
 """统一的校验 → 权限 → 执行与双重结果投影管线。"""
 
+import asyncio
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from my_code.conversation.models import ToolCall, ToolResult
-from my_code.model.primitives import JsonObject
+from my_code.model.primitives import JsonObject, to_json_object
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionDecision,
@@ -25,6 +26,7 @@ from my_code.tools.base import (
     ToolInputError,
     ToolOutput,
 )
+from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.invocation import (
     ToolInvocation,
     ToolInvocationAudit,
@@ -36,7 +38,6 @@ from my_code.tools.presentation import (
     compact_text,
     generic_tool_use_presentation,
 )
-from my_code.tools.registry import ToolRegistry
 from my_code.workspace.local import Workspace
 
 logger = logging.getLogger("my_code.permissions")
@@ -77,7 +78,7 @@ class ToolExecutor:
 
     def __init__(
         self,
-        registry: ToolRegistry,
+        tools: ToolCatalogSnapshot,
         policy: PermissionPolicy,
         prompter: PermissionPrompter,
         workspace: Workspace,
@@ -85,7 +86,7 @@ class ToolExecutor:
         hooks: Iterable[ToolInvocationHook] = (),
         audit: ToolInvocationAudit | None = None,
     ) -> None:
-        self.registry = registry
+        self.tools = tools
         self.policy = policy
         self.prompter = prompter
         self.workspace = workspace
@@ -93,26 +94,42 @@ class ToolExecutor:
         self.update_applier = update_applier or _apply_updates(policy)
         self.hooks = tuple(hooks)
         self.audit = audit or LoggingToolInvocationAudit()
+        self._permission_prompt_lock = asyncio.Lock()
 
-    def present_use(self, call: ToolCall) -> ToolUsePresentation:
+    def present_use(
+        self,
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | None = None,
+    ) -> ToolUsePresentation:
         """请求 Tool 解释调用语义；未知或异常工具使用安全回退。"""
 
-        tool = self.registry.get(call.name)
+        active_tools = self.tools if tools is None else tools
+        tool = active_tools.get(call.name)
+        tool_input = to_json_object(call.input)
         if tool is not None:
             try:
-                return tool.present_use(call.input)
+                return tool.present_use(tool_input)
             except Exception:
                 # 展示扩展不是安全边界，故障不能阻止工具进入校验和权限管线。
                 pass
-        return generic_tool_use_presentation(call.name, call.input)
+        return generic_tool_use_presentation(call.name, tool_input)
 
-    def present_error(self, call: ToolCall, message: str) -> ToolResultPresentation:
+    def present_error(
+        self,
+        call: ToolCall,
+        message: str,
+        *,
+        tools: ToolCatalogSnapshot | None = None,
+    ) -> ToolResultPresentation:
         """请求 Tool 展示错误；未知或异常工具使用安全回退。"""
 
-        tool = self.registry.get(call.name)
+        active_tools = self.tools if tools is None else tools
+        tool = active_tools.get(call.name)
+        tool_input = to_json_object(call.input)
         if tool is not None:
             try:
-                return tool.present_error(call.input, message)
+                return tool.present_error(tool_input, message)
             except Exception:
                 pass
         return ToolResultPresentation(summary=compact_text(message))
@@ -121,19 +138,24 @@ class ToolExecutor:
         self,
         call: ToolCall,
         result: ToolResult | None,
+        *,
+        tools: ToolCatalogSnapshot | None = None,
     ) -> ToolResultPresentation:
         """投影历史结果，并兼容尚未保存展示快照的旧 Transcript。"""
 
         if result is None:
             return self.present_error(
-                call, "Tool result is missing from the transcript."
+                call,
+                "Tool result is missing from the transcript.",
+                tools=tools,
             )
-        tool = self.registry.get(call.name)
+        active_tools = self.tools if tools is None else tools
+        tool = active_tools.get(call.name)
         if tool is None or result.is_error:
-            return self.present_error(call, result.content)
+            return self.present_error(call, result.content, tools=active_tools)
         return self._present_result(
             tool,
-            call.input,
+            to_json_object(call.input),
             ToolOutput(content=result.content, is_error=False),
         )
 
@@ -141,24 +163,34 @@ class ToolExecutor:
         self,
         call: ToolCall,
         *,
+        tools: ToolCatalogSnapshot | None = None,
         invocation: ToolInvocation | None = None,
+        run_id: str | None = None,
     ) -> ToolExecutionOutcome:
         actual_invocation = invocation or ToolInvocation()
-        tool = self.registry.get(call.name)
+        submitted_call = _copy_call(call)
+        submitted_input = submitted_call.input
+        active_tools = self.tools if tools is None else tools
+        execution_context = self.context.with_tools(
+            active_tools.as_mapping(),
+            version=active_tools.version,
+            run_id=run_id,
+        )
+        tool = active_tools.get(submitted_call.name)
         if tool is None:
             # 未知工具名以协议结果形式报告给模型，而不是中断整个智能体循环。
-            return self._error(call, f"Unknown tool: {call.name}")
+            return self._error(submitted_call, f"Unknown tool: {submitted_call.name}")
 
         # 校验必须先于权限检查：绝不能请求用户批准格式错误或语义含混的输入。
         try:
-            tool.validate_input(call.input)
+            tool.validate_input(to_json_object(submitted_input))
         except (ToolInputError, ValueError, TypeError) as error:
-            return self._error(call, f"Invalid input: {error}", tool=tool)
+            return self._error(submitted_call, f"Invalid input: {error}", tool=tool)
 
         # 权限是独立策略层；只有静态策略及所需用户确认均通过后，才调用 Tool.execute。
         try:
             tool_result = await tool.check_permissions(
-                call.input,
+                to_json_object(submitted_input),
                 ToolPermissionContext(
                     mode=self.policy.mode,
                     rules=self.policy.rules,
@@ -168,48 +200,74 @@ class ToolExecutor:
             decision = self.policy.decide(
                 PermissionRequest(
                     tool_name=tool.definition.name,
-                    tool_input=call.input,
+                    tool_input=to_json_object(submitted_input),
                     tool_result=tool_result,
                 )
             )
         except Exception as error:
             return self._error(
-                call,
+                submitted_call,
                 f"Unexpected {type(error).__name__} while checking permissions",
                 tool=tool,
             )
+
+        # 工具专属权限检查可能规范化或约束输入。此后只使用这一份深拷贝，
+        # audit、prompter 和 hook 都只能接触各自的隔离副本。
+        approved_input = to_json_object(
+            submitted_input
+            if decision.updated_input is None
+            else decision.updated_input
+        )
+        if decision.behavior is not PermissionBehavior.DENY:
+            try:
+                tool.validate_input(to_json_object(approved_input))
+            except (ToolInputError, ValueError, TypeError) as error:
+                return self._error(
+                    submitted_call,
+                    f"Invalid approved input: {error}",
+                    tool=tool,
+                    tool_input=approved_input,
+                )
         try:
-            await self.audit.record_permission(actual_invocation, call, decision)
+            await self.audit.record_permission(
+                actual_invocation,
+                _copy_call(submitted_call),
+                _copy_decision(decision),
+            )
         except Exception:
             return self._error(
-                call,
+                submitted_call,
                 "Tool audit failed; the tool was not executed.",
                 tool=tool,
-                tool_input=decision.updated_input or call.input,
+                tool_input=approved_input,
             )
         if decision.behavior is PermissionBehavior.DENY:
             return self._error(
-                call, f"Permission denied: {decision.message}", tool=tool
+                submitted_call,
+                f"Permission denied: {decision.message}",
+                tool=tool,
             )
         if decision.behavior is PermissionBehavior.ASK:
-            permission_input = (
-                call.input if decision.updated_input is None else decision.updated_input
-            )
+            permission_input = approved_input
             try:
-                presentation = self.present_use(call)
-                confirmation = await self.prompter.confirm(
-                    PermissionPrompt(
-                        tool_name=tool.definition.name,
-                        tool_input=permission_input,
-                        decision=decision,
-                        display_name=presentation.display_name,
-                        summary=presentation.summary,
-                        activity=presentation.activity,
-                    )
+                permission_call = _copy_call(
+                    submitted_call, tool_input=permission_input
                 )
+                presentation = self.present_use(permission_call)
+                async with self._permission_prompt_lock:
+                    confirmation = await self.prompter.confirm(
+                        PermissionPrompt(
+                            tool_name=tool.definition.name,
+                            tool_input=to_json_object(permission_input),
+                            decision=_copy_decision(decision),
+                            display_name=presentation.display_name,
+                            summary=presentation.summary,
+                            activity=presentation.activity,
+                        )
+                    )
             except Exception as error:
                 return self._error(
-                    call,
+                    submitted_call,
                     f"Permission prompt failed ({type(error).__name__}); "
                     "the tool was not executed.",
                     tool=tool,
@@ -230,7 +288,11 @@ class ToolExecutor:
                     updated_input=permission_input,
                 )
                 try:
-                    await self.audit.record_permission(actual_invocation, call, denied)
+                    await self.audit.record_permission(
+                        actual_invocation,
+                        _copy_call(submitted_call),
+                        _copy_decision(denied),
+                    )
                 except Exception:
                     logger.exception(
                         "Permission denial audit failed: tool=%s origin=%s",
@@ -238,7 +300,7 @@ class ToolExecutor:
                         actual_invocation.origin.value,
                     )
                 return self._error(
-                    call,
+                    submitted_call,
                     "Permission denied: approval was not provided. "
                     f"Reason: {decision.reason}.{feedback}",
                     tool=tool,
@@ -254,7 +316,7 @@ class ToolExecutor:
                         type(error).__name__,
                     )
                     return self._error(
-                        call,
+                        submitted_call,
                         "Permission update failed; the tool was not executed.",
                         tool=tool,
                         tool_input=permission_input,
@@ -268,25 +330,31 @@ class ToolExecutor:
                 updated_input=permission_input,
             )
             try:
-                await self.audit.record_permission(actual_invocation, call, approved)
+                await self.audit.record_permission(
+                    actual_invocation,
+                    _copy_call(submitted_call),
+                    _copy_decision(approved),
+                )
             except Exception:
                 return self._error(
-                    call,
+                    submitted_call,
                     "Tool audit failed; the tool was not executed.",
                     tool=tool,
                     tool_input=permission_input,
                 )
 
         try:
-            # 工具专属权限检查可能规范化或约束输入；执行阶段必须使用获准的准确输入。
-            approved_input = (
-                call.input if decision.updated_input is None else decision.updated_input
-            )
             for hook in self.hooks:
                 await hook.before_execute(
-                    actual_invocation, call, tool, approved_input, self.context
+                    actual_invocation,
+                    _copy_call(submitted_call, tool_input=approved_input),
+                    tool,
+                    to_json_object(approved_input),
+                    execution_context,
                 )
-            output = await tool.execute(approved_input, self.context)
+            output = await tool.execute(
+                to_json_object(approved_input), execution_context
+            )
 
             # Tool 分别决定用户展示语义和模型序列化；TUI 与 Executor 均不反向
             # 解析模型可见字符串来猜测结果含义。
@@ -294,13 +362,17 @@ class ToolExecutor:
             presentation = self._present_result(tool, approved_input, output)
 
             result = ToolResult(
-                tool_use_id=call.id,
+                tool_use_id=submitted_call.id,
                 content=model_content,
                 is_error=output.is_error,
             )
             for hook in self.hooks:
                 try:
-                    await hook.after_execute(actual_invocation, call, result)
+                    await hook.after_execute(
+                        actual_invocation,
+                        _copy_call(submitted_call, tool_input=approved_input),
+                        result,
+                    )
                 except Exception:
                     logger.exception(
                         "Post-tool hook failed after tool completion: "
@@ -310,13 +382,20 @@ class ToolExecutor:
                     )
             return ToolExecutionOutcome(result, presentation)
         except (ToolInputError, ToolExecutionError, OSError, UnicodeError) as error:
-            return self._error(call, f"{type(error).__name__}: {error}", tool=tool)
+            return self._error(
+                submitted_call,
+                f"{type(error).__name__}: {error}",
+                tool=tool,
+                tool_input=approved_input,
+            )
         except Exception as error:
             # 意外异常文本可能包含凭据或实现细节，只向模型保留稳定的异常类名。
             return self._error(
-                call,
-                f"Unexpected {type(error).__name__} while executing {call.name}",
+                submitted_call,
+                "Unexpected "
+                f"{type(error).__name__} while executing {submitted_call.name}",
                 tool=tool,
+                tool_input=approved_input,
             )
 
     @staticmethod
@@ -326,10 +405,10 @@ class ToolExecutor:
         output: ToolOutput,
     ) -> ToolResultPresentation:
         try:
-            return tool.present_result(tool_input, output)
+            return tool.present_result(to_json_object(tool_input), output)
         except Exception:
             # Tool 已经执行成功；展示层错误不能把成功改写成失败并诱发模型重试。
-            return Tool.present_result(tool, tool_input, output)
+            return Tool.present_result(tool, to_json_object(tool_input), output)
 
     @staticmethod
     def _error(
@@ -340,7 +419,7 @@ class ToolExecutor:
         tool_input: JsonObject | None = None,
     ) -> ToolExecutionOutcome:
         # 必须保留原始 ID：provider 会拒绝包含 tool_use 却没有匹配 tool_result 的历史。
-        actual_input = call.input if tool_input is None else tool_input
+        actual_input = to_json_object(call.input if tool_input is None else tool_input)
         try:
             presentation = (
                 tool.present_error(actual_input, message)
@@ -355,6 +434,32 @@ class ToolExecutor:
             is_error=True,
         )
         return ToolExecutionOutcome(result, presentation)
+
+
+def _copy_call(
+    call: ToolCall,
+    *,
+    tool_input: JsonObject | None = None,
+) -> ToolCall:
+    return ToolCall(
+        id=call.id,
+        name=call.name,
+        input=to_json_object(call.input if tool_input is None else tool_input),
+    )
+
+
+def _copy_decision(decision: PermissionDecision) -> PermissionDecision:
+    return PermissionDecision(
+        behavior=decision.behavior,
+        message=decision.message,
+        decision_reason=decision.decision_reason,
+        updated_input=(
+            None
+            if decision.updated_input is None
+            else to_json_object(decision.updated_input)
+        ),
+        suggestions=decision.suggestions,
+    )
 
 
 def _apply_updates(

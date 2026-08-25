@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,8 @@ from my_code.permissions.rules import (
 )
 
 _SCHEMA_VERSION = 3
+_MCP_SERVER_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class SettingsFileError(ValueError):
@@ -37,6 +40,50 @@ class PermissionSettingsLayer:
     deny: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ToolSettingsLayer:
+    max_parallel_calls: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentSettingsLayer:
+    enabled: bool | None = None
+    max_depth: int | None = None
+    max_active_children: int | None = None
+    max_steps: int | None = None
+    max_tokens: int | None = None
+    timeout_seconds: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BackgroundTaskSettingsLayer:
+    enabled: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SkillSettingsLayer:
+    enabled: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class McpServerSettingsLayer:
+    name: str
+    command: str
+    args: tuple[str, ...] = ()
+    env_from: tuple[tuple[str, str], ...] = ()
+    enabled: bool = True
+    startup_timeout_seconds: float = 10.0
+    call_timeout_seconds: float = 60.0
+    scope: SettingsScope = SettingsScope.USER
+
+
+@dataclass(frozen=True, slots=True)
+class McpSettingsLayer:
+    enabled: bool | None = None
+    servers: tuple[McpServerSettingsLayer, ...] = ()
+    deferred_tool_threshold: int | None = None
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class SettingsLayer:
     """A partial settings layer; nested values mirror the on-disk domains."""
@@ -44,6 +91,11 @@ class SettingsLayer:
     active_provider: str | None
     agent: AgentSettingsLayer
     permissions: PermissionSettingsLayer
+    tools: ToolSettingsLayer
+    subagents: SubagentSettingsLayer
+    background_tasks: BackgroundTaskSettingsLayer
+    skills: SkillSettingsLayer
+    mcp: McpSettingsLayer
 
     def __init__(
         self,
@@ -51,6 +103,11 @@ class SettingsLayer:
         active_provider: str | None = None,
         agent: AgentSettingsLayer | None = None,
         permissions: PermissionSettingsLayer | None = None,
+        tools: ToolSettingsLayer | None = None,
+        subagents: SubagentSettingsLayer | None = None,
+        background_tasks: BackgroundTaskSettingsLayer | None = None,
+        skills: SkillSettingsLayer | None = None,
+        mcp: McpSettingsLayer | None = None,
         # Convenience aliases for callers while the disk schema remains nested.
         model: str | None = None,
         permission_mode: PermissionMode | None = None,
@@ -60,6 +117,18 @@ class SettingsLayer:
         max_steps: int | None = None,
         max_output_tokens: int | None = None,
         context_chars: int | None = None,
+        max_parallel_tool_calls: int | None = None,
+        subagents_enabled: bool | None = None,
+        subagent_max_depth: int | None = None,
+        subagent_max_active_children: int | None = None,
+        subagent_max_steps: int | None = None,
+        subagent_max_tokens: int | None = None,
+        subagent_timeout_seconds: float | None = None,
+        background_tasks_enabled: bool | None = None,
+        skills_enabled: bool | None = None,
+        mcp_enabled: bool | None = None,
+        mcp_servers: tuple[McpServerSettingsLayer, ...] = (),
+        mcp_deferred_tool_threshold: int | None = None,
     ) -> None:
         if agent is not None and any(
             value is not None
@@ -75,6 +144,35 @@ class SettingsLayer:
             raise TypeError(
                 "permissions and flattened permission values cannot be combined"
             )
+        if tools is not None and max_parallel_tool_calls is not None:
+            raise TypeError("tools and flattened tool values cannot be combined")
+        if subagents is not None and any(
+            value is not None
+            for value in (
+                subagents_enabled,
+                subagent_max_depth,
+                subagent_max_active_children,
+                subagent_max_steps,
+                subagent_max_tokens,
+                subagent_timeout_seconds,
+            )
+        ):
+            raise TypeError(
+                "subagents and flattened subagent values cannot be combined"
+            )
+        if background_tasks is not None and background_tasks_enabled is not None:
+            raise TypeError(
+                "background_tasks and flattened background task values "
+                "cannot be combined"
+            )
+        if skills is not None and skills_enabled is not None:
+            raise TypeError("skills and flattened Skill values cannot be combined")
+        if mcp is not None and (
+            mcp_enabled is not None
+            or mcp_servers
+            or mcp_deferred_tool_threshold is not None
+        ):
+            raise TypeError("mcp and flattened MCP values cannot be combined")
         object.__setattr__(self, "active_provider", active_provider)
         object.__setattr__(
             self,
@@ -91,6 +189,44 @@ class SettingsLayer:
                 permission_allow_rules,
                 permission_ask_rules,
                 permission_deny_rules,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "background_tasks",
+            background_tasks or BackgroundTaskSettingsLayer(background_tasks_enabled),
+        )
+        object.__setattr__(
+            self,
+            "skills",
+            skills or SkillSettingsLayer(skills_enabled),
+        )
+        object.__setattr__(
+            self,
+            "tools",
+            tools or ToolSettingsLayer(max_parallel_tool_calls),
+        )
+        object.__setattr__(
+            self,
+            "subagents",
+            subagents
+            or SubagentSettingsLayer(
+                subagents_enabled,
+                subagent_max_depth,
+                subagent_max_active_children,
+                subagent_max_steps,
+                subagent_max_tokens,
+                subagent_timeout_seconds,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "mcp",
+            mcp
+            or McpSettingsLayer(
+                mcp_enabled,
+                mcp_servers,
+                mcp_deferred_tool_threshold,
             ),
         )
 
@@ -126,6 +262,54 @@ class SettingsLayer:
     def permission_deny_rules(self) -> tuple[str, ...]:
         return self.permissions.deny
 
+    @property
+    def max_parallel_tool_calls(self) -> int | None:
+        return self.tools.max_parallel_calls
+
+    @property
+    def subagents_enabled(self) -> bool | None:
+        return self.subagents.enabled
+
+    @property
+    def subagent_max_depth(self) -> int | None:
+        return self.subagents.max_depth
+
+    @property
+    def subagent_max_active_children(self) -> int | None:
+        return self.subagents.max_active_children
+
+    @property
+    def subagent_max_steps(self) -> int | None:
+        return self.subagents.max_steps
+
+    @property
+    def subagent_max_tokens(self) -> int | None:
+        return self.subagents.max_tokens
+
+    @property
+    def subagent_timeout_seconds(self) -> float | None:
+        return self.subagents.timeout_seconds
+
+    @property
+    def background_tasks_enabled(self) -> bool | None:
+        return self.background_tasks.enabled
+
+    @property
+    def skills_enabled(self) -> bool | None:
+        return self.skills.enabled
+
+    @property
+    def mcp_enabled(self) -> bool | None:
+        return self.mcp.enabled
+
+    @property
+    def mcp_servers(self) -> tuple[McpServerSettingsLayer, ...]:
+        return self.mcp.servers
+
+    @property
+    def mcp_deferred_tool_threshold(self) -> int | None:
+        return self.mcp.deferred_tool_threshold
+
     def overlay(self, higher: "SettingsLayer") -> "SettingsLayer":
         return SettingsLayer(
             active_provider=higher.active_provider or self.active_provider,
@@ -146,6 +330,50 @@ class SettingsLayer:
                 ),
                 _union_rules(self.permission_ask_rules, higher.permission_ask_rules),
                 _union_rules(self.permission_deny_rules, higher.permission_deny_rules),
+            ),
+            tools=ToolSettingsLayer(
+                higher.max_parallel_tool_calls
+                if higher.max_parallel_tool_calls is not None
+                else self.max_parallel_tool_calls
+            ),
+            subagents=SubagentSettingsLayer(
+                higher.subagents_enabled
+                if higher.subagents_enabled is not None
+                else self.subagents_enabled,
+                higher.subagent_max_depth
+                if higher.subagent_max_depth is not None
+                else self.subagent_max_depth,
+                higher.subagent_max_active_children
+                if higher.subagent_max_active_children is not None
+                else self.subagent_max_active_children,
+                higher.subagent_max_steps
+                if higher.subagent_max_steps is not None
+                else self.subagent_max_steps,
+                higher.subagent_max_tokens
+                if higher.subagent_max_tokens is not None
+                else self.subagent_max_tokens,
+                higher.subagent_timeout_seconds
+                if higher.subagent_timeout_seconds is not None
+                else self.subagent_timeout_seconds,
+            ),
+            background_tasks=BackgroundTaskSettingsLayer(
+                higher.background_tasks_enabled
+                if higher.background_tasks_enabled is not None
+                else self.background_tasks_enabled
+            ),
+            skills=SkillSettingsLayer(
+                higher.skills_enabled
+                if higher.skills_enabled is not None
+                else self.skills_enabled
+            ),
+            mcp=McpSettingsLayer(
+                higher.mcp_enabled
+                if higher.mcp_enabled is not None
+                else self.mcp_enabled,
+                _overlay_mcp_servers(self.mcp_servers, higher.mcp_servers),
+                higher.mcp_deferred_tool_threshold
+                if higher.mcp_deferred_tool_threshold is not None
+                else self.mcp_deferred_tool_threshold,
             ),
         )
 
@@ -281,6 +509,12 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
             f"agent.maxTurns is no longer supported; use agent.maxSteps: {path}"
         )
     permissions = _nested_mapping(raw, "permissions", path)
+    tools = _nested_mapping(raw, "tools", path)
+    subagents = _nested_mapping(raw, "subagents", path)
+    background_tasks = _nested_mapping(raw, "backgroundTasks", path)
+    skills = _nested_mapping(raw, "skills", path)
+    mcp = _nested_mapping(raw, "mcp", path)
+    mcp_servers = _nested_mapping(mcp, "servers", path, label="mcp.servers")
     layer = SettingsLayer(
         active_provider=_optional_string(raw, "activeProvider", path),
         agent=AgentSettingsLayer(
@@ -296,6 +530,68 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
             _permission_rules(permissions, "allow", path),
             _permission_rules(permissions, "ask", path),
             _permission_rules(permissions, "deny", path),
+        ),
+        tools=ToolSettingsLayer(
+            _optional_positive_int(
+                tools,
+                "maxParallelCalls",
+                path,
+                "tools.maxParallelCalls",
+            )
+        ),
+        subagents=SubagentSettingsLayer(
+            _optional_bool(subagents, "enabled", path, "subagents.enabled"),
+            _optional_positive_int(
+                subagents,
+                "maxDepth",
+                path,
+                "subagents.maxDepth",
+            ),
+            _optional_positive_int(
+                subagents,
+                "maxActiveChildren",
+                path,
+                "subagents.maxActiveChildren",
+            ),
+            _optional_positive_int(
+                subagents,
+                "maxSteps",
+                path,
+                "subagents.maxSteps",
+            ),
+            _optional_positive_int(
+                subagents,
+                "maxTokens",
+                path,
+                "subagents.maxTokens",
+            ),
+            _optional_positive_number(
+                subagents,
+                "timeoutSeconds",
+                path,
+                "subagents.timeoutSeconds",
+            ),
+        ),
+        background_tasks=BackgroundTaskSettingsLayer(
+            _optional_bool(
+                background_tasks,
+                "enabled",
+                path,
+                "backgroundTasks.enabled",
+            )
+        ),
+        skills=SkillSettingsLayer(
+            _optional_bool(skills, "enabled", path, "skills.enabled")
+        ),
+        mcp=McpSettingsLayer(
+            _optional_bool(mcp, "enabled", path, "mcp.enabled"),
+            _parse_mcp_servers(mcp_servers, path=path, scope=scope),
+            _optional_positive_int(
+                mcp,
+                "deferredToolThreshold",
+                path,
+                "mcp.deferredToolThreshold",
+            ),
         ),
     )
     _validate_scope(layer, scope, path)
@@ -320,6 +616,16 @@ def _validate_scope(layer: SettingsLayer, scope: SettingsScope, path: Path) -> N
     ):
         raise SettingsFileError(
             f"Shared project settings cannot enable bypassPermissions: {path}"
+        )
+    if scope is SettingsScope.PROJECT and layer.mcp_enabled is True:
+        raise SettingsFileError(
+            f"Shared project settings cannot enable MCP execution: {path}"
+        )
+    if scope is SettingsScope.PROJECT and any(
+        server.enabled for server in layer.mcp_servers
+    ):
+        raise SettingsFileError(
+            f"Shared project MCP servers cannot be enabled directly: {path}"
         )
 
 
@@ -354,6 +660,45 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
             )
     if permissions:
         document["permissions"] = permissions
+    if settings.max_parallel_tool_calls is not None:
+        document["tools"] = {"maxParallelCalls": settings.max_parallel_tool_calls}
+    subagents = {
+        key: value
+        for key, value in (
+            ("enabled", settings.subagents_enabled),
+            ("maxDepth", settings.subagent_max_depth),
+            ("maxActiveChildren", settings.subagent_max_active_children),
+            ("maxSteps", settings.subagent_max_steps),
+            ("maxTokens", settings.subagent_max_tokens),
+            ("timeoutSeconds", settings.subagent_timeout_seconds),
+        )
+        if value is not None
+    }
+    if subagents:
+        document["subagents"] = subagents
+    if settings.background_tasks_enabled is not None:
+        document["backgroundTasks"] = {"enabled": settings.background_tasks_enabled}
+    if settings.skills_enabled is not None:
+        document["skills"] = {"enabled": settings.skills_enabled}
+    mcp: dict[str, object] = {}
+    if settings.mcp_enabled is not None:
+        mcp["enabled"] = settings.mcp_enabled
+    if settings.mcp_deferred_tool_threshold is not None:
+        mcp["deferredToolThreshold"] = settings.mcp_deferred_tool_threshold
+    if settings.mcp_servers:
+        mcp["servers"] = {
+            server.name: {
+                "command": server.command,
+                "args": list(server.args),
+                "envFrom": dict(server.env_from),
+                "enabled": server.enabled,
+                "startupTimeoutSeconds": server.startup_timeout_seconds,
+                "callTimeoutSeconds": server.call_timeout_seconds,
+            }
+            for server in settings.mcp_servers
+        }
+    if mcp:
+        document["mcp"] = mcp
     return document
 
 
@@ -363,7 +708,29 @@ def _merge_document(
     result = dict(existing)
     incoming = _settings_document(settings)
     for key, value in incoming.items():
-        if key in {"agent", "permissions"} and isinstance(value, dict):
+        if key == "mcp" and isinstance(value, dict):
+            current = result.get(key)
+            merged = dict(current) if isinstance(current, dict) else {}
+            incoming_servers = value.get("servers")
+            if isinstance(incoming_servers, dict):
+                current_servers = merged.get("servers")
+                servers = (
+                    dict(current_servers) if isinstance(current_servers, dict) else {}
+                )
+                servers.update(incoming_servers)
+                merged["servers"] = servers
+            merged.update(
+                {name: item for name, item in value.items() if name != "servers"}
+            )
+            result[key] = merged
+        elif key in {
+            "agent",
+            "permissions",
+            "tools",
+            "subagents",
+            "backgroundTasks",
+            "skills",
+        } and isinstance(value, dict):
             current = result.get(key)
             merged = dict(current) if isinstance(current, dict) else {}
             merged.update(value)
@@ -375,14 +742,147 @@ def _merge_document(
 
 
 def _nested_mapping(
-    raw: dict[object, object], key: str, path: Path
+    raw: dict[object, object],
+    key: str,
+    path: Path,
+    *,
+    label: str | None = None,
 ) -> dict[object, object]:
     value = raw.get(key)
     if value is None:
         return {}
     if not isinstance(value, dict):
-        raise SettingsFileError(f"{key} must be an object: {path}")
+        raise SettingsFileError(f"{label or key} must be an object: {path}")
     return value
+
+
+def _parse_mcp_servers(
+    raw: dict[object, object],
+    *,
+    path: Path,
+    scope: SettingsScope,
+) -> tuple[McpServerSettingsLayer, ...]:
+    servers: list[McpServerSettingsLayer] = []
+    for raw_name in sorted(raw, key=str):
+        if (
+            not isinstance(raw_name, str)
+            or _MCP_SERVER_NAME.fullmatch(raw_name) is None
+        ):
+            raise SettingsFileError(
+                f"MCP server name must match [a-z0-9][a-z0-9_-]{{0,63}}: {path}"
+            )
+        raw_server = raw[raw_name]
+        if not isinstance(raw_server, dict):
+            raise SettingsFileError(f"mcp.servers.{raw_name} must be an object: {path}")
+        if "env" in raw_server:
+            raise SettingsFileError(
+                f"mcp.servers.{raw_name}.env cannot contain literal values; "
+                f"use envFrom references: {path}"
+            )
+        command = _optional_string(
+            raw_server,
+            "command",
+            path,
+            f"mcp.servers.{raw_name}.command",
+        )
+        if command is None or "\x00" in command:
+            raise SettingsFileError(
+                f"mcp.servers.{raw_name}.command is required and cannot "
+                f"contain NUL: {path}"
+            )
+        args = _string_array(
+            raw_server,
+            "args",
+            path,
+            f"mcp.servers.{raw_name}.args",
+        )
+        if any("\x00" in argument for argument in args):
+            raise SettingsFileError(
+                f"mcp.servers.{raw_name}.args cannot contain NUL: {path}"
+            )
+        enabled = _optional_bool(
+            raw_server,
+            "enabled",
+            path,
+            f"mcp.servers.{raw_name}.enabled",
+        )
+        servers.append(
+            McpServerSettingsLayer(
+                name=raw_name,
+                command=command,
+                args=args,
+                env_from=_environment_references(
+                    raw_server,
+                    raw_name,
+                    path,
+                ),
+                enabled=(scope is not SettingsScope.PROJECT)
+                if enabled is None
+                else enabled,
+                startup_timeout_seconds=(
+                    _optional_positive_number(
+                        raw_server,
+                        "startupTimeoutSeconds",
+                        path,
+                        f"mcp.servers.{raw_name}.startupTimeoutSeconds",
+                    )
+                    or 10.0
+                ),
+                call_timeout_seconds=(
+                    _optional_positive_number(
+                        raw_server,
+                        "callTimeoutSeconds",
+                        path,
+                        f"mcp.servers.{raw_name}.callTimeoutSeconds",
+                    )
+                    or 60.0
+                ),
+                scope=scope,
+            )
+        )
+    return tuple(servers)
+
+
+def _string_array(
+    raw: dict[object, object], key: str, path: Path, label: str
+) -> tuple[str, ...]:
+    value = raw.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise SettingsFileError(f"{label} must be an array of strings: {path}")
+    return tuple(value)
+
+
+def _environment_references(
+    raw_server: dict[object, object], server_name: str, path: Path
+) -> tuple[tuple[str, str], ...]:
+    raw = raw_server.get("envFrom", {})
+    if not isinstance(raw, dict):
+        raise SettingsFileError(
+            f"mcp.servers.{server_name}.envFrom must be an object: {path}"
+        )
+    references: list[tuple[str, str]] = []
+    for target in sorted(raw, key=str):
+        source = raw[target]
+        if (
+            not isinstance(target, str)
+            or _ENVIRONMENT_NAME.fullmatch(target) is None
+            or not isinstance(source, str)
+            or _ENVIRONMENT_NAME.fullmatch(source) is None
+        ):
+            raise SettingsFileError(
+                f"mcp.servers.{server_name}.envFrom must map environment names: {path}"
+            )
+        references.append((target, source))
+    return tuple(references)
+
+
+def _overlay_mcp_servers(
+    lower: tuple[McpServerSettingsLayer, ...],
+    higher: tuple[McpServerSettingsLayer, ...],
+) -> tuple[McpServerSettingsLayer, ...]:
+    merged = {server.name: server for server in lower}
+    merged.update({server.name: server for server in higher})
+    return tuple(merged[name] for name in sorted(merged))
 
 
 def _nested_object(raw: dict[str, object], key: str, path: Path) -> dict[str, object]:
@@ -413,6 +913,28 @@ def _optional_positive_int(
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise SettingsFileError(f"{label} must be a positive integer: {path}")
+    return value
+
+
+def _optional_positive_number(
+    raw: dict[object, object], key: str, path: Path, label: str
+) -> float | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise SettingsFileError(f"{label} must be a positive number: {path}")
+    return float(value)
+
+
+def _optional_bool(
+    raw: dict[object, object], key: str, path: Path, label: str
+) -> bool | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise SettingsFileError(f"{label} must be a boolean: {path}")
     return value
 
 
@@ -494,8 +1016,14 @@ def _atomic_json_write(path: Path, document: object) -> None:
 
 __all__ = [
     "AgentSettingsLayer",
+    "BackgroundTaskSettingsLayer",
+    "McpServerSettingsLayer",
+    "McpSettingsLayer",
     "PermissionSettingsLayer",
     "SettingsFileError",
     "SettingsLayer",
     "SettingsStore",
+    "SkillSettingsLayer",
+    "SubagentSettingsLayer",
+    "ToolSettingsLayer",
 ]

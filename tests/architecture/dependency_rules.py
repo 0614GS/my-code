@@ -13,8 +13,21 @@ SOURCE_ROOT = REPOSITORY_ROOT / "src" / PACKAGE_NAME
 
 ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "application": frozenset(
-        {"model", "permissions", "providers", "sessions", "workspace"}
+        {
+            "agent",
+            "context",
+            "model",
+            "mcp",
+            "permissions",
+            "providers",
+            "sessions",
+            "skills",
+            "tasks",
+            "tools",
+            "workspace",
+        }
     ),
+    "tasks": frozenset(),
     "model": frozenset(),
     "workspace": frozenset(),
     "permissions": frozenset({"model"}),
@@ -27,13 +40,26 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "sessions": frozenset({"context", "conversation", "model", "prompts", "tools"}),
     "providers": frozenset({"auth", "config", "model"}),
     "agent": frozenset({"context", "conversation", "model", "sessions", "tools"}),
+    "mcp": frozenset({"model", "permissions", "tools"}),
+    "skills": frozenset({"agent", "model", "permissions", "tools"}),
     "features.file_mentions": frozenset(
         {"context", "permissions", "tools", "workspace"}
     ),
     "features.todos": frozenset(
         {"context", "conversation", "model", "permissions", "tools"}
     ),
-    "features.subagents": frozenset({"agent", "context", "tools"}),
+    "features.subagents": frozenset(
+        {
+            "agent",
+            "application",
+            "context",
+            "model",
+            "permissions",
+            "sessions",
+            "tasks",
+            "tools",
+        }
+    ),
     "features.plan_mode": frozenset({"agent", "prompts", "tools"}),
     "chat": frozenset(
         {
@@ -80,10 +106,13 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "features.subagents",
             "features.todos",
             "model",
+            "mcp",
             "permissions",
             "prompts",
             "providers",
             "sessions",
+            "skills",
+            "tasks",
             "tools",
             "tui",
             "workspace",

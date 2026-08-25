@@ -34,6 +34,8 @@ class ContextSnapshot:
     session_history: tuple[ConversationEntry, ...] = ()
     attachment_deliveries: tuple[AttachmentDelivery, ...] = ()
     replay_records: tuple[ProviderReplayRecord, ...] = ()
+    session_id: str | None = None
+    delivered_attachment_sources: tuple[str, ...] = ()
 
 
 class SessionContextAccess(Protocol):

@@ -56,7 +56,6 @@ def _planner(
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
-        tools=(),
         max_output_tokens=100,
         microcompact=policy,
         binding_resolver=lambda: binding,
@@ -85,7 +84,9 @@ def test_matching_reported_usage_calibrates_full_request_delta() -> None:
     )
     latest = HumanMessage("new material", parent_uuid=anchor.uuid)
 
-    plan = _planner(binding).plan(ConversationSnapshot((first, anchor, latest)))
+    plan = _planner(binding).plan(
+        ConversationSnapshot((first, anchor, latest)), tools=()
+    )
 
     assert plan.budget is not None
     assert plan.budget.measurement == "reported_calibrated"
@@ -107,7 +108,9 @@ def test_binding_mismatch_uses_local_tokenizer() -> None:
         request_input_tokens_estimate=10,
     )
 
-    budget = _planner(active).inspect(ConversationSnapshot((human, assistant)))
+    budget = _planner(active).inspect(
+        ConversationSnapshot((human, assistant)), tools=()
+    )
 
     assert budget.measurement == "tokenizer_estimate"
     assert budget.last_reported_input_tokens is None
@@ -132,7 +135,7 @@ def test_token_trigger_microcompacts_and_retokenizes() -> None:
     )
 
     plan = _planner(binding, trigger=300, policy=policy).plan(
-        ConversationSnapshot((human, assistant, results))
+        ConversationSnapshot((human, assistant, results)), tools=()
     )
 
     assert len(plan.new_content_replacements) == 1

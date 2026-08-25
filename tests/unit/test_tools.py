@@ -7,8 +7,8 @@ import pytest
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.permission_updates import PermissionUpdateApplier
 from my_code.config.store import SettingsStore
-from my_code.conversation.models import ToolCall
-from my_code.model.primitives import JsonObject
+from my_code.conversation.models import ToolCall, ToolResult
+from my_code.model.primitives import JsonObject, to_json_object
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
     PermissionBehavior,
@@ -26,19 +26,23 @@ from my_code.permissions.models import (
 )
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
-from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.base import Tool, ToolContext, ToolInputError, ToolOutput
 from my_code.tools.builtin import builtin_tools
+from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.invocation import ToolInvocation
 from my_code.tools.paths import resolve_workspace_path
 from my_code.tools.presentation import ToolResultPresentation
-from my_code.tools.registry import ToolRegistry
 from my_code.workspace.local import Workspace
+
+
+def static_tools(tools: list[Tool] | tuple[Tool, ...]) -> ToolCatalogSnapshot:
+    return ToolCatalogSnapshot.from_tools(tools)
 
 
 def build_executor(tmp_path: Path, mode: PermissionMode) -> ToolExecutor:
     return ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=static_tools(builtin_tools()),
         policy=PermissionPolicy(mode),
         prompter=HeadlessPrompter(),
         workspace=Workspace(tmp_path),
@@ -172,6 +176,79 @@ class ExplodingExecutionTool(NormalizingTool):
         raise RuntimeError("secret implementation detail")
 
 
+class CapturingNormalizingTool(NormalizingTool):
+    def __init__(self) -> None:
+        self.executed_input: JsonObject | None = None
+
+    async def check_permissions(
+        self, tool_input: JsonObject, context: ToolPermissionContext
+    ) -> ToolPermissionResult:
+        del tool_input, context
+        return ToolPermissionResult.allow(
+            {"value": "approved", "nested": {"source": "policy"}},
+            message="Normalized input is safe.",
+            reason=PermissionDecisionReason(
+                PermissionDecisionKind.TOOL, "test-normalized"
+            ),
+        )
+
+    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+        self.executed_input = to_json_object(tool_input)
+        return await super().execute(tool_input, context)
+
+
+class InvalidNormalizingTool(NormalizingTool):
+    def __init__(self) -> None:
+        self.executed = False
+
+    def validate_input(self, tool_input: JsonObject) -> None:
+        if tool_input.get("value") == "invalid":
+            raise ToolInputError("normalized value is invalid")
+
+    async def check_permissions(
+        self, tool_input: JsonObject, context: ToolPermissionContext
+    ) -> ToolPermissionResult:
+        del tool_input, context
+        return ToolPermissionResult.allow(
+            {"value": "invalid"},
+            message="Return malformed normalized input for the regression test.",
+            reason=PermissionDecisionReason(
+                PermissionDecisionKind.TOOL, "test-invalid-normalized"
+            ),
+        )
+
+    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+        del tool_input, context
+        self.executed = True
+        raise AssertionError("invalid approved input must not execute")
+
+
+class MutatingHook:
+    async def before_execute(
+        self,
+        invocation: ToolInvocation,
+        call: ToolCall,
+        tool: Tool,
+        approved_input: JsonObject,
+        context: ToolContext,
+    ) -> None:
+        del invocation, tool, context
+        call.input["value"] = "hook-call"
+        approved_input["value"] = "hook-input"
+        nested = approved_input["nested"]
+        assert isinstance(nested, dict)
+        nested["source"] = "hook"
+
+    async def after_execute(
+        self,
+        invocation: ToolInvocation,
+        call: ToolCall,
+        result: ToolResult,
+    ) -> None:
+        del invocation, result
+        call.input["value"] = "after-hook"
+
+
 def test_workspace_path_rejects_traversal_but_resolves_sensitive_paths(
     tmp_path: Path,
 ) -> None:
@@ -204,7 +281,7 @@ async def test_bypass_still_requires_confirmation_for_sensitive_path(
 async def test_sensitive_path_can_run_after_one_time_approval(tmp_path: Path) -> None:
     prompter = ApprovingPrompter()
     executor = ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=static_tools(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.BYPASS),
         prompter=prompter,
         workspace=Workspace(tmp_path),
@@ -233,7 +310,7 @@ async def test_remembered_write_rule_persists_to_local_settings(
     policy = PermissionPolicy()
     prompter = ApprovingPrompter(remember=True)
     executor = ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=static_tools(builtin_tools()),
         policy=policy,
         prompter=prompter,
         workspace=Workspace(workspace),
@@ -276,7 +353,7 @@ async def test_unknown_tool_produces_matching_error_result(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_permission_denial_feedback_is_returned_to_model(tmp_path: Path) -> None:
     executor = ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=static_tools(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=FeedbackPrompter(),
         workspace=Workspace(tmp_path),
@@ -298,7 +375,7 @@ async def test_permission_denial_feedback_is_returned_to_model(tmp_path: Path) -
 @pytest.mark.asyncio
 async def test_permission_prompt_failure_fails_closed(tmp_path: Path) -> None:
     executor = ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=static_tools(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=ExplodingPrompter(),
         workspace=Workspace(tmp_path),
@@ -319,7 +396,7 @@ async def test_permission_prompt_cancellation_destroys_pending_request(
 ) -> None:
     prompter = BlockingPrompter()
     executor = ToolExecutor(
-        ToolRegistry(builtin_tools()),
+        static_tools(builtin_tools()),
         PermissionPolicy(),
         prompter,
         Workspace(tmp_path),
@@ -342,7 +419,7 @@ async def test_permission_prompt_cancellation_destroys_pending_request(
 @pytest.mark.asyncio
 async def test_audit_failure_prevents_tool_execution(tmp_path: Path) -> None:
     executor = ToolExecutor(
-        ToolRegistry(builtin_tools()),
+        static_tools(builtin_tools()),
         PermissionPolicy(PermissionMode.ACCEPT_EDITS),
         HeadlessPrompter(),
         Workspace(tmp_path),
@@ -390,7 +467,7 @@ async def test_read_only_bash_executes_without_permission_prompt(
     tmp_path: Path,
 ) -> None:
     executor = ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=static_tools(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=FailingPrompter(),
         workspace=Workspace(tmp_path),
@@ -431,7 +508,7 @@ async def test_session_allow_rule_removes_later_prompts(tmp_path: Path) -> None:
     )
     prompter = SessionApprovingPrompter(rule)
     executor = ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=static_tools(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=prompter,
         workspace=Workspace(tmp_path),
@@ -475,7 +552,7 @@ async def test_explicit_deny_precedes_session_allow(tmp_path: Path) -> None:
         )
     )
     executor = ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=static_tools(builtin_tools()),
         policy=policy,
         prompter=prompter,
         workspace=Workspace(tmp_path),
@@ -509,7 +586,7 @@ async def test_explicit_ask_precedes_session_allow(tmp_path: Path) -> None:
         ],
     )
     executor = ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=static_tools(builtin_tools()),
         policy=policy,
         prompter=FeedbackPrompter(),
         workspace=Workspace(tmp_path),
@@ -538,7 +615,7 @@ async def test_new_executor_does_not_inherit_session_rules(
         prompter = SessionApprovingPrompter(rule)
         return (
             ToolExecutor(
-                registry=ToolRegistry(builtin_tools()),
+                tools=static_tools(builtin_tools()),
                 policy=PermissionPolicy(PermissionMode.DEFAULT),
                 prompter=prompter,
                 workspace=Workspace(tmp_path),
@@ -595,7 +672,7 @@ async def test_executor_runs_the_exact_input_approved_by_tool_policy(
     tmp_path: Path,
 ) -> None:
     executor = ToolExecutor(
-        registry=ToolRegistry([NormalizingTool()]),
+        tools=static_tools([NormalizingTool()]),
         policy=PermissionPolicy(),
         prompter=FailingPrompter(),
         workspace=Workspace(tmp_path),
@@ -618,11 +695,65 @@ async def test_executor_runs_the_exact_input_approved_by_tool_policy(
 
 
 @pytest.mark.asyncio
+async def test_hooks_cannot_mutate_approved_or_persisted_tool_input(
+    tmp_path: Path,
+) -> None:
+    tool = CapturingNormalizingTool()
+    call = ToolCall(
+        id="isolated-hook-input",
+        name="Normalize",
+        input={"value": "model", "nested": {"source": "model"}},
+    )
+    executor = ToolExecutor(
+        tools=static_tools([tool]),
+        policy=PermissionPolicy(),
+        prompter=FailingPrompter(),
+        workspace=Workspace(tmp_path),
+        hooks=(MutatingHook(),),
+    )
+
+    outcome = await executor.execute(call)
+
+    assert outcome.result.content == "model:approved"
+    assert tool.executed_input == {
+        "value": "approved",
+        "nested": {"source": "policy"},
+    }
+    assert call.input == {
+        "value": "model",
+        "nested": {"source": "model"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_permission_normalized_input_is_revalidated_before_execution(
+    tmp_path: Path,
+) -> None:
+    tool = InvalidNormalizingTool()
+    executor = ToolExecutor(
+        tools=static_tools([tool]),
+        policy=PermissionPolicy(),
+        prompter=FailingPrompter(),
+        workspace=Workspace(tmp_path),
+    )
+
+    outcome = await executor.execute(
+        ToolCall("invalid-normalized-input", "Normalize", {"value": "model"})
+    )
+
+    assert outcome.result.is_error is True
+    assert outcome.result.content == (
+        "Invalid approved input: normalized value is invalid"
+    )
+    assert tool.executed is False
+
+
+@pytest.mark.asyncio
 async def test_presentation_failure_does_not_change_successful_tool_result(
     tmp_path: Path,
 ) -> None:
     executor = ToolExecutor(
-        registry=ToolRegistry([BrokenPresentationTool()]),
+        tools=static_tools([BrokenPresentationTool()]),
         policy=PermissionPolicy(),
         prompter=FailingPrompter(),
         workspace=Workspace(tmp_path),
@@ -642,7 +773,7 @@ async def test_unexpected_tool_exception_is_closed_as_protocol_result(
     tmp_path: Path,
 ) -> None:
     executor = ToolExecutor(
-        ToolRegistry([ExplodingExecutionTool()]),
+        static_tools([ExplodingExecutionTool()]),
         PermissionPolicy(),
         HeadlessPrompter(),
         Workspace(tmp_path),

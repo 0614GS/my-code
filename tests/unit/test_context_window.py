@@ -35,7 +35,6 @@ def _planner(max_chars: int = 1_000, microcompact=None) -> ContextPlanner:
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
-        tools=(),
         max_output_tokens=50,
         microcompact=microcompact,
     )
@@ -106,7 +105,7 @@ def test_microcompact_replaces_model_view_without_mutating_history() -> None:
         trigger_chars=50, target_chars=20, min_result_chars=10, keep_recent_results=0
     )
     plan = _planner(1_000, policy).plan(
-        ConversationSnapshot((human, assistant, results))
+        ConversationSnapshot((human, assistant, results)), tools=()
     )
     assert len(plan.new_content_replacements) == 1
     assert results.content[0].content == "x" * 100

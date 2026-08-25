@@ -8,7 +8,12 @@ import pytest
 
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.settings import SettingsResolver
-from my_code.config.store import SettingsFileError, SettingsLayer, SettingsStore
+from my_code.config.store import (
+    McpServerSettingsLayer,
+    SettingsFileError,
+    SettingsLayer,
+    SettingsStore,
+)
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionMode,
@@ -31,17 +36,23 @@ def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
             model="user-model",
             permission_mode=PermissionMode.PLAN,
             max_steps=10,
+            max_parallel_tool_calls=2,
         ),
     )
     store.write(
         SettingsScope.PROJECT,
-        SettingsLayer(model="project-model", max_output_tokens=4000),
+        SettingsLayer(
+            model="project-model",
+            max_output_tokens=4000,
+            max_parallel_tool_calls=3,
+        ),
     )
     store.write(
         SettingsScope.LOCAL,
         SettingsLayer(
             permission_mode=PermissionMode.ACCEPT_EDITS,
             max_steps=20,
+            max_parallel_tool_calls=1,
         ),
     )
 
@@ -50,9 +61,11 @@ def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
         permission_mode=PermissionMode.ACCEPT_EDITS,
         max_steps=20,
         max_output_tokens=4000,
+        max_parallel_tool_calls=1,
     )
     user_document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
     assert user_document["agent"]["maxSteps"] == 10
+    assert user_document["tools"]["maxParallelCalls"] == 2
     assert "maxTurns" not in user_document["agent"]
 
 
@@ -114,6 +127,181 @@ def test_unknown_keys_are_ignored_for_forward_compatibility(tmp_path: Path) -> N
     assert SettingsStore(paths).load().model == "known"
 
 
+def test_subagent_settings_layer_and_runtime_defaults(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(
+        SettingsScope.USER,
+        SettingsLayer(
+            subagents_enabled=True,
+            subagent_max_depth=2,
+            subagent_max_active_children=3,
+            subagent_max_steps=8,
+            subagent_max_tokens=900,
+            subagent_timeout_seconds=12.5,
+            background_tasks_enabled=True,
+        ),
+    )
+
+    document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
+    assert document["subagents"] == {
+        "enabled": True,
+        "maxDepth": 2,
+        "maxActiveChildren": 3,
+        "maxSteps": 8,
+        "maxTokens": 900,
+        "timeoutSeconds": 12.5,
+    }
+    assert document["backgroundTasks"] == {"enabled": True}
+    settings = SettingsResolver(paths).resolve(interactive=False)
+    assert settings.subagents_enabled is True
+    assert settings.subagent_max_depth == 2
+    assert settings.subagent_max_active_children == 3
+    assert settings.subagent_max_steps == 8
+    assert settings.subagent_max_tokens == 900
+    assert settings.subagent_timeout_seconds == 12.5
+    assert settings.background_tasks_enabled is True
+
+
+def test_subagents_are_disabled_by_default(tmp_path: Path) -> None:
+    settings = SettingsResolver(make_paths(tmp_path)).resolve(interactive=False)
+
+    assert settings.subagents_enabled is False
+    assert settings.background_tasks_enabled is False
+    assert settings.skills_enabled is False
+    assert settings.mcp_enabled is False
+    assert settings.mcp_servers == ()
+
+
+def test_skill_feature_gate_is_layered_and_serialized(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(SettingsScope.USER, SettingsLayer(skills_enabled=True))
+
+    document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
+
+    assert document["skills"] == {"enabled": True}
+    assert SettingsResolver(paths).resolve(interactive=False).skills_enabled is True
+
+
+def test_mcp_settings_replace_servers_by_scope_and_store_only_env_references(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(
+        SettingsScope.USER,
+        SettingsLayer(
+            mcp_enabled=True,
+            mcp_deferred_tool_threshold=25,
+            mcp_servers=(
+                McpServerSettingsLayer(
+                    "user-server",
+                    "/usr/bin/user-server",
+                    ("--stdio",),
+                    (("TOKEN", "USER_SERVER_TOKEN"),),
+                ),
+            ),
+        ),
+    )
+    store.write(
+        SettingsScope.PROJECT,
+        SettingsLayer(
+            mcp_servers=(
+                McpServerSettingsLayer(
+                    "project-server",
+                    "project-server",
+                    enabled=False,
+                    scope=SettingsScope.PROJECT,
+                ),
+            ),
+        ),
+    )
+    store.write(
+        SettingsScope.LOCAL,
+        SettingsLayer(
+            mcp_servers=(
+                McpServerSettingsLayer(
+                    "project-server",
+                    "/trusted/project-server",
+                    enabled=True,
+                    scope=SettingsScope.LOCAL,
+                ),
+            ),
+        ),
+    )
+
+    resolved = SettingsResolver(
+        paths, environ={"USER_SERVER_TOKEN": "super-secret-value"}
+    ).resolve(interactive=False)
+    assert resolved.mcp_enabled is True
+    assert resolved.mcp_deferred_tool_threshold == 25
+    assert tuple(server.name for server in resolved.mcp_servers) == (
+        "project-server",
+        "user-server",
+    )
+    project = resolved.mcp_servers[0]
+    assert project.command == "/trusted/project-server"
+    assert project.scope is SettingsScope.LOCAL
+    user_document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
+    assert user_document["mcp"]["deferredToolThreshold"] == 25
+    assert user_document["mcp"]["servers"]["user-server"]["envFrom"] == {
+        "TOKEN": "USER_SERVER_TOKEN"
+    }
+    assert "super-secret-value" not in json.dumps(user_document)
+
+
+def test_shared_project_mcp_definition_is_disabled_unless_copied_locally(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    paths.project_settings_path.parent.mkdir()
+    paths.project_settings_path.write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "mcp": {"servers": {"project-server": {"command": "project-server"}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    server = SettingsStore(paths).load_scope(SettingsScope.PROJECT).mcp_servers[0]
+    assert server.enabled is False
+    assert server.scope is SettingsScope.PROJECT
+
+
+@pytest.mark.parametrize(
+    "mcp, message",
+    [
+        ({"enabled": True}, "cannot enable MCP execution"),
+        (
+            {
+                "servers": {
+                    "project-server": {
+                        "command": "project-server",
+                        "enabled": True,
+                    }
+                }
+            },
+            "cannot be enabled directly",
+        ),
+    ],
+)
+def test_shared_project_cannot_activate_mcp(
+    tmp_path: Path, mcp: object, message: str
+) -> None:
+    paths = make_paths(tmp_path)
+    paths.project_settings_path.parent.mkdir()
+    paths.project_settings_path.write_text(
+        json.dumps({"version": 3, "mcp": mcp}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SettingsFileError, match=message):
+        SettingsStore(paths).load_scope(SettingsScope.PROJECT)
+
+
 @pytest.mark.parametrize(
     "document, message",
     [
@@ -127,6 +315,61 @@ def test_unknown_keys_are_ignored_for_forward_compatibility(tmp_path: Path) -> N
             "agent.maxTurns is no longer supported",
         ),
         ({"version": 3, "permissions": []}, "permissions must be an object"),
+        ({"version": 3, "tools": []}, "tools must be an object"),
+        (
+            {"version": 3, "tools": {"maxParallelCalls": 0}},
+            "tools.maxParallelCalls must be a positive integer",
+        ),
+        (
+            {"version": 3, "subagents": {"enabled": "yes"}},
+            "subagents.enabled must be a boolean",
+        ),
+        (
+            {"version": 3, "subagents": {"timeoutSeconds": 0}},
+            "subagents.timeoutSeconds must be a positive number",
+        ),
+        (
+            {"version": 3, "subagents": {"maxTokens": 0}},
+            "subagents.maxTokens must be a positive integer",
+        ),
+        (
+            {"version": 3, "backgroundTasks": {"enabled": "yes"}},
+            "backgroundTasks.enabled must be a boolean",
+        ),
+        ({"version": 3, "mcp": []}, "mcp must be an object"),
+        (
+            {"version": 3, "mcp": {"deferredToolThreshold": 0}},
+            "mcp.deferredToolThreshold must be a positive integer",
+        ),
+        (
+            {
+                "version": 3,
+                "mcp": {"servers": {"Bad Name": {"command": "server"}}},
+            },
+            "MCP server name must match",
+        ),
+        (
+            {
+                "version": 3,
+                "mcp": {
+                    "servers": {
+                        "server": {"command": "server", "envFrom": {"TOKEN": 1}}
+                    }
+                },
+            },
+            "envFrom must map environment names",
+        ),
+        (
+            {
+                "version": 3,
+                "mcp": {
+                    "servers": {
+                        "server": {"command": "server", "env": {"TOKEN": "secret"}}
+                    }
+                },
+            },
+            "env cannot contain literal values",
+        ),
     ],
 )
 def test_invalid_settings_are_rejected(

@@ -4,7 +4,10 @@
 
 - Anthropic Messages 与 OpenAI Responses provider。
 - provider-neutral 流式 text、reasoning、usage 和 continuation 建模。
-- 多 step Agent loop、串行 ToolRound 和 step 上限。
+- 多 step Agent loop、带安全屏障和并发上限的 ToolRound，以及 step 上限。
+- 默认关闭的 Subagent：独立 child Session/run/provider lease、foreground/background、Task 查询/取消/单次通知、权限收窄与多维预算。
+- 默认关闭的 MCP stdio server：分层配置、保守 project trust、连接/重连/关闭、增量发现、deferred ToolSearch 与标准权限执行。
+- 默认关闭的 Skill：project/user/builtin 分层发现、严格 frontmatter、lazy load、原子 reload、单步激活与工具 allowlist 收窄。
 - Read、Write、Edit、Glob、Grep、Bash 与 TodoWrite。
 - allow/ask/deny 规则、交互确认、dontAsk 和 bypassPermissions。
 - 工作区边界、受保护路径和 Bash 静态权限分析。
@@ -17,10 +20,9 @@
 
 ## 明确延后
 
-- MCP、远端工具发现和 deferred tools。
+- MCP 2026-07-28 driver、resources/prompts 和富媒体结果。
 - Hooks。
-- Subagents 和 Plan Mode 产品能力。
-- 并行工具执行。
+- Plan Mode 产品能力。
 - Session fork、远程会话和跨设备同步。
 - 媒体 attachment。
 - OAuth、系统 Keychain 和团队凭据管理。
@@ -40,3 +42,7 @@
 ## 与参考实现的关系
 
 `claude-code/` 用于学习行为和安全不变量。my-code 不机械复刻其实验功能、压缩产物、ports/adapters 或内部包结构；有意差异以本文件和模块文档为准。
+
+参考实现的 Agent Tool 主要用 `maxTurns` 限制 child，且全局 token-budget continuation 不用于 subagent。my-code 有意保留等价的 `max_steps`，并额外在 child run 上设置累计 token ceiling；已完成的 provider 响应会保留，预算在下一次请求前阻止继续消费。
+
+并行工具、foreground/background Subagent、MCP 与 Skill 已分别按路线图 M2、M4a/M4b、M5、M6 实现。Skill 首版有意使用严格平面 frontmatter、只把 Markdown 作为数据加载，并不复刻参考实现中动态命令、脚本执行或完整 YAML 语义；MCP resources/prompts transport 也仍延后。边界与验收证据见 [13-extensibility-roadmap.md](13-extensibility-roadmap.md)。

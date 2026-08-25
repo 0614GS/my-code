@@ -46,8 +46,8 @@ class ReadFileTool(Tool):
             },
         )
 
-    @property
-    def concurrency_safe(self) -> bool:
+    def is_concurrency_safe(self, tool_input: JsonObject) -> bool:
+        del tool_input
         return True
 
     def get_tool_use_summary(self, tool_input: JsonObject) -> str:

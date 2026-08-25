@@ -72,11 +72,7 @@ class ProviderRouter(ModelClient):
     def capabilities(self) -> ProviderCapabilities:
         """无需提前创建网络客户端即可暴露当前连接能力。"""
 
-        match self._connection.protocol:
-            case ProviderProtocol.ANTHROPIC_MESSAGES:
-                return AnthropicProvider.capabilities_for(self._connection.base_url)
-            case ProviderProtocol.OPENAI_RESPONSES:
-                return ProviderCapabilities()
+        return _capabilities_for(self._connection)
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """在完整 SSE 响应期间保持同一个适配器和连接。"""
@@ -123,7 +119,16 @@ def _build_provider(connection: ProviderConnection) -> ModelClient:
             )
 
 
+def _capabilities_for(connection: ProviderConnection) -> ProviderCapabilities:
+    match connection.protocol:
+        case ProviderProtocol.ANTHROPIC_MESSAGES:
+            return AnthropicProvider.capabilities_for(connection.base_url)
+        case ProviderProtocol.OPENAI_RESPONSES:
+            return ProviderCapabilities()
+
+
 __all__ = [
     "ProviderConnection",
+    "ProviderFactory",
     "ProviderRouter",
 ]

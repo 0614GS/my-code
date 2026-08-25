@@ -3,6 +3,10 @@
 import asyncio
 from collections.abc import AsyncIterator
 
+from my_code.agent.capabilities import (
+    RunCapabilitySnapshot,
+    StepCapabilitySource,
+)
 from my_code.agent.events import (
     AgentConversationUpdated,
     AgentEvent,
@@ -54,6 +58,7 @@ from my_code.model.primitives import (
 )
 from my_code.model.request import ModelOutput, ModelTextBlock, ModelToolUseBlock
 from my_code.sessions.session import Session
+from my_code.tools.catalog import ToolCatalog
 from my_code.tools.presentation import ToolResultPresentation
 from my_code.tools.round_executor import (
     ToolCallFinished,
@@ -72,6 +77,8 @@ class AgentEngine:
         model_call: ModelClient,
         tool_round: ToolRoundExecutor,
         context: ContextEngine,
+        tool_catalog: ToolCatalog,
+        capability_source: StepCapabilitySource | None = None,
         max_steps: int | None = None,
     ) -> None:
         if max_steps is not None and max_steps < 1:
@@ -79,6 +86,8 @@ class AgentEngine:
         self._model_call = model_call
         self._tool_round = tool_round
         self._context = context
+        self._tool_catalog = tool_catalog
+        self._capability_source = capability_source
         self.max_steps = max_steps
 
     async def submit(
@@ -128,7 +137,15 @@ class AgentEngine:
         step_count = 0
         while True:
             step_count += 1
-            request = await self._plan_with_proactive_compact(session)
+            contribution = (
+                self._capability_source.capture(session.session_id)
+                if self._capability_source is not None
+                else None
+            )
+            capabilities = RunCapabilitySnapshot.capture(
+                self._tool_catalog.snapshot(), contribution
+            )
+            request = await self._plan_with_proactive_compact(session, capabilities)
             reactive_attempted = False
             while True:
                 response: ModelOutput | None = None
@@ -210,7 +227,7 @@ class AgentEngine:
                         raise
                     reactive_attempted = True
                     await self._compact_for_retry(session, "reactive")
-                    request = await self._plan_request(session)
+                    request = await self._plan_request(session, capabilities)
                     continue
                 break
 
@@ -246,6 +263,10 @@ class AgentEngine:
             session.append_assistant_message(
                 assistant_message, replay_records=replay_records
             )
+            if self._capability_source is not None and capabilities.activation_ids:
+                self._capability_source.acknowledge(
+                    session.session_id, capabilities.activation_ids
+                )
 
             final_text = "\n".join(
                 block.text
@@ -273,6 +294,8 @@ class AgentEngine:
                 async for tool_event in self._tool_round.run_round(
                     tool_calls,
                     assistant_message,
+                    tools=capabilities.tools,
+                    run_id=session.session_id,
                 ):
                     if isinstance(tool_event, ToolCallStarted):
                         yield AgentToolStarted(
@@ -349,18 +372,32 @@ class AgentEngine:
             outcome.replacements, outcome.summary, outcome.boundary
         )
 
-    async def _plan_with_proactive_compact(self, session: Session) -> ContextPlan:
+    async def _plan_with_proactive_compact(
+        self,
+        session: Session,
+        capabilities: RunCapabilitySnapshot,
+    ) -> ContextPlan:
         try:
-            return await self._plan_request(session)
+            return await self._plan_request(session, capabilities)
         except ContextOverflow:
             await self._compact_for_retry(session, "auto")
-            return await self._plan_request(session)
+            return await self._plan_request(session, capabilities)
 
-    async def _plan_request(self, session: Session) -> ContextPlan:
-        request = self._context.plan(session.context_snapshot(), session)
+    async def _plan_request(
+        self,
+        session: Session,
+        capabilities: RunCapabilitySnapshot,
+    ) -> ContextPlan:
+        request = self._context.plan(
+            session.context_snapshot(),
+            session,
+            tools=capabilities.tools.definitions,
+            prompt_sections=capabilities.prompt_sections,
+        )
         for replacement in request.new_content_replacements:
             session.commit_content_replacement(replacement)
         session.add_context_deliveries(request.new_attachment_deliveries)
+        self._context.acknowledge_attachments(request.new_attachment_deliveries)
         return request
 
 

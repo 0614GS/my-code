@@ -103,6 +103,7 @@ class ChatService:
 
     async def submit(self, prompt: str) -> TurnOutcome:
         async with self.state.operation_lock():
+            await self.state.start()
             attachments = await self._load_attachments(prompt)
             result = await self.agent.submit(
                 self.state.session,
@@ -112,6 +113,7 @@ class ChatService:
 
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
         async with self.state.operation_lock():
+            await self.state.start()
             loaded = (
                 await self.attachment_loader.load(prompt)
                 if self.attachment_loader is not None
@@ -183,9 +185,11 @@ class ChatService:
 
     def context_status(self) -> ContextStatus:
         session = self.state.session
+        tools = self.state.tools.snapshot()
         budget = self.context.inspect(
             session.context_snapshot(),
             session,
+            tools=tools.definitions,
         )
         return ContextStatus(
             estimated_input_tokens=budget.estimated_input_tokens,
@@ -301,6 +305,7 @@ class ChatService:
         return tuple(item.attachment for item in loaded)
 
     def _project_history(self, session: Session) -> tuple[HistoryEntry, ...]:
+        tools = self.state.tools.snapshot()
         results = {
             block.tool_use_id: block
             for message in session.snapshot().history
@@ -325,11 +330,11 @@ class ChatService:
                         history.append(
                             HistoryToolCall(
                                 tool_use_id=block.id,
-                                use=self.tool_executor.present_use(block),
+                                use=self.tool_executor.present_use(block, tools=tools),
                                 result=(
                                     session.tool_presentation(block.id)
                                     or self.tool_executor.present_stored_result(
-                                        block, result
+                                        block, result, tools=tools
                                     )
                                 ),
                                 is_error=result is None or result.is_error,

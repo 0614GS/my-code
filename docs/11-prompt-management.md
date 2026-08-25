@@ -10,6 +10,8 @@
 
 runtime-stable section 在 `PromptRegistry` 构造时冻结；session-stable section 的缓存由当前 Session 私有持有。Provider 根据自身能力把稳定性映射为 prompt caching wire 字段；`prompts` 不依赖 Anthropic 或 OpenAI SDK。
 
+已激活 Skill 不注册为全局或 session-stable prompt。`SkillRuntime` 在 step 边界提供带唯一 activation ID、source 与 locator 的 request-scoped `ResolvedPromptSection`；ContextPlanner 只在该次 `ModelRequest` 末尾组合它，AssistantMessage 完整提交后 Agent 通过通用 capability acknowledgement 消费该 section。未激活 Skill 的正文不会进入请求或 prompt cache。
+
 ## 用户上下文
 
 `context.user_context.AgentsUserContextResolver` 从工作区层级读取适用的 AGENTS.md，转换为 `UserContextDocument`。解析结果在当前 Session 首次使用后缓存，resume/switch 时随新 Session 重建。

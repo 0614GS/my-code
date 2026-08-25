@@ -20,7 +20,11 @@ from my_code.config.providers import (
     ProviderProtocol,
     ReasoningConfig,
 )
-from my_code.config.store import SettingsLayer, SettingsStore
+from my_code.config.store import (
+    McpServerSettingsLayer,
+    SettingsLayer,
+    SettingsStore,
+)
 from my_code.config.validation import validate_base_url
 from my_code.model.capabilities import ModelDescriptor, ModelLimits
 from my_code.model.primitives import validate_provider_id
@@ -33,6 +37,13 @@ from my_code.permissions.rules import validate_permission_rule
 
 DEFAULT_MAX_OUTPUT_TOKENS = 8192
 DEFAULT_CONTEXT_CHARS = 160_000
+DEFAULT_MAX_PARALLEL_TOOL_CALLS = 4
+DEFAULT_SUBAGENT_MAX_DEPTH = 3
+DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN = 4
+DEFAULT_SUBAGENT_MAX_STEPS = 20
+DEFAULT_SUBAGENT_MAX_TOKENS = 100_000
+DEFAULT_SUBAGENT_TIMEOUT_SECONDS = 300.0
+DEFAULT_MCP_DEFERRED_TOOL_THRESHOLD = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +71,18 @@ class AgentSettings:
     max_output_tokens: int
     context_chars: int
     interactive: bool
+    max_parallel_tool_calls: int = DEFAULT_MAX_PARALLEL_TOOL_CALLS
+    subagents_enabled: bool = False
+    subagent_max_depth: int = DEFAULT_SUBAGENT_MAX_DEPTH
+    subagent_max_active_children: int = DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN
+    subagent_max_steps: int = DEFAULT_SUBAGENT_MAX_STEPS
+    subagent_max_tokens: int = DEFAULT_SUBAGENT_MAX_TOKENS
+    subagent_timeout_seconds: float = DEFAULT_SUBAGENT_TIMEOUT_SECONDS
+    background_tasks_enabled: bool = False
+    skills_enabled: bool = False
+    mcp_enabled: bool = False
+    mcp_servers: tuple[McpServerSettingsLayer, ...] = ()
+    mcp_deferred_tool_threshold: int = DEFAULT_MCP_DEFERRED_TOOL_THRESHOLD
     permission_rules: tuple[PermissionRule, ...] = ()
     api_key: str | None = None
     credential_source: CredentialSource = CredentialSource.NONE
@@ -84,9 +107,19 @@ class AgentSettings:
         for name, value in (
             ("max_output_tokens", self.max_output_tokens),
             ("context_chars", self.context_chars),
+            ("max_parallel_tool_calls", self.max_parallel_tool_calls),
+            ("subagent_max_depth", self.subagent_max_depth),
+            ("subagent_max_active_children", self.subagent_max_active_children),
+            ("subagent_max_steps", self.subagent_max_steps),
+            ("subagent_max_tokens", self.subagent_max_tokens),
+            ("mcp_deferred_tool_threshold", self.mcp_deferred_tool_threshold),
         ):
             if value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
+        if self.subagent_timeout_seconds <= 0:
+            raise ValueError("subagent_timeout_seconds must be positive")
+        if self.background_tasks_enabled and not self.subagents_enabled:
+            raise ValueError("background_tasks_enabled requires subagents_enabled")
 
     @property
     def cwd(self) -> Path:
@@ -208,6 +241,34 @@ class SettingsResolver:
                 else stored.context_chars or DEFAULT_CONTEXT_CHARS
             ),
             interactive=interactive,
+            max_parallel_tool_calls=(
+                stored.max_parallel_tool_calls or DEFAULT_MAX_PARALLEL_TOOL_CALLS
+            ),
+            subagents_enabled=stored.subagents_enabled or False,
+            subagent_max_depth=(
+                stored.subagent_max_depth or DEFAULT_SUBAGENT_MAX_DEPTH
+            ),
+            subagent_max_active_children=(
+                stored.subagent_max_active_children
+                or DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN
+            ),
+            subagent_max_steps=(
+                stored.subagent_max_steps or DEFAULT_SUBAGENT_MAX_STEPS
+            ),
+            subagent_max_tokens=(
+                stored.subagent_max_tokens or DEFAULT_SUBAGENT_MAX_TOKENS
+            ),
+            subagent_timeout_seconds=(
+                stored.subagent_timeout_seconds or DEFAULT_SUBAGENT_TIMEOUT_SECONDS
+            ),
+            background_tasks_enabled=stored.background_tasks_enabled or False,
+            skills_enabled=stored.skills_enabled or False,
+            mcp_enabled=stored.mcp_enabled or False,
+            mcp_servers=stored.mcp_servers,
+            mcp_deferred_tool_threshold=(
+                stored.mcp_deferred_tool_threshold
+                or DEFAULT_MCP_DEFERRED_TOOL_THRESHOLD
+            ),
             permission_rules=_resolve_permission_rules(user, project, local),
             api_key=credential.api_key,
             credential_source=credential.source,
@@ -258,6 +319,14 @@ def _resolve_permission_rules(
 
 __all__ = [
     "AgentSettings",
+    "DEFAULT_MAX_PARALLEL_TOOL_CALLS",
+    "DEFAULT_MCP_DEFERRED_TOOL_THRESHOLD",
+    "DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN",
+    "DEFAULT_SUBAGENT_MAX_DEPTH",
+    "DEFAULT_SUBAGENT_MAX_STEPS",
+    "DEFAULT_SUBAGENT_MAX_TOKENS",
+    "DEFAULT_SUBAGENT_TIMEOUT_SECONDS",
+    "McpServerSettingsLayer",
     "SettingsOverrides",
     "SettingsResolver",
 ]

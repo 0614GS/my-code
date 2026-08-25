@@ -14,8 +14,8 @@ from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
 from my_code.tools.builtin import builtin_tools
+from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
-from my_code.tools.registry import ToolRegistry
 from my_code.tools.round_executor import (
     ToolCallFinished,
     ToolRoundCompleted,
@@ -27,7 +27,7 @@ from my_code.workspace.local import Workspace
 
 def build_round_executor(tmp_path: Path) -> ToolRoundExecutor:
     executor = ToolExecutor(
-        registry=ToolRegistry(builtin_tools()),
+        tools=ToolCatalogSnapshot.from_tools(builtin_tools()),
         policy=PermissionPolicy(PermissionMode.DEFAULT),
         prompter=HeadlessPrompter(),
         workspace=Workspace(tmp_path),
@@ -78,7 +78,13 @@ async def test_round_executor_cancellation_closes_every_call(tmp_path: Path) -> 
         usage=TokenUsage(),
     )
 
-    async def cancel(_call: ToolCall) -> ToolExecutionOutcome:
+    async def cancel(
+        _call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | None = None,
+        run_id: str | None = None,
+    ) -> ToolExecutionOutcome:
+        del tools, run_id
         raise asyncio.CancelledError
 
     runner.executor.execute = cancel  # type: ignore[assignment]

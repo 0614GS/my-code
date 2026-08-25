@@ -34,8 +34,8 @@ from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
+from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutor
-from my_code.tools.registry import ToolRegistry
 from my_code.workspace.local import Workspace
 
 
@@ -122,7 +122,7 @@ def test_todo_input_and_model_schema_are_strict() -> None:
 async def test_todo_write_executes_without_permission_prompt(tmp_path: Path) -> None:
     tool = TodoWriteTool()
     executor = ToolExecutor(
-        ToolRegistry((tool,)),
+        ToolCatalogSnapshot.from_tools((tool,)),
         PermissionPolicy(PermissionMode.DEFAULT),
         HeadlessPrompter(),
         Workspace(tmp_path),
@@ -138,7 +138,7 @@ async def test_todo_write_executes_without_permission_prompt(tmp_path: Path) -> 
 @pytest.mark.asyncio
 async def test_invalid_todo_write_becomes_protocol_error(tmp_path: Path) -> None:
     executor = ToolExecutor(
-        ToolRegistry((TodoWriteTool(),)),
+        ToolCatalogSnapshot.from_tools((TodoWriteTool(),)),
         PermissionPolicy(PermissionMode.BYPASS),
         HeadlessPrompter(),
         Workspace(tmp_path),
@@ -273,7 +273,6 @@ def test_context_planner_attaches_reminder_but_compaction_excludes_it() -> None:
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
-        tools=(tool.definition,),
         max_output_tokens=100,
         attachment_resolver=DerivedAttachmentResolver(
             (TodoReminderAttachmentSource(),)
@@ -281,7 +280,7 @@ def test_context_planner_attaches_reminder_but_compaction_excludes_it() -> None:
     )
     snapshot = ConversationSnapshot(history, session_history=history)
 
-    plan = planner.plan(snapshot)
+    plan = planner.plan(snapshot, tools=(tool.definition,))
     request_text = _input_texts(plan.request.input)
     compact_messages, _ = planner.compaction_view(snapshot)
     compact_text = _input_texts(compact_messages)
@@ -304,7 +303,6 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
-        tools=(TodoWriteTool().definition,),
         max_output_tokens=100,
         attachment_resolver=DerivedAttachmentResolver(
             (TodoReminderAttachmentSource(),)
@@ -316,7 +314,7 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
         session_history=history,
         attachment_deliveries=(delivery,),
     )
-    items = planner.plan(snapshot).request.input
+    items = planner.plan(snapshot, tools=(TodoWriteTool().definition,)).request.input
 
     reminder_index = next(
         index

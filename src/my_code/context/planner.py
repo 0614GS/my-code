@@ -53,6 +53,7 @@ from my_code.model.request import (
     ModelTextBlock,
     ModelToolDefinition,
     ModelToolUseBlock,
+    ResolvedPromptSection,
     SystemPrompt,
     ToolOutputs,
     ToolOutputText,
@@ -69,7 +70,6 @@ class ContextPlanner:
         *,
         window: ContextWindow,
         prompt: PromptRegistry,
-        tools: tuple[ModelToolDefinition, ...],
         max_output_tokens: int,
         normalizer: ModelInputNormalizer | None = None,
         microcompact: MicrocompactPolicy | None = None,
@@ -83,7 +83,6 @@ class ContextPlanner:
             raise ValueError("max_output_tokens must be positive")
         self.window = window
         self.prompt = prompt
-        self.tools = tools
         self.max_output_tokens = max_output_tokens
         self.normalizer = normalizer or ModelInputNormalizer()
         self.microcompact = microcompact or MicrocompactPolicy.for_window(
@@ -105,6 +104,9 @@ class ContextPlanner:
         self,
         snapshot: ContextSnapshot,
         session: SessionContextAccess | None = None,
+        *,
+        tools: tuple[ModelToolDefinition, ...],
+        prompt_sections: tuple[ResolvedPromptSection, ...] = (),
     ) -> ContextPlan:
         effective, proposed = self._effective_messages(snapshot)
         user_context = self._get_user_context(session)
@@ -132,8 +134,10 @@ class ContextPlanner:
             if session is not None
             else self.prompt.resolve()
         )
+        if prompt_sections:
+            system_prompt = SystemPrompt((*system_prompt.sections, *prompt_sections))
         request = ModelRequest(
-            system_prompt, model_messages, self.tools, self.max_output_tokens
+            system_prompt, model_messages, tools, self.max_output_tokens
         )
         budget, local_estimate = self._budget(
             selected,
@@ -155,6 +159,7 @@ class ContextPlanner:
                     snapshot.attachment_deliveries,
                     snapshot.replay_records,
                     system_prompt,
+                    tools,
                 ),
             )
             if token_proposed:
@@ -172,7 +177,7 @@ class ContextPlanner:
                     active_binding=binding,
                 )
                 request = ModelRequest(
-                    system_prompt, model_messages, self.tools, self.max_output_tokens
+                    system_prompt, model_messages, tools, self.max_output_tokens
                 )
                 budget, local_estimate = self._budget(
                     selected,
@@ -196,6 +201,9 @@ class ContextPlanner:
         self,
         snapshot: ContextSnapshot,
         session: SessionContextAccess | None = None,
+        *,
+        tools: tuple[ModelToolDefinition, ...],
+        prompt_sections: tuple[ResolvedPromptSection, ...] = (),
     ) -> ContextBudget:
         effective, _ = self._effective_messages(snapshot, propose=False)
         user_context = self._get_user_context(session)
@@ -209,14 +217,17 @@ class ContextPlanner:
             snapshot.replay_records,
             active_binding=binding,
         )
+        system_prompt = (
+            session.resolve_prompt(self.prompt)
+            if session is not None
+            else self.prompt.resolve()
+        )
+        if prompt_sections:
+            system_prompt = SystemPrompt((*system_prompt.sections, *prompt_sections))
         request = ModelRequest(
-            (
-                session.resolve_prompt(self.prompt)
-                if session is not None
-                else self.prompt.resolve()
-            ),
+            system_prompt,
             messages,
-            self.tools,
+            tools,
             self.max_output_tokens,
         )
         budget, _ = self._budget(
@@ -253,6 +264,12 @@ class ContextPlanner:
         self, snapshot: ContextSnapshot
     ) -> tuple[ContextAttachment, ...]:
         return self.attachment_resolver.resolve(snapshot)
+
+    def acknowledge_attachments(
+        self,
+        deliveries: tuple[AttachmentDelivery, ...],
+    ) -> None:
+        self.attachment_resolver.acknowledge(deliveries)
 
     @staticmethod
     def _new_deliveries(
@@ -333,7 +350,7 @@ class ContextPlanner:
             message_limit_chars=self.window.max_chars,
             message_chars=_message_chars(request.input) - user_chars - attachment_chars,
             system_chars=len(request.system_prompt.text),
-            tool_schema_chars=_tool_schema_chars(self.tools),
+            tool_schema_chars=_tool_schema_chars(request.tools),
             reserved_output_tokens=self.max_output_tokens,
             last_actual_input_tokens=actual,
             incremental_tokens=(projected if actual is None else projected - actual),
@@ -362,6 +379,7 @@ class ContextPlanner:
         deliveries: tuple[AttachmentDelivery, ...],
         replay_records: tuple[ProviderReplayRecord, ...],
         prompt: SystemPrompt,
+        tools: tuple[ModelToolDefinition, ...],
     ) -> int:
         binding = self.binding_resolver() if self.binding_resolver is not None else None
         messages = self.normalizer.normalize(
@@ -372,7 +390,7 @@ class ContextPlanner:
             replay_records,
             active_binding=binding,
         )
-        request = ModelRequest(prompt, messages, self.tools, self.max_output_tokens)
+        request = ModelRequest(prompt, messages, tools, self.max_output_tokens)
         budget, _ = self._budget(
             conversation, request, user_context, attachments, deliveries
         )

@@ -65,7 +65,6 @@ def _planner(*, user_resolver=None, attachment_resolver=None) -> ContextPlanner:
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
-        tools=(),
         max_output_tokens=50,
         user_context_resolver=user_resolver,
         attachment_resolver=attachment_resolver,
@@ -266,8 +265,8 @@ def test_planner_caches_user_context_and_excludes_attachments_from_compact() -> 
     )
     snapshot = ConversationSnapshot((HumanMessage("prompt"),))
     session = _SessionContextAccess()
-    first = planner.plan(snapshot, session)
-    second = planner.plan(snapshot, session)
+    first = planner.plan(snapshot, session, tools=())
+    second = planner.plan(snapshot, session, tools=())
     compact, replacements = planner.compaction_view(snapshot)
 
     assert resolver.calls == 1
@@ -288,8 +287,8 @@ def test_context_plan_is_deterministic_for_the_same_inputs() -> None:
     snapshot = ConversationSnapshot((HumanMessage("prompt", uuid="human"),))
     session = _SessionContextAccess()
 
-    first = planner.plan(snapshot, session)
-    second = planner.plan(snapshot, session)
+    first = planner.plan(snapshot, session, tools=())
+    second = planner.plan(snapshot, session, tools=())
 
     assert first == second
 
@@ -309,9 +308,9 @@ def test_user_context_cache_is_owned_by_each_session_context() -> None:
     snapshot = ConversationSnapshot((HumanMessage("prompt"),))
 
     first_session = _SessionContextAccess()
-    builder.plan(snapshot, first_session)
-    builder.plan(snapshot, first_session)
-    builder.plan(snapshot, _SessionContextAccess())
+    builder.plan(snapshot, first_session, tools=())
+    builder.plan(snapshot, first_session, tools=())
+    builder.plan(snapshot, _SessionContextAccess(), tools=())
 
     assert resolver.calls == 2
     assert not hasattr(builder, "_user_context_cache")
@@ -331,7 +330,8 @@ def test_budget_separates_request_and_delivered_attachment_chars() -> None:
         ConversationSnapshot(
             (human,),
             attachment_deliveries=(AttachmentDelivery(human.uuid, delivered),),
-        )
+        ),
+        tools=(),
     )
 
     assert plan.budget is not None
@@ -346,10 +346,9 @@ def test_attachment_chars_participate_in_context_window() -> None:
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
-        tools=(),
         max_output_tokens=10,
         attachment_resolver=DerivedAttachmentResolver((lambda _: (attachment,),)),
     )
 
     with pytest.raises(ContextOverflow):
-        planner.plan(ConversationSnapshot((HumanMessage("p"),)))
+        planner.plan(ConversationSnapshot((HumanMessage("p"),)), tools=())

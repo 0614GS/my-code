@@ -64,6 +64,10 @@ mycode --provider company-gateway auth login
 
 与 Claude Code 的目录边界一致，用户配置及运行状态默认放在 `~/.my-code/`，可用 `MY_CODE_CONFIG_DIR` 整体迁移。项目共享配置为 `.my-code/settings.json`，本地覆盖为已忽略的 `.my-code/settings.local.json`；读取配置不会主动创建这些目录。完整布局和优先级见 [docs/09-storage-and-settings.md](docs/09-storage-and-settings.md)，终端层边界见 [docs/10-terminal-ui.md](docs/10-terminal-ui.md)。
 
+实验性的 MCP 已可通过 settings 注册 stdio server，默认关闭，并支持增量发现与大工具集的 deferred ToolSearch。共享项目只能声明、不能直接启用 MCP 命令；需复制到 `settings.local.json` 显式信任。远端工具仍经过本地 schema、权限和取消流水线，详细配置见 [docs/06-mcp-and-tool-discovery.md](docs/06-mcp-and-tool-discovery.md)。
+
+Skill 加载同样默认关闭。启用 `skills.enabled` 后，my-code 按项目 `.my-code/skills`、用户配置目录 `skills`、内置来源的顺序发现 `<name>/SKILL.md`；模型通过标准 `Skill` Tool 选择后，完整 Markdown 只在下一 step 出现一次，可选 `allowed-tools` 只能收窄该 step 的工具集。Loader 不导入 Skill 目录里的 Python 或执行 shell，格式和验收边界见 [docs/13-extensibility-roadmap.md](docs/13-extensibility-roadmap.md#m6skill-加载与按需激活)。
+
 首次启动聊天或认证命令时会创建缺失的用户级 `settings.json`、`providers.json`、空 `.credentials.json` 和 `projects/`。Provider Profile 将 URL、协议和默认模型与凭据分离；当前所有 Profile 仍统一使用 Anthropic Messages API。
 
 ```bash

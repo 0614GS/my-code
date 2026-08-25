@@ -2,13 +2,19 @@
 
 import logging
 from collections.abc import Callable, Iterable
+from typing import Protocol, runtime_checkable
 
 from my_code.context.attachments.models import ContextAttachment
-from my_code.context.session import ContextSnapshot
+from my_code.context.session import AttachmentDelivery, ContextSnapshot
 
 logger = logging.getLogger(__name__)
 
 type DerivedAttachmentSource = Callable[[ContextSnapshot], Iterable[ContextAttachment]]
+
+
+@runtime_checkable
+class AttachmentDeliveryObserver(Protocol):
+    def acknowledge(self, deliveries: tuple[AttachmentDelivery, ...]) -> None: ...
 
 
 class DerivedAttachmentResolver:
@@ -30,8 +36,20 @@ class DerivedAttachmentResolver:
             attachments.extend(source_attachments)
         return tuple(attachments)
 
+    def acknowledge(self, deliveries: tuple[AttachmentDelivery, ...]) -> None:
+        """Notify stateful sources only after Session accepted deliveries."""
+
+        for source in self._sources:
+            if not isinstance(source, AttachmentDeliveryObserver):
+                continue
+            try:
+                source.acknowledge(deliveries)
+            except Exception:
+                logger.exception("Attachment delivery acknowledgement failed")
+
 
 __all__ = [
     "DerivedAttachmentResolver",
     "DerivedAttachmentSource",
+    "AttachmentDeliveryObserver",
 ]

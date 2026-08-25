@@ -83,6 +83,7 @@ def test_app_state_is_the_single_runtime_owner(tmp_path: Path) -> None:
     assert not hasattr(runtime, "provider_router")
     assert runtime.state.workspace.workspace is runtime.tool_executor.workspace
     assert runtime.state.permissions.policy is runtime.tool_executor.policy
+    assert runtime.state.tools.catalog.snapshot() == runtime.tool_executor.tools
     assert runtime.state.session.session_id == _CURRENT_SESSION_ID
 
 

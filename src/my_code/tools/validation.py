@@ -43,3 +43,11 @@ def optional_bool(tool_input: JsonObject, key: str, default: bool) -> bool:
     if not isinstance(value, bool):
         raise ToolInputError(f"{key!r} must be a boolean")
     return value
+
+
+__all__ = [
+    "optional_bool",
+    "optional_int",
+    "optional_string",
+    "required_string",
+]

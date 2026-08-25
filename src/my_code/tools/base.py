@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from my_code.model.primitives import JsonObject
@@ -19,6 +21,8 @@ from my_code.workspace.local import Workspace
 if TYPE_CHECKING:
     from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 
+_EMPTY_TOOLS: Mapping[str, Tool] = MappingProxyType({})
+
 
 @dataclass(frozen=True, slots=True, init=False)
 class ToolContext:
@@ -27,12 +31,18 @@ class ToolContext:
     workspace: Workspace
     command_timeout_seconds: float
     max_command_output_bytes: int
+    available_tools: Mapping[str, Tool]
+    tool_snapshot_version: int | None
+    run_id: str | None
 
     def __init__(
         self,
         workspace: Workspace | Path,
         command_timeout_seconds: float = 120.0,
         max_command_output_bytes: int = 4 * 1024 * 1024,
+        available_tools: Mapping[str, Tool] = _EMPTY_TOOLS,
+        tool_snapshot_version: int | None = None,
+        run_id: str | None = None,
     ) -> None:
         object.__setattr__(
             self,
@@ -41,10 +51,33 @@ class ToolContext:
         )
         object.__setattr__(self, "command_timeout_seconds", command_timeout_seconds)
         object.__setattr__(self, "max_command_output_bytes", max_command_output_bytes)
+        object.__setattr__(
+            self,
+            "available_tools",
+            MappingProxyType(dict(available_tools)),
+        )
+        object.__setattr__(self, "tool_snapshot_version", tool_snapshot_version)
+        object.__setattr__(self, "run_id", run_id)
 
     @property
     def cwd(self) -> Path:
         return self.workspace.root
+
+    def with_tools(
+        self,
+        tools: Mapping[str, Tool],
+        *,
+        version: int,
+        run_id: str | None = None,
+    ) -> ToolContext:
+        return ToolContext(
+            self.workspace,
+            self.command_timeout_seconds,
+            self.max_command_output_bytes,
+            tools,
+            version,
+            run_id,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +105,10 @@ class Tool(ABC):
     def definition(self) -> ModelToolDefinition:
         """返回模型可见的定义。"""
 
-    @property
-    def concurrency_safe(self) -> bool:
-        """调度器支持并行后，该工具调用是否可以并行。"""
+    def is_concurrency_safe(self, tool_input: JsonObject) -> bool:
+        """Return whether this specific invocation may overlap other calls."""
 
+        del tool_input
         return False
 
     def user_facing_name(self, tool_input: JsonObject) -> str:
@@ -167,5 +200,7 @@ class Tool(ABC):
 __all__ = [
     "Tool",
     "ToolContext",
+    "ToolExecutionError",
+    "ToolInputError",
     "ToolOutput",
 ]

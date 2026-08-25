@@ -73,8 +73,12 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.sessions.session import Session
 from my_code.tools.builtin import builtin_tools
+from my_code.tools.catalog import (
+    ToolCatalog,
+    ToolCatalogSnapshot,
+    ToolSourceId,
+)
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
-from my_code.tools.registry import ToolRegistry
 from my_code.tools.round_executor import ToolRoundExecutor
 from my_code.workspace.local import Workspace
 
@@ -162,9 +166,14 @@ def _engine(
     model_type: type[FakeModel] = FakeModel,
 ) -> tuple[BoundEngine, FakeModel, Session, ToolRoundExecutor]:
     session_id = "11111111-1111-1111-1111-111111111111"
-    registry = ToolRegistry((*builtin_tools(), TodoWriteTool()))
+    catalog = ToolCatalog()
+    catalog.register_source(
+        ToolSourceId("test", "agent-engine"),
+        (*builtin_tools(), TodoWriteTool()),
+    )
+    tools = catalog.snapshot()
     executor = ToolExecutor(
-        registry,
+        tools,
         PermissionPolicy(PermissionMode.BYPASS),
         HeadlessPrompter(),
         Workspace(tmp_path),
@@ -175,7 +184,6 @@ def _engine(
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
-        tools=registry.definitions,
         max_output_tokens=100,
     )
     context = ContextEngine(planner, ContextCompactor(model))
@@ -185,6 +193,7 @@ def _engine(
         model_call=model,
         tool_round=tool_round,
         context=context,
+        tool_catalog=catalog,
         max_steps=max_steps,
     )
     return BoundEngine(engine, session), model, session, tool_round
@@ -581,10 +590,15 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
     )
     execute = tool_round.executor.execute
 
-    async def cancel_second(call: ToolCall) -> ToolExecutionOutcome:
+    async def cancel_second(
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | None = None,
+        run_id: str | None = None,
+    ) -> ToolExecutionOutcome:
         if call.id == "read-1":
             raise asyncio.CancelledError
-        return await execute(call)
+        return await execute(call, tools=tools, run_id=run_id)
 
     tool_round.executor.execute = cancel_second  # type: ignore[assignment]
     events = []

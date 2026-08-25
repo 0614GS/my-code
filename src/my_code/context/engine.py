@@ -3,8 +3,13 @@
 from my_code.context.compaction import ContextCompactor
 from my_code.context.models import CompactionOutcome, ContextBudget, ContextPlan
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextSnapshot, SessionContextAccess
+from my_code.context.session import (
+    AttachmentDelivery,
+    ContextSnapshot,
+    SessionContextAccess,
+)
 from my_code.conversation.state import CompactTrigger
+from my_code.model.request import ModelToolDefinition, ResolvedPromptSection
 
 
 class ContextEngine:
@@ -22,15 +27,37 @@ class ContextEngine:
         self,
         snapshot: ContextSnapshot,
         session: SessionContextAccess | None = None,
+        *,
+        tools: tuple[ModelToolDefinition, ...],
+        prompt_sections: tuple[ResolvedPromptSection, ...] = (),
     ) -> ContextPlan:
-        return self._planner.plan(snapshot, session)
+        return self._planner.plan(
+            snapshot,
+            session,
+            tools=tools,
+            prompt_sections=prompt_sections,
+        )
 
     def inspect(
         self,
         snapshot: ContextSnapshot,
         session: SessionContextAccess | None = None,
+        *,
+        tools: tuple[ModelToolDefinition, ...],
+        prompt_sections: tuple[ResolvedPromptSection, ...] = (),
     ) -> ContextBudget:
-        return self._planner.inspect(snapshot, session)
+        return self._planner.inspect(
+            snapshot,
+            session,
+            tools=tools,
+            prompt_sections=prompt_sections,
+        )
+
+    def acknowledge_attachments(
+        self,
+        deliveries: tuple[AttachmentDelivery, ...],
+    ) -> None:
+        self._planner.acknowledge_attachments(deliveries)
 
     async def compact(
         self,
