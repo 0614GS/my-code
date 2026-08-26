@@ -1,10 +1,38 @@
 """Foreground/background-neutral Subagent product values."""
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 from my_code.agent.models import AgentTurnOutcome
 from my_code.conversation.attachments import AttachmentPayload
+from my_code.prompts.registry import PromptRegistry
 from my_code.tasks.models import TaskSnapshot
+
+
+class SubagentType(StrEnum):
+    EXPLORE = "explore"
+    GENERAL = "general"
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentDefinition:
+    agent_type: SubagentType
+    description: str
+    system_prompt: PromptRegistry
+    tool_names: tuple[str, ...] | None
+    read_only: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.agent_type, SubagentType):
+            raise ValueError("Subagent definition type must be explore or general")
+        if not self.description.strip():
+            raise ValueError("Subagent definition description must not be blank")
+        if self.tool_names is not None and (
+            not self.tool_names
+            or any(not name.strip() for name in self.tool_names)
+            or len(self.tool_names) != len(set(self.tool_names))
+        ):
+            raise ValueError("Subagent definition tools must be unique non-empty names")
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,27 +84,29 @@ class SubagentParentContext:
 
 @dataclass(frozen=True, slots=True)
 class SubagentSpec:
+    agent_type: SubagentType
     prompt: str
     description: str
-    allowed_tools: tuple[str, ...] | None = None
     attachments: tuple[AttachmentPayload, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.agent_type, SubagentType):
+            raise ValueError("Subagent type must be explore or general")
         if not self.prompt.strip() or not self.description.strip():
             raise ValueError("Subagent prompt and description must not be blank")
-        if self.allowed_tools is not None:
-            if not self.allowed_tools or any(
-                not name.strip() for name in self.allowed_tools
-            ):
-                raise ValueError("Subagent allowed tools must be non-empty names")
-            if len(self.allowed_tools) != len(set(self.allowed_tools)):
-                raise ValueError("Subagent allowed tools must be unique")
 
 
 @dataclass(frozen=True, slots=True)
 class StartedSubagent:
     task_id: str
     run_id: str
+    agent_type: SubagentType
+
+    def __post_init__(self) -> None:
+        if not self.task_id.strip() or not self.run_id.strip():
+            raise ValueError("Started Subagent identity must not be blank")
+        if not isinstance(self.agent_type, SubagentType):
+            raise ValueError("Started Subagent type must be explore or general")
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +114,13 @@ class CompletedSubagent:
     task: TaskSnapshot
     run_id: str
     outcome: AgentTurnOutcome | None
+    agent_type: SubagentType
+
+    def __post_init__(self) -> None:
+        if not self.run_id.strip():
+            raise ValueError("Completed Subagent run ID must not be blank")
+        if not isinstance(self.agent_type, SubagentType):
+            raise ValueError("Completed Subagent type must be explore or general")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,17 +128,22 @@ class BackgroundSubagent:
     task: TaskSnapshot
     run_id: str
     description: str
+    agent_type: SubagentType
 
     def __post_init__(self) -> None:
         if not self.run_id.strip() or not self.description.strip():
             raise ValueError("Background Subagent identity must not be blank")
+        if not isinstance(self.agent_type, SubagentType):
+            raise ValueError("Background Subagent type must be explore or general")
 
 
 __all__ = [
     "BackgroundSubagent",
     "CompletedSubagent",
     "StartedSubagent",
+    "SubagentDefinition",
     "SubagentLimits",
     "SubagentParentContext",
     "SubagentSpec",
+    "SubagentType",
 ]

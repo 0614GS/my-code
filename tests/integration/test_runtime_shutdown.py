@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from my_code.application.runs import AgentRunSpec
-from my_code.application.state import ProviderRuntime
 from my_code.auth.credentials import CredentialSource
 from my_code.bootstrap import bootstrap_chat
 from my_code.config.paths import MyCodePaths
 from my_code.config.settings import AgentSettings
 from my_code.permissions.models import PermissionMode
+from my_code.runtime.runs import AgentRunSpec
+from my_code.runtime.state import ProviderRuntime
 from my_code.sessions.session import Session
 from my_code.tasks.models import TaskStatus
 

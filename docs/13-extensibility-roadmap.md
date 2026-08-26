@@ -371,7 +371,7 @@ PENDING ──> RUNNING ──> SUCCEEDED
 
 状态：已完成（2026-08-24）。
 
-- 实现 `SubagentSpec`、`SubagentController` 和 spawn Tool。
+- 实现 `SubagentSpec`、`SubagentController` 和 spawn Tool；模型必须显式选择固定的 `explore` 或 `general` 角色。
 - child 使用独立 Session、独立 run capsule、spawn 时工具快照子集和收窄后的权限。
 - child 只接收显式 prompt/attachments，不复制完整父 transcript。
 - child 终态被归一化为父 ToolCall 的一个 ToolResult；失败和取消同样闭合。
@@ -380,11 +380,12 @@ PENDING ──> RUNNING ──> SUCCEEDED
 验收证据：
 
 - `features.subagents` 已实现 `SubagentSpec`、`SubagentController`、`SubagentTool` 和 child hierarchy/limit 值；composition root 只在 `subagents.enabled=true` 时注册 feature source。
-- ToolContext 携带当前 step 的只读工具映射/version；child-local ToolCatalog 只能选该快照的 allowlist 子集，嵌套 Subagent 会绑定新的 run/task/depth identity。
+- ToolContext 携带当前 step 的只读工具映射/version；Explore 固定取 Read/Glob/Grep/Bash 的交集并通过双重 `is_read_only()` 代理执行，General 继承完整快照。嵌套 Subagent 会绑定新的 run/task/depth identity，最大深度时移除 Subagent。
+- 两个角色使用不同的专用 PromptRegistry、相同 cwd/environment 与根目录 AGENTS.md；child request 不含父 transcript。Explore 明确面向父 agent 报告文件证据，General 报告变更、验证和风险。
 - child 复制父 PermissionPolicy 的 mode/rules，`AgentRunSpec.allow_permission_updates=false`，因此不能持久化或在运行期扩大父级 ask/deny；workspace 安全检查保持不变。
 - child run 使用独立 UUID Session、AgentRun capsule 和 provider lease；TaskSupervisor 负责父子关系、timeout 和取消，调用方取消 foreground wait 会向 child 传播。
 - 预算默认值为 depth 3、每 parent 活跃 child 4、20 steps、100000 累计 tokens 和 300 秒；均可通过 `subagents` settings 正数配置。累计 token ceiling 保留已完成响应，在下一次请求前停止继续消费。
-- SUB-01 由 `tests/integration/test_subagent_lifecycle.py` 验证两份 transcript、单一父 ToolResult 和 run/lease 回收；SUB-02 由 `tests/integration/test_subagent_permissions.py` 验证 allowlist、ask/deny 与 workspace 逃逸。
+- SUB-01 由 `tests/integration/test_subagent_lifecycle.py` 验证两份 transcript、单一父 ToolResult 和 run/lease 回收；SUB-02 由 `tests/integration/test_subagent_permissions.py` 验证能力交集、ask/deny 与 workspace 逃逸；`test_subagent_explore_safety.py` 验证 default/allow/bypass 和输入规范化都不能突破 Explore 只读边界。
 - `tests/unit/test_subagent_controller.py` 覆盖深度/活跃数/step/token/timeout、失败闭合和 foreground 取消；`tests/unit/test_agent_budget.py` 覆盖累计 token ceiling。
 - M4a 完成时第 10 节五条命令全部通过，完整测试结果为 `437 passed`；没有新增第三方依赖，架构临时豁免仍为空。
 
@@ -413,7 +414,7 @@ PENDING ──> RUNNING ──> SUCCEEDED
 
 - Foreground child 完成前父 ToolCall 保持等待；background child 启动后父 Agent 能继续下一 step。
 - child 写入不会出现在 parent Session JSONL，只有显式返回结果进入父上下文。
-- child 不能使用 allowlist 外工具，也不能把 ask/deny 提升为 allow。
+- child 不能获得角色策略或父快照之外的工具，也不能把 ask/deny 提升为 allow。
 - background 任务在“本 step 内完成、turn 结束后完成、父级取消、应用关闭”四种情形下都只通知一次或明确取消。
 - 同一 parent Session 仍无法并发执行两个 foreground turn。
 

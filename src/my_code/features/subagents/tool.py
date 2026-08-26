@@ -5,7 +5,11 @@ import json
 from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.subagents.controller import SubagentController
-from my_code.features.subagents.models import SubagentParentContext, SubagentSpec
+from my_code.features.subagents.models import (
+    SubagentParentContext,
+    SubagentSpec,
+    SubagentType,
+)
 from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
@@ -47,6 +51,11 @@ class SubagentTool(Tool):
         input_schema: JsonObject = {
             "type": "object",
             "properties": {
+                "agent_type": {
+                    "type": "string",
+                    "enum": [item.value for item in SubagentType],
+                    "description": "Fixed child role: explore or general",
+                },
                 "description": {
                     "type": "string",
                     "description": "Short stable task description",
@@ -55,15 +64,8 @@ class SubagentTool(Tool):
                     "type": "string",
                     "description": "Complete instruction for the child agent",
                 },
-                "tools": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "minItems": 1,
-                    "uniqueItems": True,
-                    "description": "Optional subset of currently available tools",
-                },
             },
-            "required": ["description", "prompt"],
+            "required": ["agent_type", "description", "prompt"],
             "additionalProperties": False,
         }
         properties = input_schema["properties"]
@@ -77,8 +79,8 @@ class SubagentTool(Tool):
         return ModelToolDefinition(
             name="Subagent",
             description=(
-                "Run an isolated child coding agent. The child has its own Session "
-                "and a restricted tool snapshot."
+                "Run an isolated explore or general child agent. The child has its "
+                "own Session, prompt profile, and narrowed tool snapshot."
             ),
             input_schema=input_schema,
         )
@@ -88,21 +90,25 @@ class SubagentTool(Tool):
         return False
 
     def validate_input(self, tool_input: JsonObject) -> None:
+        allowed_keys = {"agent_type", "description", "prompt"}
+        if self.allow_background:
+            allowed_keys.add("background")
+        unexpected = sorted(set(tool_input) - allowed_keys)
+        if unexpected:
+            raise ToolInputError(
+                "unexpected Subagent input fields: " + ", ".join(unexpected)
+            )
+        agent_type = tool_input.get("agent_type")
+        try:
+            SubagentType(agent_type)
+        except (TypeError, ValueError):
+            raise ToolInputError("agent_type must be explore or general") from None
         for key in ("description", "prompt"):
             if (
                 not isinstance(tool_input.get(key), str)
                 or not str(tool_input[key]).strip()
             ):
                 raise ToolInputError(f"{key} must be a non-empty string")
-        tools = tool_input.get("tools")
-        if tools is not None:
-            if (
-                not isinstance(tools, list)
-                or not tools
-                or any(not isinstance(name, str) or not name.strip() for name in tools)
-                or len(tools) != len(set(tools))
-            ):
-                raise ToolInputError("tools must contain unique non-empty names")
         background = tool_input.get("background", False)
         if not isinstance(background, bool):
             raise ToolInputError("background must be a boolean")
@@ -128,19 +134,13 @@ class SubagentTool(Tool):
         tool_input: JsonObject,
         context: ToolContext,
     ) -> ToolOutput:
-        tools = tool_input.get("tools")
-        allowed_tools: tuple[str, ...] | None = None
-        if isinstance(tools, list):
-            if not all(isinstance(name, str) for name in tools):
-                raise ToolInputError("tools must contain strings")
-            allowed_tools = tuple(str(name) for name in tools)
         snapshot_version = context.tool_snapshot_version
         if snapshot_version is None:
             raise RuntimeError("Subagent requires an active tool snapshot")
         spec = SubagentSpec(
+            agent_type=SubagentType(str(tool_input["agent_type"])),
             prompt=str(tool_input["prompt"]),
             description=str(tool_input["description"]),
-            allowed_tools=allowed_tools,
         )
         parent = self._runtime_parent(context)
         if tool_input.get("background") is True:
@@ -158,6 +158,7 @@ class SubagentTool(Tool):
                         "status": "started",
                         "task_id": started.task_id,
                         "run_id": started.run_id,
+                        "agent_type": started.agent_type.value,
                     },
                     ensure_ascii=False,
                 )
@@ -176,6 +177,7 @@ class SubagentTool(Tool):
                 "status": task.status.value,
                 "task_id": task.task_id,
                 "run_id": completed.run_id,
+                "agent_type": completed.agent_type.value,
                 "error": failure.message if failure is not None else "unknown failure",
                 "error_kind": failure.kind if failure is not None else "unknown",
             }
@@ -188,6 +190,7 @@ class SubagentTool(Tool):
                         "status": "max_steps",
                         "task_id": task.task_id,
                         "run_id": completed.run_id,
+                        "agent_type": completed.agent_type.value,
                         "completed_steps": outcome.completed_steps,
                         "max_steps": outcome.max_steps,
                     },
@@ -203,6 +206,7 @@ class SubagentTool(Tool):
                     "status": "succeeded",
                     "task_id": task.task_id,
                     "run_id": completed.run_id,
+                    "agent_type": completed.agent_type.value,
                     "result": outcome.text,
                     "completed_steps": outcome.completed_steps,
                 },

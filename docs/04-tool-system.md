@@ -10,7 +10,7 @@
 
 Agent 在每个 step 开始时捕获带单调版本号的 `ToolCatalogSnapshot`。ContextPlanner 使用其中的 definitions 创建 ModelRequest，ToolRoundExecutor 使用同一快照解析并执行模型返回的调用。Catalog 在 stream 或执行期间发生变化时，当前 step 不漂移，下一 step 才看到新版本。
 
-ToolExecutor 还把该 step 的只读工具映射和版本放入 `ToolContext`。Subagent Tool 据此创建 child-local catalog：显式 allowlist 必须是当前快照的子集；嵌套时重新绑定新的 Subagent Tool/parent task identity，而不是把父级可变 catalog 直接共享给 child。
+ToolExecutor 还把该 step 的只读工具映射和版本放入 `ToolContext`。Subagent Tool 据此按固定角色创建 child-local catalog，而不是接受模型提供的 allowlist：`explore` 只取父快照中的 Read、Glob、Grep、Bash，并给每个调用增加不可绕过的只读代理；`general` 继承完整父快照。嵌套时 Subagent 与 Task tools 重新绑定 child identity，最大深度时移除 Subagent。
 
 ## Tool 能力
 
@@ -24,6 +24,8 @@ ToolExecutor 还把该 step 的只读工具映射和版本放入 `ToolContext`�
 没有为单一实现建立额外 Tool port 或 adapter。
 
 Subagent 属于 `features.subagents`，但仍实现同一 Tool 协议并经过上述输入、权限、取消和结果闭合管线。`subagents.enabled=false` 时 composition root 不注册该 source，AgentEngine 内没有 feature 条件分支。
+
+Subagent 只提供 `explore` 与 `general` 两个 built-in definition。两者使用独立 Session、run、provider lease、ContextRuntime 和专用 prompt registry，只接收显式 prompt/attachments；不复制父 transcript。Explore 的只读代理在权限判断前及执行前各检查一次底层 `is_read_only()`，因此 Bash 重定向或修改命令在 allow rule 和 bypass 模式下仍会被拒绝。
 
 `backgroundTasks.enabled=true` 时，同一 feature source 额外注册 TaskList、TaskOutput 和 TaskCancel。它们通过 ToolContext 的当前 run identity 做 owner 隔离；CLI/TUI 继续消费普通 Tool presentation 来显示 task ID/status，不直接访问 TaskSupervisor。
 

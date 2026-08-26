@@ -18,7 +18,7 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 
 
-def _environment_prompt(cwd: Path) -> str:
+def environment_prompt(cwd: Path) -> str:
     """Return the session-stable runtime facts in a fixed order."""
 
     workspace = cwd.resolve()
@@ -77,7 +77,7 @@ def build_system_prompt_registry(cwd: Path) -> PromptRegistry:
             PromptSection(
                 "my-code.environment",
                 PromptStability.SESSION,
-                lambda: _environment_prompt(cwd),
+                lambda: environment_prompt(cwd),
             ),
         )
     )
@@ -85,4 +85,5 @@ def build_system_prompt_registry(cwd: Path) -> PromptRegistry:
 
 __all__ = [
     "build_system_prompt_registry",
+    "environment_prompt",
 ]

@@ -13,13 +13,14 @@ SOURCE_ROOT = REPOSITORY_ROOT / "src" / PACKAGE_NAME
 
 ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "foundation": frozenset(),
-    "application": frozenset(
+    "runtime": frozenset(
         {
             "agent",
             "context",
             "model",
             "mcp",
             "permissions",
+            "prompts",
             "providers",
             "sessions",
             "skills",
@@ -68,12 +69,13 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "features.subagents": frozenset(
         {
             "agent",
-            "application",
             "context",
             "conversation",
             "foundation",
             "model",
             "permissions",
+            "prompts",
+            "runtime",
             "sessions",
             "skills",
             "tasks",
@@ -84,7 +86,6 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "chat": frozenset(
         {
             "agent",
-            "application",
             "config",
             "context",
             "conversation",
@@ -94,6 +95,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "model",
             "permissions",
             "providers",
+            "runtime",
             "sessions",
             "skills",
             "tools",
@@ -116,7 +118,6 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "bootstrap": frozenset(
         {
             "agent",
-            "application",
             "auth",
             "chat",
             "cli",
@@ -133,6 +134,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "permissions",
             "prompts",
             "providers",
+            "runtime",
             "sessions",
             "skills",
             "tasks",

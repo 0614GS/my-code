@@ -12,18 +12,6 @@ from uuid import uuid4
 
 from my_code.agent.budget import TokenBudgetModelClient
 from my_code.agent.engine import AgentEngine
-from my_code.application.runs import (
-    AgentRunComponents,
-    AgentRunFactory,
-    AgentRunSpec,
-)
-from my_code.application.state import (
-    AppState,
-    PermissionState,
-    ProviderRuntime,
-    ToolState,
-    WorkspaceState,
-)
 from my_code.auth.credentials import CredentialStore
 from my_code.chat.events import MaxStepsReached, TurnSucceeded
 from my_code.chat.permissions import DeferredPermissionPrompter
@@ -53,6 +41,7 @@ from my_code.features.file_mentions.loader import AttachmentLoader
 from my_code.features.file_mentions.reader import WorkspaceAttachmentReader
 from my_code.features.file_mentions.suggestions import WorkspacePathSuggester
 from my_code.features.subagents.controller import SubagentController
+from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import SubagentLimits, SubagentParentContext
 from my_code.features.subagents.notifications import BackgroundTaskNotificationSource
 from my_code.features.subagents.task_tools import (
@@ -73,12 +62,25 @@ from my_code.model.primitives import ProviderBinding
 from my_code.permissions.models import PermissionPrompter
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter, TerminalPrompter
+from my_code.prompts.registry import PromptRegistry
 from my_code.prompts.system import build_system_prompt_registry
 from my_code.providers.discovery import ModelDiscoveryService, resolve_without_network
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
 from my_code.providers.manager import ProviderManager
 from my_code.providers.model_cache import ModelCatalogCache
 from my_code.providers.router import ProviderConnection, ProviderRouter
+from my_code.runtime.runs import (
+    AgentRunComponents,
+    AgentRunFactory,
+    AgentRunSpec,
+)
+from my_code.runtime.state import (
+    AppState,
+    PermissionState,
+    ProviderRuntime,
+    ToolState,
+    WorkspaceState,
+)
 from my_code.sessions.models import SessionStart
 from my_code.sessions.session import Session
 from my_code.skills.attachments import SkillListingAttachmentSource
@@ -198,6 +200,7 @@ def _build_agent_components(
     permission_prompter: PermissionPrompter,
     workspace: Workspace,
     max_steps: int | None = None,
+    prompt_registry: PromptRegistry | None = None,
     allow_permission_updates: bool = True,
     attachment_sources: tuple[DerivedAttachmentSource, ...] = (),
 ) -> AgentRunComponents:
@@ -216,7 +219,7 @@ def _build_agent_components(
     )
     planner = ContextPlanner(
         window=ContextWindow(settings.context_chars),
-        prompt=build_system_prompt_registry(settings.cwd),
+        prompt=prompt_registry or build_system_prompt_registry(settings.cwd),
         max_output_tokens=settings.max_output_tokens,
         user_context_resolver=AgentsUserContextResolver(settings.cwd),
         attachment_resolver=DerivedAttachmentResolver(
@@ -385,6 +388,7 @@ def _assemble_agent(
             permission_prompter=prompter,
             workspace=workspace,
             max_steps=spec.max_steps,
+            prompt_registry=spec.prompt_registry,
             allow_permission_updates=spec.allow_permission_updates,
             attachment_sources=(
                 SkillListingAttachmentSource(skills.catalog),
@@ -403,6 +407,7 @@ def _assemble_agent(
             runs=run_factory,
             tasks=tasks,
             project_state_dir=settings.paths.project_state_dir,
+            definitions=build_subagent_definitions(settings.cwd),
             limits=SubagentLimits(
                 max_depth=settings.subagent_max_depth,
                 max_active_children=settings.subagent_max_active_children,

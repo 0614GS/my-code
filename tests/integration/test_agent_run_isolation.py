@@ -8,11 +8,6 @@ import pytest
 
 from my_code.agent.engine import AgentEngine
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
-from my_code.application.runs import (
-    AgentRunComponents,
-    AgentRunFactory,
-    AgentRunSpec,
-)
 from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.context.compaction import ContextCompactor
@@ -43,6 +38,11 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
 from my_code.providers.router import ProviderConnection
+from my_code.runtime.runs import (
+    AgentRunComponents,
+    AgentRunFactory,
+    AgentRunSpec,
+)
 from my_code.sessions.session import Session
 from my_code.tools.catalog import ToolCatalog
 from my_code.tools.executor import ToolExecutor

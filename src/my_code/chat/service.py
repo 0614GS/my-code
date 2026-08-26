@@ -19,7 +19,6 @@ from my_code.agent.models import (
     AgentTurnInput,
     AgentTurnSucceeded,
 )
-from my_code.application.state import AppState
 from my_code.chat.events import (
     AttachmentLoaded,
     MaxStepsReached,
@@ -69,6 +68,7 @@ from my_code.model.capabilities import (
 )
 from my_code.providers.discovery import resolve_without_network
 from my_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
+from my_code.runtime.state import AppState
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
 from my_code.sessions.session import Session
 from my_code.skills.tool import restore_skill_permissions

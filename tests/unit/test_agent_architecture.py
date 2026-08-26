@@ -271,7 +271,7 @@ def test_production_code_does_not_depend_on_legacy_chat_owners() -> None:
         imports = _imported_modules(source_path)
         assert not any(name.startswith(forbidden) for name in imports), source_path
 
-    assert (_PACKAGE_ROOT / "application" / "state.py").exists()
+    assert (_PACKAGE_ROOT / "runtime" / "state.py").exists()
 
 
 def test_core_mechanisms_do_not_import_chat_service() -> None:

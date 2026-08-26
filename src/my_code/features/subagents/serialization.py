@@ -11,6 +11,7 @@ def background_subagent_payload(item: BackgroundSubagent) -> JsonObject:
         "task_id": task.task_id,
         "run_id": item.run_id,
         "description": item.description,
+        "agent_type": item.agent_type.value,
         "status": task.status.value,
     }
     if task.failure is not None:

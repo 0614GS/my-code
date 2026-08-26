@@ -9,11 +9,6 @@ import pytest
 
 from my_code.agent.engine import AgentEngine
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
-from my_code.application.runs import (
-    AgentRunComponents,
-    AgentRunFactory,
-    AgentRunSpec,
-)
 from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.context.attachments.sources import DerivedAttachmentResolver
@@ -24,6 +19,7 @@ from my_code.context.session import ContextRuntime
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
+from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import SubagentParentContext
 from my_code.features.subagents.notifications import BackgroundTaskNotificationSource
 from my_code.features.subagents.tool import SubagentTool
@@ -55,6 +51,11 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
 from my_code.providers.router import ProviderConnection
+from my_code.runtime.runs import (
+    AgentRunComponents,
+    AgentRunFactory,
+    AgentRunSpec,
+)
 from my_code.sessions.session import Session
 from my_code.tasks.models import TaskStatus
 from my_code.tasks.supervisor import TaskSupervisor
@@ -166,7 +167,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
         context = ContextEngine(
             ContextPlanner(
                 window=ContextWindow(10_000),
-                prompt=prompt_registry(),
+                prompt=spec.prompt_registry or prompt_registry(),
                 max_output_tokens=100,
                 attachment_resolver=attachment_resolver(),
                 binding_resolver=lambda: provider.binding,
@@ -192,6 +193,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
         runs=runs,
         tasks=tasks,
         project_state_dir=tmp_path / "sessions",
+        definitions=build_subagent_definitions(tmp_path),
         background_enabled=True,
     )
     notifications = BackgroundTaskNotificationSource(controller)
@@ -214,6 +216,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
                     "subagent-1",
                     "Subagent",
                     {
+                        "agent_type": "general",
                         "description": "background work",
                         "prompt": "finish later",
                         "background": True,

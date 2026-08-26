@@ -14,6 +14,7 @@ from my_code.context.engine import ContextEngine
 from my_code.context.session import ContextRuntime
 from my_code.model.capabilities import ActiveModelEnvironment
 from my_code.permissions.policy import PermissionPolicy
+from my_code.prompts.registry import PromptRegistry
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
 from my_code.sessions.session import Session
 from my_code.tools.catalog import ToolCatalog
@@ -30,6 +31,7 @@ class AgentRunSpec:
     run_id: str = field(default_factory=lambda: str(uuid4()))
     tool_catalog: ToolCatalog | None = None
     permission_policy: PermissionPolicy | None = None
+    prompt_registry: PromptRegistry | None = None
     max_steps: int | None = None
     max_tokens: int | None = None
     allow_permission_updates: bool = True

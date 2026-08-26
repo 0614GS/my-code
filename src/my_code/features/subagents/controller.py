@@ -12,16 +12,19 @@ from my_code.agent.models import (
     AgentTurnInput,
     AgentTurnSucceeded,
 )
-from my_code.application.runs import AgentRunFactory, AgentRunSpec
 from my_code.features.subagents.models import (
     BackgroundSubagent,
     CompletedSubagent,
     StartedSubagent,
+    SubagentDefinition,
     SubagentLimits,
     SubagentParentContext,
     SubagentSpec,
+    SubagentType,
 )
+from my_code.features.subagents.read_only import ReadOnlyToolProxy
 from my_code.permissions.policy import PermissionPolicy
+from my_code.runtime.runs import AgentRunFactory, AgentRunSpec
 from my_code.sessions.session import Session
 from my_code.tasks.models import TaskStatus
 from my_code.tasks.supervisor import TaskHandle, TaskSupervisor
@@ -38,16 +41,20 @@ class SubagentController:
         runs: AgentRunFactory,
         tasks: TaskSupervisor,
         project_state_dir: Path,
+        definitions: Mapping[SubagentType, SubagentDefinition],
         limits: SubagentLimits | None = None,
         background_enabled: bool = False,
     ) -> None:
         self.runs = runs
         self.tasks = tasks
         self.project_state_dir = project_state_dir
+        self.definitions = definitions
+        if set(definitions) != set(SubagentType):
+            raise ValueError("Subagent definitions must contain explore and general")
         self.limits = limits or SubagentLimits()
         self.background_enabled = background_enabled
         self._active_by_parent: dict[str, set[str]] = {}
-        self._background: dict[str, tuple[str, str, str]] = {}
+        self._background: dict[str, tuple[str, str, str, SubagentType]] = {}
         self._delivered_by_owner: dict[str, set[str]] = {}
 
     async def start(
@@ -78,6 +85,7 @@ class SubagentController:
         task_id = str(uuid4())
         active.add(task_id)
         child_policy = PermissionPolicy(parent_policy.mode, parent_policy.rules)
+        definition = self.definitions[spec.agent_type]
         child_parent = SubagentParentContext(
             run_id,
             child_depth,
@@ -99,6 +107,7 @@ class SubagentController:
                 run_id=run_id,
                 tool_catalog=child_catalog,
                 permission_policy=child_policy,
+                prompt_registry=definition.system_prompt,
                 max_steps=self.limits.max_steps,
                 max_tokens=self.limits.max_tokens,
                 allow_permission_updates=False,
@@ -135,8 +144,9 @@ class SubagentController:
                 parent.owner_run_id,
                 run_id,
                 spec.description,
+                spec.agent_type,
             )
-        return StartedSubagent(task_id, run_id), handle
+        return StartedSubagent(task_id, run_id, spec.agent_type), handle
 
     async def run_foreground(
         self,
@@ -169,15 +179,22 @@ class SubagentController:
         )
         if snapshot.status is TaskStatus.SUCCEEDED and outcome is None:
             raise RuntimeError("Subagent task returned an invalid outcome")
-        return CompletedSubagent(snapshot, started.run_id, outcome)
+        return CompletedSubagent(snapshot, started.run_id, outcome, started.agent_type)
 
     def active_children(self, parent_run_id: str) -> int:
         return len(self._active_tasks(parent_run_id))
 
     def background_tasks(self, owner_run_id: str) -> tuple[BackgroundSubagent, ...]:
         return tuple(
-            BackgroundSubagent(self.tasks.snapshot(task_id), run_id, description)
-            for task_id, (owner, run_id, description) in self._background.items()
+            BackgroundSubagent(
+                self.tasks.snapshot(task_id), run_id, description, agent_type
+            )
+            for task_id, (
+                owner,
+                run_id,
+                description,
+                agent_type,
+            ) in self._background.items()
             if owner == owner_run_id
         )
 
@@ -187,7 +204,7 @@ class SubagentController:
         task_id: str,
     ) -> BackgroundSubagent:
         try:
-            owner, run_id, description = self._background[task_id]
+            owner, run_id, description, agent_type = self._background[task_id]
         except KeyError as error:
             raise ToolExecutionError(f"Unknown background task: {task_id}") from error
         if owner != owner_run_id:
@@ -196,6 +213,7 @@ class SubagentController:
             self.tasks.snapshot(task_id),
             run_id,
             description,
+            agent_type,
         )
 
     async def cancel_background(
@@ -244,16 +262,14 @@ class SubagentController:
         parent: SubagentParentContext,
         policy: PermissionPolicy,
     ) -> ToolCatalog:
+        definition = self.definitions[spec.agent_type]
         names = (
             tuple(sorted(available_tools))
-            if spec.allowed_tools is None
-            else spec.allowed_tools
-        )
-        missing = tuple(name for name in names if name not in available_tools)
-        if missing:
-            raise ToolExecutionError(
-                "Subagent requested unavailable tools: " + ", ".join(missing)
+            if definition.tool_names is None
+            else tuple(
+                name for name in definition.tool_names if name in available_tools
             )
+        )
         if parent.depth >= self.limits.max_depth and "Subagent" in names:
             names = tuple(name for name in names if name != "Subagent")
 
@@ -277,7 +293,8 @@ class SubagentController:
                 }
                 tools.append(task_tool_types[name](self, parent=parent))
             else:
-                tools.append(available_tools[name])
+                tool = available_tools[name]
+                tools.append(ReadOnlyToolProxy(tool) if definition.read_only else tool)
         catalog = ToolCatalog()
         catalog.register_source(
             ToolSourceId("subagent", f"snapshot-{source_version}:{parent.run_id}"),

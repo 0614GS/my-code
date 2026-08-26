@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from my_code.application.state import ProviderRuntime
 from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.model.capabilities import fallback_descriptor, resolve_environment
@@ -24,6 +23,7 @@ from my_code.model.request import (
 )
 from my_code.providers.leases import ProviderLeaseRegistry
 from my_code.providers.router import ProviderConnection, ProviderRouter
+from my_code.runtime.state import ProviderRuntime
 
 
 class FakeProvider:

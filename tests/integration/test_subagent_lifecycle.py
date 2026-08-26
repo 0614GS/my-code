@@ -8,20 +8,17 @@ import pytest
 
 from my_code.agent.engine import AgentEngine
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
-from my_code.application.runs import (
-    AgentRunComponents,
-    AgentRunFactory,
-    AgentRunSpec,
-)
 from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
+from my_code.context.user_context import AgentsUserContextResolver
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import HumanMessage, ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
+from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import SubagentParentContext
 from my_code.features.subagents.tool import SubagentTool
 from my_code.model.capabilities import (
@@ -49,6 +46,11 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
 from my_code.providers.router import ProviderConnection
+from my_code.runtime.runs import (
+    AgentRunComponents,
+    AgentRunFactory,
+    AgentRunSpec,
+)
 from my_code.sessions.session import Session
 from my_code.tasks.models import TaskStatus
 from my_code.tasks.supervisor import TaskSupervisor
@@ -90,6 +92,10 @@ def prompt_registry() -> PromptRegistry:
 async def test_foreground_subagent_uses_child_session_and_returns_one_result(
     tmp_path: Path,
 ) -> None:
+    (tmp_path / "AGENTS.md").write_text(
+        "child-only repository instructions",
+        encoding="utf-8",
+    )
     child_model = ScriptedModel([output(ModelTextBlock("child answer"))])
     connection = ProviderConnection(
         id="test",
@@ -126,8 +132,9 @@ async def test_foreground_subagent_uses_child_session_and_returns_one_result(
         context = ContextEngine(
             ContextPlanner(
                 window=ContextWindow(10_000),
-                prompt=prompt_registry(),
+                prompt=spec.prompt_registry or prompt_registry(),
                 max_output_tokens=100,
+                user_context_resolver=AgentsUserContextResolver(tmp_path),
                 binding_resolver=lambda: provider.binding,
                 model_environment=lambda: run_environment,
             ),
@@ -151,6 +158,7 @@ async def test_foreground_subagent_uses_child_session_and_returns_one_result(
         runs=runs,
         tasks=tasks,
         project_state_dir=tmp_path / "sessions",
+        definitions=build_subagent_definitions(tmp_path),
     )
     catalog = ToolCatalog()
     catalog.register_source(
@@ -170,6 +178,7 @@ async def test_foreground_subagent_uses_child_session_and_returns_one_result(
                     "subagent-1",
                     "Subagent",
                     {
+                        "agent_type": "general",
                         "description": "answer child",
                         "prompt": "answer independently",
                     },
@@ -229,6 +238,9 @@ async def test_foreground_subagent_uses_child_session_and_returns_one_result(
     assert isinstance(child_history[0], HumanMessage)
     assert child_history[0].content == "answer independently"
     assert "delegate this" not in str(child_history)
+    child_request = child_model.requests[0]
+    assert "isolated coding agent" in child_request.system_prompt.text
+    assert "child-only repository instructions" in str(child_request.input)
     assert tasks.snapshots()[0].status is TaskStatus.SUCCEEDED
     assert runs.active_count == 0
     assert leases.active_count == 0

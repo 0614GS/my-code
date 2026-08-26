@@ -19,7 +19,7 @@ from my_code.permissions.models import PermissionDecision
 | `foundation` | 无业务所有者的 JSON 值类型与严格规范化原语；不依赖任何项目内模块 |
 | `model` | provider-neutral 请求、响应、事件、usage 和能力 |
 | `conversation` | canonical entry/value 类型与事实不变量 |
-| `application` | AppState、活动 Session、ProviderRuntime、ToolState、AgentRunFactory 与 runtime operation lock |
+| `runtime` | AppState、活动 Session、ProviderRuntime、ToolState、AgentRunFactory 与 runtime operation lock |
 | `workspace` | 工作区路径与文件系统安全原语 |
 | `permissions` | 规则、决策、确认和 policy |
 | `prompts` | System prompt sections 与 registry |
@@ -51,7 +51,7 @@ context / tools / sessions / providers / tasks
         ↓
 agent / mcp / skills
         ↓
-application / features
+runtime / features
         ↓
 chat
         ↓
@@ -72,7 +72,7 @@ bootstrap
 - AgentRunFactory 创建独立 Session/Agent/provider lease 胶囊，并由 AppState 统一关闭。
 - McpRuntime 持有唯一 MCP connection registry；每个 server 只通过独立 ToolCatalog source 发布工具，wire 类型不离开 `mcp`。
 - SkillRuntime/SkillCatalog 持有唯一 Skill index 与诊断；文件和规范化 MCP 数据来源使用同一模型，Skill 目录永远不作为 Python/plugin 导入。
-- `features.subagents` 只组合 AgentRunFactory、TaskSupervisor、child-local ToolCatalog 和复制后只能收窄的 PermissionPolicy，不构造 provider adapter。
+- `features.subagents` 只组合 AgentRunFactory、TaskSupervisor、固定角色 prompt、child-local ToolCatalog 和复制后只能收窄的 PermissionPolicy，不构造 provider adapter。Explore 的通用只读代理仍委托具体 Tool 的 `is_read_only()`，不会复制 Bash 语义。
 - Session 是 canonical conversation（含 AttachmentMessage）、派生 context entries、工具结果与 replay sidecar 的唯一所有者；prompt/user-context cache 属于配对的 ContextRuntime。
 - AgentEngine、ContextEngine、ToolExecutor 和 Provider adapter 不持有 AppState 或第二份 conversation。
 - ChatService 只协调 AppState operation，不复制其状态字段。

@@ -6,11 +6,6 @@ from pathlib import Path
 import pytest
 
 from my_code.agent.engine import AgentEngine
-from my_code.application.runs import (
-    AgentRunComponents,
-    AgentRunFactory,
-    AgentRunSpec,
-)
 from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.context.compaction import ContextCompactor
@@ -19,7 +14,12 @@ from my_code.context.planner import ContextPlanner
 from my_code.context.window import ContextWindow
 from my_code.conversation.models import ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
-from my_code.features.subagents.models import SubagentParentContext, SubagentSpec
+from my_code.features.subagents.definitions import build_subagent_definitions
+from my_code.features.subagents.models import (
+    SubagentParentContext,
+    SubagentSpec,
+    SubagentType,
+)
 from my_code.foundation.json import JsonObject
 from my_code.model.capabilities import (
     ActiveModelEnvironment,
@@ -55,12 +55,16 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
 from my_code.providers.router import ProviderConnection
+from my_code.runtime.runs import (
+    AgentRunComponents,
+    AgentRunFactory,
+    AgentRunSpec,
+)
 from my_code.sessions.session import Session
 from my_code.tasks.supervisor import TaskSupervisor
 from my_code.tools.base import (
     Tool,
     ToolContext,
-    ToolExecutionError,
     ToolOutput,
 )
 from my_code.tools.builtin.write_file import WriteFileTool
@@ -171,7 +175,8 @@ def build_controller(
         context = ContextEngine(
             ContextPlanner(
                 window=ContextWindow(10_000),
-                prompt=PromptRegistry(
+                prompt=spec.prompt_registry
+                or PromptRegistry(
                     (
                         PromptSection(
                             "core",
@@ -205,6 +210,7 @@ def build_controller(
             runs=runs,
             tasks=tasks,
             project_state_dir=tmp_path / "sessions",
+            definitions=build_subagent_definitions(tmp_path),
         ),
         tasks,
         runs,
@@ -242,7 +248,7 @@ async def test_child_cannot_promote_parent_ask_or_deny(
     )
 
     completed = await controller.run_foreground(
-        SubagentSpec("try probe", "permission test", ("Probe",)),
+        SubagentSpec(SubagentType.GENERAL, "try probe", "permission test"),
         parent=SubagentParentContext("11111111-1111-1111-1111-111111111111"),
         parent_policy=parent_policy,
         available_tools={"Probe": probe},
@@ -261,22 +267,25 @@ async def test_child_cannot_promote_parent_ask_or_deny(
 
 
 @pytest.mark.asyncio
-async def test_child_rejects_tools_outside_spawn_snapshot(tmp_path: Path) -> None:
+async def test_explore_intersects_fixed_tools_with_spawn_snapshot(
+    tmp_path: Path,
+) -> None:
     provider = ScriptedProvider([output(ModelTextBlock("unused"))])
     controller, tasks, runs, leases = build_controller(tmp_path, provider)
     probe = ProbeTool()
 
-    with pytest.raises(ToolExecutionError, match="unavailable tools: Missing"):
-        await controller.start(
-            SubagentSpec("try missing", "allowlist test", ("Missing",)),
-            parent=SubagentParentContext("11111111-1111-1111-1111-111111111111"),
-            parent_policy=PermissionPolicy(PermissionMode.BYPASS),
-            available_tools={"Probe": probe},
-            tool_snapshot_version=4,
-        )
+    started, handle = await controller.start(
+        SubagentSpec(SubagentType.EXPLORE, "inspect", "intersection test"),
+        parent=SubagentParentContext("11111111-1111-1111-1111-111111111111"),
+        parent_policy=PermissionPolicy(PermissionMode.BYPASS),
+        available_tools={"Probe": probe},
+        tool_snapshot_version=4,
+    )
+    snapshot = await handle.wait()
 
-    assert tasks.snapshots() == ()
-    assert controller.active_children("11111111-1111-1111-1111-111111111111") == 0
+    assert snapshot.status.value == "succeeded"
+    assert started.agent_type is SubagentType.EXPLORE
+    assert provider.requests[0].tools == ()
     await close_runtime(tasks, runs, leases)
 
 
@@ -299,7 +308,7 @@ async def test_child_cannot_escape_parent_workspace_in_bypass_mode(
     controller, tasks, runs, leases = build_controller(tmp_path, provider)
 
     completed = await controller.run_foreground(
-        SubagentSpec("try escape", "workspace test", ("Write",)),
+        SubagentSpec(SubagentType.GENERAL, "try escape", "workspace test"),
         parent=SubagentParentContext("11111111-1111-1111-1111-111111111111"),
         parent_policy=PermissionPolicy(PermissionMode.BYPASS),
         available_tools={"Write": WriteFileTool()},

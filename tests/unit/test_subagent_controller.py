@@ -8,13 +8,14 @@ from typing import cast
 import pytest
 
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
-from my_code.application.runs import AgentRun, AgentRunFactory, AgentRunSpec
 from my_code.conversation.models import ToolCall
 from my_code.features.subagents.controller import SubagentController
+from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import (
     SubagentLimits,
     SubagentParentContext,
     SubagentSpec,
+    SubagentType,
 )
 from my_code.features.subagents.task_tools import (
     TaskCancelTool,
@@ -26,9 +27,11 @@ from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
+from my_code.runtime.runs import AgentRun, AgentRunFactory, AgentRunSpec
 from my_code.tasks.models import TaskStatus
 from my_code.tasks.supervisor import TaskSupervisor
 from my_code.tools.base import ToolExecutionError
+from my_code.tools.builtin import builtin_tools
 from my_code.tools.catalog import ToolCatalog, ToolSourceId
 from my_code.tools.executor import ToolExecutor
 from my_code.workspace.local import Workspace
@@ -92,6 +95,7 @@ def build_controller(
         runs=cast(AgentRunFactory, factory),
         tasks=tasks,
         project_state_dir=tmp_path / "sessions",
+        definitions=build_subagent_definitions(tmp_path),
         limits=limits,
         background_enabled=background_enabled,
     )
@@ -105,6 +109,107 @@ def parent(depth: int = 0) -> SubagentParentContext:
     )
 
 
+def test_subagent_schema_requires_fixed_type_and_rejects_tools(tmp_path: Path) -> None:
+    controller, _, _ = build_controller(tmp_path)
+    tool = SubagentTool(
+        controller,
+        parent=parent(),
+        policy=PermissionPolicy(PermissionMode.BYPASS),
+    )
+
+    assert tool.definition.input_schema["required"] == [
+        "agent_type",
+        "description",
+        "prompt",
+    ]
+    properties = tool.definition.input_schema["properties"]
+    assert isinstance(properties, dict)
+    agent_type_schema = properties["agent_type"]
+    assert isinstance(agent_type_schema, dict)
+    assert agent_type_schema["enum"] == ["explore", "general"]
+    assert "tools" not in properties
+    with pytest.raises(ValueError, match="agent_type"):
+        tool.validate_input({"description": "x", "prompt": "y"})
+    with pytest.raises(ValueError, match="unexpected.*tools"):
+        tool.validate_input(
+            {
+                "agent_type": "general",
+                "description": "x",
+                "prompt": "y",
+                "tools": ["Read"],
+            }
+        )
+
+
+def test_fixed_role_catalogs_narrow_and_rebind_parent_snapshot(tmp_path: Path) -> None:
+    limits = SubagentLimits(max_depth=2)
+    controller, _, _ = build_controller(tmp_path, limits=limits)
+    policy = PermissionPolicy(PermissionMode.BYPASS)
+    parent_context = parent(depth=1)
+    feature_tools = (
+        SubagentTool(controller, parent=parent(), policy=policy),
+        TaskListTool(controller, parent=parent()),
+        TaskOutputTool(controller, parent=parent()),
+        TaskCancelTool(controller, parent=parent()),
+    )
+    available = {
+        tool.definition.name: tool for tool in (*builtin_tools(), *feature_tools)
+    }
+
+    explore = controller._child_catalog(
+        SubagentSpec(SubagentType.EXPLORE, "inspect", "explore"),
+        available_tools=available,
+        source_version=7,
+        parent=parent_context,
+        policy=policy,
+    ).snapshot()
+    assert [tool.definition.name for tool in explore.tools] == [
+        "Bash",
+        "Glob",
+        "Grep",
+        "Read",
+    ]
+    assert all(type(tool).__name__ == "ReadOnlyToolProxy" for tool in explore.tools)
+
+    general = controller._child_catalog(
+        SubagentSpec(SubagentType.GENERAL, "work", "general"),
+        available_tools=available,
+        source_version=7,
+        parent=parent_context,
+        policy=policy,
+    ).snapshot()
+    general_names = {tool.definition.name for tool in general.tools}
+    assert general_names == set(available)
+    rebound_subagent = general.get("Subagent")
+    assert isinstance(rebound_subagent, SubagentTool)
+    assert rebound_subagent.parent is parent_context
+    assert isinstance(general.get("TaskList"), TaskListTool)
+
+    at_max_depth = controller._child_catalog(
+        SubagentSpec(SubagentType.GENERAL, "work", "max depth"),
+        available_tools=available,
+        source_version=7,
+        parent=parent(depth=2),
+        policy=policy,
+    ).snapshot()
+    assert at_max_depth.get("Subagent") is None
+
+
+def test_role_prompts_are_distinct_and_run_spec_captures_profile(
+    tmp_path: Path,
+) -> None:
+    definitions = build_subagent_definitions(tmp_path)
+    explore = definitions[SubagentType.EXPLORE].system_prompt.resolve()
+    general = definitions[SubagentType.GENERAL].system_prompt.resolve()
+
+    explore_text = "\n".join(section.content for section in explore.sections)
+    general_text = "\n".join(section.content for section in general.sections)
+    assert "read-only repository researcher" in explore_text
+    assert "isolated coding agent" in general_text
+    assert str(tmp_path.resolve()) in explore_text
+    assert str(tmp_path.resolve()) in general_text
+
+
 @pytest.mark.asyncio
 async def test_foreground_wait_cancellation_cancels_and_closes_child(
     tmp_path: Path,
@@ -112,7 +217,7 @@ async def test_foreground_wait_cancellation_cancels_and_closes_child(
     controller, factory, tasks = build_controller(tmp_path)
     foreground = asyncio.create_task(
         controller.run_foreground(
-            SubagentSpec("work", "cancel test"),
+            SubagentSpec(SubagentType.GENERAL, "work", "cancel test"),
             parent=parent(),
             parent_policy=PermissionPolicy(PermissionMode.BYPASS),
             available_tools={},
@@ -142,7 +247,7 @@ async def test_subagent_timeout_is_a_closed_cancelled_terminal(
     )
 
     completed = await controller.run_foreground(
-        SubagentSpec("work", "timeout test"),
+        SubagentSpec(SubagentType.GENERAL, "work", "timeout test"),
         parent=parent(),
         parent_policy=PermissionPolicy(PermissionMode.BYPASS),
         available_tools={},
@@ -166,7 +271,7 @@ async def test_active_child_and_depth_limits_are_enforced_before_spawn(
         limits=SubagentLimits(max_depth=1, max_active_children=1),
     )
     started, handle = await controller.start(
-        SubagentSpec("work", "first"),
+        SubagentSpec(SubagentType.GENERAL, "work", "first"),
         parent=parent(),
         parent_policy=PermissionPolicy(PermissionMode.BYPASS),
         available_tools={},
@@ -176,7 +281,7 @@ async def test_active_child_and_depth_limits_are_enforced_before_spawn(
 
     with pytest.raises(ToolExecutionError, match="active child limit"):
         await controller.start(
-            SubagentSpec("work", "second"),
+            SubagentSpec(SubagentType.GENERAL, "work", "second"),
             parent=parent(),
             parent_policy=PermissionPolicy(PermissionMode.BYPASS),
             available_tools={},
@@ -184,7 +289,7 @@ async def test_active_child_and_depth_limits_are_enforced_before_spawn(
         )
     with pytest.raises(ToolExecutionError, match="nesting depth"):
         await controller.start(
-            SubagentSpec("work", "nested"),
+            SubagentSpec(SubagentType.GENERAL, "work", "nested"),
             parent=parent(depth=1),
             parent_policy=PermissionPolicy(PermissionMode.BYPASS),
             available_tools={},
@@ -205,7 +310,7 @@ async def test_child_run_spec_captures_step_budget_and_disables_permission_updat
     limits = SubagentLimits(max_steps=7, max_tokens=900)
     controller, factory, tasks = build_controller(tmp_path, limits=limits)
     started, handle = await controller.start(
-        SubagentSpec("explicit prompt", "budget test"),
+        SubagentSpec(SubagentType.GENERAL, "explicit prompt", "budget test"),
         parent=parent(),
         parent_policy=PermissionPolicy(PermissionMode.DEFAULT),
         available_tools={},
@@ -219,6 +324,8 @@ async def test_child_run_spec_captures_step_budget_and_disables_permission_updat
     assert spec.max_steps == 7
     assert spec.max_tokens == 900
     assert spec.allow_permission_updates is False
+    assert spec.prompt_registry is not None
+    assert "isolated coding agent" in spec.prompt_registry.resolve().text
     assert spec.permission_policy is not None
     assert spec.permission_policy is not PermissionPolicy(PermissionMode.DEFAULT)
     assert spec.permission_policy.mode is PermissionMode.DEFAULT
@@ -240,6 +347,7 @@ async def test_child_failure_closes_parent_tool_result_and_run(tmp_path: Path) -
         runs=cast(AgentRunFactory, factory),
         tasks=tasks,
         project_state_dir=tmp_path / "sessions",
+        definitions=build_subagent_definitions(tmp_path),
     )
     policy = PermissionPolicy(PermissionMode.BYPASS)
     catalog = ToolCatalog()
@@ -258,7 +366,11 @@ async def test_child_failure_closes_parent_tool_result_and_run(tmp_path: Path) -
         ToolCall(
             "subagent-1",
             "Subagent",
-            {"description": "failure", "prompt": "fail now"},
+            {
+                "agent_type": "general",
+                "description": "failure",
+                "prompt": "fail now",
+            },
         ),
         tools=catalog.snapshot(),
     )
@@ -282,7 +394,7 @@ async def test_background_task_tools_are_owner_scoped_and_cancel_child(
     )
     owner = parent()
     started, _ = await controller.start(
-        SubagentSpec("work", "background tools"),
+        SubagentSpec(SubagentType.GENERAL, "work", "background tools"),
         parent=owner,
         parent_policy=PermissionPolicy(PermissionMode.BYPASS),
         available_tools={},
@@ -351,7 +463,7 @@ async def test_cancelling_parent_task_cancels_background_child_tree(
 
     async def run_parent() -> object:
         await controller.start(
-            SubagentSpec("work", "tree child"),
+            SubagentSpec(SubagentType.GENERAL, "work", "tree child"),
             parent=SubagentParentContext(
                 parent().run_id,
                 task_id=root_task_id,
