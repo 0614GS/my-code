@@ -37,6 +37,8 @@ from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.user_context import AgentsUserContextResolver
 from my_code.context.window import ContextWindow
+from my_code.features.background_tasks.bash import BashBackgroundController
+from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.file_mentions.loader import AttachmentLoader
 from my_code.features.file_mentions.reader import WorkspaceAttachmentReader
 from my_code.features.file_mentions.suggestions import WorkspacePathSuggester
@@ -47,9 +49,9 @@ from my_code.features.subagents.notifications import BackgroundTaskNotificationS
 from my_code.features.subagents.task_tools import (
     TaskCancelTool,
     TaskListTool,
-    TaskOutputTool,
 )
 from my_code.features.subagents.tool import SubagentTool
+from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.features.todos.reminder import TodoReminderAttachmentSource
 from my_code.features.todos.tool import TodoWriteTool
 from my_code.mcp.models import McpServerScope, McpServerSpec
@@ -127,6 +129,8 @@ class ApplicationAssembly:
     mcp: McpRuntime
     skills: SkillRuntime
     session: Session
+    background_notifications: BackgroundTaskNotificationSource | None = None
+    background_wake_signal: BackgroundTaskWakeSignal | None = None
 
 
 async def discover_active_model(
@@ -216,6 +220,7 @@ def _build_agent_components(
             if allow_permission_updates
             else lambda _: None
         ),
+        internal_read_root=settings.paths.runtime_temp_root,
     )
     planner = ContextPlanner(
         window=ContextWindow(settings.context_chars),
@@ -285,8 +290,33 @@ def _assemble_agent(
             compact_trigger_tokens=model_environment.compact_trigger_tokens,
         ),
     )
+    effective_background_enabled = (
+        settings.interactive and settings.background_tasks_enabled
+    )
+    tasks = TaskSupervisor()
+    background_wake_signal = (
+        BackgroundTaskWakeSignal() if effective_background_enabled else None
+    )
+    background_registry = BackgroundTaskRegistry(tasks, background_wake_signal)
+    bash_background = BashBackgroundController(
+        tasks,
+        background_registry,
+        settings.paths.task_output_dir(actual_session_id),
+        actual_session_id,
+    )
+    background_notifications = (
+        BackgroundTaskNotificationSource(background_registry)
+        if effective_background_enabled
+        else None
+    )
     tool_catalog = ToolCatalog()
-    tool_catalog.register_source(ToolSourceId("builtin", "core"), builtin_tools())
+    tool_catalog.register_source(
+        ToolSourceId("builtin", "core"),
+        builtin_tools(
+            bash_background=(bash_background if effective_background_enabled else None),
+            background_enabled=effective_background_enabled,
+        ),
+    )
     tool_catalog.register_source(ToolSourceId("feature", "todos"), (TodoWriteTool(),))
     mcp = McpRuntime(
         enabled=settings.mcp_enabled,
@@ -363,7 +393,6 @@ def _assemble_agent(
         provider_leases,
         model_environment,
     )
-    background_notifications: BackgroundTaskNotificationSource | None = None
 
     def extra_attachment_sources() -> tuple[DerivedAttachmentSource, ...]:
         if background_notifications is None:
@@ -401,7 +430,6 @@ def _assemble_agent(
         provider_runtime.environment,
         build_run,
     )
-    tasks = TaskSupervisor()
     if settings.subagents_enabled:
         subagents = SubagentController(
             runs=run_factory,
@@ -415,10 +443,10 @@ def _assemble_agent(
                 max_tokens=settings.subagent_max_tokens,
                 timeout_seconds=settings.subagent_timeout_seconds,
             ),
-            background_enabled=settings.background_tasks_enabled,
+            background_enabled=effective_background_enabled,
+            wake_signal=background_wake_signal,
+            background_registry=background_registry,
         )
-        if settings.background_tasks_enabled:
-            background_notifications = BackgroundTaskNotificationSource(subagents)
         parent = SubagentParentContext(actual_session_id)
         feature_tools: list[Tool] = [
             SubagentTool(
@@ -427,17 +455,25 @@ def _assemble_agent(
                 policy=permission_policy,
             )
         ]
-        if settings.background_tasks_enabled:
+        if effective_background_enabled:
             feature_tools.extend(
                 (
-                    TaskListTool(subagents, parent=parent),
-                    TaskOutputTool(subagents, parent=parent),
-                    TaskCancelTool(subagents, parent=parent),
+                    TaskListTool(background_registry, parent=parent),
+                    TaskCancelTool(background_registry, parent=parent),
                 )
             )
         tool_catalog.register_source(
             ToolSourceId("feature", "subagents"),
             feature_tools,
+        )
+    elif effective_background_enabled:
+        parent = SubagentParentContext(actual_session_id)
+        tool_catalog.register_source(
+            ToolSourceId("feature", "background-tasks"),
+            (
+                TaskListTool(background_registry, parent=parent),
+                TaskCancelTool(background_registry, parent=parent),
+            ),
         )
     initial_tools = tool_catalog.snapshot()
     components = _build_agent_components(
@@ -469,6 +505,8 @@ def _assemble_agent(
         mcp=mcp,
         skills=skills,
         session=session,
+        background_notifications=background_notifications,
+        background_wake_signal=background_wake_signal,
     )
 
 
@@ -502,6 +540,8 @@ def bootstrap_chat(
             WorkspaceAttachmentReader(settings.cwd, assembled.permissions)
         ),
         path_suggester=WorkspacePathSuggester(settings.cwd),
+        background_notifications=assembled.background_notifications,
+        background_wake_signal=assembled.background_wake_signal,
     )
 
 

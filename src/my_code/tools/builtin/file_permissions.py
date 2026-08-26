@@ -20,6 +20,7 @@ from my_code.permissions.path_rules import matching_path_rule
 from my_code.tools.base import ToolInputError
 from my_code.tools.paths import (
     is_sensitive_write_path,
+    resolve_read_path,
     resolve_workspace_path,
 )
 
@@ -32,7 +33,9 @@ def check_read_permission(
     path_key: str = "path",
     must_exist: bool = True,
 ) -> ToolPermissionResult:
-    prepared = _prepare_path_input(tool_input, context, path_key, must_exist=must_exist)
+    prepared = _prepare_read_path_input(
+        tool_input, context, path_key, must_exist=must_exist
+    )
     if isinstance(prepared, ToolPermissionResult):
         return prepared
     updated_input, path, rule_path = prepared
@@ -59,6 +62,42 @@ def check_read_permission(
         message="Workspace read is allowed.",
         reason=_tool_reason("workspace-read"),
     )
+
+
+def _prepare_read_path_input(
+    tool_input: JsonObject,
+    context: ToolPermissionContext,
+    path_key: str,
+    *,
+    must_exist: bool,
+) -> tuple[JsonObject, Path, str] | ToolPermissionResult:
+    raw_path = tool_input.get(path_key, ".")
+    if not isinstance(raw_path, str) or not raw_path:
+        return ToolPermissionResult.deny(
+            message=f"Invalid {path_key} input.", reason=_tool_reason("invalid-path")
+        )
+    try:
+        path, internal = resolve_read_path(
+            context.workspace_root,
+            raw_path,
+            internal_root=context.internal_read_root,
+            must_exist=must_exist,
+        )
+    except (ToolInputError, OSError) as error:
+        return ToolPermissionResult.deny(
+            message=str(error),
+            reason=PermissionDecisionReason(
+                PermissionDecisionKind.SAFETY, "workspace-boundary"
+            ),
+        )
+    rule_path = (
+        str(path)
+        if internal
+        else path.relative_to(context.workspace_root.resolve()).as_posix() or "."
+    )
+    updated_input = dict(tool_input)
+    updated_input[path_key] = rule_path
+    return updated_input, path, rule_path
 
 
 def check_write_permission(

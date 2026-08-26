@@ -8,6 +8,8 @@ from rich.console import Console
 from textual.widgets import Input, OptionList
 
 from my_code.chat.events import (
+    BackgroundInvocationFinished,
+    BackgroundInvocationStarted,
     MaxStepsReached,
     ReasoningCompleted,
     ReasoningDelta,
@@ -207,6 +209,24 @@ class InterruptedReasoningRuntime(FakeRuntime):
         raise RuntimeError("provider failed")
 
 
+class BackgroundRuntime(FakeRuntime):
+    def __init__(self, *, error: str | None = None) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.error = error
+
+    async def stream_background_notifications(self) -> AsyncIterator[TurnEvent]:
+        yield BackgroundInvocationStarted()
+        self.entered.set()
+        await self.release.wait()
+        if self.error is None:
+            yield TextStarted()
+            yield TextDelta("background response")
+            yield TextCompleted("background response")
+        yield BackgroundInvocationFinished(self.error)
+
+
 def test_slash_registry_filters_candidates_by_prefix() -> None:
     matches = SlashCommandRegistry.default().matching("/st")
 
@@ -323,6 +343,45 @@ def test_context_usage_uses_estimated_input_over_effective_input_max() -> None:
         "Compact at: 180k (auto)",
         "Compactions: 1 micro · 0 full",
     ]
+
+
+@pytest.mark.asyncio
+async def test_background_invocation_owns_busy_ui_and_restores_input() -> None:
+    runtime = BackgroundRuntime()
+    app = _app(runtime)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await asyncio.wait_for(runtime.entered.wait(), 1)
+        await pilot.pause()
+        prompt = app.query_one("#prompt", Input)
+        assert prompt.disabled is True
+        assert app.query_one(ActivityBar).display is True
+
+        runtime.release.set()
+        await pilot.pause(0.1)
+
+        assert prompt.disabled is False
+        assert app.query_one(ActivityBar).display is False
+        assert [item.source for item in app.query(AssistantMessage)] == [
+            "background response"
+        ]
+        assert not app.query(UserMessage)
+
+
+@pytest.mark.asyncio
+async def test_background_invocation_error_is_rendered_and_ui_recovers() -> None:
+    runtime = BackgroundRuntime(error="provider failed")
+    app = _app(runtime)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await asyncio.wait_for(runtime.entered.wait(), 1)
+        runtime.release.set()
+        await pilot.pause(0.1)
+
+        prompt = app.query_one("#prompt", Input)
+        assert prompt.disabled is False
+        errors = [str(item.render()) for item in app.query(SystemMessage)]
+        assert errors == ["Background continuation failed: provider failed"]
 
 
 @pytest.mark.asyncio

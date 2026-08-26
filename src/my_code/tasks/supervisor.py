@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,6 +17,10 @@ from my_code.tasks.models import (
 )
 
 type TaskRunner = Callable[[], Awaitable[object]]
+type TerminalCallback = Callable[[TaskSnapshot], None]
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -31,6 +36,8 @@ class _TaskRecord:
     failure: TaskFailure | None = None
     task: asyncio.Task[None] | None = None
     cancel_reason: TaskFailure | None = None
+    on_terminal: TerminalCallback | None = None
+    terminal_notified: bool = False
 
 
 class TaskHandle:
@@ -70,6 +77,7 @@ class TaskSupervisor:
         parent_task_id: str | None = None,
         timeout_seconds: float | None = None,
         task_id: str | None = None,
+        on_terminal: TerminalCallback | None = None,
     ) -> TaskHandle:
         if not self._accepting:
             raise RuntimeError("Task supervisor is closed")
@@ -93,6 +101,7 @@ class TaskSupervisor:
             parent_task_id=parent_task_id,
             status=TaskStatus.PENDING,
             created_at=_now(),
+            on_terminal=on_terminal,
         )
         self._records[actual_task_id] = record
         self._emit(record)
@@ -271,7 +280,17 @@ class TaskSupervisor:
             raise KeyError(f"Unknown task: {task_id}") from error
 
     def _emit(self, record: _TaskRecord) -> None:
-        self._events.append(TaskEvent(len(self._events), _snapshot(record)))
+        snapshot = _snapshot(record)
+        self._events.append(TaskEvent(len(self._events), snapshot))
+        if not snapshot.status.terminal or record.terminal_notified:
+            return
+        record.terminal_notified = True
+        if record.on_terminal is None:
+            return
+        try:
+            record.on_terminal(snapshot)
+        except Exception:
+            logger.exception("Task terminal callback failed for %s", record.task_id)
 
 
 def _snapshot(record: _TaskRecord) -> TaskSnapshot:

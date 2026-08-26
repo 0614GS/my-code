@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+import tempfile
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -128,6 +129,20 @@ class MyCodePaths:
 
     def tool_results_dir(self, session_id: str) -> Path:
         return self.session_dir(session_id) / "tool-results"
+
+    @property
+    def runtime_temp_root(self) -> Path:
+        """Return the private, project-scoped root for ephemeral runtime files."""
+
+        uid = str(os.getuid()) if hasattr(os, "getuid") else str(os.getpid())
+        return (
+            Path(tempfile.gettempdir())
+            / f"my-code-{uid}"
+            / sanitize_path(str(self.cwd))
+        ).resolve(strict=False)
+
+    def task_output_dir(self, session_id: str) -> Path:
+        return self.runtime_temp_root / session_id / "tasks"
 
 
 def _canonical_path(path: Path) -> Path:

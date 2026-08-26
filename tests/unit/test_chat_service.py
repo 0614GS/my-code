@@ -11,6 +11,11 @@ from my_code.agent.events import AgentEvent
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
 from my_code.auth.credentials import CredentialSource
 from my_code.bootstrap import bootstrap_chat
+from my_code.chat.events import (
+    BackgroundInvocationFinished,
+    BackgroundInvocationStarted,
+    TurnSucceeded,
+)
 from my_code.chat.history import HistoryText, HistoryToolCall
 from my_code.chat.service import ChatService
 from my_code.config.paths import MyCodePaths
@@ -30,6 +35,7 @@ from my_code.conversation.models import (
 )
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.state import CompactBoundary
+from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
 from my_code.providers.manager import ProviderUpdate
@@ -88,6 +94,93 @@ def test_app_state_is_the_single_runtime_owner(tmp_path: Path) -> None:
     assert runtime.state.permissions.policy is runtime.tool_executor.policy
     assert runtime.state.tools.catalog.snapshot() == runtime.tool_executor.tools
     assert runtime.state.session.session_id == _CURRENT_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_background_watcher_runs_continuation_without_human_message(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.state.session.append_human_message(HumanMessage("original"))
+    signal = BackgroundTaskWakeSignal()
+
+    class PendingSource:
+        pending = True
+
+        def has_pending(self, owner_run_id: str) -> bool:
+            assert owner_run_id == _CURRENT_SESSION_ID
+            return self.pending
+
+    source = PendingSource()
+
+    class ContinuationAgent:
+        calls = 0
+
+        async def stream_continuation(
+            self, session: Session, context_runtime: ContextRuntime
+        ) -> AsyncIterator[AgentEvent]:
+            del context_runtime
+            self.calls += 1
+            source.pending = False
+            assert (
+                sum(isinstance(item, HumanMessage) for item in session.conversation)
+                == 1
+            )
+            yield AgentTurnSucceeded("handled", 1, TokenUsage(2, 1))
+
+    agent = ContinuationAgent()
+    runtime.agent = agent  # type: ignore[assignment]
+    runtime.background_notifications = source  # type: ignore[assignment]
+    runtime.background_wake_signal = signal
+    stream = runtime.stream_background_notifications()
+
+    events = [await anext(stream), await anext(stream), await anext(stream)]
+
+    assert isinstance(events[0], BackgroundInvocationStarted)
+    assert events[1] == TurnSucceeded("handled", 1, 2, 1)
+    assert events[2] == BackgroundInvocationFinished()
+    assert agent.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_background_continuation_waits_for_a_new_revision(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    signal = BackgroundTaskWakeSignal()
+
+    class PendingSource:
+        def has_pending(self, owner_run_id: str) -> bool:
+            del owner_run_id
+            return True
+
+    class FailingAgent:
+        async def stream_continuation(
+            self, session: Session, context_runtime: ContextRuntime
+        ) -> AsyncIterator[AgentEvent]:
+            del session, context_runtime
+            raise RuntimeError("provider unavailable")
+            yield  # pragma: no cover
+
+    runtime.agent = FailingAgent()  # type: ignore[assignment]
+    runtime.background_notifications = PendingSource()  # type: ignore[assignment]
+    runtime.background_wake_signal = signal
+    stream = runtime.stream_background_notifications()
+
+    assert isinstance(await anext(stream), BackgroundInvocationStarted)
+    finished = await anext(stream)
+    assert finished == BackgroundInvocationFinished("provider unavailable")
+
+    async def receive_next_event():
+        return await anext(stream)
+
+    next_event = asyncio.create_task(receive_next_event())
+    await asyncio.sleep(0)
+    assert not next_event.done()
+    signal.pulse()
+    assert isinstance(
+        await asyncio.wait_for(next_event, 1), BackgroundInvocationStarted
+    )
 
 
 @pytest.mark.asyncio
@@ -176,6 +269,28 @@ async def test_runtime_lists_and_atomically_switches_project_session(
         for message in runtime.state.session.context_entries
     )
     assert runtime.state.session.session_id == _TARGET_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_session_switch_pulses_background_watcher_without_delivery(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    signal = BackgroundTaskWakeSignal()
+    runtime.background_wake_signal = signal
+    store = SessionStore(
+        runtime.settings.paths.project_state_dir,
+        _TARGET_SESSION_ID,
+    )
+    store.append(HumanMessage(content="target"))
+
+    await runtime.resume_session(_TARGET_SESSION_ID)
+
+    assert signal.revision == 1
+    assert not any(
+        isinstance(message, AttachmentMessage)
+        for message in runtime.state.session.conversation
+    )
 
 
 @pytest.mark.asyncio

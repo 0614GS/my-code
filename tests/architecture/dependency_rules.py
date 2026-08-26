@@ -80,8 +80,10 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "skills",
             "tasks",
             "tools",
+            "features.background_tasks",
         }
     ),
+    "features.background_tasks": frozenset({"agent", "foundation", "tasks", "tools"}),
     "features.plan_mode": frozenset({"agent", "prompts", "tools"}),
     "chat": frozenset(
         {
@@ -125,6 +127,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "context",
             "conversation",
             "features.file_mentions",
+            "features.background_tasks",
             "features.plan_mode",
             "features.subagents",
             "features.todos",

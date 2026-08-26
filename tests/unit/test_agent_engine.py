@@ -244,6 +244,24 @@ async def test_engine_persists_human_and_assistant_messages(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_continuation_does_not_append_a_human_message(tmp_path: Path) -> None:
+    engine, _, session, _ = _engine(
+        tmp_path,
+        [ModelOutput((ModelTextBlock("continued"),), "end_turn")],
+    )
+    session.append_human_message(HumanMessage("original prompt"))
+
+    events = [
+        event
+        async for event in engine.engine.stream_continuation(session, engine.runtime)
+    ]
+
+    assert isinstance(events[-1], AgentTurnSucceeded)
+    assert sum(isinstance(item, HumanMessage) for item in session.conversation) == 1
+    assert isinstance(session.conversation[-1], AssistantMessage)
+
+
+@pytest.mark.asyncio
 async def test_event_attachment_is_anchored_before_first_call_and_survives_turns(
     tmp_path: Path,
 ) -> None:

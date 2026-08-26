@@ -12,6 +12,10 @@ from my_code.agent.models import (
     AgentTurnInput,
     AgentTurnSucceeded,
 )
+from my_code.features.background_tasks.registry import (
+    BackgroundTask,
+    BackgroundTaskRegistry,
+)
 from my_code.features.subagents.models import (
     BackgroundSubagent,
     CompletedSubagent,
@@ -23,6 +27,7 @@ from my_code.features.subagents.models import (
     SubagentType,
 )
 from my_code.features.subagents.read_only import ReadOnlyToolProxy
+from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.permissions.policy import PermissionPolicy
 from my_code.runtime.runs import AgentRunFactory, AgentRunSpec
 from my_code.sessions.session import Session
@@ -44,6 +49,8 @@ class SubagentController:
         definitions: Mapping[SubagentType, SubagentDefinition],
         limits: SubagentLimits | None = None,
         background_enabled: bool = False,
+        wake_signal: BackgroundTaskWakeSignal | None = None,
+        background_registry: BackgroundTaskRegistry | None = None,
     ) -> None:
         self.runs = runs
         self.tasks = tasks
@@ -53,9 +60,11 @@ class SubagentController:
             raise ValueError("Subagent definitions must contain explore and general")
         self.limits = limits or SubagentLimits()
         self.background_enabled = background_enabled
+        self.wake_signal = wake_signal
+        self.background_registry = background_registry or BackgroundTaskRegistry(
+            tasks, wake_signal
+        )
         self._active_by_parent: dict[str, set[str]] = {}
-        self._background: dict[str, tuple[str, str, str, SubagentType]] = {}
-        self._delivered_by_owner: dict[str, set[str]] = {}
 
     async def start(
         self,
@@ -128,6 +137,21 @@ class SubagentController:
                 finally:
                     self._release(parent.run_id, task_id)
 
+        if background:
+            self.background_registry.register(
+                BackgroundTask(
+                    task_id,
+                    parent.owner_run_id,
+                    "subagent",
+                    spec.description,
+                    {
+                        "run_id": run_id,
+                        "description": spec.description,
+                        "agent_type": spec.agent_type.value,
+                    },
+                )
+            )
+        on_terminal = self.background_registry.terminal if background else None
         try:
             handle = await self.tasks.submit(
                 execute,
@@ -135,17 +159,12 @@ class SubagentController:
                 parent_task_id=parent.task_id,
                 timeout_seconds=self.limits.timeout_seconds,
                 task_id=task_id,
+                on_terminal=on_terminal,
             )
         except BaseException:
+            self.background_registry.unregister(task_id)
             self._release(parent.run_id, task_id)
             raise
-        if background:
-            self._background[task_id] = (
-                parent.owner_run_id,
-                run_id,
-                spec.description,
-                spec.agent_type,
-            )
         return StartedSubagent(task_id, run_id, spec.agent_type), handle
 
     async def run_foreground(
@@ -187,15 +206,13 @@ class SubagentController:
     def background_tasks(self, owner_run_id: str) -> tuple[BackgroundSubagent, ...]:
         return tuple(
             BackgroundSubagent(
-                self.tasks.snapshot(task_id), run_id, description, agent_type
+                self.tasks.snapshot(item.task_id),
+                str(item.details["run_id"]),
+                str(item.details["description"]),
+                SubagentType(str(item.details["agent_type"])),
             )
-            for task_id, (
-                owner,
-                run_id,
-                description,
-                agent_type,
-            ) in self._background.items()
-            if owner == owner_run_id
+            for item in self.background_registry.tasks_for(owner_run_id)
+            if item.task_type == "subagent"
         )
 
     def background_task(
@@ -203,17 +220,14 @@ class SubagentController:
         owner_run_id: str,
         task_id: str,
     ) -> BackgroundSubagent:
-        try:
-            owner, run_id, description, agent_type = self._background[task_id]
-        except KeyError as error:
-            raise ToolExecutionError(f"Unknown background task: {task_id}") from error
-        if owner != owner_run_id:
+        item = self.background_registry.get(owner_run_id, task_id)
+        if item.task_type != "subagent":
             raise ToolExecutionError(f"Unknown background task: {task_id}")
         return BackgroundSubagent(
             self.tasks.snapshot(task_id),
-            run_id,
-            description,
-            agent_type,
+            str(item.details["run_id"]),
+            str(item.details["description"]),
+            SubagentType(str(item.details["agent_type"])),
         )
 
     async def cancel_background(
@@ -233,11 +247,10 @@ class SubagentController:
         self,
         owner_run_id: str,
     ) -> tuple[BackgroundSubagent, ...]:
-        delivered = self._delivered_by_owner.get(owner_run_id, set())
         return tuple(
-            item
-            for item in self.background_tasks(owner_run_id)
-            if item.task.status.terminal and item.task.task_id not in delivered
+            self.background_task(owner_run_id, item.task_id)
+            for item in self.background_registry.pending(owner_run_id)
+            if item.task_type == "subagent"
         )
 
     def acknowledge_notifications(
@@ -245,13 +258,7 @@ class SubagentController:
         owner_run_id: str,
         task_ids: tuple[str, ...],
     ) -> None:
-        owned = {item.task.task_id for item in self.background_tasks(owner_run_id)}
-        unknown = tuple(task_id for task_id in task_ids if task_id not in owned)
-        if unknown:
-            raise ValueError(
-                "Cannot acknowledge unowned background tasks: " + ", ".join(unknown)
-            )
-        self._delivered_by_owner.setdefault(owner_run_id, set()).update(task_ids)
+        self.background_registry.acknowledge(owner_run_id, task_ids)
 
     def _child_catalog(
         self,
@@ -279,21 +286,24 @@ class SubagentController:
                 from my_code.features.subagents.tool import SubagentTool
 
                 tools.append(SubagentTool(self, parent=parent, policy=policy))
-            elif name in {"TaskList", "TaskOutput", "TaskCancel"}:
+            elif name in {"TaskList", "TaskCancel"}:
                 from my_code.features.subagents.task_tools import (
                     TaskCancelTool,
                     TaskListTool,
-                    TaskOutputTool,
                 )
 
                 task_tool_types = {
                     "TaskList": TaskListTool,
-                    "TaskOutput": TaskOutputTool,
                     "TaskCancel": TaskCancelTool,
                 }
                 tools.append(task_tool_types[name](self, parent=parent))
             else:
                 tool = available_tools[name]
+                if name == "Bash":
+                    from my_code.tools.builtin.bash import BashTool
+
+                    if isinstance(tool, BashTool):
+                        tool = tool.foreground_only()
                 tools.append(ReadOnlyToolProxy(tool) if definition.read_only else tool)
         catalog = ToolCatalog()
         catalog.register_source(

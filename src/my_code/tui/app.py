@@ -1,5 +1,7 @@
 """负责渲染 my-code、但不持有运行时的 Textual 应用。"""
 
+import asyncio
+
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -10,6 +12,8 @@ from textual.widgets.option_list import Option
 
 from my_code.chat.events import (
     AttachmentLoaded,
+    BackgroundInvocationFinished,
+    BackgroundInvocationStarted,
     MaxStepsReached,
     ReasoningCompleted,
     ReasoningDelta,
@@ -373,6 +377,129 @@ class MyCodeApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one("#prompt", Input).focus()
+        self._watch_background_notifications()
+
+    @work(group="background-notifications")
+    async def _watch_background_notifications(self) -> None:
+        stream = getattr(self.runtime, "stream_background_notifications", None)
+        if stream is None:
+            return
+        prompt = self.query_one("#prompt", Input)
+        activity = self.query_one(ActivityBar)
+        assistant: AssistantMessage | None = None
+        active_reasoning: ReasoningMessage | None = None
+        tools: dict[str, ToolCallMessage] = {}
+        invocation_active = False
+        try:
+            async for event in stream():
+                if isinstance(event, BackgroundInvocationStarted):
+                    invocation_active = True
+                    self._busy = True
+                    self._close_suggestions()
+                    prompt.disabled = True
+                    activity.display = True
+                    assistant = None
+                    active_reasoning = None
+                    tools = {}
+                elif isinstance(event, TextStarted):
+                    assistant = AssistantMessage("")
+                    await self._mount_message(assistant)
+                elif isinstance(event, TextDelta):
+                    if assistant is None:
+                        assistant = AssistantMessage("")
+                        await self._mount_message(assistant)
+                    await assistant.append_delta(event.text)
+                    self._scroll_to_end()
+                elif isinstance(event, TextCompleted):
+                    if assistant is None:
+                        assistant = AssistantMessage("")
+                        await self._mount_message(assistant)
+                    await assistant.complete_stream(event.text)
+                    assistant = None
+                elif isinstance(event, ReasoningStarted):
+                    active_reasoning = ReasoningMessage(event.disclosure)
+                    await self._mount_message(active_reasoning)
+                elif isinstance(event, ReasoningDelta):
+                    if active_reasoning is None:
+                        active_reasoning = ReasoningMessage(event.disclosure)
+                        await self._mount_message(active_reasoning)
+                    active_reasoning.append_delta(event.part_index, event.text)
+                    self._scroll_to_end()
+                elif isinstance(event, ReasoningCompleted):
+                    if active_reasoning is None:
+                        active_reasoning = ReasoningMessage(
+                            event.presentation.disclosure
+                        )
+                        await self._mount_message(active_reasoning)
+                    active_reasoning.load_presentation(event.presentation)
+                    active_reasoning = None
+                elif isinstance(event, ToolStarted):
+                    if assistant is not None:
+                        await assistant.finish_stream()
+                        assistant = None
+                    tool = ToolCallMessage(event.tool_use_id, event.presentation)
+                    tools[event.tool_use_id] = tool
+                    await self._mount_message(tool)
+                elif isinstance(event, ToolFinished):
+                    tool = tools.get(event.tool_use_id)
+                    if tool is not None:
+                        tool.finish(event.presentation, is_error=event.is_error)
+                        self._scroll_to_end()
+                elif isinstance(event, TodoListUpdated):
+                    self.query_one(TodoPanel).set_todos(event.todos)
+                    activity.set_todos(event.todos)
+                elif isinstance(event, MaxStepsReached):
+                    await self._mount_message(
+                        SystemMessage(
+                            f"Error: Reached max steps ({event.max_steps})",
+                            error=True,
+                        )
+                    )
+                elif isinstance(event, BackgroundInvocationFinished):
+                    if active_reasoning is not None:
+                        active_reasoning.interrupt()
+                        active_reasoning = None
+                    if assistant is not None:
+                        await assistant.finish_stream()
+                        assistant = None
+                    if event.error is not None:
+                        await self._mount_message(
+                            SystemMessage(
+                                f"Background continuation failed: {event.error}",
+                                error=True,
+                            )
+                        )
+                    invocation_active = False
+                    self._restore_after_background_invocation(prompt, activity)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            await self._mount_message(
+                SystemMessage(f"Background watcher failed: {error}", error=True)
+            )
+        finally:
+            if invocation_active:
+                if active_reasoning is not None:
+                    active_reasoning.interrupt()
+                if assistant is not None:
+                    await assistant.finish_stream()
+                self._restore_after_background_invocation(prompt, activity)
+
+    def _restore_after_background_invocation(
+        self,
+        prompt: Input,
+        activity: ActivityBar,
+    ) -> None:
+        activity.display = False
+        prompt.disabled = False
+        prompt.focus()
+        self._busy = False
+        status = self.runtime.status()
+        self.query_one(StatusBar).set_status(
+            status, _format_context_usage(self.runtime.context_status())
+        )
+        self.query_one(TodoPanel).set_todos(status.todos)
+        activity.set_todos(status.todos)
 
     def action_toggle_todos(self) -> None:
         self.query_one(TodoPanel).toggle()

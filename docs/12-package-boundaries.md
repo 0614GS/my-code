@@ -69,6 +69,7 @@ bootstrap
 - AppState 是 workspace、active Session、runtime permissions 和 ProviderRuntime 的唯一入口，不是全局 service locator。
 - ToolState 持有唯一 application-lifetime ToolCatalog；每个 Agent step 只消费不可变快照。
 - TaskSupervisor 持有唯一进程内 task registry；`tasks` 不依赖 Agent、Session、Provider 或 Feature。
+- `features.background_tasks` 在 TaskSupervisor 之上组合 owner/delivery registry、Bash 生命周期和 completion 数据投影；内置 Bash 只依赖一个 tools 层 Protocol，避免 tools 反向依赖 tasks 或 feature。
 - AgentRunFactory 创建独立 Session/Agent/provider lease 胶囊，并由 AppState 统一关闭。
 - McpRuntime 持有唯一 MCP connection registry；每个 server 只通过独立 ToolCatalog source 发布工具，wire 类型不离开 `mcp`。
 - SkillRuntime/SkillCatalog 持有唯一 Skill index 与诊断；文件和规范化 MCP 数据来源使用同一模型，Skill 目录永远不作为 Python/plugin 导入。

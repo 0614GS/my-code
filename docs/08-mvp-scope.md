@@ -5,7 +5,8 @@
 - Anthropic Messages 与 OpenAI Responses provider。
 - provider-neutral 流式 text、reasoning、usage 和 continuation 建模。
 - 多 step Agent loop、带安全屏障和并发上限的 ToolRound，以及 step 上限。
-- 默认关闭的 Subagent：固定 `explore`/`general` 角色、独立 child Session/run/provider lease/prompt、foreground/background、Task 查询/取消/单次通知、权限收窄与多维预算。
+- 默认关闭的通用后台执行：Bash 显式后台或 timeout 自动移交、Subagent foreground/background、统一 Task 查询/取消/单次通知，以及受控临时输出文件。
+- 默认关闭的 Subagent：固定 `explore`/`general` 角色、独立 child Session/run/provider lease/prompt、权限收窄与多维预算。
 - 默认关闭的 MCP stdio server：分层配置、保守 project trust、连接/重连/关闭、增量发现、deferred ToolSearch 与标准权限执行。
 - 默认关闭的 Skill：project/user/builtin 分层发现、严格 frontmatter、lazy load、原子 reload、Conversation attachment 激活与 additive session 权限规则。
 - Read、Write、Edit、Glob、Grep、Bash 与 TodoWrite。
@@ -48,3 +49,7 @@
 本项目采用参考实现风格的 fresh child 与只读 Explore，但有意保留 Codex 风格的显式 role definition、独立 run/Session 和能力收窄。角色不可由用户扩展；Explore 是不能派生 child 的只读叶子，General 继承 spawn step 的普通/动态/Skill/MCP/Task 工具，并在深度允许时继续派生两种角色。
 
 并行工具、foreground/background Subagent、MCP 与 Skill 已分别按路线图 M2、M4a/M4b、M5、M6 实现。Skill 首版有意使用严格平面 frontmatter、只把 Markdown 作为数据加载，并不复刻参考实现中动态命令、脚本执行或完整 YAML 语义；MCP resources/prompts transport 也仍延后。参考实现将 Skill 正文表示为 meta UserMessage；本项目有意统一表示为 `AttachmentMessage`，但投影后的模型输入语义相同。边界与验收证据见 [13-extensibility-roadmap.md](13-extensibility-roadmap.md)。
+
+参考实现还把携带通知 payload 的 `task-notification` 放入全局优先级 command queue。my-code 有意不增加第二份 delivery queue：Bash 与 Subagent 终态共用一个无 payload、单调递增的进程内 signal，交互式 host 被唤醒后再从通用 background registry pull pending completion；真正的投递仍统一经过 attachment source、Session durable append 和 acknowledge。Session 切换只 pulse 重新检查，signal 本身不保存 task ID、结果，也不改变 delivered 状态。
+
+本项目的“后台任务”是进程内执行生命周期，不是 Agent Teams task graph：首版没有依赖图、任务认领或跨进程恢复。与参考实现一致，控制面通知只携带状态和 output path，Bash 数据面写入项目级受控 temp root；本项目仍有意使用无 payload wake signal，并统一通过现有 Read 读取输出。

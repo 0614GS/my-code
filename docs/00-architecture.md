@@ -56,7 +56,7 @@ flowchart TB
         ChildRun["AgentRun<br/>own Session + AgentEngine + provider lease"]
         ForegroundResult["Foreground<br/>一个闭合 ToolResult"]
         BackgroundResult["Background<br/>立即返回 task_id / run_id"]
-        TaskTools["TaskList / TaskOutput / TaskCancel"]
+        TaskTools["TaskList / TaskCancel"]
         Notification["完成通知<br/>下一安全 step 单次投递"]
     end
 
@@ -138,7 +138,7 @@ flowchart TB
 - `session.conversation` 是当前分支的完整事实序列；`session.context_entries` 是从最新 compact summary 开始派生的规划后缀。`ContextRuntime` 缓存 prompt section 与用户上下文，切换 Session 或创建 child run 时重建。
 - 每个 step 只捕获一次不可变 `ToolCatalogSnapshot`。模型请求里的工具定义和随后执行 ToolCall 的实例来自同一快照。
 - 所有工具来源最终都发布为标准 `Tool`，并经过同一个 `ToolExecutor` 权限、取消与错误归一化流水线。
-- Subagent 使用独立 child Session、AgentEngine 和 provider lease；foreground 返回一个 ToolResult，background 先返回 task ID，完成后只在安全 step 边界通知。
+- Subagent 使用独立 child Session、AgentEngine 和 provider lease；foreground 返回一个 ToolResult，background 先返回 task ID，完成后 pulse 无 payload revision signal，并只在安全 step 边界通过统一 attachment source 通知。父 turn 已结束时，交互式 host 会启动不追加 HumanMessage 的 continuation。
 
 模型输入只有一条数据流：
 

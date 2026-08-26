@@ -17,7 +17,7 @@ from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
 from my_code.context.window import ContextWindow
-from my_code.conversation.models import ToolResultBatch
+from my_code.conversation.models import HumanMessage, ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import SubagentParentContext
@@ -277,10 +277,11 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
     assert runs.active_count == 0
     assert leases.active_count == 0
 
-    second = await parent.submit(
-        parent_session, parent_runtime, AgentTurnInput("check completion")
-    )
-    assert isinstance(second, AgentTurnSucceeded)
+    second_events = [
+        event
+        async for event in parent.stream_continuation(parent_session, parent_runtime)
+    ]
+    assert isinstance(second_events[-1], AgentTurnSucceeded)
     assert "Background task completed" in request_text(parent_model.requests[2])
     assert task_id in request_text(parent_model.requests[2])
     delivered = tuple(
@@ -290,6 +291,12 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
     )
     assert len(delivered) == 1
     assert controller.pending_notifications(parent_id) == ()
+    assert (
+        sum(
+            isinstance(message, HumanMessage) for message in parent_session.conversation
+        )
+        == 1
+    )
 
     third = await parent.submit(
         parent_session, parent_runtime, AgentTurnInput("check again")

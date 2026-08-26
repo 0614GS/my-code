@@ -12,7 +12,7 @@
 
 foreground Subagent 由模型可见的标准 Tool 启动。`SubagentController` 只把显式 prompt/attachments 交给 child，不复制父 transcript；child 结束后关闭 run/lease，并把一个结构化终态作为父 ToolResult 返回。调用方取消 foreground 等待时，TaskSupervisor 会取消 child task，child run 的 `finally` 负责关闭 lease。
 
-启用 background gate 后，同一 Tool 可立即返回 task ID；父 Agent 不等待 child。TaskList/TaskOutput/TaskCancel 通过 root run owner 访问 task，完成通知由 attachment source 在后续 step 规划前产生。Session 接受 durable payload 后才 acknowledge controller；Conversation 按 task ID 去重，所以 inspect、失败规划、compact retry 或 resume 不会吞掉或重复通知。
+启用 background gate 后，Subagent 与 Bash 都可立即返回 task ID；普通 Bash 超过其 timeout 前台等待预算后会把同一进程原地转为后台，不再把 timeout 当作运行期限。TaskList/TaskCancel 通过 root run owner 访问两类任务，完成通知由 attachment source 在后续 step 规划前产生。Session 接受 durable payload 后才 acknowledge registry；Conversation 按 task ID 去重，所以 inspect、失败规划、compact retry 或 resume 不会吞掉或重复通知。
 
 ## 一次 Turn
 

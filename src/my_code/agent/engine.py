@@ -110,20 +110,30 @@ class AgentEngine:
 
         return self._stream(session, runtime, turn_input)
 
+    def stream_continuation(
+        self,
+        session: Session,
+        runtime: ContextRuntime,
+    ) -> AsyncIterator[AgentEvent]:
+        """Continue from canonical conversation facts without a human message."""
+
+        return self._stream(session, runtime, None)
+
     async def _stream(
         self,
         session: Session,
         runtime: ContextRuntime,
-        turn_input: AgentTurnInput,
+        turn_input: AgentTurnInput | None,
     ) -> AsyncIterator[AgentEvent]:
-        user_message = HumanMessage(
-            content=turn_input.prompt,
-            parent_uuid=_last_uuid(session),
-        )
-        # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
-        session.append_human_message(user_message)
-        for attachment in turn_input.attachments:
-            session.append_attachment(attachment)
+        if turn_input is not None:
+            user_message = HumanMessage(
+                content=turn_input.prompt,
+                parent_uuid=_last_uuid(session),
+            )
+            # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
+            session.append_human_message(user_message)
+            for attachment in turn_input.attachments:
+                session.append_attachment(attachment)
 
         input_tokens = 0
         output_tokens = 0

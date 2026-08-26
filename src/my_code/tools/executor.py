@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
 
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import ToolCall, ToolResult
@@ -90,12 +91,13 @@ class ToolExecutor:
         update_applier: Callable[[tuple[PermissionUpdate, ...]], None] | None = None,
         hooks: Iterable[ToolInvocationHook] = (),
         audit: ToolInvocationAudit | None = None,
+        internal_read_root: Path | None = None,
     ) -> None:
         self.tools = tools
         self.policy = policy
         self.prompter = prompter
         self.workspace = workspace
-        self.context = ToolContext(workspace)
+        self.context = ToolContext(workspace, internal_read_root=internal_read_root)
         self.update_applier = update_applier or _apply_updates(policy)
         self.hooks = tuple(hooks)
         self.audit = audit or LoggingToolInvocationAudit()
@@ -175,6 +177,7 @@ class ToolExecutor:
                     mode=self.policy.mode,
                     rules=self.policy.rules,
                     workspace_root=self.workspace.root,
+                    internal_read_root=self.context.internal_read_root,
                 ),
             )
             decision = self.policy.decide(

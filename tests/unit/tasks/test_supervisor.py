@@ -147,3 +147,58 @@ async def test_close_cancels_active_tasks_and_rejects_new_work() -> None:
     assert supervisor.accepting is False
     with pytest.raises(RuntimeError, match="closed"):
         await supervisor.submit(wait_forever, name="late")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancel", "timeout"])
+async def test_terminal_callback_runs_once_for_every_terminal_path(
+    outcome: str,
+) -> None:
+    supervisor = TaskSupervisor()
+    snapshots = []
+    started = asyncio.Event()
+
+    async def runner() -> object:
+        started.set()
+        if outcome == "success":
+            return "done"
+        if outcome == "failure":
+            raise ValueError("failed")
+        await asyncio.Future[None]()
+        raise AssertionError("unreachable")
+
+    handle = await supervisor.submit(
+        runner,
+        name=outcome,
+        timeout_seconds=0.01 if outcome == "timeout" else None,
+        on_terminal=snapshots.append,
+    )
+    await started.wait()
+    if outcome == "cancel":
+        await handle.cancel()
+    else:
+        await handle.wait()
+
+    assert snapshots == [handle.snapshot()]
+    assert snapshots[0].status.terminal
+
+
+@pytest.mark.asyncio
+async def test_terminal_callback_failure_does_not_change_task_outcome() -> None:
+    supervisor = TaskSupervisor()
+
+    def fail_callback(_snapshot: object) -> None:
+        raise RuntimeError("callback failed")
+
+    async def succeed() -> object:
+        return "result"
+
+    handle = await supervisor.submit(
+        succeed,
+        name="callback-failure",
+        on_terminal=fail_callback,
+    )
+
+    snapshot = await handle.wait()
+    assert snapshot.status is TaskStatus.SUCCEEDED
+    assert snapshot.result == "result"

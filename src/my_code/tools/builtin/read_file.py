@@ -14,7 +14,7 @@ from my_code.tools.base import (
     ToolOutput,
 )
 from my_code.tools.builtin.file_permissions import check_read_permission
-from my_code.tools.paths import relative_display_path, resolve_workspace_path
+from my_code.tools.paths import relative_display_path, resolve_read_path
 from my_code.tools.validation import optional_int, required_string
 
 _MAX_READ_BYTES = 8 * 1024 * 1024
@@ -83,15 +83,23 @@ class ReadFileTool(Tool):
         optional_int(tool_input, "limit", 2000, minimum=1, maximum=5000)
 
     async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
-        path = resolve_workspace_path(
-            context.cwd, required_string(tool_input, "path"), must_exist=True
+        path, internal = resolve_read_path(
+            context.cwd,
+            required_string(tool_input, "path"),
+            internal_root=context.internal_read_root,
+            must_exist=True,
         )
         offset = optional_int(tool_input, "offset", 1, minimum=1, maximum=10_000_000)
         limit = optional_int(tool_input, "limit", 2000, minimum=1, maximum=5000)
         content, truncated = self._read_details(
-            path, offset, limit, read_bytes=context.workspace.read_bytes
+            path,
+            offset,
+            limit,
+            read_bytes=Path.read_bytes if internal else context.workspace.read_bytes,
         )
-        display_path = relative_display_path(context.cwd, path)
+        display_path = (
+            str(path) if internal else relative_display_path(context.cwd, path)
+        )
         line_count = sum(1 for line in content.splitlines() if "\t" in line)
         return ToolOutput(
             content=f"{display_path}\n{content}",

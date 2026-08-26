@@ -85,6 +85,7 @@ def test_subagent_tool_registration_is_feature_gated(tmp_path: Path) -> None:
     background = _assemble_agent(
         replace(
             settings,
+            interactive=True,
             subagents_enabled=True,
             background_tasks_enabled=True,
         ),
@@ -110,7 +111,6 @@ def test_subagent_tool_registration_is_feature_gated(tmp_path: Path) -> None:
         "Subagent",
         "TaskCancel",
         "TaskList",
-        "TaskOutput",
         "TodoWrite",
         "Write",
     )
@@ -154,6 +154,51 @@ class BootstrapMcpTransport:
 
     async def close(self) -> None:
         self.closed = True
+
+
+def test_headless_ignores_background_task_configuration(tmp_path: Path) -> None:
+    assembled = _assemble_agent(
+        replace(
+            make_settings(tmp_path),
+            interactive=False,
+            subagents_enabled=True,
+            background_tasks_enabled=True,
+        ),
+        "55555555-5555-5555-5555-555555555555",
+    )
+
+    names = tuple(item.name for item in assembled.initial_tools.definitions)
+    subagent = assembled.initial_tools.get("Subagent")
+
+    assert subagent is not None
+    properties = subagent.definition.input_schema["properties"]
+    assert isinstance(properties, dict)
+    assert "background" not in properties
+    assert not {"TaskList", "TaskCancel"}.intersection(names)
+    assert assembled.background_notifications is None
+    assert assembled.background_wake_signal is None
+
+
+def test_background_bash_does_not_require_subagents(tmp_path: Path) -> None:
+    assembled = _assemble_agent(
+        replace(
+            make_settings(tmp_path),
+            interactive=True,
+            subagents_enabled=False,
+            background_tasks_enabled=True,
+        ),
+        "56565656-5656-5656-5656-565656565656",
+    )
+
+    names = {item.name for item in assembled.initial_tools.definitions}
+    bash = assembled.initial_tools.get("Bash")
+    assert bash is not None
+    properties = bash.definition.input_schema["properties"]
+    assert isinstance(properties, dict)
+    assert "background" in properties
+    assert {"TaskList", "TaskCancel"}.issubset(names)
+    assert "TaskOutput" not in names
+    assert "Subagent" not in names
 
 
 @pytest.mark.asyncio

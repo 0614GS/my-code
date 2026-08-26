@@ -1,10 +1,13 @@
 """Stateful user-level chat orchestration."""
 
+import asyncio
 from collections.abc import AsyncIterator
+from typing import Protocol
 
 from my_code.agent.engine import AgentEngine
 from my_code.agent.events import (
     AgentConversationUpdated,
+    AgentEvent,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
@@ -21,6 +24,8 @@ from my_code.agent.models import (
 )
 from my_code.chat.events import (
     AttachmentLoaded,
+    BackgroundInvocationFinished,
+    BackgroundInvocationStarted,
     MaxStepsReached,
     ReasoningCompleted,
     ReasoningDelta,
@@ -75,6 +80,19 @@ from my_code.skills.tool import restore_skill_permissions
 from my_code.tools.executor import ToolExecutor
 
 
+class BackgroundNotificationSource(Protocol):
+    def has_pending(self, owner_run_id: str) -> bool: ...
+
+
+class BackgroundWakeSignal(Protocol):
+    @property
+    def revision(self) -> int: ...
+
+    async def wait_for_change(self, after_revision: int) -> int: ...
+
+    def pulse(self) -> None: ...
+
+
 class ChatService:
     """Coordinate chat use cases over the explicit AppState graph."""
 
@@ -90,6 +108,8 @@ class ChatService:
         state: AppState,
         attachment_loader: AttachmentLoader | None = None,
         path_suggester: WorkspacePathSuggester | None = None,
+        background_notifications: BackgroundNotificationSource | None = None,
+        background_wake_signal: BackgroundWakeSignal | None = None,
     ) -> None:
         self.agent = agent
         self.context = context
@@ -101,6 +121,8 @@ class ChatService:
         self._project_state_dir = settings.paths.project_state_dir
         self.attachment_loader = attachment_loader
         self.path_suggester = path_suggester or WorkspacePathSuggester(settings.cwd)
+        self.background_notifications = background_notifications
+        self.background_wake_signal = background_wake_signal
 
     async def submit(self, prompt: str) -> TurnOutcome:
         async with self.state.operation_lock():
@@ -124,49 +146,92 @@ class ChatService:
             for item in loaded:
                 yield AttachmentLoaded(item.path, item.is_directory, item.display)
             session = self.state.session
-            previous_todos = project_todos(session.conversation).todos
-            async for event in self.agent.stream(
+            events = self.agent.stream(
                 session,
                 self.state.context_runtime,
                 AgentTurnInput(prompt, tuple(item.attachment for item in loaded)),
-            ):
-                if isinstance(event, AgentTextStarted):
-                    yield TextStarted()
-                elif isinstance(event, AgentTextDelta):
-                    yield TextDelta(event.text)
-                elif isinstance(event, AgentTextCompleted):
-                    yield TextCompleted(event.text)
-                elif isinstance(event, AgentReasoningStarted):
-                    yield ReasoningStarted(event.disclosure)
-                elif isinstance(event, AgentReasoningDelta):
-                    yield ReasoningDelta(event.disclosure, event.part_index, event.text)
-                elif isinstance(event, AgentReasoningCompleted):
-                    yield ReasoningCompleted(event.presentation)
-                elif isinstance(event, AgentToolStarted):
-                    yield ToolStarted(event.tool_use_id, event.presentation)
-                elif isinstance(event, AgentToolFinished):
-                    yield ToolFinished(
-                        event.tool_use_id, event.is_error, event.presentation
-                    )
-                elif isinstance(event, AgentConversationUpdated):
-                    current_todos = project_todos(session.conversation).todos
-                    if current_todos != previous_todos:
-                        previous_todos = current_todos
-                        yield TodoListUpdated(current_todos)
-                elif isinstance(event, AgentTurnSucceeded):
-                    yield TurnSucceeded(
-                        event.text,
-                        event.completed_steps,
-                        event.usage.input_tokens,
-                        event.usage.output_tokens,
-                    )
-                elif isinstance(event, AgentMaxStepsReached):
-                    yield MaxStepsReached(
-                        event.max_steps,
-                        event.completed_steps,
-                        event.usage.input_tokens,
-                        event.usage.output_tokens,
-                    )
+            )
+            async for event in self._project_agent_events(session, events):
+                yield event
+
+    async def stream_background_notifications(self) -> AsyncIterator[TurnEvent]:
+        """Watch terminal background tasks and run idle continuations."""
+
+        source = self.background_notifications
+        signal = self.background_wake_signal
+        if source is None or signal is None:
+            return
+        revision = signal.revision
+        while True:
+            async with self.state.operation_lock():
+                await self.state.start()
+                session = self.state.session
+                if source.has_pending(session.session_id):
+                    yield BackgroundInvocationStarted()
+                    failed = False
+                    try:
+                        events = self.agent.stream_continuation(
+                            session,
+                            self.state.context_runtime,
+                        )
+                        async for event in self._project_agent_events(session, events):
+                            yield event
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as error:
+                        failed = True
+                        yield BackgroundInvocationFinished(str(error))
+                    else:
+                        yield BackgroundInvocationFinished()
+                    if not failed:
+                        revision = signal.revision
+                        continue
+            revision = await signal.wait_for_change(revision)
+
+    async def _project_agent_events(
+        self,
+        session: Session,
+        events: AsyncIterator[AgentEvent],
+    ) -> AsyncIterator[TurnEvent]:
+        previous_todos = project_todos(session.conversation).todos
+        async for event in events:
+            if isinstance(event, AgentTextStarted):
+                yield TextStarted()
+            elif isinstance(event, AgentTextDelta):
+                yield TextDelta(event.text)
+            elif isinstance(event, AgentTextCompleted):
+                yield TextCompleted(event.text)
+            elif isinstance(event, AgentReasoningStarted):
+                yield ReasoningStarted(event.disclosure)
+            elif isinstance(event, AgentReasoningDelta):
+                yield ReasoningDelta(event.disclosure, event.part_index, event.text)
+            elif isinstance(event, AgentReasoningCompleted):
+                yield ReasoningCompleted(event.presentation)
+            elif isinstance(event, AgentToolStarted):
+                yield ToolStarted(event.tool_use_id, event.presentation)
+            elif isinstance(event, AgentToolFinished):
+                yield ToolFinished(
+                    event.tool_use_id, event.is_error, event.presentation
+                )
+            elif isinstance(event, AgentConversationUpdated):
+                current_todos = project_todos(session.conversation).todos
+                if current_todos != previous_todos:
+                    previous_todos = current_todos
+                    yield TodoListUpdated(current_todos)
+            elif isinstance(event, AgentTurnSucceeded):
+                yield TurnSucceeded(
+                    event.text,
+                    event.completed_steps,
+                    event.usage.input_tokens,
+                    event.usage.output_tokens,
+                )
+            elif isinstance(event, AgentMaxStepsReached):
+                yield MaxStepsReached(
+                    event.max_steps,
+                    event.completed_steps,
+                    event.usage.input_tokens,
+                    event.usage.output_tokens,
+                )
 
     async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
         return await self.path_suggester.suggest(query)
@@ -300,6 +365,8 @@ class ChatService:
                 self.state.permissions.policy, session.conversation
             )
             self.state.replace_session(session)
+            if self.background_wake_signal is not None:
+                self.background_wake_signal.pulse()
             return ResumedSession(status=self.status(), history=history)
 
     async def close(self) -> None:

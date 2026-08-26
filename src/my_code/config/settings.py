@@ -118,8 +118,6 @@ class AgentSettings:
                 raise ValueError(f"{name} must be a positive integer")
         if self.subagent_timeout_seconds <= 0:
             raise ValueError("subagent_timeout_seconds must be positive")
-        if self.background_tasks_enabled and not self.subagents_enabled:
-            raise ValueError("background_tasks_enabled requires subagents_enabled")
 
     @property
     def cwd(self) -> Path:

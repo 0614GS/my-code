@@ -176,6 +176,7 @@ class ToolPermissionContext:
     rules: tuple[PermissionRule, ...]
     workspace_root: Path
     additional_working_directories: tuple[str, ...] = ()
+    internal_read_root: Path | None = None
 
     def rules_for(
         self, tool_name: str, behavior: PermissionBehavior

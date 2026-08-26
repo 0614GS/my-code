@@ -20,9 +20,9 @@ from my_code.features.subagents.models import (
 from my_code.features.subagents.task_tools import (
     TaskCancelTool,
     TaskListTool,
-    TaskOutputTool,
 )
 from my_code.features.subagents.tool import SubagentTool
+from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
@@ -88,6 +88,7 @@ def build_controller(
     *,
     limits: SubagentLimits | None = None,
     background_enabled: bool = False,
+    wake_signal: BackgroundTaskWakeSignal | None = None,
 ) -> tuple[SubagentController, ControlledRunFactory, TaskSupervisor]:
     factory = ControlledRunFactory()
     tasks = TaskSupervisor()
@@ -98,6 +99,7 @@ def build_controller(
         definitions=build_subagent_definitions(tmp_path),
         limits=limits,
         background_enabled=background_enabled,
+        wake_signal=wake_signal,
     )
     return controller, factory, tasks
 
@@ -141,6 +143,47 @@ def test_subagent_schema_requires_fixed_type_and_rejects_tools(tmp_path: Path) -
         )
 
 
+@pytest.mark.asyncio
+async def test_only_background_subagents_pulse_terminal_wake_signal(
+    tmp_path: Path,
+) -> None:
+    signal = BackgroundTaskWakeSignal()
+    controller, factory, tasks = build_controller(
+        tmp_path,
+        background_enabled=True,
+        wake_signal=signal,
+    )
+    common = {
+        "parent": parent(),
+        "parent_policy": PermissionPolicy(PermissionMode.BYPASS),
+        "available_tools": {},
+        "tool_snapshot_version": 1,
+    }
+
+    _, foreground = await controller.start(
+        SubagentSpec(SubagentType.GENERAL, "foreground", "foreground"),
+        **common,
+    )
+    await factory.entered.wait()
+    factory.release.set()
+    await foreground.wait()
+    assert signal.revision == 0
+
+    factory.entered.clear()
+    factory.release.clear()
+    _, background = await controller.start(
+        SubagentSpec(SubagentType.GENERAL, "background", "background"),
+        background=True,
+        **common,
+    )
+    await factory.entered.wait()
+    factory.release.set()
+    await background.wait()
+
+    assert signal.revision == 1
+    await tasks.close()
+
+
 def test_fixed_role_catalogs_narrow_and_rebind_parent_snapshot(tmp_path: Path) -> None:
     limits = SubagentLimits(max_depth=2)
     controller, _, _ = build_controller(tmp_path, limits=limits)
@@ -149,7 +192,6 @@ def test_fixed_role_catalogs_narrow_and_rebind_parent_snapshot(tmp_path: Path) -
     feature_tools = (
         SubagentTool(controller, parent=parent(), policy=policy),
         TaskListTool(controller, parent=parent()),
-        TaskOutputTool(controller, parent=parent()),
         TaskCancelTool(controller, parent=parent()),
     )
     available = {
@@ -408,7 +450,6 @@ async def test_background_task_tools_are_owner_scoped_and_cancel_child(
         ToolSourceId("test", "task-tools"),
         (
             TaskListTool(controller, parent=owner),
-            TaskOutputTool(controller, parent=owner),
             TaskCancelTool(controller, parent=owner),
         ),
     )
@@ -429,12 +470,11 @@ async def test_background_task_tools_are_owner_scoped_and_cancel_child(
     assert listed_payload["tasks"][0]["status"] == "running"
 
     hidden = await executor.execute(
-        ToolCall("hidden", "TaskOutput", {"task_id": started.task_id}),
+        ToolCall("hidden", "TaskList", {}),
         tools=catalog.snapshot(),
         run_id="22222222-2222-2222-2222-222222222222",
     )
-    assert hidden.result.is_error is True
-    assert "Unknown background task" in hidden.result.content
+    assert json.loads(hidden.result.content)["tasks"] == []
 
     cancelled = await executor.execute(
         ToolCall("cancel", "TaskCancel", {"task_id": started.task_id}),

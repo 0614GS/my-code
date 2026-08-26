@@ -1,4 +1,6 @@
-"""Bash tool adapter."""
+"""Bash tool adapter with foreground-budget handoff to supervised tasks."""
+
+from typing import Protocol
 
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.foundation.json import JsonObject
@@ -35,7 +37,32 @@ def _rule_reason(rule: PermissionRule) -> PermissionDecisionReason:
     )
 
 
+class BashBackgroundExecutor(Protocol):
+    async def execute(
+        self,
+        command: str,
+        context: ToolContext,
+        foreground_budget: float,
+        *,
+        background: bool,
+    ) -> ToolOutput: ...
+
+
 class BashTool(Tool):
+    def __init__(
+        self,
+        *,
+        background_executor: BashBackgroundExecutor | None = None,
+        background_enabled: bool = False,
+    ) -> None:
+        self.background_executor = background_executor
+        self.background_enabled = background_enabled
+
+    def foreground_only(self) -> "BashTool":
+        """Return the hard-timeout Bash capability used by child agents."""
+
+        return BashTool()
+
     @property
     def definition(self) -> ModelToolDefinition:
         return ModelToolDefinition(
@@ -54,6 +81,17 @@ class BashTool(Tool):
                         "maximum": 600,
                         "description": "Timeout in seconds",
                     },
+                    **(
+                        {
+                            "background": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "Run in the background immediately",
+                            }
+                        }
+                        if self.background_enabled
+                        else {}
+                    ),
                 },
                 "required": ["command"],
                 "additionalProperties": False,
@@ -156,6 +194,11 @@ class BashTool(Tool):
         if len(command) > 50_000:
             raise ValueError("'command' exceeds 50,000 characters")
         optional_int(tool_input, "timeout", 120, minimum=1, maximum=600)
+        background = tool_input.get("background", False)
+        if "background" in tool_input and not self.background_enabled:
+            raise ValueError("'background' is unavailable in this Bash context")
+        if not isinstance(background, bool):
+            raise ValueError("'background' must be a boolean")
 
     async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
         command = required_string(tool_input, "command")
@@ -166,4 +209,11 @@ class BashTool(Tool):
             minimum=1,
             maximum=600,
         )
-        return await execute_bash(command, context, timeout)
+        if self.background_executor is None:
+            return await execute_bash(command, context, timeout)
+        return await self.background_executor.execute(
+            command,
+            context,
+            timeout,
+            background=tool_input.get("background", False) is True,
+        )

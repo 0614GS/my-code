@@ -33,6 +33,7 @@ class ToolContext:
     available_tools: Mapping[str, Tool]
     tool_snapshot_version: int | None
     run_id: str | None
+    internal_read_root: Path | None
 
     def __init__(
         self,
@@ -42,6 +43,7 @@ class ToolContext:
         available_tools: Mapping[str, Tool] = _EMPTY_TOOLS,
         tool_snapshot_version: int | None = None,
         run_id: str | None = None,
+        internal_read_root: Path | None = None,
     ) -> None:
         object.__setattr__(
             self,
@@ -57,6 +59,13 @@ class ToolContext:
         )
         object.__setattr__(self, "tool_snapshot_version", tool_snapshot_version)
         object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(
+            self,
+            "internal_read_root",
+            internal_read_root.resolve(strict=False)
+            if internal_read_root is not None
+            else None,
+        )
 
     @property
     def cwd(self) -> Path:
@@ -76,6 +85,7 @@ class ToolContext:
             tools,
             version,
             run_id,
+            self.internal_read_root,
         )
 
 

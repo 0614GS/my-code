@@ -6,15 +6,19 @@ from my_code.conversation.attachments import (
     BackgroundTaskCompletionAttachment,
 )
 from my_code.conversation.models import AttachmentMessage
+from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.subagents.controller import SubagentController
-from my_code.features.subagents.serialization import background_subagent_payload
 
 
 class BackgroundTaskNotificationSource:
     """Expose terminal child tasks at model-request boundaries exactly once."""
 
-    def __init__(self, controller: SubagentController) -> None:
-        self.controller = controller
+    def __init__(self, source: SubagentController | BackgroundTaskRegistry) -> None:
+        self.registry = (
+            source.background_registry
+            if isinstance(source, SubagentController)
+            else source
+        )
 
     def __call__(
         self, state: AttachmentDerivationState
@@ -30,12 +34,17 @@ class BackgroundTaskNotificationSource:
         return tuple(
             BackgroundTaskCompletionAttachment(
                 owner_run_id,
-                item.task.task_id,
-                background_subagent_payload(item),
+                item.task_id,
+                self.registry.payload(item),
             )
-            for item in self.controller.pending_notifications(owner_run_id)
-            if item.task.task_id not in already_in_session
+            for item in self.registry.pending(owner_run_id)
+            if item.task_id not in already_in_session
         )
+
+    def has_pending(self, owner_run_id: str) -> bool:
+        """Return whether the owner has an undelivered terminal completion."""
+
+        return bool(self.registry.pending(owner_run_id))
 
     def acknowledge(self, attachments: tuple[AttachmentPayload, ...]) -> None:
         grouped: dict[str, list[str]] = {}
@@ -44,10 +53,7 @@ class BackgroundTaskNotificationSource:
                 continue
             grouped.setdefault(attachment.owner_run_id, []).append(attachment.task_id)
         for owner_run_id, task_ids in grouped.items():
-            self.controller.acknowledge_notifications(
-                owner_run_id,
-                tuple(task_ids),
-            )
+            self.registry.acknowledge(owner_run_id, tuple(task_ids))
 
 
 __all__ = ["BackgroundTaskNotificationSource"]

@@ -66,7 +66,7 @@ AgentRunFactory ──> child Session + AgentEngine + independent provider lease
 - **Session**：内存事实、工作集、session context state 与透明持久化边界。
 - **Context**：从不可变 Session snapshot 构造的临时 ModelRequest，不是第二份历史。
 - **Compact**：写入摘要事实并建立新的工作集边界。
-- **Task**：由 TaskSupervisor 管理的进程内异步生命周期；状态和进度不是 Conversation facts。
+- **Task**：由 TaskSupervisor 管理的进程内异步生命周期；Bash 与 Subagent 共用 owner/delivery 控制面，状态和进度不是 Conversation facts。
 - **AgentRun**：独立 Session、Agent 组件和 provider lease 构成的可关闭运行胶囊。
 - **Subagent**：由标准 Tool 启动、在 child AgentRun 中运行并向父级只返回结构化结果的纵向能力。
 - **MCP source**：一个 server 完整发现并原子发布到 ToolCatalog 的标准 Tool 集合。

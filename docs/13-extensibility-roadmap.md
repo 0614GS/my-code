@@ -128,7 +128,7 @@ Agent Tool ──> SubagentController ──> foreground child run
 | task completion attachment | parent Session Conversation | Parent session | 是，按 task ID 幂等 |
 | Subagent 最终结果 | child Session + `TaskSnapshot` | Task | 只有作为 ToolResult/attachment 交付后才对父上下文可见 |
 
-后台任务完成时，`TaskSupervisor` 保存唯一终态。`BackgroundTaskNotificationSource` 在父 Agent 的下一个安全 step 边界生成 durable Attachment；如果当前 turn 已结束，则在下一个 turn 投递。模型也可以通过 `TaskOutput` 主动查询。通知进度和 stream delta 不进入 Conversation。
+后台任务完成时，`TaskSupervisor` 保存唯一终态。`BackgroundTaskNotificationSource` 在父 Agent 的下一个安全 step 边界生成 durable Attachment；如果当前 turn 已结束，进程内的无 payload revision signal 会唤醒交互式 host，由 host 启动不追加 `HumanMessage` 的 continuation。Bash 输出由 attachment 给出路径并通过 Read 查询；通知进度、wake revision 和 stream delta 不进入 Conversation。
 
 ### 4.3 依赖方向
 
@@ -213,7 +213,7 @@ PENDING ──> RUNNING ──> SUCCEEDED
 - 取消父任务默认递归取消仍在运行的子任务。
 - 超时使用同一取消路径，不创建第二套状态。
 - 调用方取消等待 foreground Subagent 时，child 也必须取消。
-- background ToolResult 返回 task ID 后，父 ToolCall 已闭合；以后通过通知或 `TaskOutput` 观察终态。
+- background ToolResult 返回 task ID 后，父 ToolCall 已闭合；以后通过 completion attachment 观察终态，并用 Read 获取 Bash 输出文件。
 - `ApplicationRuntime.close()` 按“停止接收 → 取消任务 → 等待终态 → 关闭 MCP → 关闭 provider leases”的顺序执行。
 
 ### 5.4 独立 AgentRun 与 provider lease
@@ -394,17 +394,17 @@ PENDING ──> RUNNING ──> SUCCEEDED
 状态：已完成（2026-08-24）。
 
 - spawn Tool 的 background 模式提交任务后立即返回 task ID，不等待 child 完成。
-- 提供 `TaskList`、`TaskOutput`、`TaskCancel`（具体命名可按现有 Tool 风格调整）。
+- 提供 `TaskList`、`TaskCancel`；Bash 输出统一通过 `Read` 获取。
 - 实现完成通知的单次投递；只在 Agent step 边界注入。
 - TUI/CLI 显示 task ID、状态和终态，但不直接操作 TaskSupervisor 内部结构。
 
 验收证据：
 
 - `Subagent(background=true)` 通过同一 SubagentController/TaskSupervisor 提交 child 后立即返回 `task_id`/`run_id`；foreground 默认行为不变。
-- `TaskList`、`TaskOutput`、`TaskCancel` 是标准 Tool，只能按 root owner run 查询或取消本 agent tree 的 background task；取消继续经过 PermissionPolicy。
+- `TaskList`、`TaskCancel` 是标准 Tool，只能按 root owner run 查询或取消本 agent tree 的 background task；取消继续经过 PermissionPolicy。
 - `BackgroundTaskNotificationSource` 只在模型规划前的 step 边界读取终态。Session 接受 durable Attachment 后由通用 acknowledgement 回写 controller；Conversation 按 task ID 去重，`inspect`、compact retry 和跨多个 step/turn 不会提前消费或重复投影。
 - main/child ToolContext 都携带当前 run ID；session resume 后 main Tool 不依赖 bootstrap 时的旧 Session ID，嵌套 background task 的查询/通知归属 root agent tree。
-- `backgroundTasks.enabled=false` 为默认值；只有它与 `subagents.enabled` 同时开启时，Subagent schema 才暴露 background 参数并注册三个 Task tools。关闭后退回纯 foreground M4a。
+- `backgroundTasks.enabled=false` 为默认值；只有交互式 host 中它与 `subagents.enabled` 同时开启时，Subagent schema 才暴露 background 参数并注册三个 Task tools。非交互 `-p` 始终退回纯 foreground M4a，不注册 completion source 或 watcher。
 - BG-01/BG-02 由 `tests/integration/test_background_task.py` 使用 Event barrier 验证 submit 不等待、turn 后完成、后续 step 单次通知、run/lease 回收；不依赖耗时阈值。
 - `tests/unit/test_subagent_controller.py` 验证 owner 隔离、TaskList/Output/Cancel、父任务取消树、失败/timeout/foreground cancel；M3 的 shutdown 测试继续验证 tasks → runs/leases → provider 关闭顺序。
 - Task ID 与状态由 Subagent/Task Tool 的 frontend-neutral presentation 进入现有 CLI/TUI ToolStarted/ToolFinished 路径，host 不读取 TaskSupervisor 内部结构。

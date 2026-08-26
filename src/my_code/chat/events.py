@@ -84,8 +84,22 @@ class TodoListUpdated:
     todos: tuple[TodoItem, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class BackgroundInvocationStarted:
+    """The host started an automatic model continuation for task completions."""
+
+
+@dataclass(frozen=True, slots=True)
+class BackgroundInvocationFinished:
+    """The automatic continuation ended; ``error`` is set on failure."""
+
+    error: str | None = None
+
+
 type TurnEvent = (
-    AttachmentLoaded
+    BackgroundInvocationStarted
+    | BackgroundInvocationFinished
+    | AttachmentLoaded
     | TextStarted
     | TextDelta
     | TextCompleted
@@ -102,6 +116,8 @@ type TurnEvent = (
 
 __all__ = [
     "AttachmentLoaded",
+    "BackgroundInvocationFinished",
+    "BackgroundInvocationStarted",
     "MaxStepsReached",
     "ReasoningCompleted",
     "ReasoningDelta",

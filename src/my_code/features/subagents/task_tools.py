@@ -1,11 +1,11 @@
-"""Model-visible inspection and cancellation tools for background Subagents."""
+"""Model-visible inspection and cancellation tools for all background tasks."""
 
 import json
 
 from my_code.conversation.presentation import ToolResultPresentation
+from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.models import SubagentParentContext
-from my_code.features.subagents.serialization import background_subagent_payload
 from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
@@ -20,18 +20,22 @@ from my_code.tools.base import Tool, ToolContext, ToolInputError, ToolOutput
 class TaskListTool(Tool):
     def __init__(
         self,
-        controller: SubagentController,
+        controller: SubagentController | BackgroundTaskRegistry,
         *,
         parent: SubagentParentContext,
     ) -> None:
-        self.controller = controller
+        self.registry = (
+            controller.background_registry
+            if isinstance(controller, SubagentController)
+            else controller
+        )
         self.parent = parent
 
     @property
     def definition(self) -> ModelToolDefinition:
         return ModelToolDefinition(
             "TaskList",
-            "List background Subagent tasks started by this agent tree.",
+            "List background Bash and Subagent tasks started by this agent tree.",
             {"type": "object", "additionalProperties": False},
         )
 
@@ -57,10 +61,11 @@ class TaskListTool(Tool):
         context: ToolContext,
     ) -> ToolOutput:
         del tool_input
-        tasks = self.controller.background_tasks(_owner(self.parent, context))
+        owner = _owner(self.parent, context)
+        tasks = self.registry.tasks_for(owner)
         return ToolOutput(
             json.dumps(
-                {"tasks": [background_subagent_payload(item) for item in tasks]},
+                {"tasks": [self.registry.payload(item) for item in tasks]},
                 ensure_ascii=False,
             )
         )
@@ -79,83 +84,25 @@ class TaskListTool(Tool):
         return ToolResultPresentation(summary=f"Listed {count} background tasks")
 
 
-class TaskOutputTool(Tool):
-    def __init__(
-        self,
-        controller: SubagentController,
-        *,
-        parent: SubagentParentContext,
-    ) -> None:
-        self.controller = controller
-        self.parent = parent
-
-    @property
-    def definition(self) -> ModelToolDefinition:
-        return ModelToolDefinition(
-            "TaskOutput",
-            "Get the current status and output of one background Subagent task.",
-            {
-                "type": "object",
-                "properties": {"task_id": {"type": "string"}},
-                "required": ["task_id"],
-                "additionalProperties": False,
-            },
-        )
-
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
-        del tool_input, context
-        return True
-
-    async def check_permissions(
-        self,
-        tool_input: JsonObject,
-        context: ToolPermissionContext,
-    ) -> ToolPermissionResult:
-        del context
-        return _allow(tool_input, "task-output")
-
-    def validate_input(self, tool_input: JsonObject) -> None:
-        _task_id(tool_input)
-
-    async def execute(
-        self,
-        tool_input: JsonObject,
-        context: ToolContext,
-    ) -> ToolOutput:
-        task = self.controller.background_task(
-            _owner(self.parent, context),
-            _task_id(tool_input),
-        )
-        return ToolOutput(
-            json.dumps(background_subagent_payload(task), ensure_ascii=False)
-        )
-
-    def get_tool_use_summary(self, tool_input: JsonObject) -> str:
-        return _task_id(tool_input)
-
-    def present_result(
-        self,
-        tool_input: JsonObject,
-        output: ToolOutput,
-    ) -> ToolResultPresentation:
-        return _present_task_result(tool_input, output)
-
-
 class TaskCancelTool(Tool):
     def __init__(
         self,
-        controller: SubagentController,
+        controller: SubagentController | BackgroundTaskRegistry,
         *,
         parent: SubagentParentContext,
     ) -> None:
-        self.controller = controller
+        self.registry = (
+            controller.background_registry
+            if isinstance(controller, SubagentController)
+            else controller
+        )
         self.parent = parent
 
     @property
     def definition(self) -> ModelToolDefinition:
         return ModelToolDefinition(
             "TaskCancel",
-            "Cancel one non-terminal background Subagent task.",
+            "Cancel one non-terminal background Bash or Subagent task.",
             {
                 "type": "object",
                 "properties": {"task_id": {"type": "string"}},
@@ -191,13 +138,9 @@ class TaskCancelTool(Tool):
         tool_input: JsonObject,
         context: ToolContext,
     ) -> ToolOutput:
-        task = await self.controller.cancel_background(
-            _owner(self.parent, context),
-            _task_id(tool_input),
-        )
-        return ToolOutput(
-            json.dumps(background_subagent_payload(task), ensure_ascii=False)
-        )
+        owner = _owner(self.parent, context)
+        item = await self.registry.cancel(owner, _task_id(tool_input))
+        return ToolOutput(json.dumps(self.registry.payload(item), ensure_ascii=False))
 
     def get_tool_use_summary(self, tool_input: JsonObject) -> str:
         return _task_id(tool_input)
@@ -243,4 +186,4 @@ def _present_task_result(
     return ToolResultPresentation(summary=f"Task {task_id}: {status or 'unknown'}")
 
 
-__all__ = ["TaskCancelTool", "TaskListTool", "TaskOutputTool"]
+__all__ = ["TaskCancelTool", "TaskListTool"]
