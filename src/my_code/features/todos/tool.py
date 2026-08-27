@@ -10,7 +10,7 @@ from my_code.permissions.models import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.base import Tool, ToolContext, ToolExposure, ToolOutput
 
 _DESCRIPTION = """Update the structured todo list for the current coding session.
 Use it for complex multi-step work, explicit user task lists, and newly discovered
@@ -22,6 +22,10 @@ items that are no longer relevant."""
 
 
 class TodoWriteTool(Tool):
+    @property
+    def exposure(self) -> ToolExposure:
+        return ToolExposure.SEARCHABLE
+
     @property
     def definition(self) -> ModelToolDefinition:
         return ModelToolDefinition(

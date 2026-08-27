@@ -24,7 +24,11 @@ from my_code.agent.models import (
 from my_code.context.engine import ContextEngine
 from my_code.context.models import ContextOverflow, ContextPlan
 from my_code.context.session import ContextRuntime
-from my_code.conversation.attachments import AttachmentPayload
+from my_code.conversation.attachments import (
+    AttachmentPayload,
+    ToolDiscoveryInvalidationAttachment,
+    ToolSearchListingAttachment,
+)
 from my_code.conversation.models import (
     AssistantMessage,
     HumanMessage,
@@ -53,9 +57,16 @@ from my_code.model.primitives import (
     replay_content_id,
 )
 from my_code.model.request import ModelOutput, ModelTextBlock, ModelToolUseBlock
+from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionUpdate
 from my_code.sessions.session import Session
+from my_code.tools.base import ToolExposure
 from my_code.tools.catalog import ToolCatalog, ToolCatalogSnapshot
+from my_code.tools.discovery import (
+    TOOL_SEARCH_NAME,
+    ToolExposureSnapshot,
+    restored_discoveries,
+)
 from my_code.tools.round_executor import (
     ToolCallFinished,
     ToolCallStarted,
@@ -74,6 +85,7 @@ class AgentEngine:
         tool_round: ToolRoundExecutor,
         context: ContextEngine,
         tool_catalog: ToolCatalog,
+        tool_search_mode: ToolSearchMode | None = None,
         max_steps: int | None = None,
     ) -> None:
         if max_steps is not None and max_steps < 1:
@@ -82,6 +94,7 @@ class AgentEngine:
         self._tool_round = tool_round
         self._context = context
         self._tool_catalog = tool_catalog
+        self._tool_search_mode = tool_search_mode
         self.max_steps = max_steps
 
     async def submit(
@@ -140,7 +153,37 @@ class AgentEngine:
         step_count = 0
         while True:
             step_count += 1
-            tools = self._tool_catalog.snapshot()
+            catalog = self._tool_catalog.snapshot()
+            if self._tool_search_mode is None:
+                tools: ToolCatalogSnapshot | ToolExposureSnapshot = catalog
+            else:
+                discoveries = restored_discoveries(session.conversation)
+                tools = ToolExposureSnapshot.build(
+                    catalog, self._tool_search_mode, discoveries
+                )
+                invalidated = tools.invalidated(discoveries)
+                if invalidated:
+                    session.append_attachment(
+                        ToolDiscoveryInvalidationAttachment(invalidated)
+                    )
+                    discoveries = restored_discoveries(session.conversation)
+                    tools = ToolExposureSnapshot.build(
+                        catalog, self._tool_search_mode, discoveries
+                    )
+                searchable_names = tuple(
+                    sorted(
+                        tool.definition.name
+                        for tool in catalog.tools
+                        if tool.exposure is ToolExposure.SEARCHABLE
+                    )
+                )
+                if (
+                    catalog.get(TOOL_SEARCH_NAME) is not None
+                    and _latest_search_listing(session) != searchable_names
+                ):
+                    session.append_attachment(
+                        ToolSearchListingAttachment(searchable_names)
+                    )
             request = await self._plan_with_proactive_compact(session, runtime, tools)
             reactive_attempted = False
             while True:
@@ -374,7 +417,7 @@ class AgentEngine:
         self,
         session: Session,
         runtime: ContextRuntime,
-        tools: ToolCatalogSnapshot,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot,
     ) -> ContextPlan:
         try:
             return await self._plan_request(session, runtime, tools)
@@ -386,7 +429,7 @@ class AgentEngine:
         self,
         session: Session,
         runtime: ContextRuntime,
-        tools: ToolCatalogSnapshot,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot,
     ) -> ContextPlan:
         derived = self._context.derive_attachments(
             session.attachment_derivation_state()
@@ -427,6 +470,17 @@ def _cancelled_results(
 
 def _last_uuid(session: Session) -> str | None:
     return session.causal_head_uuid
+
+
+def _latest_search_listing(session: Session) -> tuple[str, ...] | None:
+    from my_code.conversation.models import AttachmentMessage
+
+    for entry in reversed(session.context_entries):
+        if isinstance(entry, AttachmentMessage) and isinstance(
+            entry.payload, ToolSearchListingAttachment
+        ):
+            return entry.payload.names
+    return None
 
 
 __all__ = [

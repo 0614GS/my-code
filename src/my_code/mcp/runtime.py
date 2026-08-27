@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import dataclass
 
 from my_code.foundation.json import JsonObject
@@ -14,13 +13,11 @@ from my_code.mcp.models import (
     McpDiagnostic,
     McpDiagnosticCode,
     McpRemoteTool,
-    McpSearchMatch,
     McpServerSnapshot,
     McpServerSpec,
     public_tool_name,
 )
 from my_code.mcp.schema import validate_tool_schema
-from my_code.mcp.search_tool import McpToolSearch
 from my_code.mcp.tool import McpTool
 from my_code.mcp.transport import (
     McpConfigurationError,
@@ -34,8 +31,6 @@ from my_code.mcp.transport import (
 from my_code.tools.base import Tool, ToolExecutionError
 from my_code.tools.catalog import ToolCatalog, ToolSourceId
 
-DEFAULT_DEFERRED_TOOL_THRESHOLD = 50
-
 
 class McpRuntimeError(ToolExecutionError):
     """A stable execution error that contains no command, env value, or stderr."""
@@ -48,7 +43,6 @@ class _ServerRuntime:
     transport: McpTransport | None = None
     info: McpConnectionInfo | None = None
     remote_tools: tuple[McpRemoteTool, ...] = ()
-    activated_remote_names: frozenset[str] = frozenset()
     tool_names: tuple[str, ...] = ()
     diagnostic: McpDiagnostic | None = None
 
@@ -63,18 +57,14 @@ class McpRuntime:
         servers: tuple[McpServerSpec, ...],
         catalog: ToolCatalog,
         transport_factory: McpTransportFactory,
-        deferred_tool_threshold: int = DEFAULT_DEFERRED_TOOL_THRESHOLD,
     ) -> None:
         names = [server.name for server in servers]
         if len(names) != len(set(names)):
             raise ValueError(
                 "MCP server names must be unique after settings resolution"
             )
-        if deferred_tool_threshold <= 0:
-            raise ValueError("MCP deferred tool threshold must be positive")
         self.enabled = enabled
         self.catalog = catalog
-        self.deferred_tool_threshold = deferred_tool_threshold
         self._transport_factory = transport_factory
         self._servers = {
             spec.name: _ServerRuntime(spec, self._initial_state(spec))
@@ -220,12 +210,7 @@ class McpRuntime:
             if normalized == server.remote_tools:
                 server.diagnostic = None
                 return self._snapshot(server_name, server)
-            retained = frozenset(
-                name
-                for name in server.activated_remote_names
-                if any(remote.name == name for remote in normalized)
-            )
-            tools = self._published_tools(server, normalized, retained)
+            tools = self._published_tools(server, normalized)
             try:
                 self.catalog.replace_source(self._source(server), tools)
             except (ValueError, TypeError):
@@ -236,7 +221,7 @@ class McpRuntime:
                     "MCP refreshed tools conflict with the active catalog.",
                 )
                 return self._snapshot(server_name, server)
-            self._commit_tools(server, normalized, retained, tools)
+            self._commit_tools(server, normalized, tools)
             return self._snapshot(server_name, server)
 
     async def wait_for_refreshes(self) -> None:
@@ -244,38 +229,6 @@ class McpRuntime:
 
         while self._refresh_tasks:
             await asyncio.gather(*tuple(self._refresh_tasks), return_exceptions=True)
-
-    async def search_and_activate(
-        self,
-        server_name: str,
-        query: str,
-        *,
-        limit: int,
-    ) -> tuple[McpSearchMatch, ...]:
-        async with self._lock:
-            if self._closed:
-                raise McpRuntimeError("MCP runtime is closed")
-            server = self._server(server_name)
-            if server.state is not McpConnectionState.CONNECTED:
-                raise McpRuntimeError(f"MCP server {server_name!r} is unavailable")
-            if not self._is_deferred(server.remote_tools):
-                raise McpRuntimeError(
-                    f"MCP server {server_name!r} does not use deferred tools"
-                )
-            matches = _search(server.spec.name, server.remote_tools, query, limit)
-            activated = server.activated_remote_names | frozenset(
-                match.remote_name for match in matches
-            )
-            if activated != server.activated_remote_names:
-                tools = self._published_tools(server, server.remote_tools, activated)
-                try:
-                    self.catalog.replace_source(self._source(server), tools)
-                except (ValueError, TypeError) as error:
-                    raise McpRuntimeError(
-                        f"MCP server {server_name!r} tools could not be activated"
-                    ) from error
-                self._commit_tools(server, server.remote_tools, activated, tools)
-            return matches
 
     async def call_tool(
         self, server_name: str, remote_name: str, arguments: JsonObject
@@ -350,7 +303,7 @@ class McpRuntime:
             return
         try:
             normalized = await self._discover(server)
-            tools = self._published_tools(server, normalized, frozenset())
+            tools = self._published_tools(server, normalized)
             self.catalog.register_source(self._source(server), tools)
         except asyncio.CancelledError:
             await self._close_failed_transport(server)
@@ -374,7 +327,7 @@ class McpRuntime:
             return
         server.info = info
         server.state = McpConnectionState.CONNECTED
-        self._commit_tools(server, normalized, frozenset(), tools)
+        self._commit_tools(server, normalized, tools)
 
     async def _discover(self, server: _ServerRuntime) -> tuple[McpRemoteTool, ...]:
         assert server.transport is not None
@@ -400,46 +353,21 @@ class McpRuntime:
         self,
         server: _ServerRuntime,
         remote_tools: tuple[McpRemoteTool, ...],
-        activated: frozenset[str],
     ) -> tuple[Tool, ...]:
-        if not self._is_deferred(remote_tools):
-            exposed = remote_tools
-            search: tuple[Tool, ...] = ()
-        else:
-            exposed = tuple(
-                remote for remote in remote_tools if remote.name in activated
-            )
-            search = (
-                McpToolSearch(
-                    self,
-                    server_name=server.spec.name,
-                    tool_count=len(remote_tools),
-                ),
-            )
-        return (
-            *search,
-            *(
-                McpTool(self, server_name=server.spec.name, remote=remote)
-                for remote in exposed
-            ),
+        return tuple(
+            McpTool(self, server_name=server.spec.name, remote=remote)
+            for remote in remote_tools
         )
 
     def _commit_tools(
         self,
         server: _ServerRuntime,
         remote_tools: tuple[McpRemoteTool, ...],
-        activated: frozenset[str],
         tools: tuple[Tool, ...],
     ) -> None:
         server.remote_tools = remote_tools
-        server.activated_remote_names = (
-            activated if self._is_deferred(remote_tools) else frozenset()
-        )
         server.tool_names = tuple(tool.definition.name for tool in tools)
         server.diagnostic = None
-
-    def _is_deferred(self, tools: tuple[McpRemoteTool, ...]) -> bool:
-        return len(tools) > self.deferred_tool_threshold
 
     def _schedule_refresh(self, server_name: str) -> None:
         if self._closed:
@@ -498,7 +426,6 @@ class McpRuntime:
         server.transport = None
         server.info = None
         server.remote_tools = ()
-        server.activated_remote_names = frozenset()
         server.tool_names = ()
         server.state = target
         server.diagnostic = None
@@ -537,7 +464,6 @@ class McpRuntime:
         self.catalog.unregister_source(self._source(server))
         server.info = None
         server.remote_tools = ()
-        server.activated_remote_names = frozenset()
         server.tool_names = ()
         server.state = McpConnectionState.FAILED
         server.diagnostic = McpDiagnostic(server.spec.name, server.state, code, message)
@@ -571,7 +497,6 @@ class McpRuntime:
                 server.transport = None
                 server.info = None
                 server.remote_tools = ()
-                server.activated_remote_names = frozenset()
                 server.tool_names = ()
                 server.state = McpConnectionState.CLOSED
                 server.diagnostic = None
@@ -585,48 +510,7 @@ class McpRuntime:
                 raise ExceptionGroup("Failed to close MCP runtime", errors)
 
 
-def _search(
-    server_name: str,
-    tools: tuple[McpRemoteTool, ...],
-    query: str,
-    limit: int,
-) -> tuple[McpSearchMatch, ...]:
-    normalized_query = query.casefold().strip()
-    if not normalized_query:
-        return ()
-    terms = tuple(term for term in re.split(r"[^a-z0-9]+", normalized_query) if term)
-    scored: list[tuple[int, str, McpRemoteTool]] = []
-    for remote in tools:
-        name = remote.name.casefold()
-        description = remote.description.casefold()
-        score = 0
-        if normalized_query == name:
-            score += 1_000
-        elif normalized_query in name:
-            score += 500
-        elif normalized_query in description:
-            score += 100
-        for term in terms:
-            if term in name:
-                score += 20
-            if term in description:
-                score += 5
-        if score:
-            scored.append((score, remote.name, remote))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return tuple(
-        McpSearchMatch(
-            server_name,
-            remote.name,
-            public_tool_name(server_name, remote.name),
-            remote.description,
-        )
-        for _, _, remote in scored[:limit]
-    )
-
-
 __all__ = [
-    "DEFAULT_DEFERRED_TOOL_THRESHOLD",
     "McpRuntime",
     "McpRuntimeError",
 ]

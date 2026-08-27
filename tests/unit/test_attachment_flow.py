@@ -7,6 +7,9 @@ from my_code.conversation.attachments import (
     FileMentionAttachment,
     InvokedSkillsAttachment,
     SkillActivationAttachment,
+    ToolDiscoveryAttachment,
+    ToolDiscoveryDefinition,
+    ToolDiscoveryInvalidationAttachment,
 )
 from my_code.conversation.models import (
     AssistantMessage,
@@ -25,6 +28,7 @@ from my_code.permissions.models import PermissionBehavior
 from my_code.permissions.policy import PermissionPolicy
 from my_code.sessions.session import Session
 from my_code.skills.tool import restore_skill_permissions
+from my_code.tools.discovery import restored_discoveries
 
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -141,3 +145,27 @@ def test_compact_rebuilds_latest_invoked_skills_and_restores_grants(
         and rule.behavior is PermissionBehavior.ALLOW
         for rule in policy.rules
     )
+
+
+def test_compact_and_restore_rebuild_valid_tool_discoveries(tmp_path: Path) -> None:
+    session = Session(tmp_path, SESSION_ID)
+    session.append_human_message(HumanMessage("work"))
+    first = ToolDiscoveryDefinition(
+        "One", "first", {"type": "object"}, "fingerprint-one"
+    )
+    removed = ToolDiscoveryDefinition(
+        "Removed", "old", {"type": "object"}, "fingerprint-removed"
+    )
+    session.append_attachment(ToolDiscoveryAttachment((first, removed), "dispatcher"))
+    latest = session.append_attachment(
+        ToolDiscoveryInvalidationAttachment(("Removed",))
+    )
+    summary = ConversationSummaryMessage("state", parent_uuid=latest.uuid)
+    boundary = CompactBoundary(latest.uuid, summary.uuid, "manual", 100)
+
+    session.commit_compaction((), summary, boundary)
+
+    restored = Session(tmp_path, SESSION_ID)
+    discoveries = restored_discoveries(restored.conversation)
+    assert tuple(discoveries) == ("One",)
+    assert discoveries["One"] == first

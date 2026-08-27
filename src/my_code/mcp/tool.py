@@ -14,7 +14,7 @@ from my_code.permissions.models import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.base import Tool, ToolContext, ToolExposure, ToolOutput
 
 
 class McpToolCaller(Protocol):
@@ -48,6 +48,10 @@ class McpTool(Tool):
     @property
     def definition(self) -> ModelToolDefinition:
         return self._definition
+
+    @property
+    def exposure(self) -> ToolExposure:
+        return ToolExposure.SEARCHABLE
 
     def user_facing_name(self, tool_input: JsonObject) -> str:
         del tool_input

@@ -18,6 +18,7 @@ class ToolInvocationOrigin(StrEnum):
     """The application capability that initiated a tool call."""
 
     MODEL = "model"
+    SEARCHED_DISPATCH = "searched_dispatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +26,8 @@ class ToolInvocation:
     """Security-relevant metadata for one invocation."""
 
     origin: ToolInvocationOrigin = ToolInvocationOrigin.MODEL
+    dispatcher_name: str | None = None
+    target_name: str | None = None
 
 
 class ToolInvocationHook(Protocol):

@@ -13,6 +13,7 @@ from my_code.conversation.presentation import (
     generic_tool_result_presentation,
 )
 from my_code.foundation.json import JsonObject, to_json_object
+from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionDecision,
@@ -34,10 +35,15 @@ from my_code.tools.base import (
     ToolOutput,
 )
 from my_code.tools.catalog import ToolCatalogSnapshot
+from my_code.tools.discovery import (
+    INVOKE_SEARCHED_TOOL_NAME,
+    ToolExposureSnapshot,
+)
 from my_code.tools.invocation import (
     ToolInvocation,
     ToolInvocationAudit,
     ToolInvocationHook,
+    ToolInvocationOrigin,
 )
 from my_code.tools.presentation import (
     ToolUsePresentation,
@@ -107,13 +113,13 @@ class ToolExecutor:
         self,
         call: ToolCall,
         *,
-        tools: ToolCatalogSnapshot | None = None,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
     ) -> ToolUsePresentation:
         """请求 Tool 解释调用语义；未知或异常工具使用安全回退。"""
 
         active_tools = self.tools if tools is None else tools
-        tool = active_tools.get(call.name)
-        tool_input = to_json_object(call.input)
+        resolved_call, tool, _, _ = self._resolve(call, active_tools, None)
+        tool_input = to_json_object(resolved_call.input)
         if tool is not None:
             try:
                 return tool.present_use(tool_input)
@@ -127,13 +133,13 @@ class ToolExecutor:
         call: ToolCall,
         message: str,
         *,
-        tools: ToolCatalogSnapshot | None = None,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
     ) -> ToolResultPresentation:
         """请求 Tool 展示错误；未知或异常工具使用安全回退。"""
 
         active_tools = self.tools if tools is None else tools
-        tool = active_tools.get(call.name)
-        tool_input = to_json_object(call.input)
+        resolved_call, tool, _, _ = self._resolve(call, active_tools, None)
+        tool_input = to_json_object(resolved_call.input)
         if tool is not None:
             try:
                 return tool.present_error(tool_input, message)
@@ -145,20 +151,33 @@ class ToolExecutor:
         self,
         call: ToolCall,
         *,
-        tools: ToolCatalogSnapshot | None = None,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
         invocation: ToolInvocation | None = None,
         run_id: str | None = None,
     ) -> ToolExecutionOutcome:
-        actual_invocation = invocation or ToolInvocation()
-        submitted_call = _copy_call(call)
-        submitted_input = submitted_call.input
         active_tools = self.tools if tools is None else tools
-        execution_context = self.context.with_tools(
-            active_tools.as_mapping(),
-            version=active_tools.version,
-            run_id=run_id,
+        submitted_call, tool, route_error, routed_invocation = self._resolve(
+            call, active_tools, invocation
         )
-        tool = active_tools.get(submitted_call.name)
+        actual_invocation = routed_invocation or invocation or ToolInvocation()
+        submitted_input = submitted_call.input
+        catalog = (
+            active_tools.catalog
+            if isinstance(active_tools, ToolExposureSnapshot)
+            else active_tools
+        )
+        execution_context = self.context.with_tools(
+            catalog.as_mapping(),
+            version=catalog.version,
+            run_id=run_id,
+            searched_fingerprints=(
+                active_tools.searched_fingerprints()
+                if isinstance(active_tools, ToolExposureSnapshot)
+                else {}
+            ),
+        )
+        if route_error is not None:
+            return self._error(call, route_error)
         if tool is None:
             # 未知工具名以协议结果形式报告给模型，而不是中断整个智能体循环。
             return self._error(submitted_call, f"Unknown tool: {submitted_call.name}")
@@ -431,6 +450,65 @@ class ToolExecutor:
         ):
             raise ValueError("Tool follow-ups may update session permissions only")
         self.update_applier(updates)
+
+    @staticmethod
+    def _resolve(
+        call: ToolCall,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot,
+        invocation: ToolInvocation | None,
+    ) -> tuple[ToolCall, Tool | None, str | None, ToolInvocation | None]:
+        if not isinstance(tools, ToolExposureSnapshot):
+            return call, tools.get(call.name), None, invocation
+        if call.name != INVOKE_SEARCHED_TOOL_NAME:
+            tool = tools.direct(call.name)
+            if tool is None and tools.target(call.name) is not None:
+                return (
+                    call,
+                    None,
+                    f"Tool {call.name!r} is not directly exposed; "
+                    "use ToolSearch first.",
+                    invocation,
+                )
+            return call, tool, None, invocation
+        dispatcher = tools.direct(INVOKE_SEARCHED_TOOL_NAME)
+        if tools.mode is not ToolSearchMode.DISPATCHER or dispatcher is None:
+            return (
+                call,
+                None,
+                "InvokeSearchedTool is not available in native mode.",
+                invocation,
+            )
+        outer_input = to_json_object(call.input)
+        try:
+            dispatcher.validate_input(outer_input)
+        except (ToolInputError, ValueError, TypeError) as error:
+            return call, None, f"Invalid input: {error}", invocation
+        target_name = outer_input.get("tool_name")
+        arguments = outer_input.get("arguments")
+        assert isinstance(target_name, str) and isinstance(arguments, dict)
+        record = tools.searched.get(target_name)
+        target = tools.target(target_name)
+        if record is None or target is None:
+            return (
+                call,
+                None,
+                f"Searched tool {target_name!r} is unavailable or stale; "
+                "use ToolSearch again.",
+                invocation,
+            )
+        if target.exposure.value != "searchable":
+            return call, None, f"Tool {target_name!r} cannot be dispatched.", invocation
+        target_call = ToolCall(call.id, target_name, to_json_object(arguments))
+        return (
+            target_call,
+            target,
+            None,
+            ToolInvocation(
+                ToolInvocationOrigin.SEARCHED_DISPATCH,
+                INVOKE_SEARCHED_TOOL_NAME,
+                target_name,
+            ),
+        )
 
 
 def _copy_call(

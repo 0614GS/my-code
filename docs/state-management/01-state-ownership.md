@@ -200,7 +200,7 @@ load + validate + repair candidate Session
 ### Tools
 
 - application-lifetime `ToolCatalog` 只有 `AppState.tools` 一份；来源更新原子发布新版本。
-- Agent step 使用不可变 `ToolCatalogSnapshot`，请求 definitions 与 ToolRound 执行版本一致。
+- Agent step 从完整 `ToolCatalogSnapshot` 和 Session discovery state 生成不可变 `ToolExposureSnapshot`，请求 definitions、调用校验与 ToolRound 执行版本一致。
 - `ToolExecutor` 不绑定活动 Session 或活动工具结果目录。
 - Tool 返回领域结果；由 Session 提交路径负责结果外置、展示快照和持久化。
 

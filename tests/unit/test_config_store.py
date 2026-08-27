@@ -14,6 +14,7 @@ from my_code.config.store import (
     SettingsLayer,
     SettingsStore,
 )
+from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionMode,
@@ -171,6 +172,7 @@ def test_subagents_are_disabled_by_default(tmp_path: Path) -> None:
     assert settings.skills_enabled is False
     assert settings.mcp_enabled is False
     assert settings.mcp_servers == ()
+    assert settings.tool_search_mode is ToolSearchMode.DISPATCHER
 
 
 def test_skill_feature_gate_is_layered_and_serialized(tmp_path: Path) -> None:
@@ -193,7 +195,7 @@ def test_mcp_settings_replace_servers_by_scope_and_store_only_env_references(
         SettingsScope.USER,
         SettingsLayer(
             mcp_enabled=True,
-            mcp_deferred_tool_threshold=25,
+            tool_search_mode=ToolSearchMode.NATIVE,
             mcp_servers=(
                 McpServerSettingsLayer(
                     "user-server",
@@ -235,7 +237,7 @@ def test_mcp_settings_replace_servers_by_scope_and_store_only_env_references(
         paths, environ={"USER_SERVER_TOKEN": "super-secret-value"}
     ).resolve(interactive=False)
     assert resolved.mcp_enabled is True
-    assert resolved.mcp_deferred_tool_threshold == 25
+    assert resolved.tool_search_mode is ToolSearchMode.NATIVE
     assert tuple(server.name for server in resolved.mcp_servers) == (
         "project-server",
         "user-server",
@@ -244,7 +246,7 @@ def test_mcp_settings_replace_servers_by_scope_and_store_only_env_references(
     assert project.command == "/trusted/project-server"
     assert project.scope is SettingsScope.LOCAL
     user_document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
-    assert user_document["mcp"]["deferredToolThreshold"] == 25
+    assert user_document["tools"]["toolSearchMode"] == "native"
     assert user_document["mcp"]["servers"]["user-server"]["envFrom"] == {
         "TOKEN": "USER_SERVER_TOKEN"
     }
@@ -321,6 +323,10 @@ def test_shared_project_cannot_activate_mcp(
             "tools.maxParallelCalls must be a positive integer",
         ),
         (
+            {"version": 3, "tools": {"toolSearchMode": "deferred"}},
+            "tools.toolSearchMode must be dispatcher or native",
+        ),
+        (
             {"version": 3, "subagents": {"enabled": "yes"}},
             "subagents.enabled must be a boolean",
         ),
@@ -339,7 +345,7 @@ def test_shared_project_cannot_activate_mcp(
         ({"version": 3, "mcp": []}, "mcp must be an object"),
         (
             {"version": 3, "mcp": {"deferredToolThreshold": 0}},
-            "mcp.deferredToolThreshold must be a positive integer",
+            "Unknown setting mcp.deferredToolThreshold",
         ),
         (
             {

@@ -42,7 +42,7 @@ flowchart TB
         Provider["Anthropic / OpenAI Responses adapters"]
         Round["ToolRoundExecutor<br/>安全并行组 + 不安全屏障"]
         Executor["ToolExecutor<br/>校验 → 权限 → hook → 执行"]
-        SelectedTools["当前 ToolCatalogSnapshot<br/>tools + definitions + source + version"]
+        SelectedTools["当前 ToolExposureSnapshot<br/>full catalog + direct tools + definitions"]
     end
 
     subgraph SessionBoundary["Session 边界"]

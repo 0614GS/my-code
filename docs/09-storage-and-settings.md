@@ -64,7 +64,7 @@ Inspect the relevant implementation and tests before reporting findings.
 
 MCP 配置位于 `mcp` 域，`enabled` 默认 `false`。每个 `servers.<name>` 是完整替换的 server 定义，包含 `command`、`args`、`envFrom`、`enabled` 与启动/调用 timeout。`envFrom` 只保存“目标变量名 → 来源变量名”，不保存值，也不支持字面量 `env`。
 
-`mcp.deferredToolThreshold` 必须为正整数，默认 50。单个 server 的发现结果超过阈值时，只先暴露该 server 的本地 ToolSearch；搜索命中工具从下一 step 的 catalog snapshot 开始可见。把阈值设得足够大可关闭实际 deferred 行为。
+`tools.toolSearchMode` 接受 `dispatcher` 或 `native`，默认 `dispatcher`，不提供 CLI/TUI 切换。旧 `mcp.deferredToolThreshold` 已删除并作为未知配置立即失败。Discovery 记录属于 Session，切换 provider 不会清空。
 
 共享 project settings 可以声明 MCP server，但不能开启全局 MCP 或直接启用 server；project 定义默认 disabled。要信任并运行它，用户必须把完整定义复制到 `settings.local.json`。user/local server 可以启用；同名定义仍按 local > project > user 选择最高层完整值。
 

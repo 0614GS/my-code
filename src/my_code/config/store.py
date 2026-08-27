@@ -9,6 +9,7 @@ from pathlib import Path
 
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.model.primitives import validate_provider_id
+from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.rules import (
     permission_rule_to_string,
@@ -43,6 +44,7 @@ class PermissionSettingsLayer:
 @dataclass(frozen=True, slots=True)
 class ToolSettingsLayer:
     max_parallel_calls: int | None = None
+    tool_search_mode: ToolSearchMode | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +83,6 @@ class McpServerSettingsLayer:
 class McpSettingsLayer:
     enabled: bool | None = None
     servers: tuple[McpServerSettingsLayer, ...] = ()
-    deferred_tool_threshold: int | None = None
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -118,6 +119,7 @@ class SettingsLayer:
         max_output_tokens: int | None = None,
         context_chars: int | None = None,
         max_parallel_tool_calls: int | None = None,
+        tool_search_mode: ToolSearchMode | None = None,
         subagents_enabled: bool | None = None,
         subagent_max_depth: int | None = None,
         subagent_max_active_children: int | None = None,
@@ -128,7 +130,6 @@ class SettingsLayer:
         skills_enabled: bool | None = None,
         mcp_enabled: bool | None = None,
         mcp_servers: tuple[McpServerSettingsLayer, ...] = (),
-        mcp_deferred_tool_threshold: int | None = None,
     ) -> None:
         if agent is not None and any(
             value is not None
@@ -144,7 +145,9 @@ class SettingsLayer:
             raise TypeError(
                 "permissions and flattened permission values cannot be combined"
             )
-        if tools is not None and max_parallel_tool_calls is not None:
+        if tools is not None and (
+            max_parallel_tool_calls is not None or tool_search_mode is not None
+        ):
             raise TypeError("tools and flattened tool values cannot be combined")
         if subagents is not None and any(
             value is not None
@@ -167,11 +170,7 @@ class SettingsLayer:
             )
         if skills is not None and skills_enabled is not None:
             raise TypeError("skills and flattened Skill values cannot be combined")
-        if mcp is not None and (
-            mcp_enabled is not None
-            or mcp_servers
-            or mcp_deferred_tool_threshold is not None
-        ):
+        if mcp is not None and (mcp_enabled is not None or mcp_servers):
             raise TypeError("mcp and flattened MCP values cannot be combined")
         object.__setattr__(self, "active_provider", active_provider)
         object.__setattr__(
@@ -204,7 +203,7 @@ class SettingsLayer:
         object.__setattr__(
             self,
             "tools",
-            tools or ToolSettingsLayer(max_parallel_tool_calls),
+            tools or ToolSettingsLayer(max_parallel_tool_calls, tool_search_mode),
         )
         object.__setattr__(
             self,
@@ -226,7 +225,6 @@ class SettingsLayer:
             or McpSettingsLayer(
                 mcp_enabled,
                 mcp_servers,
-                mcp_deferred_tool_threshold,
             ),
         )
 
@@ -265,6 +263,10 @@ class SettingsLayer:
     @property
     def max_parallel_tool_calls(self) -> int | None:
         return self.tools.max_parallel_calls
+
+    @property
+    def tool_search_mode(self) -> ToolSearchMode | None:
+        return self.tools.tool_search_mode
 
     @property
     def subagents_enabled(self) -> bool | None:
@@ -306,10 +308,6 @@ class SettingsLayer:
     def mcp_servers(self) -> tuple[McpServerSettingsLayer, ...]:
         return self.mcp.servers
 
-    @property
-    def mcp_deferred_tool_threshold(self) -> int | None:
-        return self.mcp.deferred_tool_threshold
-
     def overlay(self, higher: "SettingsLayer") -> "SettingsLayer":
         return SettingsLayer(
             active_provider=higher.active_provider or self.active_provider,
@@ -334,7 +332,10 @@ class SettingsLayer:
             tools=ToolSettingsLayer(
                 higher.max_parallel_tool_calls
                 if higher.max_parallel_tool_calls is not None
-                else self.max_parallel_tool_calls
+                else self.max_parallel_tool_calls,
+                higher.tool_search_mode
+                if higher.tool_search_mode is not None
+                else self.tool_search_mode,
             ),
             subagents=SubagentSettingsLayer(
                 higher.subagents_enabled
@@ -371,9 +372,6 @@ class SettingsLayer:
                 if higher.mcp_enabled is not None
                 else self.mcp_enabled,
                 _overlay_mcp_servers(self.mcp_servers, higher.mcp_servers),
-                higher.mcp_deferred_tool_threshold
-                if higher.mcp_deferred_tool_threshold is not None
-                else self.mcp_deferred_tool_threshold,
             ),
         )
 
@@ -514,6 +512,8 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
     background_tasks = _nested_mapping(raw, "backgroundTasks", path)
     skills = _nested_mapping(raw, "skills", path)
     mcp = _nested_mapping(raw, "mcp", path)
+    if "deferredToolThreshold" in mcp:
+        raise SettingsFileError(f"Unknown setting mcp.deferredToolThreshold: {path}")
     mcp_servers = _nested_mapping(mcp, "servers", path, label="mcp.servers")
     layer = SettingsLayer(
         active_provider=_optional_string(raw, "activeProvider", path),
@@ -537,7 +537,8 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
                 "maxParallelCalls",
                 path,
                 "tools.maxParallelCalls",
-            )
+            ),
+            _tool_search_mode(tools, path),
         ),
         subagents=SubagentSettingsLayer(
             _optional_bool(subagents, "enabled", path, "subagents.enabled"),
@@ -586,12 +587,6 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
         mcp=McpSettingsLayer(
             _optional_bool(mcp, "enabled", path, "mcp.enabled"),
             _parse_mcp_servers(mcp_servers, path=path, scope=scope),
-            _optional_positive_int(
-                mcp,
-                "deferredToolThreshold",
-                path,
-                "mcp.deferredToolThreshold",
-            ),
         ),
     )
     _validate_scope(layer, scope, path)
@@ -660,8 +655,13 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
             )
     if permissions:
         document["permissions"] = permissions
+    tool_settings: dict[str, object] = {}
     if settings.max_parallel_tool_calls is not None:
-        document["tools"] = {"maxParallelCalls": settings.max_parallel_tool_calls}
+        tool_settings["maxParallelCalls"] = settings.max_parallel_tool_calls
+    if settings.tool_search_mode is not None:
+        tool_settings["toolSearchMode"] = settings.tool_search_mode.value
+    if tool_settings:
+        document["tools"] = tool_settings
     subagents = {
         key: value
         for key, value in (
@@ -683,8 +683,6 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
     mcp: dict[str, object] = {}
     if settings.mcp_enabled is not None:
         mcp["enabled"] = settings.mcp_enabled
-    if settings.mcp_deferred_tool_threshold is not None:
-        mcp["deferredToolThreshold"] = settings.mcp_deferred_tool_threshold
     if settings.mcp_servers:
         mcp["servers"] = {
             server.name: {
@@ -903,6 +901,20 @@ def _optional_string(
     if not isinstance(value, str) or not value.strip():
         raise SettingsFileError(f"{label or key} must be a non-empty string: {path}")
     return value
+
+
+def _tool_search_mode(raw: dict[object, object], path: Path) -> ToolSearchMode | None:
+    value = raw.get("toolSearchMode")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SettingsFileError(f"tools.toolSearchMode must be a string: {path}")
+    try:
+        return ToolSearchMode(value)
+    except ValueError as error:
+        raise SettingsFileError(
+            f"tools.toolSearchMode must be dispatcher or native: {path}"
+        ) from error
 
 
 def _optional_positive_int(

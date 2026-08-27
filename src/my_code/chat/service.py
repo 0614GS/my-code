@@ -178,6 +178,13 @@ class ChatService:
         """Return a fresh catalog snapshot without leaking runtime objects."""
 
         tools = self.state.tools.snapshot()
+        from my_code.tools.discovery import ToolExposureSnapshot, restored_discoveries
+
+        exposure = ToolExposureSnapshot.build(
+            tools,
+            self.settings.tool_search_mode,
+            restored_discoveries(self.state.session.conversation),
+        )
         skill_snapshot = self.state.skills.catalog.snapshot()
         return CapabilitiesView(
             tools=tuple(
@@ -185,6 +192,18 @@ class ChatService:
                     registration.tool.definition.name,
                     registration.tool.definition.description,
                     str(registration.source),
+                    (
+                        "searched"
+                        if registration.tool.definition.name in exposure.searched
+                        else registration.tool.exposure.value
+                    ),
+                    (
+                        "direct"
+                        if registration.tool.definition.name in exposure.direct_tools
+                        else "via InvokeSearchedTool"
+                        if registration.tool.definition.name in exposure.searched
+                        else "via ToolSearch"
+                    ),
                 )
                 for registration in tools.registrations
             ),
@@ -222,6 +241,7 @@ class ChatService:
                 )
                 for server in self.state.mcp.snapshots()
             ),
+            tool_search_mode=self.settings.tool_search_mode.value,
         )
 
     def background_tasks(self) -> tuple[BackgroundTaskView, ...]:

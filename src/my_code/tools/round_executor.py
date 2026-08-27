@@ -4,7 +4,10 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from my_code.conversation.attachments import AttachmentPayload
+from my_code.conversation.attachments import (
+    AttachmentPayload,
+    ToolDiscoveryAttachment,
+)
 from my_code.conversation.models import (
     AssistantMessage,
     ToolCall,
@@ -14,6 +17,7 @@ from my_code.conversation.models import (
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.permissions.models import PermissionUpdate
 from my_code.tools.catalog import ToolCatalogSnapshot
+from my_code.tools.discovery import ToolExposureSnapshot
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
 from my_code.tools.presentation import ToolUsePresentation
 
@@ -63,7 +67,7 @@ class ToolRoundExecutor:
         calls: tuple[ToolCall, ...],
         assistant_message: AssistantMessage,
         *,
-        tools: ToolCatalogSnapshot | None = None,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
         run_id: str | None = None,
     ) -> AsyncIterator[ToolRoundEvent]:
         active_tools = self.executor.tools if tools is None else tools
@@ -71,7 +75,7 @@ class ToolRoundExecutor:
         attachments: list[AttachmentPayload] = []
         permission_updates: list[PermissionUpdate] = []
         try:
-            for group in _execution_groups(calls, active_tools):
+            for group in _execution_groups(calls, active_tools, self.executor):
                 for call in group:
                     yield ToolCallStarted(
                         call,
@@ -126,7 +130,7 @@ class ToolRoundExecutor:
 
         yield ToolRoundCompleted(
             message=_tool_result_message(assistant_message, tuple(results)),
-            new_attachments=tuple(attachments),
+            new_attachments=_merge_discovery_attachments(attachments),
             permission_updates=tuple(permission_updates),
         )
 
@@ -136,7 +140,7 @@ class ToolRoundExecutor:
     async def _execute_group(
         self,
         calls: tuple[ToolCall, ...],
-        tools: ToolCatalogSnapshot,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot,
         *,
         run_id: str | None,
     ) -> tuple[ToolExecutionOutcome, ...]:
@@ -182,14 +186,19 @@ class ToolRoundExecutor:
 
 def _execution_groups(
     calls: tuple[ToolCall, ...],
-    tools: ToolCatalogSnapshot,
+    tools: ToolCatalogSnapshot | ToolExposureSnapshot,
+    executor: ToolExecutor,
 ) -> tuple[tuple[ToolCall, ...], ...]:
     groups: list[tuple[ToolCall, ...]] = []
     safe: list[ToolCall] = []
     for call in calls:
-        tool = tools.get(call.name)
+        resolved_call, tool, error, _ = executor._resolve(call, tools, None)
         try:
-            concurrency_safe = tool is not None and tool.is_concurrency_safe(call.input)
+            concurrency_safe = (
+                error is None
+                and tool is not None
+                and tool.is_concurrency_safe(resolved_call.input)
+            )
         except Exception:
             concurrency_safe = False
         if concurrency_safe:
@@ -215,6 +224,28 @@ def _tool_result_message(
         parent_uuid=assistant_message.uuid,
         source_assistant_id=assistant_message.uuid,
     )
+
+
+def _merge_discovery_attachments(
+    attachments: list[AttachmentPayload],
+) -> tuple[AttachmentPayload, ...]:
+    ordinary: list[AttachmentPayload] = []
+    definitions = {}
+    mode: str | None = None
+    for attachment in attachments:
+        if isinstance(attachment, ToolDiscoveryAttachment):
+            mode = attachment.mode
+            definitions.update((item.name, item) for item in attachment.definitions)
+        else:
+            ordinary.append(attachment)
+    if definitions:
+        assert mode in {"dispatcher", "native"}
+        ordinary.append(
+            ToolDiscoveryAttachment(
+                tuple(definitions[name] for name in sorted(definitions)), mode
+            )
+        )
+    return tuple(ordinary)
 
 
 __all__ = [

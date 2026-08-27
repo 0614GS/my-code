@@ -1,6 +1,6 @@
 """Stable MCP public names retain distinct remote identities."""
 
-from my_code.mcp.models import public_tool_name, tool_search_name
+from my_code.mcp.models import public_tool_name
 
 
 def test_public_tool_names_are_distinct_stable_and_provider_bounded() -> None:
@@ -12,4 +12,3 @@ def test_public_tool_names_are_distinct_stable_and_provider_bounded() -> None:
     assert len(long_name) == 64
     assert long_name == public_tool_name("s" * 64, "t" * 128)
     assert long_name != public_tool_name("s" * 64, "u" * 128)
-    assert len(tool_search_name("s" * 64)) <= 64

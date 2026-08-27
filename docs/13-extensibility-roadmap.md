@@ -443,12 +443,12 @@ PENDING ──> RUNNING ──> SUCCEEDED
 - MCP-02 由 `tests/integration/test_mcp_tool_round.py` 覆盖 allow/ask/deny、schema 拒绝、连接失败清洗和调用取消；SAFE-01 在 M5 阶段更新为 tasks → runs → MCP → provider，并在 M6 加入两者之间的 SkillRuntime。
 - M5a 完成时第 10 节五条命令全部通过，完整测试结果为 `469 passed`；`pyproject.toml`/`uv.lock` 未因 MCP 改动，没有新增第三方依赖，架构临时豁免仍为空。
 
-#### M5b 增量发现与 deferred tools
+#### M5b 增量发现与 provider-neutral ToolSearch
 
 状态：已完成（2026-08-24）。
 
 - 支持显式 refresh、server tools-changed 通知和幂等 diff。
-- 大工具集只向模型暴露索引/ToolSearch；命中后在下一 step 创建新快照。
+- 完整 catalog 与每 step exposure snapshot 分离；ToolSearch 命中后从下一 step 生效。
 - 为 tool name 建立稳定 namespace/显示名映射，并保留原始 server/tool identity 用于日志和权限。
 - 后续再扩展 MCP resources/prompts；不得混入 M5a 的完成定义。
 
@@ -457,9 +457,9 @@ PENDING ──> RUNNING ──> SUCCEEDED
 - `McpRuntime.refresh()` 对完整远端列表做 schema/name 校验和单 source replace；add/remove/update 只增加一个新 catalog version，内容相同的 refresh 不变更版本，失败保留旧 source。
 - stdio 将 `notifications/tools/list_changed` 交给 runtime 的受管 refresh task。同 server 通知可合并；refresh 期间到达的新通知设置 dirty 标记并保证后续 diff，关闭时取消并等待这些 task。
 - 远端 identity 保留在 `McpTool`/metadata；模型名对 `.` 做无碰撞编码，超出 64 字符时使用稳定 hash 截断，`-` 与 `_` 不再被错误合并。
-- `mcp.deferredToolThreshold` 默认 50。超过阈值的 server 原子发布 namespaced `mcp_search__<server>` 与已激活工具；ToolSearch 是标准本地 Tool，命中只更新 catalog，当前 step snapshot 不变、下一 step 可见。
-- refresh 会按 remote identity 保留仍存在的激活工具并更新定义，已删除工具自动撤销；小列表继续直接暴露全部工具。
-- MCP-03 由 `tests/integration/test_mcp_discovery.py` 使用 Event barrier 验证显式 refresh、幂等、失败回滚、通知合并/追赶和 deferred 下一 step 激活；稳定命名另由 `tests/unit/mcp/test_models.py` 验证。
+- 所有 MCP adapter 始终发布到完整 catalog 并声明 searchable；全局 ToolSearch 和 Session fingerprint discovery 取代 server-local search 与数量阈值。
+- 默认 dispatcher 保持顶层 definitions 稳定并经 InvokeSearchedTool 路由；native 仅从下一 step 追加有效命中。两者均不采用 Anthropic `tool_reference`/`defer_loading` 协议。
+- refresh 保留 fingerprint 未变化的 discovery，定义变化或删除时失效并通知重新搜索。
 - M5b 完成时第 10 节五条命令全部通过，完整测试结果为 `475 passed`；没有新增第三方依赖，架构临时豁免仍为空。
 
 退出条件：

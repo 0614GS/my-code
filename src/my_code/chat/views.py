@@ -35,6 +35,8 @@ class ToolCapabilityView:
     name: str
     description: str
     source: str
+    exposure: str = "eager"
+    access: str = "direct"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +68,7 @@ class CapabilitiesView:
     skills: tuple[SkillCapabilityView, ...]
     skill_diagnostics: tuple[CapabilityDiagnosticView, ...]
     mcp_servers: tuple[McpServerView, ...]
+    tool_search_mode: str = "dispatcher"
 
     @property
     def enabled_summary(self) -> str:

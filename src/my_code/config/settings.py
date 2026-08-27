@@ -28,6 +28,7 @@ from my_code.config.store import (
 from my_code.config.validation import validate_base_url
 from my_code.model.capabilities import ModelDescriptor, ModelLimits
 from my_code.model.primitives import validate_provider_id
+from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionMode,
@@ -43,7 +44,6 @@ DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN = 4
 DEFAULT_SUBAGENT_MAX_STEPS = 20
 DEFAULT_SUBAGENT_MAX_TOKENS = 100_000
 DEFAULT_SUBAGENT_TIMEOUT_SECONDS = 300.0
-DEFAULT_MCP_DEFERRED_TOOL_THRESHOLD = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +72,7 @@ class AgentSettings:
     context_chars: int
     interactive: bool
     max_parallel_tool_calls: int = DEFAULT_MAX_PARALLEL_TOOL_CALLS
+    tool_search_mode: ToolSearchMode = ToolSearchMode.DISPATCHER
     subagents_enabled: bool = False
     subagent_max_depth: int = DEFAULT_SUBAGENT_MAX_DEPTH
     subagent_max_active_children: int = DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN
@@ -82,7 +83,6 @@ class AgentSettings:
     skills_enabled: bool = False
     mcp_enabled: bool = False
     mcp_servers: tuple[McpServerSettingsLayer, ...] = ()
-    mcp_deferred_tool_threshold: int = DEFAULT_MCP_DEFERRED_TOOL_THRESHOLD
     permission_rules: tuple[PermissionRule, ...] = ()
     api_key: str | None = None
     credential_source: CredentialSource = CredentialSource.NONE
@@ -112,7 +112,6 @@ class AgentSettings:
             ("subagent_max_active_children", self.subagent_max_active_children),
             ("subagent_max_steps", self.subagent_max_steps),
             ("subagent_max_tokens", self.subagent_max_tokens),
-            ("mcp_deferred_tool_threshold", self.mcp_deferred_tool_threshold),
         ):
             if value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
@@ -242,6 +241,7 @@ class SettingsResolver:
             max_parallel_tool_calls=(
                 stored.max_parallel_tool_calls or DEFAULT_MAX_PARALLEL_TOOL_CALLS
             ),
+            tool_search_mode=(stored.tool_search_mode or ToolSearchMode.DISPATCHER),
             subagents_enabled=stored.subagents_enabled or False,
             subagent_max_depth=(
                 stored.subagent_max_depth or DEFAULT_SUBAGENT_MAX_DEPTH
@@ -263,10 +263,6 @@ class SettingsResolver:
             skills_enabled=stored.skills_enabled or False,
             mcp_enabled=stored.mcp_enabled or False,
             mcp_servers=stored.mcp_servers,
-            mcp_deferred_tool_threshold=(
-                stored.mcp_deferred_tool_threshold
-                or DEFAULT_MCP_DEFERRED_TOOL_THRESHOLD
-            ),
             permission_rules=_resolve_permission_rules(user, project, local),
             api_key=credential.api_key,
             credential_source=credential.source,
@@ -318,7 +314,6 @@ def _resolve_permission_rules(
 __all__ = [
     "AgentSettings",
     "DEFAULT_MAX_PARALLEL_TOOL_CALLS",
-    "DEFAULT_MCP_DEFERRED_TOOL_THRESHOLD",
     "DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN",
     "DEFAULT_SUBAGENT_MAX_DEPTH",
     "DEFAULT_SUBAGENT_MAX_STEPS",

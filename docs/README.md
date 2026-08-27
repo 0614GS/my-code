@@ -46,7 +46,7 @@ AgentRunFactory ──> child Session + AgentEngine + independent provider lease
 | [03-context-management.md](03-context-management.md) | 模型上下文、预算和压缩 |
 | [04-tool-system.md](04-tool-system.md) | 工具注册、权限和执行 |
 | [05-permission-system.md](05-permission-system.md) | 权限规则与决策顺序 |
-| [06-mcp-and-tool-discovery.md](06-mcp-and-tool-discovery.md) | MCP 生命周期、增量发现、deferred tools 与安全边界 |
+| [06-mcp-and-tool-discovery.md](06-mcp-and-tool-discovery.md) | MCP 生命周期、增量发现、全局 ToolSearch 与安全边界 |
 | [07-hooks.md](07-hooks.md) | 尚未实现的 Hooks 边界 |
 | [08-mvp-scope.md](08-mvp-scope.md) | 当前功能范围 |
 | [09-storage-and-settings.md](09-storage-and-settings.md) | 配置、凭据和本地存储 |

@@ -1,4 +1,4 @@
-"""MCP-03: refresh and deferred activation publish only future snapshots."""
+"""MCP-03: refresh atomically publishes the complete MCP source."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from my_code.conversation.models import ToolCall
 from my_code.foundation.json import JsonObject
 from my_code.mcp.models import (
     McpCallResult,
@@ -20,12 +19,8 @@ from my_code.mcp.models import (
 )
 from my_code.mcp.runtime import McpRuntime
 from my_code.mcp.transport import McpTransport
-from my_code.permissions.models import PermissionMode
-from my_code.permissions.policy import PermissionPolicy
-from my_code.permissions.prompt import HeadlessPrompter
+from my_code.tools.base import ToolExposure
 from my_code.tools.catalog import ToolCatalog
-from my_code.tools.executor import ToolExecutor
-from my_code.workspace.local import Workspace
 
 
 class DiscoveryTransport:
@@ -86,8 +81,6 @@ def tool(name: str, description: str = "original") -> McpRemoteTool:
 def runtime(
     tmp_path: Path,
     transport: DiscoveryTransport,
-    *,
-    threshold: int = 50,
 ) -> tuple[McpRuntime, ToolCatalog]:
     catalog = ToolCatalog()
 
@@ -101,7 +94,6 @@ def runtime(
             servers=(McpServerSpec("remote", "fake", tmp_path),),
             catalog=catalog,
             transport_factory=factory,
-            deferred_tool_threshold=threshold,
         ),
         catalog,
     )
@@ -194,7 +186,7 @@ async def test_notification_during_refresh_triggers_one_follow_up_diff(
 
 
 @pytest.mark.asyncio
-async def test_deferred_tool_search_activates_match_for_next_step_only(
+async def test_all_mcp_tools_are_published_as_searchable(
     tmp_path: Path,
 ) -> None:
     transport = DiscoveryTransport(
@@ -203,33 +195,14 @@ async def test_deferred_tool_search_activates_match_for_next_step_only(
             tool("repository-search", "Search repository text"),
         )
     )
-    mcp, catalog = runtime(tmp_path, transport, threshold=1)
+    mcp, catalog = runtime(tmp_path, transport)
     await mcp.start()
-    search_step = catalog.snapshot()
-    assert search_step.get("mcp_search__remote") is not None
-    assert search_step.get("mcp__remote__weather_dot_lookup") is None
-    executor = ToolExecutor(
-        tools=search_step,
-        policy=PermissionPolicy(PermissionMode.DEFAULT),
-        prompter=HeadlessPrompter(),
-        workspace=Workspace(tmp_path),
-    )
+    snapshot = catalog.snapshot()
+    weather = snapshot.get("mcp__remote__weather_dot_lookup")
+    repository = snapshot.get("mcp__remote__repository-search")
+    assert weather is not None and weather.exposure is ToolExposure.SEARCHABLE
+    assert repository is not None and repository.exposure is ToolExposure.SEARCHABLE
 
-    outcome = await executor.execute(
-        ToolCall("search-1", "mcp_search__remote", {"query": "weather"}),
-        tools=search_step,
-    )
-
-    assert outcome.result.is_error is False
-    assert '"availableFrom":"next_step"' in outcome.result.content
-    assert search_step.get("mcp__remote__weather_dot_lookup") is None
-    next_step = catalog.snapshot()
-    assert next_step.version == search_step.version + 1
-    assert next_step.get("mcp__remote__weather_dot_lookup") is not None
-    assert next_step.get("mcp__remote__repository-search") is None
-    assert next_step.get("mcp_search__remote") is not None
-
-    # Refresh keeps a still-existing activation and updates its definition.
     transport.tools = (
         tool("weather.lookup", "Updated weather forecasts"),
         tool("repository-search", "Search repository text"),

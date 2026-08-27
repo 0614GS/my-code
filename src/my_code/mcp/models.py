@@ -118,14 +118,6 @@ class McpServerSnapshot:
     connection_info: McpConnectionInfo | None
 
 
-@dataclass(frozen=True, slots=True)
-class McpSearchMatch:
-    server_name: str
-    remote_name: str
-    public_name: str
-    description: str
-
-
 def validate_remote_tool_name(name: str) -> str:
     if _REMOTE_TOOL_NAME.fullmatch(name) is None:
         raise ValueError("MCP tool name must match [A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
@@ -140,12 +132,6 @@ def public_tool_name(server_name: str, remote_name: str) -> str:
     validate_remote_tool_name(remote_name)
     normalized = remote_name.replace(".", "_dot_")
     return _bounded_public_name(f"mcp__{server_name}__{normalized}")
-
-
-def tool_search_name(server_name: str) -> str:
-    if _SERVER_NAME.fullmatch(server_name) is None:
-        raise ValueError("Invalid MCP server name")
-    return _bounded_public_name(f"mcp_search__{server_name}")
 
 
 def _bounded_public_name(value: str) -> str:
@@ -163,11 +149,9 @@ __all__ = [
     "McpDiagnostic",
     "McpDiagnosticCode",
     "McpRemoteTool",
-    "McpSearchMatch",
     "McpServerScope",
     "McpServerSnapshot",
     "McpServerSpec",
     "public_tool_name",
-    "tool_search_name",
     "validate_remote_tool_name",
 ]

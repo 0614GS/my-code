@@ -4,11 +4,13 @@
 
 `tools` 拥有工具定义、动态目录、不可变快照、输入校验、权限调用、执行和展示投影。内置文件与 Bash 工具位于 `tools.builtin`；TodoWrite 属于 `features.todos`，通过带来源的同一 Tool 接口注册。结果外置属于 Session 的私有持久化行为。
 
-## Catalog 与 step 快照
+## Catalog、曝光与 step 快照
 
 `tools.catalog.ToolCatalog` 是 application 生命周期内的工具来源目录，由 `AppState.tools` 持有。每个来源使用稳定 `ToolSourceId` 整体注册、替换或撤销；重名会使更新原子失败，不会静默遮蔽已有工具。
 
-Agent 在每个 step 开始时捕获带单调版本号的 `ToolCatalogSnapshot`。ContextPlanner 使用其中的 definitions 创建 ModelRequest，ToolRoundExecutor 使用同一快照解析并执行模型返回的调用。Catalog 在 stream 或执行期间发生变化时，当前 step 不漂移，下一 step 才看到新版本。
+`ToolCatalogSnapshot` 始终包含完整、可执行的工具全集。Agent 在每个 step 开始时再基于 Session discovery state 生成一次不可变 `ToolExposureSnapshot`；ContextPlanner 只发送其中实际曝光的 definitions，ToolRoundExecutor 使用同一快照校验、分组和执行。Catalog 在 stream 或执行期间发生变化时，当前 step 不漂移，下一 step 才看到新版本。
+
+Tool 默认声明为 `eager`；TodoWrite、TaskList、TaskCancel 和全部 MCP adapter 声明为 `searchable`。`tools.toolSearchMode` 默认为 `dispatcher`：ToolSearch 与 InvokeSearchedTool 常驻，搜索结果的完整 schema 通过 durable attachment 提供，顶层 definitions 不随搜索变化。`native` 模式从搜索后的下一 step 起把命中的完整 definition 追加到已排序 eager 前缀之后。两种模式都不使用 provider 专用的 `tool_reference` 或 `defer_loading` 字段。
 
 ToolExecutor 还把该 step 的只读工具映射和版本放入 `ToolContext`。Subagent Tool 据此按固定角色创建 child-local catalog，而不是接受模型提供的 allowlist：`explore` 只取父快照中的 Read、Glob、Grep、Bash，并给每个调用增加不可绕过的只读代理；`general` 继承完整父快照。嵌套时 Subagent 与 Task tools 重新绑定 child identity，最大深度时移除 Subagent。
 
@@ -35,7 +37,8 @@ TUI host 中 `backgroundTasks.enabled=true` 时，主 Session 的 Bash schema �
 
 ```text
 ToolCall
-  -> 当前 ToolCatalogSnapshot 查找与输入校验
+  -> 当前 ToolExposureSnapshot 直接曝光/dispatch 校验
+  -> 同 step ToolCatalogSnapshot 查找与目标输入校验
   -> Tool 自身的权限分析
   -> PermissionPolicy 合并规则和 mode
   -> 必要时 PermissionPrompter 确认
@@ -45,6 +48,8 @@ ToolCall
 ```
 
 `ToolExecutor.execute()` 只返回带内嵌 presentation 的完整领域结果，不绑定活动 Session 或 result store。`present_result()` 每次执行只调用一次，展示异常使用稳定 fallback。Session 在提交 `ToolResultBatch` 时决定是否外置大结果，并原样保留 presentation。
+
+Dispatcher 只解析外层 `{tool_name, arguments}` 并验证目标仍是已搜索且 fingerprint 有效的 searchable tool；真实目标随后完整经过自己的 validation、权限策略、用户确认、audit、hook、取消和 I/O。ToolResult 保留外层 provider tool-use ID，而展示、权限和审计使用真实目标 identity。同轮 ToolSearch 结果在整个 ToolRound 成功提交后才生效，因此同轮 Invoke 不能提前消费。
 
 权限检查规范化后的输入会再次校验。audit、prompter、hook、presentation 和 Tool 执行分别接收隔离的 JSON 副本；观察型扩展不能原地修改持久化 ToolCall 或真正执行的已批准输入。
 

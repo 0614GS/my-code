@@ -14,6 +14,10 @@ from my_code.conversation.attachments import (
     SkillListingAttachment,
     SkillListingEntry,
     TodoReminderAttachment,
+    ToolDiscoveryAttachment,
+    ToolDiscoveryDefinition,
+    ToolDiscoveryInvalidationAttachment,
+    ToolSearchListingAttachment,
 )
 from my_code.conversation.models import (
     AssistantMessage,
@@ -721,6 +725,24 @@ def _attachment_to_json(payload: AttachmentPayload) -> JsonObject:
         }
     if isinstance(payload, SkillActivationAttachment):
         return _skill_activation_json(payload)
+    if isinstance(payload, ToolDiscoveryAttachment):
+        return {
+            "kind": payload.kind,
+            "mode": payload.mode,
+            "definitions": [
+                {
+                    "name": item.name,
+                    "description": item.description,
+                    "input_schema": item.input_schema,
+                    "fingerprint": item.fingerprint,
+                }
+                for item in payload.definitions
+            ],
+        }
+    if isinstance(payload, ToolDiscoveryInvalidationAttachment):
+        return {"kind": payload.kind, "names": list(payload.names)}
+    if isinstance(payload, ToolSearchListingAttachment):
+        return {"kind": payload.kind, "names": list(payload.names)}
     return {
         "kind": payload.kind,
         "skills": [_skill_activation_json(skill) for skill in payload.skills],
@@ -774,6 +796,37 @@ def _attachment_from_json(value: object) -> AttachmentPayload:
                     _skill_activation(_object(item)) for item in _list(data, "skills")
                 )
             )
+        if kind == "tool_discovery":
+            _require_exact_fields(data, frozenset({"kind", "mode", "definitions"}))
+            mode = _string(data, "mode")
+            if mode not in {"dispatcher", "native"}:
+                raise TranscriptDecodeError("Invalid tool discovery mode")
+            actual_mode: Literal["dispatcher", "native"] = (
+                "dispatcher" if mode == "dispatcher" else "native"
+            )
+            return ToolDiscoveryAttachment(
+                tuple(
+                    _tool_discovery_definition(_object(item))
+                    for item in _list(data, "definitions")
+                ),
+                actual_mode,
+            )
+        if kind == "tool_discovery_invalidation":
+            _require_exact_fields(data, frozenset({"kind", "names"}))
+            return ToolDiscoveryInvalidationAttachment(
+                tuple(
+                    _non_empty_string_item(item, "names")
+                    for item in _list(data, "names")
+                )
+            )
+        if kind == "tool_search_listing":
+            _require_exact_fields(data, frozenset({"kind", "names"}))
+            return ToolSearchListingAttachment(
+                tuple(
+                    _non_empty_string_item(item, "names")
+                    for item in _list(data, "names")
+                )
+            )
     except (TypeError, ValueError) as error:
         if isinstance(error, TranscriptDecodeError):
             raise
@@ -789,6 +842,34 @@ def _skill_listing_entry(value: object) -> SkillListingEntry:
         _string(data, "description"),
         _string(data, "source"),
     )
+
+
+def _tool_discovery_definition(
+    data: Mapping[str, object],
+) -> ToolDiscoveryDefinition:
+    _require_exact_fields(
+        data,
+        frozenset({"name", "description", "input_schema", "fingerprint"}),
+    )
+    return ToolDiscoveryDefinition(
+        _string(data, "name"),
+        _possibly_empty_string(data, "description"),
+        to_json_object(data.get("input_schema")),
+        _string(data, "fingerprint"),
+    )
+
+
+def _non_empty_string_item(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise TranscriptDecodeError(f"{field} must contain non-empty strings")
+    return value
+
+
+def _possibly_empty_string(data: Mapping[str, object], key: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str):
+        raise TranscriptDecodeError(f"{key} must be a string")
+    return value
 
 
 def _skill_activation(data: Mapping[str, object]) -> SkillActivationAttachment:

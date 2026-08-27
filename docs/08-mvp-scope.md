@@ -7,7 +7,7 @@
 - 多 step Agent loop、带安全屏障和并发上限的 ToolRound，以及 step 上限。
 - 默认关闭的通用后台执行：Bash 显式后台或 timeout 自动移交、Subagent foreground/background、统一 Task 查询/取消/单次通知，以及受控临时输出文件。
 - 默认关闭的 Subagent：固定 `explore`/`general` 角色、独立 child Session/run/provider lease/prompt、权限收窄与多维预算。
-- 默认关闭的 MCP stdio server：分层配置、保守 project trust、连接/重连/关闭、增量发现、deferred ToolSearch 与标准权限执行。
+- 默认关闭的 MCP stdio server：分层配置、保守 project trust、连接/重连/关闭、增量发现、全量 catalog、provider-neutral ToolSearch 与标准权限执行。
 - 默认关闭的 Skill：project/user/builtin 分层发现、严格 frontmatter、lazy load、原子 reload、Conversation attachment 激活与 additive session 权限规则。
 - Read、Write、Edit、Glob、Grep、Bash 与 TodoWrite。
 - allow/ask/deny 规则、交互确认、dontAsk 和 bypassPermissions。

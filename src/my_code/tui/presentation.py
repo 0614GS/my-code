@@ -53,9 +53,18 @@ def render_usage(usage: SessionUsageView) -> str:
 
 def render_tools(capabilities: CapabilitiesView) -> RenderableType:
     rows = tuple(
-        (tool.name, tool.source, tool.description) for tool in capabilities.tools
+        (
+            tool.name,
+            f"{tool.exposure}/{tool.access}",
+            tool.source,
+            tool.description,
+        )
+        for tool in capabilities.tools
     )
-    return capability_table(f"Tools ({len(rows)})", rows or (("No active tools",),))
+    return capability_table(
+        f"Tools ({len(rows)}) · search={capabilities.tool_search_mode}",
+        rows or (("No active tools",),),
+    )
 
 
 def render_skills(capabilities: CapabilitiesView) -> RenderableType:

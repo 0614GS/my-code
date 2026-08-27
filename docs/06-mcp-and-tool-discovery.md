@@ -1,6 +1,6 @@
 # MCP 与工具发现
 
-> 当前已完成路线图 M5a/M5b：静态生命周期、增量 refresh、`tools/list_changed` 和 deferred ToolSearch 均已实现；resources/prompts 与 2026-07-28 driver 不在当前范围。
+> 当前已完成静态生命周期、增量 refresh、`tools/list_changed` 和全局 provider-neutral ToolSearch；resources/prompts 与 2026-07-28 driver 不在当前范围。
 
 ## 当前结构
 
@@ -64,8 +64,10 @@ M5a 提供零新增依赖的 stdio 实现和可替换的窄 `McpTransport`。std
 - 参数校验发生在权限询问和远端 I/O 之前；执行、审计、hook、取消和 ToolResult 闭合仍只经过 `ToolExecutor`。
 - tool result 的 text 与 structured JSON 被规范化为当前 provider-neutral 文本结果。MCP resources/prompts 和富媒体产品体验不在 M5a 范围。
 
-## 增量发现与 deferred tools
+## 增量发现与全局 ToolSearch
 
 `McpRuntime.refresh(server)` 重新拉取完整 tool list，先完成全部 schema/name/catalog 冲突校验，再以一个 source replace 发布。内容相同的 refresh 不增加 catalog version；非法更新保留旧 source 并只更新结构化诊断。stdio 的 `notifications/tools/list_changed` 会触发同一路径；同一 server 的并发通知被合并，refresh 期间到达的新通知会保证再执行一次 diff，不会静默丢失。
 
-`mcp.deferredToolThreshold` 是正整数，默认 50。tool 数超过阈值时，该 server 初始只暴露 `mcp_search__<server>`；它搜索本地 name/description 索引并把命中 adapter 原子加入同一 server source。搜索发生在普通 ToolRound 内，因此当前 step snapshot 不变，激活工具从下一 model step 可见。refresh 会保留仍存在的激活 identity、更新其 schema/description，并移除远端已经撤销的工具。
+每个 MCP server 无论工具数量多少都把全部 adapter 发布到完整 ToolCatalog，并统一声明为 searchable。全局 `ToolSearch` 搜索所有 searchable 工具的 name/description，也支持 `select:ToolA,ToolB` 精确选择；当前可搜索名称由临时 attachment 公布，不披露 schema。
+
+命中 definition 与规范化 JSON 的 SHA-256 fingerprint 作为 durable discovery attachment 写入 Session，从下一 model step 生效。dispatcher 模式通过 `InvokeSearchedTool` 路由；native 模式才把有效命中加入顶层 definitions。refresh 后未变化的 fingerprint 继续有效；description、schema、名称变化或删除会产生 durable invalidation，要求重新搜索。compact 会把仍有效的 discovery state 重挂到 summary 后，恢复不依赖进程内集合。

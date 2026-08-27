@@ -8,6 +8,9 @@ from my_code.conversation.attachments import (
     AttachmentPayload,
     InvokedSkillsAttachment,
     SkillActivationAttachment,
+    ToolDiscoveryAttachment,
+    ToolDiscoveryDefinition,
+    ToolDiscoveryInvalidationAttachment,
     is_durable_attachment,
 )
 from my_code.conversation.models import (
@@ -281,11 +284,19 @@ class Session:
         candidate.add_compact_boundary(boundary)
         candidate.append(summary)
         invoked = _latest_invoked_skills(candidate.conversation[:-1])
-        attachments: tuple[AttachmentMessage, ...] = ()
+        discovered = _latest_tool_discoveries(candidate.conversation[:-1])
+        attachments_list: list[AttachmentMessage] = []
+        parent_uuid = summary.uuid
         if invoked is not None:
-            attachment = AttachmentMessage(invoked, parent_uuid=summary.uuid)
+            attachment = AttachmentMessage(invoked, parent_uuid=parent_uuid)
             candidate.append(attachment)
-            attachments = (attachment,)
+            attachments_list.append(attachment)
+            parent_uuid = attachment.uuid
+        if discovered is not None:
+            attachment = AttachmentMessage(discovered, parent_uuid=parent_uuid)
+            candidate.append(attachment)
+            attachments_list.append(attachment)
+        attachments = tuple(attachments_list)
         self._store.append_compaction(replacements, boundary, summary, attachments)
         self._conversation = candidate
         return boundary
@@ -339,6 +350,28 @@ def _latest_invoked_skills(
     if not by_name:
         return None
     return InvokedSkillsAttachment(tuple(by_name.values()))
+
+
+def _latest_tool_discoveries(
+    history: tuple[ConversationEntry, ...],
+) -> ToolDiscoveryAttachment | None:
+    by_name: dict[str, ToolDiscoveryDefinition] = {}
+    mode: str = "dispatcher"
+    for entry in history:
+        if not isinstance(entry, AttachmentMessage):
+            continue
+        payload = entry.payload
+        if isinstance(payload, ToolDiscoveryAttachment):
+            mode = payload.mode
+            by_name.update((item.name, item) for item in payload.definitions)
+        elif isinstance(payload, ToolDiscoveryInvalidationAttachment):
+            for name in payload.names:
+                by_name.pop(name, None)
+    if not by_name:
+        return None
+    return ToolDiscoveryAttachment(
+        tuple(by_name[name] for name in sorted(by_name)), mode
+    )
 
 
 def _causal_head(history: tuple[ConversationEntry, ...]) -> str | None:

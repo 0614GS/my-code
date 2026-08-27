@@ -14,10 +14,20 @@ from my_code.permissions.models import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from my_code.tools.base import Tool, ToolContext, ToolInputError, ToolOutput
+from my_code.tools.base import (
+    Tool,
+    ToolContext,
+    ToolExposure,
+    ToolInputError,
+    ToolOutput,
+)
 
 
 class TaskListTool(Tool):
+    @property
+    def exposure(self) -> ToolExposure:
+        return ToolExposure.SEARCHABLE
+
     def __init__(
         self,
         controller: SubagentController | BackgroundTaskRegistry,
@@ -85,6 +95,10 @@ class TaskListTool(Tool):
 
 
 class TaskCancelTool(Tool):
+    @property
+    def exposure(self) -> ToolExposure:
+        return ToolExposure.SEARCHABLE
+
     def __init__(
         self,
         controller: SubagentController | BackgroundTaskRegistry,

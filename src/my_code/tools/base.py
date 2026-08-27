@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -23,6 +24,13 @@ if TYPE_CHECKING:
 _EMPTY_TOOLS: Mapping[str, Tool] = MappingProxyType({})
 
 
+class ToolExposure(StrEnum):
+    """Whether a tool is sent eagerly or must first be discovered."""
+
+    EAGER = "eager"
+    SEARCHABLE = "searchable"
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class ToolContext:
     """内置工具可用的运行时依赖。"""
@@ -34,6 +42,7 @@ class ToolContext:
     tool_snapshot_version: int | None
     run_id: str | None
     internal_read_root: Path | None
+    searched_fingerprints: Mapping[str, str]
 
     def __init__(
         self,
@@ -44,6 +53,7 @@ class ToolContext:
         tool_snapshot_version: int | None = None,
         run_id: str | None = None,
         internal_read_root: Path | None = None,
+        searched_fingerprints: Mapping[str, str] = MappingProxyType({}),
     ) -> None:
         object.__setattr__(
             self,
@@ -66,6 +76,11 @@ class ToolContext:
             if internal_read_root is not None
             else None,
         )
+        object.__setattr__(
+            self,
+            "searched_fingerprints",
+            MappingProxyType(dict(searched_fingerprints)),
+        )
 
     @property
     def cwd(self) -> Path:
@@ -77,6 +92,7 @@ class ToolContext:
         *,
         version: int,
         run_id: str | None = None,
+        searched_fingerprints: Mapping[str, str] = MappingProxyType({}),
     ) -> ToolContext:
         return ToolContext(
             self.workspace,
@@ -86,6 +102,7 @@ class ToolContext:
             version,
             run_id,
             self.internal_read_root,
+            searched_fingerprints,
         )
 
 
@@ -124,6 +141,12 @@ class Tool(ABC):
     @abstractmethod
     def definition(self) -> ModelToolDefinition:
         """返回模型可见的定义。"""
+
+    @property
+    def exposure(self) -> ToolExposure:
+        """Declare how the tool becomes available to the model."""
+
+        return ToolExposure.EAGER
 
     def is_concurrency_safe(self, tool_input: JsonObject) -> bool:
         """Return whether this specific invocation may overlap other calls."""
@@ -223,4 +246,5 @@ __all__ = [
     "ToolExecutionError",
     "ToolInputError",
     "ToolOutput",
+    "ToolExposure",
 ]

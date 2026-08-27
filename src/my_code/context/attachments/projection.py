@@ -10,6 +10,9 @@ from my_code.conversation.attachments import (
     SkillActivationAttachment,
     SkillListingAttachment,
     TodoReminderAttachment,
+    ToolDiscoveryAttachment,
+    ToolDiscoveryInvalidationAttachment,
+    ToolSearchListingAttachment,
 )
 from my_code.model.request import InputText, UserInput
 
@@ -68,6 +71,41 @@ def _render(attachment: AttachmentPayload) -> str:
         )
     if isinstance(attachment, SkillActivationAttachment):
         return _render_skill(attachment)
+    if isinstance(attachment, ToolSearchListingAttachment):
+        return wrap_xml(
+            "system-reminder",
+            "Searchable tools currently available through ToolSearch (names only):\n\n"
+            + ("\n".join(f"- {name}" for name in attachment.names) or "(none)"),
+        )
+    if isinstance(attachment, ToolDiscoveryInvalidationAttachment):
+        return wrap_xml(
+            "system-reminder",
+            "These previously discovered tools changed or disappeared and are no "
+            "longer available. Use ToolSearch again before invoking them: "
+            + ", ".join(attachment.names),
+        )
+    if isinstance(attachment, ToolDiscoveryAttachment):
+        if attachment.mode == "native":
+            return wrap_xml(
+                "system-reminder",
+                "Discovered tools are available as native tools starting with this "
+                "model step: "
+                + ", ".join(item.name for item in attachment.definitions),
+            )
+        definitions = [
+            {
+                "name": item.name,
+                "description": item.description,
+                "input_schema": item.input_schema,
+            }
+            for item in attachment.definitions
+        ]
+        return wrap_xml(
+            "system-reminder",
+            "Discovered tool definitions follow. Invoke them only through "
+            "InvokeSearchedTool using the exact tool_name and arguments.\n\n"
+            + json.dumps(definitions, ensure_ascii=False, sort_keys=True),
+        )
     return wrap_xml(
         "system-reminder",
         "The following skills were invoked in this session. Continue to follow "

@@ -98,6 +98,57 @@ class InvokedSkillsAttachment:
             raise ValueError("Invoked Skills attachment contains duplicate names")
 
 
+@dataclass(frozen=True, slots=True)
+class ToolDiscoveryDefinition:
+    name: str
+    description: str
+    input_schema: JsonObject
+    fingerprint: str
+
+    def __post_init__(self) -> None:
+        if not self.name.strip() or not self.fingerprint.strip():
+            raise ValueError("Tool discovery identity must not be empty")
+        object.__setattr__(self, "input_schema", to_json_object(self.input_schema))
+
+
+@dataclass(frozen=True, slots=True)
+class ToolDiscoveryAttachment:
+    definitions: tuple[ToolDiscoveryDefinition, ...]
+    mode: Literal["dispatcher", "native"]
+    kind: Literal["tool_discovery"] = "tool_discovery"
+
+    def __post_init__(self) -> None:
+        if not self.definitions:
+            raise ValueError("Tool discovery must contain at least one definition")
+        names = [item.name for item in self.definitions]
+        if len(names) != len(set(names)):
+            raise ValueError("Tool discovery contains duplicate names")
+
+
+@dataclass(frozen=True, slots=True)
+class ToolDiscoveryInvalidationAttachment:
+    names: tuple[str, ...]
+    kind: Literal["tool_discovery_invalidation"] = "tool_discovery_invalidation"
+
+    def __post_init__(self) -> None:
+        if not self.names or any(not name.strip() for name in self.names):
+            raise ValueError("Tool discovery invalidation requires tool names")
+        if len(self.names) != len(set(self.names)):
+            raise ValueError("Tool discovery invalidation contains duplicate names")
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSearchListingAttachment:
+    names: tuple[str, ...]
+    kind: Literal["tool_search_listing"] = "tool_search_listing"
+
+    def __post_init__(self) -> None:
+        if any(not name.strip() for name in self.names):
+            raise ValueError("Tool search listing names must not be empty")
+        if tuple(sorted(set(self.names))) != self.names:
+            raise ValueError("Tool search listing names must be sorted and unique")
+
+
 type AttachmentPayload = (
     FileMentionAttachment
     | TodoReminderAttachment
@@ -105,6 +156,9 @@ type AttachmentPayload = (
     | SkillListingAttachment
     | SkillActivationAttachment
     | InvokedSkillsAttachment
+    | ToolDiscoveryAttachment
+    | ToolDiscoveryInvalidationAttachment
+    | ToolSearchListingAttachment
 )
 
 
@@ -118,6 +172,8 @@ def is_durable_attachment(payload: AttachmentPayload) -> bool:
             BackgroundTaskCompletionAttachment,
             SkillActivationAttachment,
             InvokedSkillsAttachment,
+            ToolDiscoveryAttachment,
+            ToolDiscoveryInvalidationAttachment,
         ),
     )
 
@@ -131,5 +187,9 @@ __all__ = [
     "SkillListingAttachment",
     "SkillListingEntry",
     "TodoReminderAttachment",
+    "ToolDiscoveryAttachment",
+    "ToolDiscoveryDefinition",
+    "ToolDiscoveryInvalidationAttachment",
+    "ToolSearchListingAttachment",
     "is_durable_attachment",
 ]

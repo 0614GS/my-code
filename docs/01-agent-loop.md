@@ -21,9 +21,9 @@ ChatService.stream(prompt)
   -> 加载显式 attachment
   -> AgentEngine.stream(active_session, input)
      -> 先提交 HumanMessage
-     -> Step 1: 捕获一次 ToolCatalogSnapshot
+     -> Step 1: 捕获完整 ToolCatalogSnapshot，并冻结 ToolExposureSnapshot
         -> 运行动态 attachment sources，并由 Session 排入 Conversation
-     -> ContextEngine.plan(Session snapshot, 同版本 tool definitions)
+     -> ContextEngine.plan(Session snapshot, 当前 exposure definitions)
      -> ModelClient.stream()
      -> 提交完整 AssistantMessage
      -> 无工具：产生 AgentTurnSucceeded
@@ -53,7 +53,7 @@ ChatService.stream(prompt)
 - Agent 不提供 context inspection、手动 compact 或历史 tool presentation API。
 - 一个模型请求只接受一个最终 `ModelOutputCompleted`。
 - AssistantMessage 必须先持久化，工具才可以执行。
-- 同一 step 的 ModelRequest 和 ToolRound 必须使用同一 ToolCatalogSnapshot。
+- 同一 step 的 ModelRequest 和 ToolRound 必须使用同一 ToolExposureSnapshot（其中持有完整 catalog snapshot）。
 - Catalog 更新只影响下一个 step，不改变正在运行的 ToolRound。
 - Skill activation 在 ToolResultBatch 后成为 durable Attachment；正文不修改 system prompt，并在 compact/resume 后继续存在。
 - 每个 ToolCall 最终都有一个 ToolResult。

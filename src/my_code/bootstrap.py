@@ -59,6 +59,7 @@ from my_code.mcp.transport import McpTransportFactory
 from my_code.model.capabilities import ActiveModelEnvironment, resolve_environment
 from my_code.model.client import ModelClient
 from my_code.model.primitives import ProviderBinding
+from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionPrompter
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter, TerminalPrompter
@@ -98,6 +99,7 @@ from my_code.tools.catalog import (
 )
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.round_executor import ToolRoundExecutor
+from my_code.tools.search import InvokeSearchedTool, ToolSearch
 from my_code.tui.app import MyCodeTui
 from my_code.workspace.local import Workspace
 
@@ -243,6 +245,7 @@ def _build_agent_components(
             tool_round=tool_round,
             context=context,
             tool_catalog=tool_catalog,
+            tool_search_mode=settings.tool_search_mode,
             max_steps=settings.max_steps if max_steps is None else max_steps,
         ),
         context=context,
@@ -317,6 +320,10 @@ def _assemble_agent(
         ),
     )
     tool_catalog.register_source(ToolSourceId("feature", "todos"), (TodoWriteTool(),))
+    search_tools: tuple[Tool, ...] = (ToolSearch(settings.tool_search_mode),)
+    if settings.tool_search_mode is ToolSearchMode.DISPATCHER:
+        search_tools = (*search_tools, InvokeSearchedTool())
+    tool_catalog.register_source(ToolSourceId("builtin", "tool-search"), search_tools)
     mcp = McpRuntime(
         enabled=settings.mcp_enabled,
         servers=tuple(
@@ -340,7 +347,6 @@ def _assemble_agent(
             if mcp_transport_factory is not None
             else StdioMcpTransportFactory(os.environ)
         ),
-        deferred_tool_threshold=settings.mcp_deferred_tool_threshold,
     )
     skill_roots = [
         SkillSearchRoot(
