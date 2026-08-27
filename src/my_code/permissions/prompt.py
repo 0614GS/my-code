@@ -4,14 +4,9 @@ import json
 from collections.abc import Callable
 
 from my_code.permissions.models import (
-    PermissionBehavior,
     PermissionConfirmation,
     PermissionPrompt,
-    PermissionUpdate,
-    PermissionUpdateDestination,
 )
-from my_code.permissions.rules import validate_bash_rule_content
-from my_code.permissions.updates import permission_rule_for_destination
 
 
 class TerminalPrompter:
@@ -22,13 +17,18 @@ class TerminalPrompter:
 
     async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
         rendered = json.dumps(request.tool_input, ensure_ascii=False, indent=2)
-        can_remember = request.tool_name == "Bash" or bool(request.decision.suggestions)
-        remember = "4. Yes, and don't ask again\n" if can_remember else ""
+        can_remember = False
+        if request.tool_name == "Bash":
+            scope = _suggestion_scope(request)
+            choices = f'1. Yes\n2. Yes, and don\'t ask again for "{scope}"\n3. No\n'
+        else:
+            can_remember = bool(request.decision.suggestions)
+            remember = "4. Yes, and don't ask again\n" if can_remember else ""
+            choices = "1. Yes\n2. No\n3. No, and tell my-code why\n" + remember
         prompt = (
             f"\nPermission required: {request.tool_name}\n"
             f"{rendered}\n{request.decision.message}\n"
-            "1. Yes\n2. No\n3. No, and tell my-code why\n"
-            f"{remember}Choice: "
+            f"{choices}Choice: "
         )
         try:
             answer = self._input(prompt)
@@ -37,13 +37,13 @@ class TerminalPrompter:
         normalized = answer.strip().lower()
         if normalized in {"1", "y", "yes"}:
             return PermissionConfirmation(True)
-        if normalized == "4" and can_remember:
-            try:
-                updates = self._remember_updates(request)
-            except (EOFError, KeyboardInterrupt):
-                return PermissionConfirmation(False)
-            return PermissionConfirmation(True, updates=updates)
+        if normalized == "2" and request.tool_name == "Bash":
+            return PermissionConfirmation(True, updates=request.decision.suggestions)
+        if normalized == "4" and request.tool_name != "Bash" and can_remember:
+            return PermissionConfirmation(True, updates=request.decision.suggestions)
         if normalized == "3":
+            if request.tool_name == "Bash":
+                return PermissionConfirmation(False)
             try:
                 feedback = self._input("Tell my-code what to do differently: ")
             except (EOFError, KeyboardInterrupt):
@@ -51,34 +51,6 @@ class TerminalPrompter:
             if feedback.strip():
                 return PermissionConfirmation(False, feedback.strip())
         return PermissionConfirmation(False)
-
-    def _remember_updates(
-        self, request: PermissionPrompt
-    ) -> tuple[PermissionUpdate, ...]:
-        """构造由当前确认框明确提供的长期授权更新。"""
-
-        if request.tool_name == "Bash":
-            while True:
-                raw = self._input(
-                    "Command prefix to allow (e.g., git diff:*): "
-                ).strip()
-                try:
-                    content = validate_bash_rule_content(raw)
-                except ValueError as error:
-                    print(f"Invalid command prefix: {error}")
-                    continue
-                rule = permission_rule_for_destination(
-                    "Bash",
-                    PermissionBehavior.ALLOW,
-                    PermissionUpdateDestination.LOCAL,
-                    content,
-                )
-                return (
-                    PermissionUpdate.add_rules(
-                        (rule,), destination=PermissionUpdateDestination.LOCAL
-                    ),
-                )
-        return request.decision.suggestions
 
 
 class HeadlessPrompter:
@@ -93,3 +65,10 @@ __all__ = [
     "HeadlessPrompter",
     "TerminalPrompter",
 ]
+
+
+def _suggestion_scope(request: PermissionPrompt) -> str:
+    updates = request.decision.suggestions
+    if not updates or not updates[0].rules:
+        return "this exact command"
+    return updates[0].rules[0].rule_content or request.tool_name

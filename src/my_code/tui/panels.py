@@ -18,18 +18,31 @@ def permission_panel(
 ) -> FormattedText:
     if mode == "feedback":
         return _message("Permission denied with feedback", "Enter to send · Esc deny")
-    if mode == "prefix":
-        return _message("Allow Bash prefix", "Enter a rule such as git diff:*")
-    choices = ["Yes", "No", "No, with feedback"]
-    if request.tool_name == "Bash" or request.suggestions:
+    if request.tool_name == "Bash":
+        choices = [
+            "Yes",
+            f'Yes, and don\'t ask again for "{_suggestion_scope(request)}"',
+            "No",
+        ]
+        shortcut = "↑↓ select · Enter confirm · 1–3 shortcut · Esc deny"
+    else:
+        choices = ["Yes", "No", "No, with feedback"]
+        shortcut = "↑↓ select · Enter confirm · 1–4 shortcut · Esc deny"
+    if request.tool_name != "Bash" and request.suggestions:
         choices.append("Yes, and remember")
     return _picker(
         f"Tool use · {request.presentation.display_name}"
         f" ({request.presentation.summary})\n{request.message}",
         tuple(choices),
         selected,
-        "↑↓ select · Enter confirm · 1–4 shortcut · Esc deny",
+        shortcut,
     )
+
+
+def _suggestion_scope(request: PermissionRequest) -> str:
+    if not request.suggestions or not request.suggestions[0].rules:
+        return "this exact command"
+    return request.suggestions[0].rules[0].rule_content or request.tool_name
 
 
 def resume_panel(sessions: tuple[SessionSummary, ...], selected: int) -> FormattedText:

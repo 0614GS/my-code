@@ -32,9 +32,7 @@ from my_code.chat.events import (
 )
 from my_code.chat.history import (
     HistoryEntry,
-    HistoryReasoning,
     HistoryText,
-    HistoryToolCall,
 )
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.service import ChatService
@@ -42,13 +40,8 @@ from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import SubagentTaskView
 from my_code.features.file_mentions.models import PathSuggestion
 from my_code.permissions.models import (
-    PermissionBehavior,
     PermissionConfirmation,
-    PermissionUpdate,
-    PermissionUpdateDestination,
 )
-from my_code.permissions.rules import validate_bash_rule_content
-from my_code.permissions.updates import permission_rule_for_destination
 from my_code.providers.manager import ProviderView
 from my_code.sessions.catalog import SessionSummary
 from my_code.tools.presentation import ToolUsePresentation
@@ -86,14 +79,11 @@ from my_code.tui.terminal import terminal_supports_true_color
 from my_code.tui.theme import TuiTheme
 from my_code.tui.turns import TurnFlowMixin
 from my_code.tui.widgets import (
-    assistant_message,
-    reasoning_message,
+    history_message,
     status_line,
     streaming_assistant_message,
     system_message,
     todo_text,
-    tool_message,
-    user_message,
     welcome,
 )
 
@@ -128,6 +118,7 @@ class MyCodeApp(TurnFlowMixin):
         self._status_warning = ""
         self._agents: tuple[SubagentTaskView, ...] = ()
         self._agent_scroll = 0
+        self._agent_task_id: str | None = None
         self._panel: str | None = None
         self._panel_index = 0
         self._sessions: tuple[SessionSummary, ...] = ()
@@ -366,7 +357,7 @@ class MyCodeApp(TurnFlowMixin):
         return ""
 
     def _agent_panel_text(self) -> str:
-        if self._panel_index == 0:
+        if self._agent_task_id is None:
             lines = ["Main session · F6 cycles through agent views"]
             lines.extend(
                 ("○ " if item.status in {"succeeded", "failed", "cancelled"} else "● ")
@@ -376,11 +367,18 @@ class MyCodeApp(TurnFlowMixin):
             )
             lines.append("↑↓ select · Enter view · Esc close")
             return "\n".join(lines)
-        index = self._panel_index - 1
-        if index >= len(self._agents):
-            self._panel_index = 0
-            return "Main session"
-        return render_agent_view(self._agents[index], scroll=self._agent_scroll)
+        task = next(
+            (item for item in self._agents if item.task_id == self._agent_task_id),
+            None,
+        )
+        if task is None:
+            return "Selected Subagent is no longer available · Esc main"
+        return render_agent_view(
+            task,
+            scroll=self._agent_scroll,
+            width=self.console.width,
+            theme=self.theme,
+        )
 
     def _permission_selecting(self) -> bool:
         return self._panel == "permission" and self._permission_mode == "select"
@@ -509,7 +507,11 @@ class MyCodeApp(TurnFlowMixin):
         try:
             async for tasks in stream():
                 self._agents = tasks
-                if self._panel == "agents" and self._panel_index > len(tasks):
+                if (
+                    self._panel == "agents"
+                    and self._agent_task_id is None
+                    and self._panel_index > len(tasks)
+                ):
                     self._panel_index = 0
                 self._invalidate()
         except asyncio.CancelledError:
@@ -553,24 +555,34 @@ class MyCodeApp(TurnFlowMixin):
         self._agents = self.runtime.subagent_tasks()
         self._panel_index = 0
         self._agent_scroll = 0
+        self._agent_task_id = None
         self._open_panel("agents")
 
     def _cycle_agent_view(self) -> None:
+        if self._panel == "permission":
+            return
         self._agents = self.runtime.subagent_tasks()
         if self._panel != "agents":
             self._saved_draft = self.buffer.text
             self._panel = "agents"
-            self._panel_index = 1 if self._agents else 0
+            self._agent_task_id = self._agents[0].task_id if self._agents else None
+            self._panel_index = 0
         else:
-            self._panel_index = (self._panel_index + 1) % (len(self._agents) + 1)
-            if self._panel_index == 0:
+            ids = [item.task_id for item in self._agents]
+            if self._agent_task_id is None:
+                self._agent_task_id = ids[0] if ids else None
+            elif self._agent_task_id in ids and ids.index(
+                self._agent_task_id
+            ) + 1 < len(ids):
+                self._agent_task_id = ids[ids.index(self._agent_task_id) + 1]
+            else:
                 self._close_panel()
                 return
         self._agent_scroll = 0
         self._invalidate()
 
     def _scroll_agent(self, offset: int | None) -> None:
-        if self._panel != "agents" or self._panel_index == 0:
+        if self._panel != "agents" or self._agent_task_id is None:
             return
         if offset is None:
             self._agent_scroll = 0
@@ -585,6 +597,8 @@ class MyCodeApp(TurnFlowMixin):
         self._invalidate()
 
     def _close_panel(self) -> None:
+        if self._panel == "agents":
+            self._agent_task_id = None
         self._panel = None
         self._provider_form = None
         self.buffer.set_document(
@@ -608,7 +622,7 @@ class MyCodeApp(TurnFlowMixin):
             size = 4
         elif self._panel == "provider_models":
             size = min(len(self._provider_models), 8)
-        elif self._panel == "agents":
+        elif self._panel == "agents" and self._agent_task_id is None:
             size = len(self._agents) + 1
         else:
             size = 0
@@ -623,8 +637,6 @@ class MyCodeApp(TurnFlowMixin):
                 self._choose_permission(self._permission_options()[self._panel_index])
             elif self._permission_mode == "feedback" and value:
                 self._resolve_permission(PermissionConfirmation(False, value))
-            elif self._permission_mode == "prefix" and value:
-                await self._submit_permission_prefix(value)
         elif self._panel == "resume" and self._sessions:
             session_id = self._sessions[self._panel_index].session_id
             try:
@@ -697,6 +709,7 @@ class MyCodeApp(TurnFlowMixin):
             if self._panel_index == 0:
                 self._close_panel()
             else:
+                self._agent_task_id = self._agents[self._panel_index - 1].task_id
                 self._agent_scroll = 0
                 self._invalidate()
 
@@ -848,11 +861,14 @@ class MyCodeApp(TurnFlowMixin):
     ) -> PermissionConfirmation:
         if self._permission_future is not None:
             raise RuntimeError("A permission request is already active")
-        self._saved_draft = self.buffer.text
+        restore_panel = self._panel
+        restore_index = self._panel_index
+        draft = self._saved_draft if restore_panel == "agents" else self.buffer.text
+        self._saved_draft = draft
         self.buffer.set_document(Document(""), bypass_readonly=True)
         self._permission_request = request
         self._permission_mode = "select"
-        self._panel_index = 1
+        self._panel_index = 2 if request.tool_name == "Bash" else 1
         self._panel = "permission"
         self._permission_future = asyncio.get_running_loop().create_future()
         self._invalidate()
@@ -861,7 +877,8 @@ class MyCodeApp(TurnFlowMixin):
         finally:
             self._permission_future = None
             self._permission_request = None
-            self._panel = None
+            self._panel = restore_panel
+            self._panel_index = restore_index
             self.buffer.set_document(
                 Document(self._saved_draft, len(self._saved_draft)),
                 bypass_readonly=True,
@@ -872,16 +889,26 @@ class MyCodeApp(TurnFlowMixin):
         request = self._permission_request
         if choice == "allow":
             self._resolve_permission(PermissionConfirmation(True))
+        elif choice == "second":
+            if request is not None and request.tool_name == "Bash":
+                self._resolve_permission(
+                    PermissionConfirmation(True, updates=request.suggestions)
+                )
+            else:
+                self._resolve_permission(PermissionConfirmation(False))
+        elif choice == "third":
+            if request is not None and request.tool_name == "Bash":
+                self._resolve_permission(PermissionConfirmation(False))
+            else:
+                self._permission_mode = "feedback"
+                self.buffer.set_document(Document(""), bypass_readonly=True)
         elif choice == "deny":
             self._resolve_permission(PermissionConfirmation(False))
         elif choice == "feedback":
             self._permission_mode = "feedback"
             self.buffer.set_document(Document(""), bypass_readonly=True)
         elif choice == "remember" and request is not None:
-            if request.tool_name == "Bash":
-                self._permission_mode = "prefix"
-                self.buffer.set_document(Document(""), bypass_readonly=True)
-            elif request.suggestions:
+            if request.tool_name != "Bash" and request.suggestions:
                 self._resolve_permission(
                     PermissionConfirmation(True, updates=request.suggestions)
                 )
@@ -889,32 +916,12 @@ class MyCodeApp(TurnFlowMixin):
 
     def _permission_options(self) -> tuple[str, ...]:
         request = self._permission_request
-        options = ["allow", "deny", "feedback"]
-        if request is not None and (request.tool_name == "Bash" or request.suggestions):
+        if request is not None and request.tool_name == "Bash":
+            return ("allow", "second", "third")
+        options = ["allow", "second", "third"]
+        if request is not None and request.suggestions:
             options.append("remember")
         return tuple(options)
-
-    async def _submit_permission_prefix(self, raw: str) -> None:
-        try:
-            content = validate_bash_rule_content(raw)
-        except ValueError as error:
-            await self._write(
-                system_message(f"Invalid Bash prefix: {error}", error=True)
-            )
-            self.buffer.reset()
-            return
-        update = PermissionUpdate.add_rules(
-            (
-                permission_rule_for_destination(
-                    "Bash",
-                    PermissionBehavior.ALLOW,
-                    PermissionUpdateDestination.LOCAL,
-                    content,
-                ),
-            ),
-            destination=PermissionUpdateDestination.LOCAL,
-        )
-        self._resolve_permission(PermissionConfirmation(True, updates=(update,)))
 
     def _resolve_permission(self, result: PermissionConfirmation) -> None:
         future = self._permission_future
@@ -949,22 +956,7 @@ class MyCodeApp(TurnFlowMixin):
 
     async def _render_history(self, history: tuple[HistoryEntry, ...]) -> None:
         for entry in history:
-            if isinstance(entry, HistoryText):
-                renderable = (
-                    user_message(entry.text, self.theme)
-                    if entry.role == "user"
-                    else assistant_message(entry.text)
-                    if entry.role == "assistant"
-                    else system_message(entry.text)
-                )
-            elif isinstance(entry, HistoryReasoning):
-                renderable = reasoning_message(entry.presentation)
-            else:
-                assert isinstance(entry, HistoryToolCall)
-                renderable = tool_message(
-                    entry.use, entry.result, is_error=entry.is_error
-                )
-            await self._write(renderable)
+            await self._write(history_message(entry, self.theme))
 
     def _refresh_status(self) -> None:
         warnings: list[str] = []

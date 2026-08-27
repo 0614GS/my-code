@@ -6,7 +6,8 @@
 
 ## 决策数据
 
-- `ToolPermissionResult`：工具根据具体输入得出的 allow/ask/deny/passthrough 事实。
+- `ToolPermissionResult`：工具根据具体输入得出的 allow/ask/deny/passthrough 事实；
+  其中受控的 `overrides_ask` 只用于 Bash 命中 `localSettings` remembered-allow。
 - `PermissionRequest`：ToolExecutor 交给策略的输入。
 - `PermissionDecision`：全局规则和 mode 合并后的可审计结论。
 - `PermissionPrompt`：需要 host 确认时的安全展示数据。
@@ -17,8 +18,8 @@
 ## 决策顺序
 
 1. 显式整工具 deny。
-2. 显式整工具 ask。
-3. 工具级 deny。
+2. 工具级 deny。
+3. 显式整工具 ask（除非 Bash 已命中受控的 local remembered-allow）。
 4. 声明为 bypass-immune 的工具级 ask。
 5. `bypassPermissions` 的宽松默认。
 6. 显式整工具 allow。
@@ -27,6 +28,8 @@
 9. 其余 ask/passthrough 进入用户确认。
 
 显式 deny、受保护路径和工具声明的不可绕过检查不会被 bypass mode 静默覆盖。
+Bash 的 local remembered-allow 也可覆盖匹配的内容级 ask，但不能覆盖 deny、Plan
+mode 拒绝或 Explore/工具硬安全边界；其他工具不获得这一优先级例外。
 
 ## 规则
 
@@ -39,6 +42,11 @@
 无头模式使用 `HeadlessPrompter` 并默认拒绝。TUI 通过 `chat.permissions.DeferredPermissionPrompter` 注册当前 handler；没有 handler 时同样 fail closed。
 
 权限确认只决定是否执行当前调用。长期规则变更必须先成功持久化，再应用到活动策略，避免内存已放行但磁盘仍未记录。pending approval 是 host task 的短生命周期状态；完成、异常、拒绝、取消和 runtime close 都必须释放。
+
+Bash 确认固定为 `Yes`、自动生成的 `Yes, and don't ask again for "<scope>"`、
+`No` 三项，默认选中 `No`，不接受手工 prefix 或拒绝反馈；terminal prompter 与
+TUI 使用工具分析器提供的同一 local-settings 更新。其他工具保留反馈和 suggestion
+交互。
 
 ## 安全不变量
 

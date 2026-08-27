@@ -90,6 +90,97 @@ async def test_explicit_ask_precedes_bypass_mode(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ask_content", [None, "git:*"])
+async def test_local_bash_remembered_allow_overrides_ask_rule(
+    tmp_path: Path, ask_content: str | None
+) -> None:
+    policy = PermissionPolicy(
+        rules=[
+            PermissionRule(
+                "Bash", PermissionBehavior.ASK, ask_content, source="projectSettings"
+            ),
+            PermissionRule(
+                "Bash",
+                PermissionBehavior.ALLOW,
+                "git push:*",
+                source="projectSettings",
+            ),
+            PermissionRule(
+                "Bash",
+                PermissionBehavior.ALLOW,
+                "git push:*",
+                source="localSettings",
+            ),
+        ]
+    )
+
+    decision = await decide(
+        policy,
+        BashTool(),
+        {"command": "git push origin main"},
+        ToolContext(tmp_path),
+    )
+
+    assert decision.behavior is PermissionBehavior.ALLOW
+    assert decision.decision_reason.rule == policy.rules[2]
+
+
+@pytest.mark.asyncio
+async def test_local_bash_remembered_allow_cannot_override_deny_or_plan(
+    tmp_path: Path,
+) -> None:
+    remembered = PermissionRule(
+        "Bash", PermissionBehavior.ALLOW, "git push:*", source="localSettings"
+    )
+    denied = await decide(
+        PermissionPolicy(
+            rules=[
+                PermissionRule("Bash", PermissionBehavior.DENY),
+                remembered,
+            ]
+        ),
+        BashTool(),
+        {"command": "git push origin main"},
+        ToolContext(tmp_path),
+    )
+    planned = await decide(
+        PermissionPolicy(PermissionMode.PLAN, [remembered]),
+        BashTool(),
+        {"command": "git push origin main"},
+        ToolContext(tmp_path),
+    )
+
+    assert denied.behavior is PermissionBehavior.DENY
+    assert planned.behavior is PermissionBehavior.DENY
+
+
+@pytest.mark.asyncio
+async def test_non_bash_allow_does_not_override_whole_tool_ask(
+    tmp_path: Path,
+) -> None:
+    policy = PermissionPolicy(
+        rules=[
+            PermissionRule("Write", PermissionBehavior.ASK),
+            PermissionRule(
+                "Write",
+                PermissionBehavior.ALLOW,
+                "notes.txt",
+                source="localSettings",
+            ),
+        ]
+    )
+
+    decision = await decide(
+        policy,
+        WriteFileTool(),
+        {"path": "notes.txt", "content": "x"},
+        ToolContext(tmp_path),
+    )
+
+    assert decision.behavior is PermissionBehavior.ASK
+
+
+@pytest.mark.asyncio
 async def test_default_allows_reads_and_asks_for_writes(tmp_path: Path) -> None:
     policy = PermissionPolicy()
     (tmp_path / "README.md").write_text("hello", encoding="utf-8")
@@ -306,17 +397,25 @@ async def test_wildcard_allow_must_cover_every_compound_subcommand(
 
 
 @pytest.mark.asyncio
-async def test_terminal_option_four_creates_bash_session_rule() -> None:
-    answers = iter(["4", "git diff:*"])
-    prompter = TerminalPrompter(lambda prompt: next(answers))
-    decision = PermissionDecision(
-        PermissionBehavior.ASK,
-        "Allow git diff?",
-        tool_reason("bash-approval-required"),
+async def test_terminal_bash_option_two_uses_generated_local_rule(
+    tmp_path: Path,
+) -> None:
+    prompts: list[str] = []
+
+    def answer(prompt: str) -> str:
+        prompts.append(prompt)
+        return "2"
+
+    prompter = TerminalPrompter(answer)
+    decision = await decide(
+        PermissionPolicy(),
+        BashTool(),
+        {"command": "git push origin main"},
+        ToolContext(tmp_path),
     )
 
     confirmation = await confirm(
-        prompter, BashTool(), {"command": "git diff"}, decision
+        prompter, BashTool(), {"command": "git push origin main"}, decision
     )
 
     assert confirmation == PermissionConfirmation(
@@ -327,7 +426,7 @@ async def test_terminal_option_four_creates_bash_session_rule() -> None:
                     PermissionRule(
                         "Bash",
                         PermissionBehavior.ALLOW,
-                        "git diff:*",
+                        "git push:*",
                         source="localSettings",
                     ),
                 ),
@@ -335,24 +434,38 @@ async def test_terminal_option_four_creates_bash_session_rule() -> None:
             ),
         ),
     )
+    assert "1. Yes" in prompts[0]
+    assert '2. Yes, and don\'t ask again for "git push:*"' in prompts[0]
+    assert "3. No" in prompts[0]
+    assert "4." not in prompts[0]
 
 
 @pytest.mark.asyncio
-async def test_terminal_option_four_retries_invalid_prefixes() -> None:
-    answers = iter(["4", "", "*", "git diff:*"])
-    prompter = TerminalPrompter(lambda prompt: next(answers))
-    decision = PermissionDecision(
-        PermissionBehavior.ASK,
-        "Allow git diff?",
-        tool_reason("bash-approval-required"),
+async def test_terminal_bash_option_three_denies_without_feedback(
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    def answer(prompt: str) -> str:
+        nonlocal calls
+        del prompt
+        calls += 1
+        return "3"
+
+    prompter = TerminalPrompter(answer)
+    decision = await decide(
+        PermissionPolicy(),
+        BashTool(),
+        {"command": "rm generated.txt"},
+        ToolContext(tmp_path),
     )
 
     confirmation = await confirm(
-        prompter, BashTool(), {"command": "git diff"}, decision
+        prompter, BashTool(), {"command": "rm generated.txt"}, decision
     )
 
-    assert confirmation.allowed is True
-    assert confirmation.updates[0].rules[0].rule_content == "git diff:*"
+    assert confirmation == PermissionConfirmation(False)
+    assert calls == 1
 
 
 @pytest.mark.asyncio

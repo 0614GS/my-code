@@ -16,6 +16,12 @@ from rich.table import Table
 from rich.text import Text
 
 from my_code import __version__
+from my_code.chat.history import (
+    HistoryEntry,
+    HistoryReasoning,
+    HistoryText,
+    HistoryToolCall,
+)
 from my_code.chat.status import RuntimeStatus
 from my_code.features.todos.models import TodoItem
 from my_code.model.primitives import ReasoningPresentation
@@ -131,6 +137,23 @@ def tool_message(
     return line
 
 
+def history_message(
+    entry: HistoryEntry, theme: TuiTheme | None = None
+) -> RenderableType:
+    """Render both canonical and child-agent history through one entry point."""
+
+    if isinstance(entry, HistoryText):
+        if entry.role == "user":
+            return user_message(entry.text, theme)
+        if entry.role == "assistant":
+            return assistant_message(entry.text)
+        return system_message(entry.text)
+    if isinstance(entry, HistoryReasoning):
+        return reasoning_message(entry.presentation)
+    assert isinstance(entry, HistoryToolCall)
+    return tool_message(entry.use, entry.result, is_error=entry.is_error)
+
+
 def todo_text(todos: tuple[TodoItem, ...], *, expanded: bool) -> str:
     if not todos:
         return ""
@@ -178,6 +201,7 @@ def _bounded_reasoning(value: str) -> str:
 __all__ = [
     "assistant_message",
     "capability_table",
+    "history_message",
     "reasoning_message",
     "status_line",
     "streaming_assistant_message",

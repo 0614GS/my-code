@@ -131,12 +131,14 @@ class SubagentTool(Tool):
         context: ToolPermissionContext,
     ) -> ToolPermissionResult:
         del context
-        return ToolPermissionResult.ask(
-            message="Starting a child agent requires confirmation.",
+        return ToolPermissionResult.allow(
+            tool_input,
+            message=(
+                "Subagent orchestration is read-only; child tools enforce permissions."
+            ),
             reason=PermissionDecisionReason(
                 PermissionDecisionKind.TOOL, "subagent-spawn"
             ),
-            updated_input=tool_input,
         )
 
     async def execute(

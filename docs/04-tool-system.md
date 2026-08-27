@@ -27,6 +27,8 @@ ToolExecutor 还把该 step 的只读工具映射和版本放入 `ToolContext`�
 
 Subagent 属于 `features.subagents`，但仍实现同一 Tool 协议并经过上述输入、权限、取消和结果闭合管线。`subagents.enabled=false` 时 composition root 不注册该 source，AgentEngine 内没有 feature 条件分支。
 
+启动 Subagent 本身是只读编排操作，default mode 下直接放行，前台和后台都不弹确认框；显式的整工具 `Subagent` ask/deny 仍由统一策略执行。child 复制父级 mode/rules，其 Read、Bash、写入和 MCP 等真实调用继续逐次经过标准权限管线。
+
 Subagent 只提供 `explore` 与 `general` 两个 built-in definition。两者使用独立 Session、run、provider lease、ContextRuntime 和专用 prompt registry，只接收显式 prompt/attachments；不复制父 transcript。Explore 的只读代理在权限判断前及执行前各检查一次底层 `is_read_only()`，因此 Bash 重定向或修改命令在 allow rule 和 bypass 模式下仍会被拒绝。
 
 TUI host 中 `backgroundTasks.enabled=true` 时，主 Session 的 Bash schema 增加 `background`，并注册 TaskList 与 TaskCancel。二者统一覆盖 Bash 和 Subagent，通过 ToolContext 的当前 run identity 做 owner 隔离；输出不经过 TaskOutput，而由 completion attachment 给出受控临时文件绝对路径，再用 Read 获取。TUI 继续消费普通 Tool presentation，不直接访问 TaskSupervisor。Subagent 的 Bash 快照不暴露 `background`，执行层会拒绝注入该字段。
@@ -67,6 +69,9 @@ Dispatcher 只解析外层 `{tool_name, arguments}` 并验证目标仍是已搜�
 - 全局 mode、allow/ask/deny 规则和确认顺序归 `permissions`。
 - 路径解析、工作区逃逸防护和文件读写原语归 `workspace`。
 - Bash AST、命令语义和重定向分析留在 `tools.builtin.bash`。
+- Bash 分析同时生成确定性的 remembered-allow 建议：稳定 dispatcher 使用两段
+  前缀（例如 `git push:*`、`uv run:*`），包装器、复合或动态命令使用转义后的
+  精确命令；冗余的当前工作区 `cd ... &&` 不进入建议。
 - Explore 的只读代理消费工具提供的结构化只读判定及原因；未知 Bash
   语法继续 fail-closed，精确当前 cwd 的冗余 `cd ... &&` 只在权限证明中视为
   空操作，deny/ask 规则仍检查原始命令。

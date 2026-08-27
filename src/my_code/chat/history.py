@@ -15,11 +15,13 @@ type HistoryTextRole = Literal["user", "assistant", "system"]
 class HistoryText:
     role: HistoryTextRole
     text: str
+    streaming: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class HistoryReasoning:
     presentation: ReasoningPresentation
+    streaming: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +30,7 @@ class HistoryToolCall:
     use: ToolUsePresentation
     result: ToolResultPresentation
     is_error: bool
+    running: bool = False
 
 
 type HistoryEntry = HistoryText | HistoryReasoning | HistoryToolCall

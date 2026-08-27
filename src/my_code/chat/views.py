@@ -93,14 +93,6 @@ class BackgroundTaskView:
 
 
 @dataclass(frozen=True, slots=True)
-class SubagentActivityView:
-    kind: str
-    summary: str
-    detail: str | None = None
-    is_error: bool = False
-
-
-@dataclass(frozen=True, slots=True)
 class SubagentTaskView:
     task_id: str
     run_id: str
@@ -113,9 +105,8 @@ class SubagentTaskView:
     finished_at: str | None
     input_tokens: int
     output_tokens: int
-    reasoning: str
-    text: str
-    activities: tuple[SubagentActivityView, ...]
+    transcript: tuple[HistoryEntry, ...]
+    active_tool_ids: tuple[str, ...]
     error: str | None = None
 
 
@@ -127,7 +118,6 @@ __all__ = [
     "SessionUsageView",
     "SessionView",
     "SkillCapabilityView",
-    "SubagentActivityView",
     "SubagentTaskView",
     "ToolCapabilityView",
 ]

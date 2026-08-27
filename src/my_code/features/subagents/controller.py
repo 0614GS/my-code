@@ -114,6 +114,7 @@ class SubagentController:
             spec.agent_type,
             spec.description,
             background,
+            spec.prompt,
         )
         try:
             child_catalog = self._child_catalog(

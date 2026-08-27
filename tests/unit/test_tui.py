@@ -23,7 +23,7 @@ from my_code.chat.events import (
 from my_code.chat.history import HistoryText
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.status import ContextStatus, RuntimeStatus
-from my_code.chat.views import CapabilitiesView, SessionView
+from my_code.chat.views import CapabilitiesView, SessionView, SubagentTaskView
 from my_code.config.providers import ProviderProtocol
 from my_code.permissions.models import PermissionConfirmation
 from my_code.providers.manager import ProviderUpdate, ProviderView
@@ -53,6 +53,7 @@ class FakeRuntime:
         self.removed_credentials: list[str] = []
         self.has_stored_key = True
         self.credential_source = credential_source
+        self.agents: tuple[SubagentTaskView, ...] = ()
 
     async def initialize(self) -> SessionView:
         return SessionView(self.status(), self.history)
@@ -110,7 +111,7 @@ class FakeRuntime:
         return CapabilitiesView((), (), (), ())
 
     def subagent_tasks(self):
-        return ()
+        return self.agents
 
     async def stream_subagent_activity(self):
         while True:
@@ -665,6 +666,100 @@ async def test_permission_panel_returns_feedback_and_restores_draft() -> None:
 
     assert await pending == PermissionConfirmation(False, "Use another file.")
     assert app.buffer.text == "unfinished draft"
+
+
+def subagent_view(task_id: str, description: str) -> SubagentTaskView:
+    return SubagentTaskView(
+        task_id,
+        f"run-{task_id}",
+        "general",
+        description,
+        False,
+        "running",
+        "2026-08-27T00:00:00+00:00",
+        "2026-08-27T00:00:00+00:00",
+        None,
+        0,
+        0,
+        (HistoryText("user", f"prompt-{task_id}"),),
+        (),
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_view_selection_uses_stable_task_id() -> None:
+    runtime = FakeRuntime()
+    first = subagent_view("first", "First agent")
+    second = subagent_view("second", "Second agent")
+    runtime.agents = (first, second)
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+
+    app._open_agents()
+    app._panel_index = 1
+    await app._panel_enter()
+    runtime.agents = (second, first)
+    app._agents = runtime.agents
+
+    assert app._agent_task_id == "first"
+    assert "First agent" in app._agent_panel_text()
+    assert "Second agent" not in app._agent_panel_text()
+
+
+@pytest.mark.asyncio
+async def test_bash_permission_defaults_to_no_and_has_only_three_choices() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    request = PermissionRequest(
+        "Bash",
+        {"command": "git push origin main"},
+        "Allow Bash?",
+        ToolUsePresentation("Bash", "git push origin main", "Running Bash"),
+    )
+    pending = asyncio.create_task(app._ask_permission(request))
+    await asyncio.sleep(0)
+
+    assert app._panel_index == 2
+    assert app._permission_options() == ("allow", "second", "third")
+    app._choose_permission("third")
+    assert await pending == PermissionConfirmation(False)
+
+
+@pytest.mark.asyncio
+async def test_permission_modal_restores_selected_agent_and_blocks_f6() -> None:
+    runtime = FakeRuntime()
+    runtime.agents = (subagent_view("first", "First agent"),)
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._cycle_agent_view()
+    pending = asyncio.create_task(
+        app._ask_permission(
+            PermissionRequest(
+                "Write",
+                {"path": "a.txt"},
+                "Allow write?",
+                ToolUsePresentation("Write", "a.txt", "Writing a.txt"),
+            )
+        )
+    )
+    await asyncio.sleep(0)
+
+    app._cycle_agent_view()
+    assert app._panel == "permission"
+    app._choose_permission("deny")
+    assert await pending == PermissionConfirmation(False)
+    assert app._panel == "agents"
+    assert app._agent_task_id == "first"
 
 
 def test_provider_form_preserves_all_fields_and_password() -> None:

@@ -11,9 +11,12 @@ from my_code.permissions.models import (
     PermissionDecisionReason,
     PermissionMode,
     PermissionRule,
+    PermissionUpdate,
+    PermissionUpdateDestination,
     ToolPermissionContext,
     ToolPermissionResult,
 )
+from my_code.permissions.updates import permission_rule_for_destination
 from my_code.tools.base import (
     ReadOnlyAssessment,
     Tool,
@@ -24,6 +27,7 @@ from my_code.tools.builtin.bash.permissions import (
     allowing_rules,
     analyze_bash_command,
     matching_rule,
+    suggest_bash_permission,
 )
 from my_code.tools.builtin.bash.process import execute_bash
 from my_code.tools.presentation import compact_text
@@ -143,6 +147,18 @@ class BashTool(Tool):
 
         command = required_string(tool_input, "command")
         analysis = analyze_bash_command(command, context.workspace_root)
+        suggestion = suggest_bash_permission(command, context.workspace_root)
+        remember_update = PermissionUpdate.add_rules(
+            (
+                permission_rule_for_destination(
+                    "Bash",
+                    PermissionBehavior.ALLOW,
+                    PermissionUpdateDestination.LOCAL,
+                    suggestion.rule_content,
+                ),
+            ),
+            destination=PermissionUpdateDestination.LOCAL,
+        )
 
         deny_rule = matching_rule(
             analysis,
@@ -155,20 +171,6 @@ class BashTool(Tool):
                 reason=_rule_reason(deny_rule),
             )
 
-        ask_rule = matching_rule(
-            analysis,
-            command,
-            context.rules_for(self.definition.name, PermissionBehavior.ASK),
-        )
-        if ask_rule is not None:
-            return ToolPermissionResult.ask(
-                message=(
-                    f"Bash command requires confirmation by a {ask_rule.source} rule."
-                ),
-                reason=_rule_reason(ask_rule),
-                bypass_immune=True,
-            )
-
         if context.mode is PermissionMode.PLAN and not analysis.is_read_only:
             return ToolPermissionResult.deny(
                 message="Mutating Bash commands are unavailable in plan mode.",
@@ -179,14 +181,43 @@ class BashTool(Tool):
         matched_allow_rules = allowing_rules(
             analysis, command, allow_rules, context.workspace_root
         )
+        local_allow_rules = tuple(
+            rule
+            for rule in allow_rules
+            if rule.source == PermissionUpdateDestination.LOCAL.value
+        )
+        local_matches = allowing_rules(
+            analysis, command, local_allow_rules, context.workspace_root
+        )
+        local_remembered_allow = bool(local_matches)
+
+        ask_rule = matching_rule(
+            analysis,
+            command,
+            context.rules_for(self.definition.name, PermissionBehavior.ASK),
+        )
+        if ask_rule is not None and not local_remembered_allow:
+            return ToolPermissionResult.ask(
+                message=(
+                    f"Bash command requires confirmation by a {ask_rule.source} rule."
+                ),
+                reason=_rule_reason(ask_rule),
+                bypass_immune=True,
+                suggestions=(remember_update,),
+            )
+
         if matched_allow_rules:
+            effective_allow_rules = (
+                local_matches if local_remembered_allow else matched_allow_rules
+            )
             sources = ", ".join(
-                dict.fromkeys(rule.source for rule in matched_allow_rules)
+                dict.fromkeys(rule.source for rule in effective_allow_rules)
             )
             return ToolPermissionResult.allow(
                 tool_input,
                 message=f"Bash command is allowed by {sources} rule(s).",
-                reason=_rule_reason(matched_allow_rules[0]),
+                reason=_rule_reason(effective_allow_rules[0]),
+                overrides_ask=local_remembered_allow,
             )
 
         if analysis.is_read_only:
@@ -202,6 +233,7 @@ class BashTool(Tool):
             reason=PermissionDecisionReason(
                 PermissionDecisionKind.TOOL, "bash-approval-required"
             ),
+            suggestions=(remember_update,),
         )
 
     def validate_input(self, tool_input: JsonObject) -> None:

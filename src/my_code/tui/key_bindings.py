@@ -193,7 +193,8 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
     @bindings.add("f6")
     def cycle_agents(event: KeyPressEvent) -> None:
         del event
-        host._cycle_agent_view()
+        if host._panel != "permission":
+            host._cycle_agent_view()
 
     @bindings.add("pageup")
     def agent_page_up(event: KeyPressEvent) -> None:
@@ -212,8 +213,8 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
 
     for key, choice in (
         ("1", "allow"),
-        ("2", "deny"),
-        ("3", "feedback"),
+        ("2", "second"),
+        ("3", "third"),
         ("4", "remember"),
     ):
 

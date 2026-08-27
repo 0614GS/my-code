@@ -43,13 +43,13 @@ TUI 只渲染投影，不重新解释 Conversation 或读取工具结果文件�
 
 ## 权限
 
-TUI 注册 `PermissionHandler`，在底部临时面板展示 `chat.permissions.PermissionRequest` 并返回 `PermissionConfirmation`。支持允许、拒绝、反馈、remember 和 Bash prefix 校验。Provider API key 字段使用密码 processor；无 handler 时权限请求默认拒绝。
+TUI 注册 `PermissionHandler`，在底部临时面板展示 `chat.permissions.PermissionRequest` 并返回 `PermissionConfirmation`。Bash 固定显示 Yes、自动生成的 remembered-allow 和 No，默认选中 No，快捷键为 1–3，不进入手工 prefix 或拒绝反馈输入；其他工具保留允许、拒绝、反馈和 suggestion。Provider API key 字段使用密码 processor；无 handler 时权限请求默认拒绝。
 
 ## Slash 命令
 
 Slash command 在 prompt 进入模型前本地解析。除原有命令外，`/usage`、`/tools`、`/skills [reload]`、`/mcp [refresh|reconnect <server>]`、`/tasks` 和 `/agents` 只调用 ChatService 的窄接口。`/tasks` 同时显示 Bash 与前后台 Subagent，但不提供直接取消；取消仍由 Agent 的 `TaskCancel` 经过权限系统完成。
 
-`/agents` 打开只读 Subagent 面板，F6 按主会话、活跃 child、最近结束 child 的顺序快速循环。面板显示状态、前后台属性、usage、最近 200 条安全展示事件和当前文本/reasoning 流；隐藏 reasoning 不投影内容。终态 child 在当前进程内最多保留 20 个。PageUp/PageDown 浏览，End 回到实时尾部；Subagent 面板中的 Esc 只回到主会话，主会话中的 Esc 才取消前台回合。
+`/agents` 打开只读 Subagent 选择页，F6 按主会话、活跃 child、最近结束 child 的顺序快速循环。选中后使用与主历史相同的 user、assistant Markdown、reasoning 和配对 tool 组件显示当前进程内完整的安全 transcript，包括初始 prompt、实时文本/reasoning 流、运行中工具、结果与错误；不投影原始工具输入、provider continuation 或隐藏 reasoning 内容。终态 child 最多保留最近 20 个。视图以稳定 task ID 跟踪选择，PageUp/PageDown 浏览，End 回到实时尾部；权限 modal 关闭后恢复原 child 视图，modal 打开时 F6 不切换。Subagent 面板中的 Esc 只回到主会话，不取消 child。
 
 ## 输入与临时面板
 

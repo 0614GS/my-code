@@ -1,18 +1,19 @@
 """Pure text and table projections used by the terminal frontend."""
 
 from datetime import UTC, datetime
+from io import StringIO
 
-from rich.console import RenderableType
+from rich.console import Console, RenderableType
 
 from my_code.chat.status import ContextStatus
 from my_code.chat.views import (
     BackgroundTaskView,
     CapabilitiesView,
     SessionUsageView,
-    SubagentActivityView,
     SubagentTaskView,
 )
-from my_code.tui.widgets import capability_table
+from my_code.tui.theme import TuiTheme
+from my_code.tui.widgets import capability_table, history_message
 
 
 def render_context_status(status: ContextStatus) -> str:
@@ -116,7 +117,13 @@ def render_tasks(tasks: tuple[BackgroundTaskView, ...]) -> RenderableType:
     return capability_table(title, rows or (("No background tasks for this session",),))
 
 
-def render_agent_view(task: SubagentTaskView, *, scroll: int = 0) -> str:
+def render_agent_view(
+    task: SubagentTaskView,
+    *,
+    scroll: int = 0,
+    width: int = 100,
+    theme: TuiTheme | None = None,
+) -> str:
     mode = "background" if task.background else "foreground"
     lines = [
         f"{task.description} · {task.agent_type} · {mode}",
@@ -125,20 +132,17 @@ def render_agent_view(task: SubagentTaskView, *, scroll: int = 0) -> str:
     ]
     if task.error:
         lines.append(f"Error: {task.error}")
-    activities = list(task.activities)
-    if task.reasoning:
-        activities.append(SubagentActivityView("reasoning", task.reasoning))
-    if task.text:
-        activities.append(SubagentActivityView("text", task.text))
-    end = max(0, len(activities) - scroll)
+    entries = list(task.transcript)
+    end = max(0, len(entries) - scroll)
     start = max(0, end - 30)
-    lines.append("Recent activity:")
-    for item in activities[start:end]:
-        marker = "!" if item.is_error else "·"
-        lines.append(f"{marker} {item.kind}: {item.summary}")
-        if item.detail:
-            lines.append(f"  {item.detail}")
-    lines.append("↑↓ switch agent · PageUp/PageDown scroll · End live tail · Esc main")
+    stream = StringIO()
+    console = Console(file=stream, width=max(width, 40), color_system=None)
+    for entry in entries[start:end]:
+        console.print(history_message(entry, theme))
+    rendered = stream.getvalue().rstrip()
+    if rendered:
+        lines.append(rendered)
+    lines.append("PageUp/PageDown scroll · End live tail · Esc main")
     return "\n".join(lines)
 
 

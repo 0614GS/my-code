@@ -5,6 +5,7 @@ import pytest
 from my_code.tools.builtin.bash.permissions import (
     analyze_bash_command,
     bash_rule_matches,
+    suggest_bash_permission,
 )
 
 
@@ -97,3 +98,38 @@ def test_prefix_rules_match_command_boundaries_only() -> None:
     assert bash_rule_matches("git:*", "git") is True
     assert bash_rule_matches("git:*", "github status") is False
     assert bash_rule_matches("git status", "git status --short") is False
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("git push origin main", "git push:*"),
+        ("uv run pytest -q", "uv run:*"),
+        ("sudo git push", "sudo git push"),
+        ("bash -lc 'git push'", "bash -lc 'git push'"),
+        ("git status && rm *.tmp", r"git status && rm \*.tmp"),
+        ("echo $(id)", "echo $(id)"),
+    ],
+)
+def test_remembered_allow_suggestion_is_deterministic_and_narrow(
+    tmp_path: Path, command: str, expected: str
+) -> None:
+    suggestion = suggest_bash_permission(command, tmp_path)
+
+    assert suggestion.scope == expected
+    assert suggestion.rule_content == expected
+
+
+def test_remembered_allow_omits_redundant_workspace_cd(tmp_path: Path) -> None:
+    suggestion = suggest_bash_permission(
+        f"cd {tmp_path} && git push origin main", tmp_path
+    )
+
+    assert suggestion.rule_content == "git push:*"
+
+
+def test_escaped_exact_suggestion_does_not_become_a_wildcard(tmp_path: Path) -> None:
+    suggestion = suggest_bash_permission("rm *.tmp", tmp_path)
+
+    assert bash_rule_matches(suggestion.rule_content, "rm *.tmp") is True
+    assert bash_rule_matches(suggestion.rule_content, "rm secrets.tmp") is False

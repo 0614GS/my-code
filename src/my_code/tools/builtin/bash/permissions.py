@@ -30,6 +30,22 @@ class BashAnalysis:
     ast: BashAstResult | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class BashPermissionSuggestion:
+    """A deterministic, non-broad rule offered by the permission prompt."""
+
+    scope: str
+    rule_content: str
+
+
+_STABLE_SUBCOMMAND_TOOLS = frozenset(
+    {"cargo", "docker", "git", "gh", "kubectl", "npm", "pnpm", "uv", "yarn"}
+)
+_DANGEROUS_WRAPPERS = frozenset(
+    {"bash", "dash", "env", "fish", "sh", "sudo", "timeout", "xargs", "zsh"}
+)
+
+
 def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
     """Prove the supported static subset read-only; otherwise require approval."""
 
@@ -86,6 +102,40 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
         ast.command_sources,
         ast,
     )
+
+
+def suggest_bash_permission(command: str, cwd: Path) -> BashPermissionSuggestion:
+    """Return the remembered-allow scope for one Bash approval request."""
+
+    ast = parse_bash(command)
+    semantic = _semantic_commands(ast, command, cwd) if ast.is_complete else ()
+    if len(semantic) == 1:
+        item = semantic[0]
+        if (
+            not item.environment
+            and not item.redirections
+            and len(item.argv) >= 2
+            and item.argv[0] in _STABLE_SUBCOMMAND_TOOLS
+            and item.argv[0] not in _DANGEROUS_WRAPPERS
+            and not item.argv[1].startswith("-")
+        ):
+            prefix = f"{item.argv[0]} {item.argv[1]}:*"
+            return BashPermissionSuggestion(prefix, prefix)
+
+    exact = _command_without_redundant_cwd(command, ast, semantic)
+    escaped = _escape_exact_rule(exact)
+    return BashPermissionSuggestion(escaped, escaped)
+
+
+def _command_without_redundant_cwd(
+    command: str,
+    ast: BashAstResult,
+    semantic: tuple[SimpleCommand, ...],
+) -> str:
+    if ast.is_complete and semantic and len(semantic) < len(ast.commands):
+        source = command.encode("utf-8")
+        return source[semantic[0].start_byte :].decode("utf-8").strip()
+    return command.strip()
 
 
 def matching_rule(
@@ -308,3 +358,24 @@ def _is_escaped(pattern: str, index: int) -> bool:
         backslash_count += 1
         cursor -= 1
     return backslash_count % 2 == 1
+
+
+def _escape_exact_rule(command: str) -> str:
+    result: list[str] = []
+    for character in command:
+        if character in {"\\", "*"}:
+            result.append("\\")
+        result.append(character)
+    return "".join(result)
+
+
+__all__ = [
+    "BashAnalysis",
+    "BashPermissionSuggestion",
+    "allowing_rules",
+    "analyze_bash_command",
+    "bash_rule_has_wildcard",
+    "bash_rule_matches",
+    "matching_rule",
+    "suggest_bash_permission",
+]

@@ -57,7 +57,6 @@ from my_code.chat.views import (
     SessionUsageView,
     SessionView,
     SkillCapabilityView,
-    SubagentActivityView,
     SubagentTaskView,
     ToolCapabilityView,
 )
@@ -74,6 +73,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.file_mentions.loader import AttachmentLoader
 from my_code.features.file_mentions.models import PathSuggestion
@@ -84,14 +84,23 @@ from my_code.model.capabilities import (
     ModelDescriptor,
     resolve_environment,
 )
+from my_code.model.primitives import ReasoningPresentation
 from my_code.providers.discovery import resolve_without_network
 from my_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
 from my_code.runtime.state import AppState
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
 from my_code.sessions.session import Session
 from my_code.skills.tool import restore_skill_permissions
-from my_code.tasks.models import SubagentTaskView as RuntimeSubagentTaskView
+from my_code.tasks.models import (
+    SubagentTaskView as RuntimeSubagentTaskView,
+)
+from my_code.tasks.models import (
+    SubagentTranscriptReasoning,
+    SubagentTranscriptText,
+    SubagentTranscriptTool,
+)
 from my_code.tools.executor import ToolExecutor
+from my_code.tools.presentation import ToolUsePresentation
 
 
 class BackgroundNotificationSource(Protocol):
@@ -114,6 +123,37 @@ class SubagentActivitySource(Protocol):
     def task_views(self, owner_run_id: str) -> tuple[RuntimeSubagentTaskView, ...]: ...
 
     async def wait_for_activity(self, after_revision: int) -> int: ...
+
+
+def _project_subagent_entry(
+    entry: SubagentTranscriptText
+    | SubagentTranscriptReasoning
+    | SubagentTranscriptTool,
+) -> HistoryEntry:
+    if isinstance(entry, SubagentTranscriptText):
+        role = "user" if entry.role == "user" else "assistant"
+        return HistoryText(role, entry.text, entry.streaming)
+    if isinstance(entry, SubagentTranscriptReasoning):
+        return HistoryReasoning(
+            ReasoningPresentation(entry.disclosure, entry.parts), entry.streaming
+        )
+    use = ToolUsePresentation(
+        entry.use.display_name, entry.use.summary, entry.use.activity
+    )
+    result = (
+        ToolResultPresentation(
+            entry.result.summary, entry.result.detail, entry.result.truncated
+        )
+        if entry.result is not None
+        else ToolResultPresentation("Tool is still running.")
+    )
+    return HistoryToolCall(
+        entry.tool_use_id,
+        use,
+        result,
+        entry.is_error,
+        running=entry.result is None,
+    )
 
 
 class ChatService:
@@ -324,17 +364,10 @@ class ChatService:
                 finished_at=item.finished_at,
                 input_tokens=item.input_tokens,
                 output_tokens=item.output_tokens,
-                reasoning=item.reasoning,
-                text=item.text,
-                activities=tuple(
-                    SubagentActivityView(
-                        activity.kind,
-                        activity.summary,
-                        activity.detail,
-                        activity.is_error,
-                    )
-                    for activity in item.activities
+                transcript=tuple(
+                    _project_subagent_entry(entry) for entry in item.transcript
                 ),
+                active_tool_ids=item.active_tool_ids,
                 error=item.error,
             )
             for item in self._subagents.task_views(self.state.session.session_id)
@@ -351,7 +384,16 @@ class ChatService:
             if current != revision:
                 revision = current
                 yield self.subagent_tasks()
-            revision = await self._subagents.wait_for_activity(revision)
+            try:
+                revision = await asyncio.wait_for(
+                    self._subagents.wait_for_activity(revision), timeout=1.0
+                )
+            except TimeoutError:
+                if any(
+                    item.status in {"pending", "running", "cancelling"}
+                    for item in self.subagent_tasks()
+                ):
+                    yield self.subagent_tasks()
 
     async def reload_skills(self) -> CapabilitiesView:
         async with self.state.operation_lock():

@@ -199,7 +199,12 @@ class ToolPermissionResult:
     decision_reason: PermissionDecisionReason
     updated_input: JsonObject | None = None
     bypass_immune: bool = False
+    overrides_ask: bool = False
     suggestions: tuple[PermissionUpdate, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.overrides_ask and self.behavior is not ToolPermissionBehavior.ALLOW:
+            raise ValueError("Only an allow result can override ask rules")
 
     @property
     def reason(self) -> str:
@@ -214,8 +219,17 @@ class ToolPermissionResult:
         *,
         message: str,
         reason: PermissionDecisionReason,
+        overrides_ask: bool = False,
+        suggestions: tuple[PermissionUpdate, ...] = (),
     ) -> ToolPermissionResult:
-        return cls(ToolPermissionBehavior.ALLOW, message, reason, tool_input)
+        return cls(
+            ToolPermissionBehavior.ALLOW,
+            message,
+            reason,
+            tool_input,
+            overrides_ask=overrides_ask,
+            suggestions=suggestions,
+        )
 
     @classmethod
     def ask(

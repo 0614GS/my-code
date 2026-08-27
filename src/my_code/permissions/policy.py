@@ -99,14 +99,6 @@ class PermissionPolicy:
                 decision_reason=_rule_reason(deny_rule),
             )
 
-        ask_rule = self._whole_tool_rule(request.tool_name, PermissionBehavior.ASK)
-        if ask_rule is not None:
-            return PermissionDecision(
-                behavior=PermissionBehavior.ASK,
-                message=f"{request.tool_name} requires confirmation by rule.",
-                decision_reason=_rule_reason(ask_rule),
-            )
-
         tool_result = request.tool_result
 
         # 工具拥有输入语义，因此它的拒绝具有权威性。显式内容询问和受保护路径检查
@@ -117,6 +109,15 @@ class PermissionPolicy:
                 message=tool_result.message,
                 decision_reason=tool_result.decision_reason,
                 updated_input=tool_result.updated_input,
+                suggestions=tool_result.suggestions,
+            )
+
+        ask_rule = self._whole_tool_rule(request.tool_name, PermissionBehavior.ASK)
+        if ask_rule is not None and not _can_override_ask(request):
+            return PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message=f"{request.tool_name} requires confirmation by rule.",
+                decision_reason=_rule_reason(ask_rule),
                 suggestions=tool_result.suggestions,
             )
         if (
@@ -205,6 +206,19 @@ class PermissionPolicy:
 
 def _updated_input(updated: JsonObject | None, original: JsonObject) -> JsonObject:
     return original if updated is None else updated
+
+
+def _can_override_ask(request: PermissionRequest) -> bool:
+    result = request.tool_result
+    rule = result.decision_reason.rule
+    return (
+        request.tool_name == "Bash"
+        and result.overrides_ask
+        and result.behavior is ToolPermissionBehavior.ALLOW
+        and rule is not None
+        and rule.behavior is PermissionBehavior.ALLOW
+        and rule.source == "localSettings"
+    )
 
 
 def _rule_reason(rule: PermissionRule) -> PermissionDecisionReason:
