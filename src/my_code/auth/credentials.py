@@ -99,8 +99,8 @@ class CredentialStore:
         if raw.get("version") != _SCHEMA_VERSION:
             raise CredentialStoreError(
                 "Credential file must use schema version "
-                f"{_SCHEMA_VERSION}: {self.path}. Recreate it with "
-                "`mycode auth login`."
+                f"{_SCHEMA_VERSION}: {self.path}. Recreate it from the "
+                "Provider panel."
             )
         providers = raw.get("providers")
         if not isinstance(providers, dict):

@@ -4,7 +4,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from my_code.auth.credentials import CredentialStore, resolve_api_key
+from my_code.auth.credentials import CredentialSource, CredentialStore, resolve_api_key
 from my_code.config.paths import MyCodePaths
 from my_code.config.providers import (
     CompactConfig,
@@ -30,6 +30,7 @@ class ProviderView:
     base_url: str | None
     active: bool
     has_stored_key: bool
+    credential_source: CredentialSource
     reasoning: ReasoningConfig = ReasoningConfig()
     limits: ModelLimits = ModelLimits()
     compact: CompactConfig = CompactConfig()
@@ -74,6 +75,12 @@ class ProviderManager:
     def list(self, active_provider: str) -> tuple[ProviderView, ...]:
         views: list[ProviderView] = []
         for profile in self.profiles.load().values():
+            credential = resolve_api_key(
+                self.credentials,
+                self.environ,
+                provider_id=profile.id,
+                protocol=profile.protocol.value,
+            )
             cached = self.model_cache.load(
                 self.model_cache.binding_key(
                     profile.id, profile.protocol.value, profile.base_url
@@ -90,6 +97,7 @@ class ProviderManager:
                     active=profile.id == active_provider,
                     has_stored_key=self.credentials.load_api_key(profile.id)
                     is not None,
+                    credential_source=credential.source,
                     reasoning=profile.reasoning,
                     limits=profile.limits,
                     compact=profile.compact,
@@ -123,22 +131,29 @@ class ProviderManager:
         )
         models = cached.models if cached is not None else (selected,)
         return ProviderView(
-            profile.id,
-            profile.protocol,
-            profile.model,
-            profile.base_url,
-            False,
-            credential.api_key is not None,
-            profile.reasoning,
-            profile.limits,
-            profile.compact,
-            tuple(item.id for item in models),
-            selected.source.value,
-            fetched_at,
-            discovery_error,
-            None,
-            selected.limits,
+            id=profile.id,
+            protocol=profile.protocol,
+            model=profile.model,
+            base_url=profile.base_url,
+            active=False,
+            has_stored_key=self.credentials.load_api_key(profile.id) is not None,
+            credential_source=credential.source,
+            reasoning=profile.reasoning,
+            limits=profile.limits,
+            compact=profile.compact,
+            models=tuple(item.id for item in models),
+            capability_source=selected.source.value,
+            discovered_at=fetched_at,
+            discovery_error=discovery_error,
+            resolved_limits=selected.limits,
         )
+
+    def delete_credential(self, provider_id: str) -> bool:
+        """Delete only the stored credential for an existing provider profile."""
+
+        if provider_id not in self.profiles.load():
+            raise ValueError(f"Unknown provider: {provider_id}")
+        return self.credentials.delete(provider_id)
 
     def configure(self, update: ProviderUpdate) -> ProviderConnection:
         profile = ProviderProfile(

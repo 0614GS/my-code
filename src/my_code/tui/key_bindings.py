@@ -17,11 +17,13 @@ _NAVIGATION_PANELS = {
     "resume",
     "provider_select",
     "provider_actions",
+    "provider_remove_credential",
     "provider_review",
     "provider_models",
 }
 _PROVIDER_PANELS = {
     "provider_actions",
+    "provider_remove_credential",
     "provider_form",
     "provider_review",
     "provider_models",

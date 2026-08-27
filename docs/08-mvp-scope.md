@@ -16,7 +16,7 @@
 - token budget、工具结果替换、自动/手动/reactive compact。
 - `@path` 文件或目录 attachment、路径补全与 AGENTS 用户上下文。
 - provider profile、凭据存储、模型发现缓存和运行期切换。
-- 非交互 print 模式与 `prompt_toolkit + Rich` 原生 scrollback TUI。参考实现使用 Ink；本项目有意采用 Python 原生非全屏 host，不实现自定义可交互 transcript，也不保留 Textual inline 双 host。
+- 纯交互式 `prompt_toolkit + Rich` 原生 scrollback TUI。参考实现使用 Ink；本项目有意采用 Python 原生非全屏 host，不实现自定义可交互 transcript，也不保留 Textual inline 双 host。
 - Ruff、Pyright standard、pytest 和 AST 架构守卫。
 
 ## 明确延后

@@ -51,7 +51,7 @@ ALLOWED_DEPENDENCIES = {
         "sessions",
         "tools",
     },
-    "cli": {"auth", "chat", "config", "permissions"},
+    "cli": {"config", "permissions"},
     "tui": {
         "chat",
         "config",

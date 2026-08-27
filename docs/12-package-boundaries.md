@@ -38,6 +38,8 @@ from my_code.permissions.models import PermissionDecision
 | `cli` / `tui` | host 输入输出 |
 | `bootstrap` | 唯一对象组装入口 |
 
+CLI 只解析 TUI launch 参数并依赖 `config`/`permissions` 的安全值类型，不再依赖 `auth`；Provider 凭据管理由 TUI 经 `ChatService` 和 `ProviderManager` 完成。
+
 ## 依赖顺序
 
 ```text

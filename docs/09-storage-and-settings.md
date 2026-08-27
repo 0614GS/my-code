@@ -25,7 +25,7 @@
 └── skills/<name>/SKILL.md
 ```
 
-用户目录在真实启动或认证操作时幂等初始化。导入模块不会创建文件、读取凭据或发起网络请求。
+用户目录在真实 TUI 启动时幂等初始化。导入模块不会创建文件、读取凭据或发起网络请求。launch 分支要求 stdin 和 stdout 都是 TTY，并在存储初始化、Provider 发现或网络访问前拒绝管道与重定向；`--help`、`--version` 仍可在任意终端环境使用。未来配置类子命令可以独立允许非 TTY，但不改变 launch 边界。
 
 ## Settings 合并
 
@@ -70,7 +70,7 @@ MCP 配置位于 `mcp` 域，`enabled` 默认 `false`。每个 `servers.<name>` 
 
 ## 凭据
 
-`auth.credentials.CredentialStore` 只处理私有凭据文件。解析顺序由 provider/protocol 和环境变量决定，并返回 `ResolvedCredential` 说明来源。任何 status、history、日志或 Session record 都不能包含 API key。
+`auth.credentials.CredentialStore` 只处理私有凭据文件。解析顺序由 provider/protocol 和环境变量决定，并返回 `ResolvedCredential` 说明来源。Provider TUI 显示 `environment`、`stored` 或 `not configured`，保存和删除都只操作目标 profile 的本地 Key；环境变量始终优先且不会被删除。删除当前 Provider 的本地 Key 后，runtime 会立即重新解析并切换连接。任何 status、history、日志或 Session record 都不能包含 API key。
 
 ## 写入语义
 

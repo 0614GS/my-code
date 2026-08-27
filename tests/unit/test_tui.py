@@ -12,6 +12,7 @@ from prompt_toolkit.output.color_depth import ColorDepth
 from rich.console import Console
 from rich.padding import Padding
 
+from my_code.auth.credentials import CredentialSource
 from my_code.chat.events import (
     TextCompleted,
     TextDelta,
@@ -37,12 +38,20 @@ from my_code.tui.widgets import user_message
 
 
 class FakeRuntime:
-    def __init__(self, *, history: tuple[HistoryText, ...] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        history: tuple[HistoryText, ...] = (),
+        credential_source: CredentialSource = CredentialSource.STORED,
+    ) -> None:
         self.prompts: list[str] = []
         self.history = history
         self.permission_handler = None
         self.submitted = asyncio.Event()
         self.provider_updates: list[ProviderUpdate] = []
+        self.removed_credentials: list[str] = []
+        self.has_stored_key = True
+        self.credential_source = credential_source
 
     async def initialize(self) -> SessionView:
         return SessionView(self.status(), self.history)
@@ -71,7 +80,7 @@ class FakeRuntime:
             base_url=None,
             model="test-model",
             permission_mode="default",
-            credential_source="stored",
+            credential_source=self.credential_source.value,
             context_entry_count=len(self.prompts) * 2,
             conversation_entry_count=len(self.prompts) * 2,
             todos=(),
@@ -107,12 +116,20 @@ class FakeRuntime:
                 "test-model",
                 None,
                 True,
-                True,
+                self.has_stored_key,
+                self.credential_source,
             ),
         )
 
     async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
         self.provider_updates.append(update)
+        return self.status()
+
+    async def remove_provider_credential(self, provider_id: str) -> RuntimeStatus:
+        self.removed_credentials.append(provider_id)
+        self.has_stored_key = False
+        if self.credential_source is CredentialSource.STORED:
+            self.credential_source = CredentialSource.NONE
         return self.status()
 
     async def suggest_paths(self, query: str):
@@ -208,6 +225,17 @@ def test_slash_opens_command_suggestions_while_typing() -> None:
     }
     menu = app._slash_menu_text()
     assert menu[0][0] == "class:selected"
+
+
+def test_auth_slash_command_is_removed_from_help_completion_and_dispatch() -> None:
+    registry = SlashCommandRegistry.default()
+    status = FakeRuntime().status()
+
+    assert "/auth" not in registry.render_help()
+    assert registry.matching("/auth") == ()
+    outcome = registry.dispatch("/auth", status=status)
+    assert outcome is not None
+    assert outcome.message.startswith("Unknown command")
 
 
 def test_tab_only_inserts_the_selected_slash_command() -> None:
@@ -437,6 +465,74 @@ async def test_provider_picker_uses_enter_for_primary_actions() -> None:
     assert [update.id for update in runtime.provider_updates] == ["anthropic"]
     assert app._panel is None
     assert app.buffer.text == "draft"
+
+
+@pytest.mark.asyncio
+async def test_provider_credential_removal_requires_confirmation_and_can_cancel() -> (
+    None
+):
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._open_provider()
+    await app._panel_enter()
+    app._panel_index = 2
+    await app._panel_enter()
+
+    assert app._panel == "provider_remove_credential"
+    assert app._panel_index == 1
+    await app._panel_enter()
+
+    assert app._panel == "provider_actions"
+    assert runtime.removed_credentials == []
+    assert runtime.has_stored_key is True
+
+
+@pytest.mark.asyncio
+async def test_provider_credential_removal_reports_environment_override() -> None:
+    runtime = FakeRuntime(credential_source=CredentialSource.ENVIRONMENT)
+    output = StringIO()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=output, force_terminal=False),
+    )
+    app.buffer.text = "draft"
+    app._open_provider()
+    await app._panel_enter()
+    actions = fragment_list_to_text(to_formatted_text(app._panel_text()))
+    assert "environment" in actions
+    assert "Remove saved API key" in actions
+    app._panel_index = 2
+    await app._panel_enter()
+    app._panel_index = 0
+    await app._panel_enter()
+
+    assert runtime.removed_credentials == ["anthropic"]
+    assert app._panel is None
+    assert app.buffer.text == "draft"
+    assert "environment API key remains active" in output.getvalue()
+
+
+def test_provider_panel_reports_not_configured_without_remove_action() -> None:
+    runtime = FakeRuntime(credential_source=CredentialSource.NONE)
+    runtime.has_stored_key = False
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._open_provider()
+    app._provider_selected_index = 0
+    app._panel = "provider_actions"
+
+    text = fragment_list_to_text(to_formatted_text(app._panel_text()))
+
+    assert "not configured" in text
+    assert "Remove saved API key" not in text
 
 
 @pytest.mark.asyncio

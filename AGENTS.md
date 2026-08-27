@@ -10,7 +10,7 @@
 
 - `uv sync`：创建或更新项目的 `.venv`。
 - `uv run mycode --help`：检查 CLI 入口。
-- `uv run mycode -p "prompt"`：执行一次非交互式对话。
+- `uv run mycode`：启动交互式 TUI。
 - `uv run ruff format .`：格式化 Python 文件。
 - `uv run ruff check .`：执行代码规范检查。
 - `uv run pyright`：以 standard 模式执行静态类型检查。

@@ -5,8 +5,6 @@ import pytest
 
 from my_code.auth.credentials import CredentialSource, CredentialStore
 from my_code.cli.arguments import (
-    AuthAction,
-    AuthOptions,
     CliOptions,
     build_parser,
     parse_args,
@@ -31,7 +29,7 @@ def resolve_options(options: CliOptions) -> AgentSettings:
     resolver = SettingsResolver.for_workspace(options.cwd)
     return resolver.resolve(
         options.settings_overrides,
-        interactive=options.interactive,
+        interactive=True,
     )
 
 
@@ -41,7 +39,20 @@ def test_parser_uses_installed_command_name() -> None:
 
 def test_parser_rejects_removed_max_turns_flag() -> None:
     with pytest.raises(SystemExit):
-        parse_args(["--max-turns", "3", "-p", "hello"])
+        parse_args(["--max-turns", "3"])
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (("-p", "hello"), ("--print", "hello"), ("hello",)),
+)
+def test_parser_rejects_non_interactive_chat_forms(
+    arguments: tuple[str, ...],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        parse_cli(list(arguments))
+
+    assert exit_info.value.code == 2
 
 
 def test_cli_resolves_file_environment_and_flag_precedence(
@@ -76,8 +87,6 @@ def test_cli_resolves_file_environment_and_flag_precedence(
             "https://cli.example/api",
             "--max-steps",
             "7",
-            "-p",
-            "hello",
         ]
     )
 
@@ -104,7 +113,7 @@ def test_environment_model_overrides_settings(
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("ANTHROPIC_MODEL", "env-model")
 
-    options = parse_args(["--cwd", str(workspace), "-p", "hello"])
+    options = parse_args(["--cwd", str(workspace)])
 
     assert resolve_options(options).model == "env-model"
 
@@ -123,7 +132,7 @@ def test_environment_base_url_overrides_user_settings(
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://env.example/api")
 
-    options = parse_args(["--cwd", str(workspace), "-p", "hello"])
+    options = parse_args(["--cwd", str(workspace)])
 
     assert resolve_options(options).base_url == "https://env.example/api"
 
@@ -159,7 +168,7 @@ def test_named_provider_resolves_profile_and_scoped_credential(
     )
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
 
-    options = parse_args(["--cwd", str(workspace), "-p", "hello"])
+    options = parse_args(["--cwd", str(workspace)])
 
     settings = resolve_options(options)
     assert settings.provider_id == "gateway"
@@ -196,9 +205,7 @@ def test_cli_provider_override_selects_named_profile(
     )
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
 
-    options = parse_args(
-        ["--cwd", str(workspace), "--provider", "gateway", "-p", "hello"]
-    )
+    options = parse_args(["--cwd", str(workspace), "--provider", "gateway"])
 
     settings = resolve_options(options)
     assert settings.provider_id == "gateway"
@@ -216,7 +223,7 @@ def test_environment_api_key_overrides_stored_credential(
     CredentialStore(config_home / ".credentials.json").save_api_key("stored-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "environment-key")
 
-    options = parse_args(["--cwd", str(workspace), "-p", "hello"])
+    options = parse_args(["--cwd", str(workspace)])
 
     settings = resolve_options(options)
     assert settings.api_key == "environment-key"
@@ -233,25 +240,31 @@ def test_cli_uses_stored_credential_without_environment_override(
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     CredentialStore(config_home / ".credentials.json").save_api_key("stored-key")
 
-    options = parse_args(["--cwd", str(workspace), "-p", "hello"])
+    options = parse_args(["--cwd", str(workspace)])
 
     settings = resolve_options(options)
     assert settings.api_key == "stored-key"
     assert settings.credential_source is CredentialSource.STORED
 
 
-def test_parse_cli_returns_auth_management_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(tmp_path / "config"))
+def test_session_and_launch_overrides_are_preserved(tmp_path: Path) -> None:
+    options = parse_cli(
+        [
+            "--cwd",
+            str(tmp_path),
+            "--session",
+            "11111111-1111-1111-1111-111111111111",
+            "--provider",
+            "gateway",
+            "--model",
+            "model-x",
+        ]
+    )
 
-    options = parse_cli(["auth", "login"])
-
-    assert isinstance(options, AuthOptions)
-    assert options.action is AuthAction.LOGIN
     assert options.cwd == tmp_path
-    assert options.provider_override is None
+    assert options.session_id == "11111111-1111-1111-1111-111111111111"
+    assert options.settings_overrides.provider_id == "gateway"
+    assert options.settings_overrides.model == "model-x"
 
 
 def test_parsing_does_not_materialize_storage(
@@ -263,7 +276,7 @@ def test_parsing_does_not_materialize_storage(
     config_home = tmp_path / "missing-config"
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
 
-    options = parse_args(["--cwd", str(workspace), "-p", "hello"])
+    options = parse_args(["--cwd", str(workspace)])
 
     assert options.cwd == workspace
     assert not config_home.exists()
@@ -278,7 +291,7 @@ def test_non_positive_cli_limit_is_rejected(
     workspace.mkdir()
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(tmp_path / "config"))
 
-    options = parse_args(["--cwd", str(workspace), "--max-steps", "0", "-p", "hello"])
+    options = parse_args(["--cwd", str(workspace), "--max-steps", "0"])
     with pytest.raises(ValueError, match="max_steps must be a positive integer"):
         resolve_options(options)
 
@@ -291,6 +304,6 @@ def test_max_steps_is_unlimited_by_default(
     workspace.mkdir()
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(tmp_path / "config"))
 
-    options = parse_args(["--cwd", str(workspace), "-p", "hello"])
+    options = parse_args(["--cwd", str(workspace)])
 
     assert resolve_options(options).max_steps is None

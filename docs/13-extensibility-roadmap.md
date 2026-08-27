@@ -404,7 +404,7 @@ PENDING ──> RUNNING ──> SUCCEEDED
 - `TaskList`、`TaskCancel` 是标准 Tool，只能按 root owner run 查询或取消本 agent tree 的 background task；取消继续经过 PermissionPolicy。
 - `BackgroundTaskNotificationSource` 只在模型规划前的 step 边界读取终态。Session 接受 durable Attachment 后由通用 acknowledgement 回写 controller；Conversation 按 task ID 去重，`inspect`、compact retry 和跨多个 step/turn 不会提前消费或重复投影。
 - main/child ToolContext 都携带当前 run ID；session resume 后 main Tool 不依赖 bootstrap 时的旧 Session ID，嵌套 background task 的查询/通知归属 root agent tree。
-- `backgroundTasks.enabled=false` 为默认值；只有交互式 host 中它与 `subagents.enabled` 同时开启时，Subagent schema 才暴露 background 参数并注册三个 Task tools。非交互 `-p` 始终退回纯 foreground M4a，不注册 completion source 或 watcher。
+- `backgroundTasks.enabled=false` 为默认值；TUI host 中它与 `subagents.enabled` 同时开启时，Subagent schema 才暴露 background 参数并注册 Task tools。
 - BG-01/BG-02 由 `tests/integration/test_background_task.py` 使用 Event barrier 验证 submit 不等待、turn 后完成、后续 step 单次通知、run/lease 回收；不依赖耗时阈值。
 - `tests/unit/test_subagent_controller.py` 验证 owner 隔离、TaskList/Output/Cancel、父任务取消树、失败/timeout/foreground cancel；M3 的 shutdown 测试继续验证 tasks → runs/leases → provider 关闭顺序。
 - Task ID 与状态由 Subagent/Task Tool 的 frontend-neutral presentation 进入现有 CLI/TUI ToolStarted/ToolFinished 路径，host 不读取 TaskSupervisor 内部结构。

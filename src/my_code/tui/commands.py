@@ -12,7 +12,6 @@ class SlashCommandAction(StrEnum):
     STATUS = "status"
     CONTEXT = "context"
     COMPACT = "compact"
-    AUTH = "auth"
     PROVIDER = "provider"
     RESUME = "resume"
     CLEAR = "clear"
@@ -101,9 +100,6 @@ class SlashCommandRegistry:
                     SlashCommandAction.TASKS,
                 ),
                 SlashCommand(
-                    "auth", "Show authentication status", SlashCommandAction.AUTH
-                ),
-                SlashCommand(
                     "provider",
                     "Configure API provider, URL, model, and key",
                     SlashCommandAction.PROVIDER,
@@ -175,8 +171,6 @@ class SlashCommandRegistry:
                 return CommandOutcome(show_tools=True)
             case SlashCommandAction.TASKS:
                 return CommandOutcome(show_tasks=True)
-            case SlashCommandAction.AUTH:
-                return CommandOutcome(_render_auth(status))
             case SlashCommandAction.PROVIDER:
                 return CommandOutcome(open_provider_manager=True)
             case SlashCommandAction.RESUME:
@@ -229,15 +223,6 @@ def _render_status(status: RuntimeStatus) -> str:
                 f"{status.mcp_connected_count}/{status.mcp_server_count} MCP"
             ),
         )
-    )
-
-
-def _render_auth(status: RuntimeStatus) -> str:
-    if status.credential_source == "none":
-        return "Not logged in. Run `mycode auth login` outside the TUI."
-    return (
-        f"Authentication source: {status.credential_source}. "
-        "Use `mycode auth status` for details."
     )
 
 

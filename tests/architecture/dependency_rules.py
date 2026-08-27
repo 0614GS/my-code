@@ -105,7 +105,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "tools",
         }
     ),
-    "cli": frozenset({"auth", "chat", "config", "permissions"}),
+    "cli": frozenset({"config", "permissions"}),
     "tui": frozenset(
         {
             "chat",

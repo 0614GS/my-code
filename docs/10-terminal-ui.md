@@ -2,7 +2,7 @@
 
 ## 边界
 
-`tui` 是 `prompt_toolkit + Rich` 的普通终端 host，只负责底部动态布局、按键、slash 命令和事件渲染。它不读取 JSONL、不执行工具、不构造 ModelRequest，也不持有 AgentEngine。应用使用 `full_screen=False`，不进入 alternate screen、不接管鼠标；已完成内容通过 `run_in_terminal()` 串行固化到终端 scrollback。
+`tui` 是 `mycode` 唯一的聊天 host，使用 `prompt_toolkit + Rich` 负责底部动态布局、按键、slash 命令和事件渲染。它不读取 JSONL、不执行工具、不构造 ModelRequest，也不持有 AgentEngine。应用使用 `full_screen=False`，不进入 alternate screen、不接管鼠标；已完成内容通过 `run_in_terminal()` 串行固化到终端 scrollback。launch 要求 stdin/stdout 都是 TTY；`--session <uuid>` 仍通过同一 TUI 恢复。
 
 模块按职责拆分：`app.py` 只编排 ChatService、生命周期与临时面板状态；`turns.py` 消费前后台 turn 事件；`layout.py` 构造非全屏动态区；`key_bindings.py` 负责按键路由；`composer.py` 持有独立 slash 选择状态并适配 path 补全；`panels.py` 生成带语义样式的临时面板；`theme.py` 与 `terminal.py` 统一颜色和原生光标策略；`presentation.py` 投影运行时能力；`widgets.py` 生成 Rich scrollback renderable。Provider 表单状态和 resume 摘要分别留在 `provider_screen.py` 与 `resume_screen.py`。
 
@@ -57,4 +57,4 @@ TUI 不发送光标形状控制序列，并覆盖 prompt_toolkit 默认的“显
 
 固化到 scrollback 的用户 prompt 使用一条铺满可用宽度的低对比度背景带和 `›` 标记，AI Markdown 继续使用终端默认背景，因此恢复历史和新回合都能清楚区分双方消息。
 
-resume、provider 和 permission 都投影为底部临时面板。Provider 采用与参考实现相同的“列表选择、方向键导航、Enter 执行主操作、Esc 返回”交互语法：profile 选择后先提供 Use/Configure，配置默认只经过五项核心字段，在 Review 页保存、发现模型或按需进入 Advanced；不再要求记忆保存和模型发现快捷键。通过 `--session` 启动时，带 my-code ASCII 标识的 Welcome 面板后立即绘制完整安全历史；`/clear` 只清理当前可见终端并重绘 Welcome，不修改 canonical conversation。
+resume、provider 和 permission 都投影为底部临时面板。Provider 采用与参考实现相同的“列表选择、方向键导航、Enter 执行主操作、Esc 返回”交互语法：profile 选择后先提供 Use/Configure，配置默认只经过五项核心字段，在 Review 页保存、发现模型或按需进入 Advanced；面板显示不含密钥的凭据来源，本地 Key 存在时提供带二次确认的删除操作。删除不会影响环境 Key；删除当前 Provider 的本地 Key 后连接立即重新解析。`/auth` 不再存在。通过 `--session` 启动时，带 my-code ASCII 标识的 Welcome 面板后立即绘制完整安全历史；`/clear` 只清理当前可见终端并重绘 Welcome，不修改 canonical conversation。

@@ -57,6 +57,7 @@ from my_code.tui.panels import (
     provider_actions_panel,
     provider_form_panel,
     provider_models_panel,
+    provider_remove_credential_panel,
     provider_review_panel,
     provider_select_panel,
     resume_panel,
@@ -225,6 +226,7 @@ class MyCodeApp(TurnFlowMixin):
             "resume",
             "provider_select",
             "provider_actions",
+            "provider_remove_credential",
             "provider_review",
             "provider_models",
         }:
@@ -319,6 +321,10 @@ class MyCodeApp(TurnFlowMixin):
             return provider_select_panel(self._providers, self._panel_index)
         if self._panel == "provider_actions" and self._providers:
             return provider_actions_panel(
+                self._providers[self._provider_selected_index], self._panel_index
+            )
+        if self._panel == "provider_remove_credential" and self._providers:
+            return provider_remove_credential_panel(
                 self._providers[self._provider_selected_index], self._panel_index
             )
         if self._panel == "provider_form" and self._provider_form is not None:
@@ -506,7 +512,10 @@ class MyCodeApp(TurnFlowMixin):
         elif self._panel == "provider_select":
             size = min(len(self._providers), 8) + 1
         elif self._panel == "provider_actions":
-            size = 3
+            provider = self._providers[self._provider_selected_index]
+            size = 4 if provider.has_stored_key else 3
+        elif self._panel == "provider_remove_credential":
+            size = 2
         elif self._panel == "provider_review":
             size = 4
         elif self._panel == "provider_models":
@@ -555,17 +564,21 @@ class MyCodeApp(TurnFlowMixin):
                 self.buffer.set_document(Document(""), bypass_readonly=True)
                 self._invalidate()
         elif self._panel == "provider_actions":
+            provider = self._providers[self._provider_selected_index]
             if self._panel_index == 0:
-                self._provider_form = ProviderForm.from_view(
-                    self._providers[self._provider_selected_index]
-                )
+                self._provider_form = ProviderForm.from_view(provider)
                 await self._save_provider()
             elif self._panel_index == 1:
-                self._start_provider_form(
-                    ProviderForm.from_view(
-                        self._providers[self._provider_selected_index]
-                    )
-                )
+                self._start_provider_form(ProviderForm.from_view(provider))
+            elif provider.has_stored_key and self._panel_index == 2:
+                self._panel = "provider_remove_credential"
+                self._panel_index = 1
+                self._invalidate()
+            else:
+                self._provider_back()
+        elif self._panel == "provider_remove_credential":
+            if self._panel_index == 0:
+                await self._remove_provider_credential()
             else:
                 self._provider_back()
         elif self._panel == "provider_form":
@@ -683,10 +696,44 @@ class MyCodeApp(TurnFlowMixin):
         )
         self._invalidate()
 
+    async def _remove_provider_credential(self) -> None:
+        provider = self._providers[self._provider_selected_index]
+        try:
+            status = await self.runtime.remove_provider_credential(provider.id)
+            providers = self.runtime.providers()
+        except Exception as error:
+            await self._write(
+                system_message(f"Failed to remove saved API key: {error}", error=True)
+            )
+            return
+        refreshed = next(item for item in providers if item.id == provider.id)
+        self._status = status
+        self._context_status = self.runtime.context_status()
+        self._providers = providers
+        self._panel = None
+        self.buffer.set_document(
+            Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
+        )
+        if refreshed.credential_source.value == "environment":
+            message = (
+                f"Saved API key for {provider.id!r} removed. "
+                "An environment API key remains active."
+            )
+        else:
+            message = (
+                f"Saved API key for {provider.id!r} removed. "
+                "The provider is now not configured."
+            )
+        await self._write(system_message(message))
+        self._invalidate()
+
     def _provider_back(self) -> None:
         if self._panel == "provider_actions":
             self._panel = "provider_select"
             self._panel_index = max(self._provider_selected_index, 0)
+        elif self._panel == "provider_remove_credential":
+            self._panel = "provider_actions"
+            self._panel_index = 2
         elif self._panel == "provider_models":
             self._panel = "provider_review"
             self._panel_index = 1

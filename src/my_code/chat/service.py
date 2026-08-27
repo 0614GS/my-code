@@ -502,6 +502,29 @@ class ChatService:
             await self.state.provider.switch(connection, environment)
             return self.status()
 
+    async def remove_provider_credential(self, provider_id: str) -> RuntimeStatus:
+        """Remove a stored key and refresh the active connection when necessary."""
+
+        async with self.state.operation_lock():
+            removed = self.provider_manager.delete_credential(provider_id)
+            current = self.state.provider.router.connection
+            if not removed or current.id != provider_id:
+                return self.status()
+            connection = self.provider_manager.resolve(provider_id)
+            descriptor = resolve_without_network(
+                connection.protocol,
+                connection.base_url,
+                connection.model,
+                connection.limits,
+            )
+            environment = resolve_environment(
+                descriptor,
+                requested_output_tokens=self.settings.max_output_tokens,
+                configured_trigger_tokens=connection.compact.trigger_input_tokens,
+            )
+            await self.state.provider.switch(connection, environment)
+            return self.status()
+
     async def list_sessions(self) -> tuple[SessionSummary, ...]:
         return SessionCatalog(self._project_state_dir).list(
             exclude_session_id=self.state.session.session_id

@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from my_code.auth.credentials import CredentialSource, CredentialStore
 from my_code.bootstrap import initialize_user_storage
 from my_code.config.paths import MyCodePaths, SettingsScope
@@ -93,7 +95,39 @@ def test_provider_views_never_expose_key_value(tmp_path: Path) -> None:
     view = manager.list("anthropic")[0]
 
     assert view.has_stored_key is True
+    assert view.credential_source is CredentialSource.STORED
     assert "secret-key" not in repr(view)
+
+
+def test_provider_view_reports_environment_without_exposing_value(
+    tmp_path: Path,
+) -> None:
+    _manager, paths = make_manager(tmp_path)
+    manager = ProviderManager(paths, environ={"ANTHROPIC_API_KEY": "environment-key"})
+
+    view = manager.list("anthropic")[0]
+
+    assert view.credential_source is CredentialSource.ENVIRONMENT
+    assert view.has_stored_key is False
+    assert "environment-key" not in repr(view)
+
+
+def test_delete_credential_only_removes_the_target_profile(tmp_path: Path) -> None:
+    manager, paths = make_manager(tmp_path)
+    manager.configure(ProviderUpdate("anthropic", "model-a", None, "key-a"))
+    manager.configure(ProviderUpdate("other", "model-b", None, "key-b"))
+
+    assert manager.delete_credential("anthropic") is True
+    assert manager.delete_credential("anthropic") is False
+    assert CredentialStore(paths.credentials_path).load_api_key("anthropic") is None
+    assert CredentialStore(paths.credentials_path).load_api_key("other") == "key-b"
+
+
+def test_delete_credential_rejects_unknown_provider(tmp_path: Path) -> None:
+    manager, _paths = make_manager(tmp_path)
+
+    with pytest.raises(ValueError, match="Unknown provider"):
+        manager.delete_credential("missing")
 
 
 def test_openai_profile_uses_protocol_specific_environment(tmp_path: Path) -> None:

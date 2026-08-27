@@ -27,7 +27,7 @@ Subagent 属于 `features.subagents`，但仍实现同一 Tool 协议并经过�
 
 Subagent 只提供 `explore` 与 `general` 两个 built-in definition。两者使用独立 Session、run、provider lease、ContextRuntime 和专用 prompt registry，只接收显式 prompt/attachments；不复制父 transcript。Explore 的只读代理在权限判断前及执行前各检查一次底层 `is_read_only()`，因此 Bash 重定向或修改命令在 allow rule 和 bypass 模式下仍会被拒绝。
 
-交互式 host 中 `backgroundTasks.enabled=true` 时，主 Session 的 Bash schema 增加 `background`，并注册 TaskList 与 TaskCancel。二者统一覆盖 Bash 和 Subagent，通过 ToolContext 的当前 run identity 做 owner 隔离；输出不经过 TaskOutput，而由 completion attachment 给出受控临时文件绝对路径，再用 Read 获取。TUI 继续消费普通 Tool presentation，不直接访问 TaskSupervisor。非交互 `mycode -p` 强制关闭 background gate；Subagent 的 Bash 快照也不暴露 `background`，执行层会拒绝注入该字段。
+TUI host 中 `backgroundTasks.enabled=true` 时，主 Session 的 Bash schema 增加 `background`，并注册 TaskList 与 TaskCancel。二者统一覆盖 Bash 和 Subagent，通过 ToolContext 的当前 run identity 做 owner 隔离；输出不经过 TaskOutput，而由 completion attachment 给出受控临时文件绝对路径，再用 Read 获取。TUI 继续消费普通 Tool presentation，不直接访问 TaskSupervisor。Subagent 的 Bash 快照不暴露 `background`，执行层会拒绝注入该字段。
 
 `skills.enabled=true` 时，`SkillRuntime` 在 application 启动阶段把当前 `SkillCatalogSnapshot` 适配为一个标准 `Skill` Tool。Tool description/schema 保持静态，可用列表由临时 `SkillListingAttachment` 提供。调用延迟读取 Markdown，并在完整 ToolResultBatch 后产生 durable `SkillActivationAttachment`。`allowed-tools` 转为 additive session allow rules，不收窄工具目录，且含权限请求的激活默认需要用户授权。旧 Tool adapter 持有旧 Skill snapshot，因此 reload 不会让当前 ToolRound 漂移。
 

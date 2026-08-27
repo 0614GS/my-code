@@ -10,7 +10,7 @@ import pytest
 
 from my_code.agent.events import AgentEvent
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
-from my_code.auth.credentials import CredentialSource
+from my_code.auth.credentials import CredentialSource, CredentialStore
 from my_code.bootstrap import bootstrap_chat
 from my_code.chat.events import (
     BackgroundInvocationFinished,
@@ -40,7 +40,7 @@ from my_code.features.background_tasks.registry import BackgroundTask
 from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
-from my_code.providers.manager import ProviderUpdate
+from my_code.providers.manager import ProviderManager, ProviderUpdate
 from my_code.sessions._store import SessionStore
 from my_code.sessions.session import Session
 from my_code.tools.presentation import ToolUsePresentation
@@ -389,6 +389,98 @@ async def test_provider_switch_does_not_modify_session_facts(tmp_path: Path) -> 
     assert status.provider_id == "other"
     assert status.model == "other-model"
     assert runtime.state.provider.environment().descriptor.id == "other-model"
+
+
+@pytest.mark.asyncio
+async def test_removing_current_provider_key_rebinds_runtime(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.provider_manager.configure(
+        ProviderUpdate("anthropic", "test-model", None, "stored-key")
+    )
+    await runtime.state.provider.switch(
+        runtime.provider_manager.resolve("anthropic"),
+        runtime.state.provider.environment(),
+    )
+
+    status = await runtime.remove_provider_credential("anthropic")
+
+    assert status.credential_source == "none"
+    assert runtime.state.provider.router.connection.api_key is None
+    assert (
+        CredentialStore(runtime.settings.paths.credentials_path).load_api_key() is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_removing_non_current_provider_key_does_not_switch_runtime(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.provider_manager.configure(
+        ProviderUpdate("other", "other-model", None, "other-key")
+    )
+    await runtime.configure_provider(ProviderUpdate("anthropic", "test-model", None))
+    connection = runtime.state.provider.router.connection
+
+    await runtime.remove_provider_credential("other")
+
+    assert runtime.state.provider.router.connection is connection
+    assert (
+        CredentialStore(runtime.settings.paths.credentials_path).load_api_key("other")
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_removing_current_stored_key_keeps_environment_key_active(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.provider_manager = ProviderManager(
+        runtime.settings.paths,
+        environ={"ANTHROPIC_API_KEY": "environment-key"},
+    )
+    connection = runtime.provider_manager.configure(
+        ProviderUpdate("anthropic", "test-model", None, "stored-key")
+    )
+    await runtime.state.provider.switch(
+        connection,
+        runtime.state.provider.environment(),
+    )
+
+    status = await runtime.remove_provider_credential("anthropic")
+
+    assert status.credential_source == "environment"
+    assert runtime.state.provider.router.connection.api_key == "environment-key"
+    assert "environment-key" not in repr(runtime.providers()[0])
+
+
+@pytest.mark.asyncio
+async def test_credential_delete_failure_preserves_connection_and_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    connection = runtime.provider_manager.configure(
+        ProviderUpdate("anthropic", "test-model", None, "stored-key")
+    )
+    await runtime.state.provider.switch(
+        connection,
+        runtime.state.provider.environment(),
+    )
+    connection = runtime.state.provider.router.connection
+
+    def fail(_provider_id: str) -> bool:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(runtime.provider_manager, "delete_credential", fail)
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        await runtime.remove_provider_credential("anthropic")
+
+    assert runtime.state.provider.router.connection is connection
+    assert runtime.provider_manager.credentials.load_api_key("anthropic") == (
+        "stored-key"
+    )
 
 
 @pytest.mark.asyncio

@@ -59,13 +59,30 @@ def provider_select_panel(
 
 
 def provider_actions_panel(provider: ProviderView, selected: int) -> FormattedText:
-    actions = ("Use this provider", "Configure", "Back")
+    actions = ["Use this provider", "Configure"]
+    if provider.has_stored_key:
+        actions.append("Remove saved API key")
+    actions.append("Back")
     detail = (
         f"{provider.id} · {provider.protocol.value} · {provider.model}\n"
         f"{provider.base_url or 'SDK default URL'} · "
-        f"{'key saved' if provider.has_stored_key else 'no saved key'}"
+        f"{_credential_label(provider)}"
     )
-    return _picker(detail, actions, selected, "↑↓ navigate · Enter select · Esc back")
+    return _picker(
+        detail, tuple(actions), selected, "↑↓ navigate · Enter select · Esc back"
+    )
+
+
+def provider_remove_credential_panel(
+    provider: ProviderView, selected: int
+) -> FormattedText:
+    return _picker(
+        f"Remove saved API key for {provider.id!r}?\n"
+        "Environment credentials are not affected.",
+        ("Remove saved API key", "Cancel"),
+        selected,
+        "↑↓ navigate · Enter confirm · Esc cancel",
+    )
 
 
 def provider_form_panel(
@@ -122,6 +139,14 @@ def _message(title: str, hint: str) -> FormattedText:
     return FormattedText([("class:heading", title), ("class:secondary", f" · {hint}")])
 
 
+def _credential_label(provider: ProviderView) -> str:
+    if provider.credential_source.value == "environment":
+        return "environment"
+    if provider.credential_source.value == "stored":
+        return "stored"
+    return "not configured"
+
+
 def _picker(
     title: str, rows: tuple[str, ...], selected: int, hint: str
 ) -> FormattedText:
@@ -138,6 +163,7 @@ __all__ = [
     "provider_actions_panel",
     "provider_form_panel",
     "provider_models_panel",
+    "provider_remove_credential_panel",
     "provider_review_panel",
     "provider_select_panel",
     "resume_panel",

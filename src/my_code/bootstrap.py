@@ -13,11 +13,9 @@ from uuid import uuid4
 from my_code.agent.budget import TokenBudgetModelClient
 from my_code.agent.engine import AgentEngine
 from my_code.auth.credentials import CredentialStore
-from my_code.chat.events import MaxStepsReached, TurnSucceeded
 from my_code.chat.permissions import DeferredPermissionPrompter
 from my_code.chat.service import ChatService
-from my_code.cli.arguments import AuthOptions, CliOptions, parse_cli
-from my_code.cli.auth import run_auth_command
+from my_code.cli.arguments import CliOptions, parse_cli
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.permission_updates import PermissionUpdateApplier
 from my_code.config.providers import (
@@ -548,26 +546,7 @@ def bootstrap_chat(
     )
 
 
-async def _submit(options: CliOptions, resolver: SettingsResolver) -> int:
-    settings = resolver.resolve(options.settings_overrides, interactive=False)
-    if settings.paths.providers_path.exists():
-        settings = await discover_active_model(settings)
-    runtime = bootstrap_chat(settings, options.session_id)
-    try:
-        result = await runtime.submit(options.prompt or "")
-    finally:
-        await runtime.close()
-    if isinstance(result, TurnSucceeded):
-        print(result.text or "<no text response>")
-        return 0
-    assert isinstance(result, MaxStepsReached)
-    print(f"Error: Reached max steps ({result.max_steps})", file=sys.stderr)
-    return 1
-
-
 async def run(options: CliOptions, resolver: SettingsResolver) -> int:
-    if options.prompt is not None:
-        return await _submit(options, resolver)
     settings = resolver.resolve(options.settings_overrides, interactive=True)
     if settings.paths.providers_path.exists():
         settings = await discover_active_model(settings)
@@ -593,28 +572,16 @@ def _run_async(task: Coroutine[Any, Any, int]) -> int:
 def main(argv: list[str] | None = None) -> None:
     try:
         options = parse_cli(argv)
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            print(
+                "Error: mycode requires an interactive terminal; "
+                "piped or redirected chat is not supported.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
         resolver = SettingsResolver.for_workspace(options.cwd)
         initialize_user_storage(resolver.paths)
     except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
         raise SystemExit(2) from error
-    if isinstance(options, AuthOptions):
-        provider_id = resolver.active_provider_id(options.provider_override)
-        protocol = (
-            ProviderProfileStore(resolver.paths.providers_path)
-            .load()[provider_id]
-            .protocol.value
-        )
-        try:
-            raise SystemExit(
-                run_auth_command(
-                    options, resolver.paths, provider_id, protocol=protocol
-                )
-            )
-        except (EOFError, KeyboardInterrupt):
-            print("Cancelled.", file=sys.stderr)
-            raise SystemExit(130) from None
-        except ValueError as error:
-            print(f"Error: {error}", file=sys.stderr)
-            raise SystemExit(2) from error
     raise SystemExit(_run_async(run(options, resolver)))

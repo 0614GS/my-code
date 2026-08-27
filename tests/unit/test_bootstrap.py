@@ -4,10 +4,12 @@ import json
 import stat
 from collections.abc import Callable
 from dataclasses import replace
+from io import StringIO
 from pathlib import Path
 
 import pytest
 
+import my_code.bootstrap as bootstrap_module
 from my_code.auth.credentials import CredentialSource, CredentialStore
 from my_code.bootstrap import (
     ApplicationAssembly,
@@ -318,20 +320,67 @@ def test_bootstrap_rejects_legacy_storage_without_modifying_it(
     assert "anthropicApiKey" in paths.credentials_path.read_text(encoding="utf-8")
 
 
-def test_cli_startup_bootstraps_before_auth_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+class TerminalStream(StringIO):
+    def __init__(self, interactive: bool) -> None:
+        super().__init__()
+        self.interactive = interactive
+
+    def isatty(self) -> bool:
+        return self.interactive
+
+
+@pytest.mark.parametrize("stdin_tty, stdout_tty", ((False, True), (True, False)))
+def test_cli_launch_rejects_non_tty_before_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stdin_tty: bool,
+    stdout_tty: bool,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config_home = tmp_path / "config"
-    monkeypatch.chdir(workspace)
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(bootstrap_module.sys, "stdin", TerminalStream(stdin_tty))
+    monkeypatch.setattr(bootstrap_module.sys, "stdout", TerminalStream(stdout_tty))
+    errors = TerminalStream(False)
+    monkeypatch.setattr(bootstrap_module.sys, "stderr", errors)
+    monkeypatch.setattr(
+        bootstrap_module,
+        "initialize_user_storage",
+        lambda _paths: pytest.fail("storage must not be initialized"),
+    )
+    monkeypatch.setattr(
+        bootstrap_module,
+        "discover_active_model",
+        lambda _settings: pytest.fail("provider discovery must not run"),
+    )
+    monkeypatch.setattr(
+        bootstrap_module,
+        "MyCodeTui",
+        lambda _runtime: pytest.fail("TUI must not start"),
+    )
 
     with pytest.raises(SystemExit) as exit_info:
-        main(["auth", "status"])
+        main(["--cwd", str(workspace)])
 
-    assert exit_info.value.code == 1
-    assert (config_home / "settings.json").exists()
-    assert (config_home / "providers.json").exists()
-    assert (config_home / ".credentials.json").exists()
+    assert exit_info.value.code == 2
+    assert errors.getvalue() == (
+        "Error: mycode requires an interactive terminal; "
+        "piped or redirected chat is not supported.\n"
+    )
+    assert not config_home.exists()
+
+
+@pytest.mark.parametrize("argument", ("--help", "--version"))
+def test_cli_metadata_options_work_without_tty(
+    monkeypatch: pytest.MonkeyPatch, argument: str
+) -> None:
+    output = TerminalStream(False)
+    monkeypatch.setattr(bootstrap_module.sys, "stdin", TerminalStream(False))
+    monkeypatch.setattr(bootstrap_module.sys, "stdout", output)
+
+    with pytest.raises(SystemExit) as exit_info:
+        main([argument])
+
+    assert exit_info.value.code == 0
+    assert output.getvalue()
