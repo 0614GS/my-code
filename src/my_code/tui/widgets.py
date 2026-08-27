@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
+from io import StringIO
 from typing import Protocol
 
-from rich.console import Group, RenderableType
+from prompt_toolkit.formatted_text import ANSI
+from rich.console import Console, Group, RenderableType
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.panel import Panel
@@ -17,6 +20,7 @@ from my_code.chat.status import RuntimeStatus
 from my_code.features.todos.models import TodoItem
 from my_code.model.primitives import ReasoningPresentation
 from my_code.tools.presentation import ToolUsePresentation
+from my_code.tui.dimensions import SURFACE_VERTICAL_PADDING
 from my_code.tui.theme import TuiTheme
 
 
@@ -67,11 +71,32 @@ def welcome(status: RuntimeStatus, theme: TuiTheme | None = None) -> RenderableT
 def user_message(prompt: str, theme: TuiTheme | None = None) -> RenderableType:
     theme = theme or TuiTheme.detect()
     content = Text.assemble(("› ", "bold cyan"), prompt)
-    return Padding(content, (0, 1), style=theme.rich_surface, expand=True)
+    return Padding(
+        content,
+        (SURFACE_VERTICAL_PADDING, 1),
+        style=theme.rich_surface,
+        expand=True,
+    )
 
 
 def assistant_message(content: str) -> Markdown:
     return Markdown(content or "<no text response>")
+
+
+@lru_cache(maxsize=8)
+def streaming_assistant_message(content: str, width: int) -> ANSI:
+    """Render partial Markdown for prompt_toolkit's transient live region."""
+
+    stream = StringIO()
+    console = Console(
+        file=stream,
+        width=max(width, 20),
+        force_terminal=True,
+        color_system="truecolor",
+    )
+    console.print(assistant_message(content), end="")
+    rendered = "\n".join(line.rstrip() for line in stream.getvalue().splitlines())
+    return ANSI(rendered)
 
 
 def system_message(content: str, *, error: bool = False) -> Text:
@@ -155,6 +180,7 @@ __all__ = [
     "capability_table",
     "reasoning_message",
     "status_line",
+    "streaming_assistant_message",
     "system_message",
     "todo_text",
     "tool_message",

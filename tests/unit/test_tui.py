@@ -30,6 +30,7 @@ from my_code.providers.manager import ProviderUpdate, ProviderView
 from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.app import MyCodeApp
 from my_code.tui.commands import SlashCommandRegistry
+from my_code.tui.dimensions import SURFACE_VERTICAL_PADDING
 from my_code.tui.presentation import format_context_usage, render_context_status
 from my_code.tui.provider_screen import ProviderForm
 from my_code.tui.terminal import NativeCursorVt100Output, terminal_color_depth
@@ -375,13 +376,32 @@ def test_slash_menu_is_below_composer_and_uses_terminal_background() -> None:
     assert menu_window.right_margins == []
 
 
-def test_user_message_uses_a_full_width_background() -> None:
+def test_user_message_matches_composer_vertical_padding() -> None:
     theme = TuiTheme(TerminalPalette((48, 10, 36)))
     message = user_message("hello", theme)
 
     assert isinstance(message, Padding)
     assert message.expand is True
     assert message.style == "on #49273e"
+    assert message.top == SURFACE_VERTICAL_PADDING
+    assert message.bottom == SURFACE_VERTICAL_PADDING
+
+
+def test_streaming_assistant_text_renders_markdown_before_completion() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), width=80, force_terminal=False),
+    )
+    app._stream_text = "**partial response**\n\n- first item"
+
+    rendered = to_formatted_text(app._dynamic_text())
+    text = fragment_list_to_text(rendered)
+
+    assert "**" not in text
+    assert "partial response" in text
+    assert "• first item" in text
+    assert any("bold" in style for style, *_ in rendered)
 
 
 def test_theme_adapts_user_surface_to_light_and_dark_terminals() -> None:

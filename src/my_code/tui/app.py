@@ -9,7 +9,11 @@ from prompt_toolkit.application import Application, run_in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import AnyFormattedText, FormattedText
+from prompt_toolkit.formatted_text import (
+    AnyFormattedText,
+    FormattedText,
+    to_formatted_text,
+)
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import Input
 from prompt_toolkit.layout import BufferControl
@@ -83,6 +87,7 @@ from my_code.tui.widgets import (
     assistant_message,
     reasoning_message,
     status_line,
+    streaming_assistant_message,
     system_message,
     todo_text,
     tool_message,
@@ -290,9 +295,16 @@ class MyCodeApp(TurnFlowMixin):
         if self._panel is not None:
             return self._panel_text()
         parts = [part for part in (self._activity, self._reasoning_summary()) if part]
+        fragments = list(to_formatted_text("\n".join(parts)))
         if self._stream_text:
-            parts.append(self._stream_text)
-        return "\n".join(parts)
+            if fragments:
+                fragments.append(("", "\n"))
+            fragments.extend(
+                to_formatted_text(
+                    streaming_assistant_message(self._stream_text, self.console.width)
+                )
+            )
+        return FormattedText(fragments)
 
     def _todo_display(self) -> str:
         return todo_text(self._todos, expanded=self._todos_expanded)

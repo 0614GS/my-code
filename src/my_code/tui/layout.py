@@ -24,6 +24,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.output import Output
 
+from my_code.tui.dimensions import SURFACE_VERTICAL_PADDING
 from my_code.tui.terminal import terminal_color_depth, terminal_output
 from my_code.tui.theme import TuiTheme
 
@@ -78,7 +79,7 @@ def build_terminal_layout(
                 Condition(has_todos),
             ),
             Window(height=1, char="─", style="class:border"),
-            Window(height=1, style="class:surface"),
+            Window(height=SURFACE_VERTICAL_PADDING, style="class:surface"),
             Window(
                 input_control,
                 height=Dimension(min=1, max=8),
@@ -86,7 +87,7 @@ def build_terminal_layout(
                 dont_extend_height=True,
                 style="class:surface",
             ),
-            Window(height=1, style="class:surface"),
+            Window(height=SURFACE_VERTICAL_PADDING, style="class:surface"),
             slash_menu,
             completions_menu,
             Window(
