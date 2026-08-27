@@ -35,9 +35,9 @@ Provider endpoint、protocol、默认 model、reasoning、limits 和 compact 配
 
 工具调度配置位于 settings 的 `tools` 域：`tools.maxParallelCalls` 必须是正整数，默认值为 4；设为 1 会关闭 ToolRound 内的实际重叠执行。它只限制并发上限，不会把默认不安全的 Tool 改为安全。
 
-foreground Subagent 配置位于 `subagents` 域。`enabled` 默认 `false`；`maxDepth`、`maxActiveChildren`、`maxSteps`、`maxTokens` 和 `timeoutSeconds` 都必须为正数。gate 只决定是否注册 Subagent tool source，预算值由不可变 `AgentSettings` 传给每个 child run。
+foreground Subagent 配置位于 `subagents` 域。`enabled` 默认 `true`；`maxDepth`、`maxActiveChildren`、`maxSteps`、`maxTokens` 和 `timeoutSeconds` 都必须为正数。gate 只决定是否注册 Subagent tool source，预算值由不可变 `AgentSettings` 传给每个 child run。`Subagent` 是基础 eager tool，不经 ToolSearch 延迟加载。
 
-`backgroundTasks.enabled` 默认 `false`，可独立于 `subagents.enabled` 开启。它只在 interactive effective gate 下生效；关闭后不会撤销 foreground Subagent，而会移除 Bash/Subagent 的 background 参数、Task tools 和完成通知 source。
+`backgroundTasks.enabled` 默认 `true`，可独立于 `subagents.enabled` 关闭。它只在 interactive effective gate 下生效；关闭后不会撤销 foreground Subagent，而会移除 Bash/Subagent 的 background 参数、Task tools 和完成通知 source。TaskList/TaskCancel 注册后属于 searchable tool，仍通过 ToolSearch 按需发现。
 
 后台 Bash 的合并输出位于系统临时目录下的用户/项目/session 隔离空间：`my-code-<uid>/<project>/<session>/tasks/<uuid>.output`。目录权限为 `0700`、文件为 `0600`。前台完成后立即删除文件；后台终态文件暂时保留，由 OS 临时目录生命周期回收，不写入项目 `.my-code` 或 durable session storage。
 

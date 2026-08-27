@@ -164,15 +164,33 @@ def test_subagent_settings_layer_and_runtime_defaults(tmp_path: Path) -> None:
     assert settings.background_tasks_enabled is True
 
 
-def test_subagents_are_disabled_by_default(tmp_path: Path) -> None:
+def test_subagents_and_background_tasks_are_enabled_by_default(tmp_path: Path) -> None:
     settings = SettingsResolver(make_paths(tmp_path)).resolve(interactive=False)
 
-    assert settings.subagents_enabled is False
-    assert settings.background_tasks_enabled is False
+    assert settings.subagents_enabled is True
+    assert settings.background_tasks_enabled is True
     assert settings.skills_enabled is False
     assert settings.mcp_enabled is False
     assert settings.mcp_servers == ()
     assert settings.tool_search_mode is ToolSearchMode.DISPATCHER
+
+
+def test_subagents_and_background_tasks_can_be_explicitly_disabled(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    SettingsStore(paths).write(
+        SettingsScope.USER,
+        SettingsLayer(
+            subagents_enabled=False,
+            background_tasks_enabled=False,
+        ),
+    )
+
+    settings = SettingsResolver(paths).resolve(interactive=True)
+
+    assert settings.subagents_enabled is False
+    assert settings.background_tasks_enabled is False
 
 
 def test_skill_feature_gate_is_layered_and_serialized(tmp_path: Path) -> None:

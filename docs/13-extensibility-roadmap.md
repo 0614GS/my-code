@@ -526,13 +526,13 @@ PENDING ──> RUNNING ──> SUCCEEDED
 
 ## 8. Feature gate 与回滚
 
-建议新增独立设置，默认关闭尚未完成验收的能力：
+各能力保留独立设置以支持回滚；已完成验收的 Subagent 与后台任务默认开启：
 
 - `tools.maxParallelCalls = 1`：设为 `1` 即回到串行执行。
 - `mcp.enabled = false`：关闭 MCP source，不影响内置 catalog。
 - `skills.enabled = false`：不扫描/激活 Skill。
-- `subagents.enabled = false`：不注册 Subagent tools。
-- `backgroundTasks.enabled = false`：只允许 foreground child。
+- `subagents.enabled = false`：显式回滚时不注册 Subagent tools；默认值为 `true`。
+- `backgroundTasks.enabled = false`：显式回滚时只允许 foreground child；默认值为 `true`，且仅 interactive host 生效。
 
 Feature gate 只控制能力注册，不在 AgentEngine 中增加五个条件分支。关闭来源后重新生成 catalog/snapshot；正在运行的 step 按 D1 完成或取消。
 

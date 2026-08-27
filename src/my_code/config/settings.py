@@ -44,6 +44,8 @@ DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN = 4
 DEFAULT_SUBAGENT_MAX_STEPS = 20
 DEFAULT_SUBAGENT_MAX_TOKENS = 100_000
 DEFAULT_SUBAGENT_TIMEOUT_SECONDS = 300.0
+DEFAULT_SUBAGENTS_ENABLED = True
+DEFAULT_BACKGROUND_TASKS_ENABLED = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,13 +75,13 @@ class AgentSettings:
     interactive: bool
     max_parallel_tool_calls: int = DEFAULT_MAX_PARALLEL_TOOL_CALLS
     tool_search_mode: ToolSearchMode = ToolSearchMode.DISPATCHER
-    subagents_enabled: bool = False
+    subagents_enabled: bool = DEFAULT_SUBAGENTS_ENABLED
     subagent_max_depth: int = DEFAULT_SUBAGENT_MAX_DEPTH
     subagent_max_active_children: int = DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN
     subagent_max_steps: int = DEFAULT_SUBAGENT_MAX_STEPS
     subagent_max_tokens: int = DEFAULT_SUBAGENT_MAX_TOKENS
     subagent_timeout_seconds: float = DEFAULT_SUBAGENT_TIMEOUT_SECONDS
-    background_tasks_enabled: bool = False
+    background_tasks_enabled: bool = DEFAULT_BACKGROUND_TASKS_ENABLED
     skills_enabled: bool = False
     mcp_enabled: bool = False
     mcp_servers: tuple[McpServerSettingsLayer, ...] = ()
@@ -242,7 +244,11 @@ class SettingsResolver:
                 stored.max_parallel_tool_calls or DEFAULT_MAX_PARALLEL_TOOL_CALLS
             ),
             tool_search_mode=(stored.tool_search_mode or ToolSearchMode.DISPATCHER),
-            subagents_enabled=stored.subagents_enabled or False,
+            subagents_enabled=(
+                DEFAULT_SUBAGENTS_ENABLED
+                if stored.subagents_enabled is None
+                else stored.subagents_enabled
+            ),
             subagent_max_depth=(
                 stored.subagent_max_depth or DEFAULT_SUBAGENT_MAX_DEPTH
             ),
@@ -259,7 +265,11 @@ class SettingsResolver:
             subagent_timeout_seconds=(
                 stored.subagent_timeout_seconds or DEFAULT_SUBAGENT_TIMEOUT_SECONDS
             ),
-            background_tasks_enabled=stored.background_tasks_enabled or False,
+            background_tasks_enabled=(
+                DEFAULT_BACKGROUND_TASKS_ENABLED
+                if stored.background_tasks_enabled is None
+                else stored.background_tasks_enabled
+            ),
             skills_enabled=stored.skills_enabled or False,
             mcp_enabled=stored.mcp_enabled or False,
             mcp_servers=stored.mcp_servers,
@@ -313,7 +323,9 @@ def _resolve_permission_rules(
 
 __all__ = [
     "AgentSettings",
+    "DEFAULT_BACKGROUND_TASKS_ENABLED",
     "DEFAULT_MAX_PARALLEL_TOOL_CALLS",
+    "DEFAULT_SUBAGENTS_ENABLED",
     "DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN",
     "DEFAULT_SUBAGENT_MAX_DEPTH",
     "DEFAULT_SUBAGENT_MAX_STEPS",

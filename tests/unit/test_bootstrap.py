@@ -71,7 +71,10 @@ def test_agent_assembly_exposes_named_component_identities(tmp_path: Path) -> No
 
 def test_subagent_tool_registration_is_feature_gated(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
-    disabled = _assemble_agent(settings, "22222222-2222-2222-2222-222222222222")
+    disabled = _assemble_agent(
+        replace(settings, subagents_enabled=False),
+        "22222222-2222-2222-2222-222222222222",
+    )
     enabled = _assemble_agent(
         replace(
             settings,
@@ -88,8 +91,6 @@ def test_subagent_tool_registration_is_feature_gated(tmp_path: Path) -> None:
         replace(
             settings,
             interactive=True,
-            subagents_enabled=True,
-            background_tasks_enabled=True,
         ),
         "44444444-4444-4444-4444-444444444444",
     )
