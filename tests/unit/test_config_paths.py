@@ -19,7 +19,11 @@ def test_default_layout_matches_claude_code_shape(tmp_path: Path) -> None:
         home / ".my-code" / "projects" / sanitize_path(str(workspace.resolve()))
     )
     assert paths.tool_results_dir(_SESSION_ID) == (
-        paths.project_state_dir / _SESSION_ID / "tool-results"
+        paths.runtime_temp_root / _SESSION_ID / "tool-results"
+    )
+    assert (
+        paths.task_output_dir(_SESSION_ID).parent
+        == paths.tool_results_dir(_SESSION_ID).parent
     )
     assert paths.settings_path(SettingsScope.USER) == (
         home / ".my-code" / "settings.json"

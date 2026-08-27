@@ -58,6 +58,7 @@ async def test_explore_denies_mutating_bash_in_every_permission_mode(
 
     assert outcome.result.is_error is True
     assert "Explore agents may execute read-only" in outcome.result.content
+    assert "not in the read-only command allowlist" in outcome.result.content
     assert not (tmp_path / "forbidden.txt").exists()
 
 

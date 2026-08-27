@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from uuid import uuid4
 
@@ -47,6 +47,7 @@ class SubagentController:
         runs: AgentRunFactory,
         tasks: TaskSupervisor,
         project_state_dir: Path,
+        tool_results_dir: Callable[[str], Path] | None = None,
         definitions: Mapping[SubagentType, SubagentDefinition],
         limits: SubagentLimits | None = None,
         background_enabled: bool = False,
@@ -56,6 +57,7 @@ class SubagentController:
         self.runs = runs
         self.tasks = tasks
         self.project_state_dir = project_state_dir
+        self.tool_results_dir = tool_results_dir
         self.definitions = definitions
         if set(definitions) != set(SubagentType):
             raise ValueError("Subagent definitions must contain explore and general")
@@ -122,7 +124,15 @@ class SubagentController:
                 policy=child_policy,
             )
             run_spec = AgentRunSpec(
-                session=Session(self.project_state_dir, run_id),
+                session=Session(
+                    self.project_state_dir,
+                    run_id,
+                    tool_results_dir=(
+                        self.tool_results_dir(run_id)
+                        if self.tool_results_dir is not None
+                        else None
+                    ),
+                ),
                 name=spec.description,
                 parent_run_id=parent.run_id,
                 run_id=run_id,

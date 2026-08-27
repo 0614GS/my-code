@@ -15,6 +15,7 @@ from my_code.permissions.models import (
     ToolPermissionResult,
 )
 from my_code.tools.base import (
+    ReadOnlyAssessment,
     Tool,
     ToolContext,
     ToolOutput,
@@ -69,7 +70,8 @@ class BashTool(Tool):
             name="Bash",
             description=(
                 "Run a shell command in the workspace. Commands are permission-gated "
-                "but are not OS-sandboxed."
+                "but are not OS-sandboxed. The shell already starts in the workspace; "
+                "do not prefix commands with cd to that same directory."
             ),
             input_schema={
                 "type": "object",
@@ -126,6 +128,13 @@ class BashTool(Tool):
     def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
         command = required_string(tool_input, "command")
         return analyze_bash_command(command, context.cwd).is_read_only
+
+    def assess_read_only(
+        self, tool_input: JsonObject, context: ToolContext
+    ) -> ReadOnlyAssessment:
+        command = required_string(tool_input, "command")
+        analysis = analyze_bash_command(command, context.cwd)
+        return ReadOnlyAssessment(analysis.is_read_only, analysis.reason)
 
     async def check_permissions(
         self, tool_input: JsonObject, context: ToolPermissionContext

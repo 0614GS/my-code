@@ -10,6 +10,7 @@ from my_code.permissions.models import (
     ToolPermissionResult,
 )
 from my_code.tools.base import (
+    ReadOnlyAssessment,
     Tool,
     ToolContext,
     ToolExecutionError,
@@ -59,6 +60,11 @@ class ReadOnlyToolProxy(Tool):
     def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
         return self.wrapped.is_read_only(tool_input, context)
 
+    def assess_read_only(
+        self, tool_input: JsonObject, context: ToolContext
+    ) -> ReadOnlyAssessment:
+        return self.wrapped.assess_read_only(tool_input, context)
+
     def validate_input(self, tool_input: JsonObject) -> None:
         self.wrapped.validate_input(tool_input)
 
@@ -67,12 +73,16 @@ class ReadOnlyToolProxy(Tool):
         tool_input: JsonObject,
         context: ToolPermissionContext,
     ) -> ToolPermissionResult:
-        if not self.wrapped.is_read_only(
+        assessment = self.wrapped.assess_read_only(
             tool_input,
             ToolContext(context.workspace_root),
-        ):
+        )
+        if not assessment.is_read_only:
             return ToolPermissionResult.deny(
-                message="Explore agents may execute read-only tool calls only.",
+                message=(
+                    "Explore agents may execute read-only tool calls only: "
+                    f"{assessment.reason}."
+                ),
                 reason=PermissionDecisionReason(
                     PermissionDecisionKind.SAFETY,
                     "explore-read-only",
@@ -85,9 +95,11 @@ class ReadOnlyToolProxy(Tool):
         tool_input: JsonObject,
         context: ToolContext,
     ) -> ToolOutput:
-        if not self.wrapped.is_read_only(tool_input, context):
+        assessment = self.wrapped.assess_read_only(tool_input, context)
+        if not assessment.is_read_only:
             raise ToolExecutionError(
-                "Explore agents may execute read-only tool calls only."
+                "Explore agents may execute read-only tool calls only: "
+                f"{assessment.reason}."
             )
         return await self.wrapped.execute(tool_input, context)
 

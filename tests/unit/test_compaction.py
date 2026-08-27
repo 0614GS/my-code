@@ -53,7 +53,8 @@ async def test_compaction_service_extracts_summary_and_discards_analyze() -> Non
     assert summary == "Continue from verified state."
     assert usage.provider_reported is True
     request = model.requests[0]
-    assert "<analyze>" in request.system_prompt.text
+    assert "<analyze>" not in request.system_prompt.text
+    assert "exactly one non-empty <summary>" in request.system_prompt.text
     final_block = request.input[-1].content[-1]  # type: ignore[union-attr]
     assert isinstance(final_block, InputText)
     assert "recent user-authored messages" in final_block.text
@@ -64,9 +65,10 @@ async def test_compaction_service_extracts_summary_and_discards_analyze() -> Non
 @pytest.mark.parametrize(
     "response",
     [
-        "plain summary without tags",
         "<analyze>draft</analyze><summary> </summary>",
         "<summary>one</summary><summary>two</summary>",
+        "<summary>missing close",
+        "<summary>valid</summary><summary",
     ],
 )
 async def test_compaction_service_rejects_invalid_summary_contract(
@@ -76,6 +78,28 @@ async def test_compaction_service_rejects_invalid_summary_contract(
 
     with pytest.raises(RuntimeError, match="exactly one non-empty <summary>"):
         await service.summarize((UserInput((InputText("Keep going"),)),))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ("plain summary without tags", "plain summary without tags"),
+        ("```text\nfenced summary\n```", "fenced summary"),
+        (
+            "<analyze>discard this</analyze>\ncompatible summary",
+            "compatible summary",
+        ),
+    ],
+)
+async def test_compaction_service_accepts_unambiguous_plain_fallback(
+    response: str, expected: str
+) -> None:
+    summary, _ = await ContextCompactor(_CompletionModel(response)).summarize(
+        (UserInput((InputText("Keep going"),)),)
+    )
+
+    assert summary == expected
 
 
 class _Context:

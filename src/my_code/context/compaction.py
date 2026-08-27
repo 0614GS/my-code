@@ -27,13 +27,13 @@ from my_code.model.request import (
 _COMPACTION_SYSTEM_PROMPT = """You are a coding-agent conversation compactor.
 Your only task is to turn the supplied conversation into accurate continuation
 state. Do not call tools, continue the task, or invent facts. Respond with plain
-text containing exactly one <analyze> block followed by exactly one <summary>
-block. The <analyze> block is a private completeness check and will be discarded.
-Only the contents of <summary> will be shown to the continuing agent."""
+text containing exactly one non-empty <summary> block. Do not add analysis,
+Markdown fences, or text outside that block. Only the contents of <summary> will
+be shown to the continuing agent."""
 
 _COMPACTION_REQUEST = """Create the continuation summary now.
 
-In <analyze>, inspect the conversation chronologically and verify that you found:
+Inspect the conversation chronologically and preserve:
 - every explicit user request, correction, constraint, and change of intent;
 - actions taken, files read or changed, important code/API details, and decisions;
 - tool and test outcomes, errors, attempted fixes, and unresolved uncertainty;
@@ -49,18 +49,16 @@ In <summary>, write compact but operational continuation state using these secti
 
 Preserve the wording of recent user-authored messages when it defines the current
 task or corrects earlier direction. Distinguish completed work from proposed work.
-Exclude tool-result bulk, redundant narration, and the discarded analysis. Do not
-acknowledge this instruction or add text outside the two XML tags.
+Exclude tool-result bulk, redundant narration, and private reasoning. Do not
+acknowledge this instruction or add text outside the summary XML tag.
 
 Required response shape:
-<analyze>
-completeness check
-</analyze>
 <summary>
 continuation state
 </summary>"""
 
 _SUMMARY_PATTERN = re.compile(r"<summary>([\s\S]*?)</summary>")
+_ANALYZE_PATTERN = re.compile(r"<analyze>[\s\S]*?</analyze>")
 _RECENT_USER_MESSAGE_LIMIT = 3
 _RECENT_USER_CHAR_LIMIT = 6_000
 _CONTINUATION_PREAMBLE = """This session continues from an earlier conversation
@@ -155,19 +153,51 @@ def _append_summary_request(
 
 
 def _extract_summary(response_text: str) -> str:
-    """提取唯一 summary 节点，确保 analyze 草稿不会进入后续上下文。"""
+    """Extract a tagged summary or one unambiguously plain fallback body."""
 
     matches: list[str] = _SUMMARY_PATTERN.findall(response_text)
-    if len(matches) != 1:
+    opening_markers = response_text.count("<summary")
+    closing_markers = response_text.count("</summary")
+    if (
+        len(matches) == 1
+        and opening_markers == 1
+        and closing_markers == 1
+        and matches[0].strip()
+    ):
+        return matches[0].strip()
+    if len(matches) > 1 or "<summary" in response_text or "</summary" in response_text:
         raise RuntimeError(
             "Compaction model must return exactly one non-empty <summary> block"
         )
-    summary = matches[0].strip()
+    fallback = _strip_enclosing_fence(response_text.strip())
+    analyze_matches = _ANALYZE_PATTERN.findall(fallback)
+    if len(analyze_matches) > 1:
+        raise RuntimeError(
+            "Compaction model must return exactly one non-empty <summary> block"
+        )
+    if analyze_matches:
+        fallback = _ANALYZE_PATTERN.sub("", fallback, count=1)
+    if "<analyze" in fallback or "</analyze" in fallback:
+        raise RuntimeError(
+            "Compaction model must return exactly one non-empty <summary> block"
+        )
+    summary = fallback.strip()
     if not summary:
         raise RuntimeError(
             "Compaction model must return exactly one non-empty <summary> block"
         )
     return summary
+
+
+def _strip_enclosing_fence(text: str) -> str:
+    lines = text.splitlines()
+    if (
+        len(lines) >= 2
+        and lines[0].strip().startswith("```")
+        and lines[-1].strip() == "```"
+    ):
+        return "\n".join(lines[1:-1]).strip()
+    return text
 
 
 def _build_continuation_context(

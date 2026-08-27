@@ -2,7 +2,7 @@
 
 ## 所有权
 
-`config` 拥有路径、分层 settings、provider profile 和配置持久化。`auth` 拥有 API key 存储与解析。`sessions` 私有拥有 Conversation JSONL 与大型工具输出文件。
+`config` 拥有路径、分层 settings、provider profile 和配置持久化。`auth` 拥有 API key 存储与解析。`sessions` 私有拥有 Conversation JSONL，并管理位于运行时临时目录的大型工具输出文件。
 
 根 `my_code.bootstrap` 是唯一 composition root，负责初始化存储并组装运行时对象；其他模块不能导入 bootstrap。
 
@@ -16,13 +16,20 @@
 ├── .credentials.json
 ├── model-cache/
 └── projects/<workspace-key>/
-    ├── sessions/<session-id>.jsonl
-    └── tool-results/<session-id>/...
+    └── <session-id>.jsonl
 
 <workspace>/.my-code/
 ├── settings.json
 ├── settings.local.json
 └── skills/<name>/SKILL.md
+```
+
+大型工具结果与后台 task 输出统一位于系统临时目录：
+
+```text
+<tmp>/my-code-<uid>/<workspace-key>/<session-id>/
+├── tool-results/<tool-use-digest>.txt
+└── tasks/<task-id>.output
 ```
 
 用户目录在真实 TUI 启动时幂等初始化。导入模块不会创建文件、读取凭据或发起网络请求。launch 分支要求 stdin 和 stdout 都是 TTY，并在存储初始化、Provider 发现或网络访问前拒绝管道与重定向；`--help`、`--version` 仍可在任意终端环境使用。未来配置类子命令可以独立允许非 TTY，但不改变 launch 边界。
@@ -39,7 +46,7 @@ foreground Subagent 配置位于 `subagents` 域。`enabled` 默认 `true`；`ma
 
 `backgroundTasks.enabled` 默认 `true`，可独立于 `subagents.enabled` 关闭。它只在 interactive effective gate 下生效；关闭后不会撤销 foreground Subagent，而会移除 Bash/Subagent 的 background 参数、Task tools 和完成通知 source。TaskList/TaskCancel 注册后属于 searchable tool，仍通过 ToolSearch 按需发现。
 
-后台 Bash 的合并输出位于系统临时目录下的用户/项目/session 隔离空间：`my-code-<uid>/<project>/<session>/tasks/<uuid>.output`。目录权限为 `0700`、文件为 `0600`。前台完成后立即删除文件；后台终态文件暂时保留，由 OS 临时目录生命周期回收，不写入项目 `.my-code` 或 durable session storage。
+后台 Bash 的合并输出位于上述 session 临时空间。目录权限为 `0700`、文件为 `0600`。前台完成后立即删除文件；后台终态文件和外置的大型工具结果暂时保留，由 OS 临时目录生命周期回收，不写入项目 `.my-code` 或 durable session storage。Transcript 只持久化大型结果的有界 preview 与临时路径，因此系统清理后不保证恢复完整原始输出。
 
 Skill 配置位于 `skills` 域，`enabled` 默认 `false`。开启后按 project `.my-code/skills` > user config `skills` > package builtin 搜索 `<name>/SKILL.md`；同层同名不会按遍历顺序覆盖，而是隔离并产生诊断。当前 frontmatter 只支持 `name`、`description`、`allowed-tools` 和 `compatibility` 的平面字段，不导入目录中的 Python 或执行 shell。关闭 gate 不扫描目录，也不注册 `Skill` Tool。
 
@@ -79,7 +86,7 @@ MCP 配置位于 `mcp` 域，`enabled` 默认 `false`。每个 `servers.<name>` 
 - Session 通过同目录临时文件与原子替换提交 JSONL 事务；恢复时严格校验 schema、父链、tool pairing、compact boundary 和 replay 关联。
 - MCP server 配置只生成不可变运行 spec；连接、诊断和远端工具目录不写入 Session。
 - Skill index和诊断只存在于 application runtime；成功激活的 SKILL.md 正文作为 durable AttachmentMessage 写入 Session，供 resume/compact 恢复。
-- 大型工具结果按 session ID 分目录，由 Session 在 tool batch 提交内创建或回滚；调用方不接触 store/path。
+- 大型工具结果按 session ID 分目录写入系统临时空间，由 Session 在 tool batch 提交内创建或回滚；调用方不接触 store/path。
 
 ## 版本控制
 

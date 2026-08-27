@@ -21,6 +21,8 @@ Keep operations within the workspace and respect the .git and .my-code boundarie
 TOOLS_PROMPT = """Use the available tools to inspect and modify the workspace.
 Prefer Read, Edit, Write, Glob, and Grep for file operations before using Bash.
 Use Bash only when a shell command is genuinely needed.
+The Bash shell already starts in the workspace; do not prefix commands with a
+redundant cd to that same directory.
 Run independent tool calls in parallel when doing so is safe and useful."""
 
 RESPONSE_STYLE_PROMPT = """Keep responses concise and direct.

@@ -54,7 +54,6 @@ def test_ast_extracts_compound_commands_environment_and_redirections() -> None:
     [
         "pwd &",
         "echo $VALUE",
-        "ls *.py",
         "echo {a,b}",
         "echo $((1 + 2))",
         "echo $(pwd)",
@@ -102,15 +101,12 @@ def test_input_redirect_must_stay_in_workspace(tmp_path: Path) -> None:
     assert analyze_bash_command("cat 2>&1", tmp_path).is_read_only is True
 
 
-def test_output_redirect_is_never_automatically_read_only(tmp_path: Path) -> None:
+def test_output_redirect_is_only_safe_for_dev_null(tmp_path: Path) -> None:
     assert (
         analyze_bash_command("cat README.md > result.txt", tmp_path).is_read_only
         is False
     )
-    assert (
-        analyze_bash_command("cat README.md > /dev/null", tmp_path).is_read_only
-        is False
-    )
+    assert analyze_bash_command("cat README.md > /dev/null", tmp_path).is_read_only
 
 
 def test_only_safe_environment_prefixes_inherit_read_only_semantics(

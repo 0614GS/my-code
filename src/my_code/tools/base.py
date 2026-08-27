@@ -134,6 +134,14 @@ class ToolExecutionError(RuntimeError):
     """合法工具请求无法完成时抛出。"""
 
 
+@dataclass(frozen=True, slots=True)
+class ReadOnlyAssessment:
+    """Explain whether one concrete invocation is statically read-only."""
+
+    is_read_only: bool
+    reason: str
+
+
 class Tool(ABC):
     """封装校验、权限元数据与执行的强类型单元。"""
 
@@ -229,6 +237,17 @@ class Tool(ABC):
 
         raise NotImplementedError
 
+    def assess_read_only(
+        self, tool_input: JsonObject, context: ToolContext
+    ) -> ReadOnlyAssessment:
+        read_only = self.is_read_only(tool_input, context)
+        return ReadOnlyAssessment(
+            read_only,
+            "tool invocation is read-only"
+            if read_only
+            else "tool invocation is not proven read-only",
+        )
+
     @abstractmethod
     async def check_permissions(
         self, tool_input: JsonObject, context: ToolPermissionContext
@@ -247,6 +266,7 @@ class Tool(ABC):
 
 
 __all__ = [
+    "ReadOnlyAssessment",
     "Tool",
     "ToolContext",
     "ToolExecutionError",

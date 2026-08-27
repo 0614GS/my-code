@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -106,7 +107,43 @@ _PATH_COMMANDS: dict[str, _OptionSpec] = {
             }
         )
     ),
+    "sort": _OptionSpec(
+        frozenset(
+            {
+                "-b",
+                "-d",
+                "-f",
+                "-g",
+                "-h",
+                "-i",
+                "-M",
+                "-n",
+                "-R",
+                "-r",
+                "-s",
+                "-u",
+                "-V",
+                "-z",
+                "--dictionary-order",
+                "--ignore-case",
+                "--general-numeric-sort",
+                "--human-numeric-sort",
+                "--ignore-nonprinting",
+                "--month-sort",
+                "--numeric-sort",
+                "--random-sort",
+                "--reverse",
+                "--stable",
+                "--unique",
+                "--version-sort",
+                "--zero-terminated",
+            }
+        ),
+        frozenset({"-k", "--key", "-t", "--field-separator"}),
+    ),
 }
+
+_SED_PRINT_PROGRAM = re.compile(r"(?:\d+|\d+,\d+)p")
 
 _RG_OPTIONS = _OptionSpec(
     frozenset(
@@ -345,6 +382,10 @@ def command_is_read_only(parts: tuple[str, ...], cwd: Path) -> tuple[bool, str]:
             arguments in (["--version"], ["-v"]),
             "only the exact node version query is read-only",
         )
+    if name == "echo":
+        return True, f"{name} only writes to standard output"
+    if name == "sed":
+        return _validate_sed(arguments, cwd)
     if name in _PATH_COMMANDS:
         return _validate_path_command(name, arguments, cwd)
     if name in {"rg", "grep"}:
@@ -359,12 +400,35 @@ def command_is_read_only(parts: tuple[str, ...], cwd: Path) -> tuple[bool, str]:
 def _validate_path_command(
     name: str, arguments: list[str], cwd: Path
 ) -> tuple[bool, str]:
-    positionals = _parse_options(arguments, _PATH_COMMANDS[name])
+    normalized = arguments
+    if name in {"head", "tail"}:
+        normalized = [
+            item
+            for argument in arguments
+            for item in (
+                ("-n", argument[1:])
+                if len(argument) > 1 and argument[1:].isdigit()
+                else (argument,)
+            )
+        ]
+    positionals = _parse_options(normalized, _PATH_COMMANDS[name])
     if positionals is None:
         return False, f"{name} contains an unsupported option"
     if all(_is_workspace_path(value, cwd) for value in positionals):
         return True, f"{name} only reads workspace paths"
     return False, f"{name} references a path outside the workspace"
+
+
+def _validate_sed(arguments: list[str], cwd: Path) -> tuple[bool, str]:
+    if len(arguments) < 3 or arguments[0] != "-n":
+        return False, "sed is only allowed in the form sed -n '<range>p' <path>"
+    program = arguments[1]
+    paths = arguments[2:]
+    if _SED_PRINT_PROGRAM.fullmatch(program) is None:
+        return False, "sed program is not a simple print-only line range"
+    if all(_is_workspace_path(value, cwd) for value in paths):
+        return True, "sed prints a bounded range from workspace paths"
+    return False, "sed references a path outside the workspace"
 
 
 def _validate_search_command(

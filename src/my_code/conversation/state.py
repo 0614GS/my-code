@@ -29,8 +29,9 @@ class ContentReplacement:
             tool_name=tool_name,
             original_chars=original_chars,
             content=(
-                f"[Previous {tool_name} result compacted: {original_chars} chars. "
-                "Run the tool again if the full output is needed.]"
+                f"[Previous {tool_name} result removed from active context: "
+                f"{original_chars} chars. If exact content is still required, use "
+                "a targeted Read with offset/limit or a focused Grep.]"
             ),
         )
 

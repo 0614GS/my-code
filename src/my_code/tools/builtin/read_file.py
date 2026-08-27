@@ -1,6 +1,7 @@
 """读取工作区文件中有界的行范围。"""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from my_code.conversation.presentation import ToolResultPresentation
@@ -18,6 +19,17 @@ from my_code.tools.paths import relative_display_path, resolve_read_path
 from my_code.tools.validation import optional_int, required_string
 
 _MAX_READ_BYTES = 8 * 1024 * 1024
+_MAX_OUTPUT_CHARS = 16_000
+
+
+@dataclass(frozen=True, slots=True)
+class _ReadDetails:
+    content: str
+    returned_start: int | None
+    returned_end: int | None
+    total_lines: int
+    next_offset: int | None
+    truncated_by: str | None
 
 
 class ReadFileTool(Tool):
@@ -25,7 +37,11 @@ class ReadFileTool(Tool):
     def definition(self) -> ModelToolDefinition:
         return ModelToolDefinition(
             name="Read",
-            description="Read a UTF-8 text file from the current workspace.",
+            description=(
+                "Read a bounded UTF-8 line range from the current workspace. "
+                "The default is 2,000 lines. For large files, prefer a targeted "
+                "offset/limit or Grep and continue from next_offset when returned."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -39,6 +55,7 @@ class ReadFileTool(Tool):
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 5000,
+                        "description": "Maximum lines to return (default 2000)",
                     },
                 },
                 "required": ["path"],
@@ -91,28 +108,60 @@ class ReadFileTool(Tool):
         )
         offset = optional_int(tool_input, "offset", 1, minimum=1, maximum=10_000_000)
         limit = optional_int(tool_input, "limit", 2000, minimum=1, maximum=5000)
-        content, truncated = self._read_details(
-            path,
-            offset,
-            limit,
-            read_bytes=Path.read_bytes if internal else context.workspace.read_bytes,
-        )
         display_path = (
             str(path) if internal else relative_display_path(context.cwd, path)
         )
-        line_count = sum(1 for line in content.splitlines() if "\t" in line)
+        details = self._read_details(
+            path,
+            offset,
+            limit,
+            max_chars=max(1, _MAX_OUTPUT_CHARS - len(display_path) - 300),
+            read_bytes=Path.read_bytes if internal else context.workspace.read_bytes,
+        )
+        if details.returned_start is None:
+            range_text = "no lines returned"
+        else:
+            range_text = (
+                f"lines {details.returned_start}-{details.returned_end} "
+                f"of {details.total_lines}"
+            )
+        continuation = (
+            f"; next_offset={details.next_offset}"
+            if details.next_offset is not None
+            else ""
+        )
+        truncation = (
+            f"; truncated_by={details.truncated_by}"
+            if details.truncated_by is not None
+            else ""
+        )
+        content = (
+            f"{display_path}\n[{range_text}{continuation}{truncation}]\n"
+            f"{details.content}"
+        )
+        content = content[:_MAX_OUTPUT_CHARS]
+        line_count = (
+            0
+            if details.returned_start is None or details.returned_end is None
+            else details.returned_end - details.returned_start + 1
+        )
         return ToolOutput(
-            content=f"{display_path}\n{content}",
+            content=content,
             metadata={
                 "path": display_path,
                 "line_count": line_count,
-                "truncated": truncated,
+                "truncated": details.truncated_by is not None,
+                "returned_start": details.returned_start,
+                "returned_end": details.returned_end,
+                "total_lines": details.total_lines,
+                "next_offset": details.next_offset,
+                "truncated_by": details.truncated_by,
             },
         )
 
     @staticmethod
     def _read(path: Path, offset: int, limit: int) -> str:
-        return ReadFileTool._read_details(path, offset, limit)[0]
+        return ReadFileTool._read_details(path, offset, limit).content
 
     @staticmethod
     def _read_details(
@@ -120,8 +169,9 @@ class ReadFileTool(Tool):
         offset: int,
         limit: int,
         *,
+        max_chars: int = _MAX_OUTPUT_CHARS,
         read_bytes: Callable[[Path], bytes] = Path.read_bytes,
-    ) -> tuple[str, bool]:
+    ) -> _ReadDetails:
         if not path.is_file():
             raise ToolExecutionError(f"Not a file: {path}")
         if path.stat().st_size > _MAX_READ_BYTES:
@@ -137,11 +187,43 @@ class ReadFileTool(Tool):
             raise ToolExecutionError("File is not valid UTF-8 text") from error
         selected = lines[offset - 1 : offset - 1 + limit]
         if not selected:
-            return "<no lines in requested range>", False
-        return (
-            "\n".join(
-                f"{line_number:>6}\t{line}"
-                for line_number, line in enumerate(selected, start=offset)
-            ),
-            offset - 1 + len(selected) < len(lines),
+            return _ReadDetails(
+                "<no lines in requested range>", None, None, len(lines), None, None
+            )
+
+        rendered: list[str] = []
+        used = 0
+        truncated_by: str | None = None
+        for line_number, line in enumerate(selected, start=offset):
+            formatted = f"{line_number:>6}\t{line}"
+            separator = 1 if rendered else 0
+            if used + separator + len(formatted) <= max_chars:
+                rendered.append(formatted)
+                used += separator + len(formatted)
+                continue
+            if not rendered:
+                rendered.append(formatted[:max_chars])
+                truncated_by = "line_chars"
+            else:
+                truncated_by = "characters"
+            break
+
+        returned_end = offset + len(rendered) - 1
+        limited_end = offset - 1 + len(selected)
+        if truncated_by == "line_chars":
+            next_offset = None
+        elif returned_end < len(lines):
+            next_offset = returned_end + 1
+            truncated_by = truncated_by or (
+                "line_limit" if limited_end < len(lines) else "characters"
+            )
+        else:
+            next_offset = None
+        return _ReadDetails(
+            "\n".join(rendered),
+            offset,
+            returned_end,
+            len(lines),
+            next_offset,
+            truncated_by,
         )

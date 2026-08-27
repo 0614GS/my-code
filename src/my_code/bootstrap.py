@@ -278,6 +278,7 @@ def _assemble_agent(
     session = Session(
         settings.paths.project_state_dir,
         actual_session_id,
+        tool_results_dir=settings.paths.tool_results_dir(actual_session_id),
         start=SessionStart(
             session_id=actual_session_id,
             created_at=datetime.now(UTC).isoformat(),
@@ -462,6 +463,7 @@ def _assemble_agent(
             runs=run_factory,
             tasks=tasks,
             project_state_dir=settings.paths.project_state_dir,
+            tool_results_dir=settings.paths.tool_results_dir,
             definitions=build_subagent_definitions(settings.cwd),
             limits=SubagentLimits(
                 max_depth=settings.subagent_max_depth,

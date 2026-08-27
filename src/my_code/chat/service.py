@@ -642,7 +642,11 @@ class ChatService:
             if session_id == self.state.session.session_id:
                 raise ValueError("Session is already active")
             # Fully hydrate and repair every candidate component before publishing it.
-            session = Session.restore(self._project_state_dir, session_id)
+            session = Session.restore(
+                self._project_state_dir,
+                session_id,
+                tool_results_dir=self.settings.paths.tool_results_dir(session_id),
+            )
             history = self._project_history(session)
             restore_skill_permissions(
                 self.state.permissions.policy, session.conversation

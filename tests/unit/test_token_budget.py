@@ -134,7 +134,7 @@ def test_token_trigger_microcompacts_and_retokenizes() -> None:
         trigger_chars=100_000,
         target_chars=90_000,
         min_result_chars=10,
-        keep_recent_results=0,
+        keep_recent_batches=0,
     )
 
     plan = _planner(binding, trigger=300, policy=policy).plan(

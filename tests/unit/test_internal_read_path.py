@@ -36,6 +36,43 @@ async def test_read_accepts_only_controlled_project_temp_root(tmp_path: Path) ->
         resolve_read_path(workspace, str(outside), internal_root=runtime)
 
 
+@pytest.mark.asyncio
+async def test_read_caps_visible_output_and_reports_next_offset(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = workspace / "large.txt"
+    source.write_text(
+        "\n".join(f"line-{index}-" + "x" * 500 for index in range(100)),
+        encoding="utf-8",
+    )
+
+    result = await ReadFileTool().execute({"path": "large.txt"}, ToolContext(workspace))
+
+    assert len(result.content) <= 16_000
+    assert result.metadata["truncated_by"] == "characters"
+    next_offset = result.metadata["next_offset"]
+    assert isinstance(next_offset, int)
+    assert next_offset > 1
+    assert f"next_offset={next_offset}" in result.content
+
+
+@pytest.mark.asyncio
+async def test_read_marks_single_overlong_line_without_fake_line_pagination(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "minified.js").write_text("x" * 30_000, encoding="utf-8")
+
+    result = await ReadFileTool().execute(
+        {"path": "minified.js"}, ToolContext(workspace)
+    )
+
+    assert len(result.content) <= 16_000
+    assert result.metadata["truncated_by"] == "line_chars"
+    assert result.metadata["next_offset"] is None
+
+
 def test_internal_read_rejects_traversal_and_symlink_escape(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     runtime = tmp_path / "runtime"

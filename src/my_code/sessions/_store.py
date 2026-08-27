@@ -73,8 +73,8 @@ class SessionStore:
             raise ValueError("session_id must be a UUID")
         self._session_id = session_id
         self.project_state_dir = project_state_dir
-        # 会话记录文件与 session 目录同处项目目录下；大型工具结果存放在后者的
-        # ``tool-results/`` 子目录中。
+        # 持久化目录只拥有 transcript；大型工具结果由 Session 注入的临时
+        # ToolResultStore 管理，不属于 durable session storage。
         self.path = project_state_dir / f"{session_id}.jsonl"
         self.session_dir = project_state_dir / session_id
         self._clock = clock or (lambda: datetime.now(UTC))

@@ -1,5 +1,8 @@
 """Public Session boundary over private conversation and JSONL persistence."""
 
+import hashlib
+import os
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -40,6 +43,7 @@ class Session:
         project_state_dir: Path,
         session_id: str,
         *,
+        tool_results_dir: Path | None = None,
         start: SessionStart | None = None,
     ) -> None:
         self._store = SessionStore(project_state_dir, session_id, start=start)
@@ -54,13 +58,23 @@ class Session:
             for record in loaded.replay_records
         }
         self._tool_results = ToolResultStore(
-            project_state_dir / session_id / "tool-results"
+            tool_results_dir
+            if tool_results_dir is not None
+            else _default_tool_results_dir(project_state_dir, session_id)
         )
         self._repair_trailing_tool_calls()
 
     @classmethod
-    def restore(cls, project_state_dir: Path, session_id: str) -> "Session":
-        candidate = cls(project_state_dir, session_id)
+    def restore(
+        cls,
+        project_state_dir: Path,
+        session_id: str,
+        *,
+        tool_results_dir: Path | None = None,
+    ) -> "Session":
+        candidate = cls(
+            project_state_dir, session_id, tool_results_dir=tool_results_dir
+        )
         if not candidate.conversation:
             raise ValueError(f"Session contains no messages: {session_id}")
         return candidate
@@ -402,6 +416,22 @@ def _causal_head(history: tuple[ConversationEntry, ...]) -> str | None:
             or is_durable_attachment(entry.payload)
         ),
         None,
+    )
+
+
+def _default_tool_results_dir(project_state_dir: Path, session_id: str) -> Path:
+    """Keep direct Session consumers ephemeral even without application paths."""
+
+    uid = str(os.getuid()) if hasattr(os, "getuid") else str(os.getpid())
+    digest = hashlib.sha256(
+        str(project_state_dir.resolve(strict=False)).encode("utf-8")
+    ).hexdigest()[:20]
+    return (
+        Path(tempfile.gettempdir())
+        / f"my-code-{uid}"
+        / f"session-store-{digest}"
+        / session_id
+        / "tool-results"
     )
 
 

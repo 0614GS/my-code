@@ -128,7 +128,7 @@ class MyCodePaths:
         return self.project_state_dir / session_id
 
     def tool_results_dir(self, session_id: str) -> Path:
-        return self.session_dir(session_id) / "tool-results"
+        return self.runtime_temp_root / session_id / "tool-results"
 
     @property
     def runtime_temp_root(self) -> Path:

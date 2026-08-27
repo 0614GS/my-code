@@ -65,6 +65,7 @@ class SimpleCommand:
     argv: tuple[str, ...]
     environment: tuple[EnvironmentAssignment, ...]
     redirections: tuple[Redirection, ...]
+    unquoted_glob_indices: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +198,7 @@ def _parse_command(node: Node, source: bytes) -> SimpleCommand | None:
     environment: list[EnvironmentAssignment] = []
     redirects: list[Redirection] = []
     word_nodes: list[Node] = []
+    unquoted_glob_indices: list[int] = []
     for child in node.named_children:
         if child.type == "variable_assignment":
             assignment = _parse_assignment(child, source)
@@ -209,6 +211,8 @@ def _parse_command(node: Node, source: bytes) -> SimpleCommand | None:
                 return None
             argv.append(value)
             word_nodes.append(child)
+            if _contains_unquoted_glob(child, source):
+                unquoted_glob_indices.append(len(argv) - 1)
         elif child.type == "file_redirect":
             redirect = _parse_redirect(child, source)
             if redirect is None:
@@ -238,6 +242,7 @@ def _parse_command(node: Node, source: bytes) -> SimpleCommand | None:
         tuple(argv),
         tuple(environment),
         tuple(redirects),
+        tuple(unquoted_glob_indices),
     )
 
 
@@ -322,9 +327,28 @@ def _has_unquoted_expansion(text: str) -> bool:
             continue
         if character == "\\":
             escaped = True
-        elif character in {"*", "?", "[", "]", "{", "}"}:
+        elif character in {"{", "}"}:
             return True
     return escaped
+
+
+def _contains_unquoted_glob(node: Node, source: bytes) -> bool:
+    if node.type == "word":
+        text = _text(node, source)
+        escaped = False
+        for character in text:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character in {"*", "?", "[", "]"}:
+                return True
+        return False
+    if node.type == "concatenation":
+        return any(
+            _contains_unquoted_glob(child, source) for child in node.named_children
+        )
+    return False
 
 
 def _decode_unquoted(text: str) -> str:

@@ -30,16 +30,16 @@ class MicrocompactPolicy:
         trigger_chars: int,
         target_chars: int,
         min_result_chars: int = 2_000,
-        keep_recent_results: int = 1,
+        keep_recent_batches: int = 2,
     ) -> None:
         if target_chars < 1 or trigger_chars < target_chars:
             raise ValueError("Microcompact thresholds are invalid")
-        if min_result_chars < 1 or keep_recent_results < 0:
+        if min_result_chars < 1 or keep_recent_batches < 0:
             raise ValueError("Microcompact limits are invalid")
         self.trigger_chars = trigger_chars
         self.target_chars = target_chars
         self.min_result_chars = min_result_chars
-        self.keep_recent_results = keep_recent_results
+        self.keep_recent_batches = keep_recent_batches
 
     @classmethod
     def for_window(cls, max_chars: int) -> "MicrocompactPolicy":
@@ -52,11 +52,17 @@ class MicrocompactPolicy:
         self,
         messages: tuple[ConversationEntry, ...],
         existing: tuple[ContentReplacement, ...],
+        *,
+        additional_chars: int = 0,
     ) -> tuple[ContentReplacement, ...]:
         """按消息顺序返回达到目标预算所需的新决策。"""
 
         replacements = {item.tool_use_id: item for item in existing}
-        current_chars = _effective_message_chars(messages, replacements)
+        if additional_chars < 0:
+            raise ValueError("additional_chars must not be negative")
+        current_chars = (
+            _effective_message_chars(messages, replacements) + additional_chars
+        )
         if current_chars <= self.trigger_chars:
             return ()
 
@@ -67,18 +73,7 @@ class MicrocompactPolicy:
             for block in message.content
             if isinstance(block, ToolCall)
         }
-        candidates = [
-            block
-            for message in messages
-            if isinstance(message, ToolResultBatch)
-            for block in message.content
-            if isinstance(block, ToolResult)
-            and block.tool_use_id not in replacements
-            and tool_names.get(block.tool_use_id) in _ELIGIBLE_TOOLS
-            and len(block.content) >= self.min_result_chars
-        ]
-        if self.keep_recent_results:
-            candidates = candidates[: -self.keep_recent_results]
+        candidates = self._candidates(messages, replacements, tool_names)
 
         proposed: list[ContentReplacement] = []
         for block in candidates:
@@ -116,17 +111,7 @@ class MicrocompactPolicy:
             for block in message.content
             if isinstance(block, ToolCall)
         }
-        candidates = [
-            block
-            for message in messages
-            if isinstance(message, ToolResultBatch)
-            for block in message.content
-            if block.tool_use_id not in replacements
-            and tool_names.get(block.tool_use_id) in _ELIGIBLE_TOOLS
-            and len(block.content) >= self.min_result_chars
-        ]
-        if self.keep_recent_results:
-            candidates = candidates[: -self.keep_recent_results]
+        candidates = self._candidates(messages, replacements, tool_names)
         proposed: list[ContentReplacement] = []
         for block in candidates:
             replacement = ContentReplacement.for_tool_result(
@@ -139,6 +124,29 @@ class MicrocompactPolicy:
             if estimate(view) <= target_tokens:
                 break
         return tuple(proposed)
+
+    def _candidates(
+        self,
+        messages: tuple[ConversationEntry, ...],
+        replacements: dict[str, ContentReplacement],
+        tool_names: dict[str, str],
+    ) -> list[ToolResult]:
+        batches = [
+            message for message in messages if isinstance(message, ToolResultBatch)
+        ]
+        eligible_batches = (
+            batches[: -self.keep_recent_batches]
+            if self.keep_recent_batches
+            else batches
+        )
+        return [
+            block
+            for message in eligible_batches
+            for block in message.content
+            if block.tool_use_id not in replacements
+            and tool_names.get(block.tool_use_id) in _ELIGIBLE_TOOLS
+            and len(block.content) >= self.min_result_chars
+        ]
 
 
 def apply_content_replacements(

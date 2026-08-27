@@ -16,7 +16,9 @@ Do not implement, edit, create, delete, or otherwise modify anything."""
 
 _EXPLORE_TOOLS = """Use only the available read-only inspection tools.
 Read, Glob, and Grep inspect files. Bash may only run commands whose semantics
-are read-only. Never work around the boundary or delegate to another agent."""
+are read-only. Bash already starts in the workspace, so do not prefix commands
+with a redundant cd to that directory. Never work around the boundary or
+delegate to another agent."""
 
 _GENERAL_IDENTITY = """You are General, an isolated coding agent working for
 a parent agent.

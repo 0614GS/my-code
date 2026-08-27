@@ -34,7 +34,8 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
     """Prove the supported static subset read-only; otherwise require approval."""
 
     ast = parse_bash(command)
-    coverage_sources = tuple(item.rule_source for item in ast.commands)
+    semantic_commands = _semantic_commands(ast, command, cwd)
+    coverage_sources = tuple(item.rule_source for item in semantic_commands)
     if not ast.is_complete:
         return BashAnalysis(
             False,
@@ -43,7 +44,7 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
             ast.command_sources,
             ast,
         )
-    if any(not _environment_is_safe(item) for item in ast.commands):
+    if any(not _environment_is_safe(item) for item in semantic_commands):
         return BashAnalysis(
             False,
             "environment prefix can alter command behavior",
@@ -56,7 +57,23 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
         return BashAnalysis(
             False, redirect_reason, coverage_sources, ast.command_sources, ast
         )
-    for item in ast.commands:
+    for item in semantic_commands:
+        if item.unquoted_glob_indices and item.argv[0] not in {
+            "wc",
+            "ls",
+            "cat",
+            "head",
+            "tail",
+            "stat",
+            "file",
+        }:
+            return BashAnalysis(
+                False,
+                f"unquoted glob arguments are unsupported for {item.argv[0]!r}",
+                coverage_sources,
+                ast.command_sources,
+                ast,
+            )
         safe, reason = command_is_read_only(item.argv, cwd)
         if not safe:
             return BashAnalysis(
@@ -106,7 +123,8 @@ def allowing_rules(
     ast = analysis.ast
     if ast is None or not ast.is_complete or not analysis.commands:
         return ()
-    if any(not _environment_is_safe(item) for item in ast.commands):
+    semantic_commands = _semantic_commands(ast, command, cwd)
+    if any(not _environment_is_safe(item) for item in semantic_commands):
         return ()
     if ast.redirections and any(
         item.argv[0] in {"cd", "pushd", "popd", "source", "."} for item in ast.commands
@@ -132,6 +150,36 @@ def allowing_rules(
             return ()
         matched.append(rule)
     return tuple(matched)
+
+
+def _semantic_commands(
+    ast: BashAstResult, command: str, cwd: Path
+) -> tuple[SimpleCommand, ...]:
+    commands = ast.commands
+    if len(commands) < 2:
+        return commands
+    first, second = commands[0], commands[1]
+    if (
+        first.argv[:1] != ("cd",)
+        or len(first.argv) != 2
+        or first.environment
+        or first.redirections
+    ):
+        return commands
+    target = Path(first.argv[1]).expanduser()
+    if not target.is_absolute():
+        target = cwd / target
+    try:
+        is_current = target.resolve(strict=False) == cwd.resolve(strict=False)
+    except OSError:
+        return commands
+    source = command.encode("utf-8")
+    connector = source[first.end_byte : second.start_byte].decode(
+        "utf-8", errors="strict"
+    )
+    if is_current and re.fullmatch(r"\s*&&\s*", connector):
+        return commands[1:]
+    return commands
 
 
 def bash_rule_matches(rule_content: str, command: str) -> bool:
@@ -183,7 +231,7 @@ def _redirections_allow_read_only(
     redirects: tuple[Redirection, ...], cwd: Path
 ) -> str | None:
     for redirect in redirects:
-        if redirect.kind == "output":
+        if redirect.kind == "output" and redirect.target != "/dev/null":
             return "output redirection may write to a file"
         if redirect.kind == "input" and not _safe_redirect_target(redirect.target, cwd):
             return "input redirection references a path outside the workspace"

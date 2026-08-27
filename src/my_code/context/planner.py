@@ -106,9 +106,17 @@ class ContextPlanner:
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextPlan:
-        effective, proposed = self._effective_messages(state)
-        user_context = runtime.user_context(self.user_context_resolver.resolve)
         binding = self.binding_resolver() if self.binding_resolver is not None else None
+        existing_view = apply_content_replacements(
+            state.context_entries, state.content_replacements
+        )
+        effective, proposed = self._effective_messages(
+            state,
+            additional_chars=_replayed_continuation_chars(
+                existing_view, state.replay_records, binding
+            ),
+        )
+        user_context = runtime.user_context(self.user_context_resolver.resolve)
         selected = self.window.ensure_fits(
             effective,
             additional_chars=_replayed_continuation_chars(
@@ -228,10 +236,18 @@ class ContextPlanner:
         self.attachment_resolver.acknowledge(attachments)
 
     def _effective_messages(
-        self, state: ContextPlanningState, *, propose: bool = True
+        self,
+        state: ContextPlanningState,
+        *,
+        propose: bool = True,
+        additional_chars: int = 0,
     ) -> tuple[tuple[ConversationEntry, ...], tuple[ContentReplacement, ...]]:
         proposed = (
-            self.microcompact.propose(state.context_entries, state.content_replacements)
+            self.microcompact.propose(
+                state.context_entries,
+                state.content_replacements,
+                additional_chars=additional_chars,
+            )
             if propose
             else ()
         )

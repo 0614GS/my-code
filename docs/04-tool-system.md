@@ -67,7 +67,10 @@ Dispatcher 只解析外层 `{tool_name, arguments}` 并验证目标仍是已搜�
 - 全局 mode、allow/ask/deny 规则和确认顺序归 `permissions`。
 - 路径解析、工作区逃逸防护和文件读写原语归 `workspace`。
 - Bash AST、命令语义和重定向分析留在 `tools.builtin.bash`。
+- Explore 的只读代理消费工具提供的结构化只读判定及原因；未知 Bash
+  语法继续 fail-closed，精确当前 cwd 的冗余 `cd ... &&` 只在权限证明中视为
+  空操作，deny/ask 规则仍检查原始命令。
 
 ## 展示与持久化
 
-模型可见内容与前端 presentation 是同一个不可变 `ToolResult` 的两个投影。Session v5 JSONL 将 presentation 内嵌到 `ToolResultRecord`；旧 sidecar 仅用于恢复兼容。大型原始输出和 microcompact 只替换 `content`，presentation 保持不变；provider adapter 明确忽略 presentation。
+模型可见内容与前端 presentation 是同一个不可变 `ToolResult` 的两个投影。Session v5 JSONL 将 presentation 内嵌到 `ToolResultRecord`；旧 sidecar 仅用于恢复兼容。大型原始输出写入 session 临时目录并在 transcript 中保留有界 preview；microcompact 只替换活动模型视图中的 `content`，presentation 保持不变；provider adapter 明确忽略 presentation。Read 保留行范围语义，并额外按字符封顶、通过 `next_offset` 显式分页。

@@ -37,7 +37,12 @@ def _store(tmp_path: Path, suffix: str) -> SessionStore:
 
 
 def _session(tmp_path: Path, suffix: str) -> Session:
-    return Session(tmp_path, f"00000000-0000-0000-0000-{suffix:0>12}")
+    session_id = f"00000000-0000-0000-0000-{suffix:0>12}"
+    return Session(
+        tmp_path,
+        session_id,
+        tool_results_dir=tmp_path / "runtime" / session_id / "tool-results",
+    )
 
 
 def test_append_is_persisted_then_applied_without_runtime_reload(
@@ -96,7 +101,9 @@ def test_session_externalizes_large_tool_result_during_commit(tmp_path: Path) ->
 
     result = persisted.content[0]
     assert "Output exceeded 20000 characters" in result.content
-    result_files = tuple((tmp_path / session.session_id / "tool-results").iterdir())
+    result_files = tuple(
+        (tmp_path / "runtime" / session.session_id / "tool-results").iterdir()
+    )
     assert len(result_files) == 1
     assert result_files[0].read_text(encoding="utf-8") == "x" * 20_001
     assert Session.restore(tmp_path, session.session_id).conversation[-1] == persisted
@@ -133,7 +140,7 @@ def test_failed_tool_result_commit_rolls_back_externalized_file_and_memory(
         )
 
     assert session.conversation == before
-    result_dir = tmp_path / session.session_id / "tool-results"
+    result_dir = tmp_path / "runtime" / session.session_id / "tool-results"
     assert not result_dir.exists() or not tuple(result_dir.iterdir())
 
 
