@@ -168,6 +168,11 @@ def test_subagents_and_background_tasks_are_enabled_by_default(tmp_path: Path) -
     settings = SettingsResolver(make_paths(tmp_path)).resolve(interactive=False)
 
     assert settings.subagents_enabled is True
+    assert settings.subagent_max_depth == 3
+    assert settings.subagent_max_active_children == 4
+    assert settings.subagent_max_steps is None
+    assert settings.subagent_max_tokens is None
+    assert settings.subagent_timeout_seconds is None
     assert settings.background_tasks_enabled is True
     assert settings.skills_enabled is False
     assert settings.mcp_enabled is False

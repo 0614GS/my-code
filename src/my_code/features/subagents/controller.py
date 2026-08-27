@@ -16,6 +16,7 @@ from my_code.features.background_tasks.registry import (
     BackgroundTask,
     BackgroundTaskRegistry,
 )
+from my_code.features.subagents.activity import SubagentActivityRecord
 from my_code.features.subagents.models import (
     BackgroundSubagent,
     CompletedSubagent,
@@ -31,7 +32,7 @@ from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.permissions.policy import PermissionPolicy
 from my_code.runtime.runs import AgentRunFactory, AgentRunSpec
 from my_code.sessions.session import Session
-from my_code.tasks.models import TaskStatus
+from my_code.tasks.models import SubagentTaskView, TaskSnapshot, TaskStatus
 from my_code.tasks.supervisor import TaskHandle, TaskSupervisor
 from my_code.tools.base import Tool, ToolExecutionError
 from my_code.tools.catalog import ToolCatalog, ToolSourceId
@@ -65,6 +66,9 @@ class SubagentController:
             tasks, wake_signal
         )
         self._active_by_parent: dict[str, set[str]] = {}
+        self._activity: dict[str, SubagentActivityRecord] = {}
+        self._activity_revision = 0
+        self._activity_changed = asyncio.Event()
 
     async def start(
         self,
@@ -101,6 +105,14 @@ class SubagentController:
             task_id,
             parent.owner_run_id,
         )
+        activity = SubagentActivityRecord(
+            task_id,
+            run_id,
+            parent.owner_run_id,
+            spec.agent_type,
+            spec.description,
+            background,
+        )
         try:
             child_catalog = self._child_catalog(
                 spec,
@@ -129,13 +141,31 @@ class SubagentController:
             run = None
             try:
                 run = await self.runs.create(run_spec)
-                return await run.submit(AgentTurnInput(spec.prompt, spec.attachments))
+                outcome = None
+                turn_input = AgentTurnInput(spec.prompt, spec.attachments)
+                stream = getattr(run, "stream", None)
+                if stream is None:
+                    # Compatibility for narrow injected test doubles. Real AgentRun
+                    # instances always expose the observable stream boundary.
+                    outcome = await run.submit(turn_input)
+                else:
+                    async for event in stream(turn_input):
+                        activity.consume(event)
+                        self._publish_activity()
+                        if isinstance(
+                            event, (AgentTurnSucceeded, AgentMaxStepsReached)
+                        ):
+                            outcome = event
+                if outcome is None:
+                    raise RuntimeError("Subagent stream ended without a completed turn")
+                return outcome
             finally:
                 try:
                     if run is not None:
                         await run.close()
                 finally:
                     self._release(parent.run_id, task_id)
+                    self._publish_activity()
 
         if background:
             self.background_registry.register(
@@ -151,7 +181,13 @@ class SubagentController:
                     },
                 )
             )
-        on_terminal = self.background_registry.terminal if background else None
+
+        def on_terminal(snapshot: TaskSnapshot) -> None:
+            if background:
+                self.background_registry.terminal(snapshot)
+            self._prune_terminal_activity(parent.owner_run_id)
+            self._publish_activity()
+
         try:
             handle = await self.tasks.submit(
                 execute,
@@ -165,7 +201,56 @@ class SubagentController:
             self.background_registry.unregister(task_id)
             self._release(parent.run_id, task_id)
             raise
+        self._activity[task_id] = activity
+        self._publish_activity()
         return StartedSubagent(task_id, run_id, spec.agent_type), handle
+
+    @property
+    def activity_revision(self) -> int:
+        return self._activity_revision
+
+    def task_views(self, owner_run_id: str) -> tuple[SubagentTaskView, ...]:
+        records = [
+            record
+            for record in self._activity.values()
+            if record.owner_run_id == owner_run_id
+        ]
+        active = [
+            record
+            for record in records
+            if not self.tasks.snapshot(record.task_id).status.terminal
+        ]
+        terminal = [
+            record
+            for record in records
+            if self.tasks.snapshot(record.task_id).status.terminal
+        ][-20:]
+        return tuple(
+            record.view(self.tasks.snapshot(record.task_id))
+            for record in (*active, *reversed(terminal))
+        )
+
+    async def wait_for_activity(self, after_revision: int) -> int:
+        while self._activity_revision <= after_revision:
+            self._activity_changed.clear()
+            if self._activity_revision > after_revision:
+                break
+            await self._activity_changed.wait()
+        return self._activity_revision
+
+    def _publish_activity(self) -> None:
+        self._activity_revision += 1
+        self._activity_changed.set()
+
+    def _prune_terminal_activity(self, owner_run_id: str) -> None:
+        terminal_ids = [
+            task_id
+            for task_id, record in self._activity.items()
+            if record.owner_run_id == owner_run_id
+            and self.tasks.snapshot(task_id).status.terminal
+        ]
+        for task_id in terminal_ids[:-20]:
+            self._activity.pop(task_id, None)
 
     async def run_foreground(
         self,

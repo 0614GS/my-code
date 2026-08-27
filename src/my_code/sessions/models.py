@@ -22,6 +22,7 @@ class SessionStart:
     model_limits: ModelLimits = ModelLimits()
     model_limit_source: str | None = None
     compact_trigger_tokens: int | None = None
+    provider_protocol: str | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -35,6 +36,8 @@ class SessionStart:
             raise ValueError("cwd must be an absolute path")
         if not self.provider_id or not self.model or not self.permission_mode:
             raise ValueError("Session start strings must not be empty")
+        if self.provider_protocol is not None and not self.provider_protocol.strip():
+            raise ValueError("provider_protocol must be non-empty or null")
         if self.max_steps is not None and self.max_steps < 1:
             raise ValueError("max_steps must be positive or null")
         if self.max_output_tokens < 1 or self.context_chars < 1:

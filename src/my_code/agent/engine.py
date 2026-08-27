@@ -38,7 +38,6 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
-from my_code.conversation.presentation import generic_tool_result_presentation
 from my_code.conversation.state import CompactTrigger
 from my_code.model.client import ModelClient
 from my_code.model.errors import ModelContextOverflow
@@ -374,8 +373,7 @@ class AgentEngine:
                 # 最终协议兜底并持久化一次。
                 if result_message is None:
                     results = _cancelled_results(
-                        tool_calls,
-                        results,
+                        tool_calls, results, self._tool_round, tools
                     )
                     result_message = ToolResultBatch(
                         tuple(results),
@@ -450,20 +448,16 @@ class AgentEngine:
 def _cancelled_results(
     calls: tuple[ToolCall, ...],
     existing: list[ToolResult],
+    tool_round: ToolRoundExecutor,
+    tools: ToolCatalogSnapshot | ToolExposureSnapshot,
 ) -> list[ToolResult]:
-    message = "Tool execution was cancelled."
     by_id = {result.tool_use_id: result for result in existing}
     results: list[ToolResult] = []
     for call in calls:
         if call.id in by_id:
             results.append(by_id[call.id])
             continue
-        result = ToolResult(
-            tool_use_id=call.id,
-            content=message,
-            presentation=generic_tool_result_presentation(message, True),
-            is_error=True,
-        )
+        result = tool_round.executor.cancelled_result(call, tools=tools)
         results.append(result)
     return results
 

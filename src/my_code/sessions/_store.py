@@ -106,6 +106,19 @@ class SessionStore:
     def session_id(self) -> str:
         return self._session_id
 
+    @property
+    def start(self) -> SessionStart:
+        return self._start
+
+    def configure_start(self, start: SessionStart) -> None:
+        """Replace an unpersisted placeholder before the first message is written."""
+
+        if start.session_id != self._session_id:
+            raise ValueError("SessionStart session_id must match the store session_id")
+        if self.path.exists() or (self._known_ids is not None and self._known_ids):
+            raise RuntimeError("SessionStart cannot change after persistence begins")
+        self._start = start
+
     def load(self) -> _HydratedSession:
         """从 Transcript 完整恢复一次会话。
 

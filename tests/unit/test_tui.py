@@ -109,6 +109,14 @@ class FakeRuntime:
     def capabilities(self) -> CapabilitiesView:
         return CapabilitiesView((), (), (), ())
 
+    def subagent_tasks(self):
+        return ()
+
+    async def stream_subagent_activity(self):
+        while True:
+            await asyncio.sleep(3600)
+            yield ()
+
     def providers(self) -> tuple[ProviderView, ...]:
         return (
             ProviderView(
@@ -226,6 +234,24 @@ def test_slash_opens_command_suggestions_while_typing() -> None:
     }
     menu = app._slash_menu_text()
     assert menu[0][0] == "class:selected"
+
+
+def test_refresh_status_isolates_context_failure() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(runtime)  # type: ignore[arg-type]
+    previous = runtime.context_status()
+    app._context_status = previous
+
+    def fail_context() -> ContextStatus:
+        raise RuntimeError("unresolved tool use")
+
+    runtime.context_status = fail_context  # type: ignore[method-assign]
+
+    app._refresh_status()
+
+    assert app._status is not None
+    assert app._context_status is previous
+    assert app._status_warning == "context: RuntimeError"
 
 
 def test_auth_slash_command_is_removed_from_help_completion_and_dispatch() -> None:

@@ -35,7 +35,7 @@ Provider endpoint、protocol、默认 model、reasoning、limits 和 compact 配
 
 工具调度配置位于 settings 的 `tools` 域：`tools.maxParallelCalls` 必须是正整数，默认值为 4；设为 1 会关闭 ToolRound 内的实际重叠执行。它只限制并发上限，不会把默认不安全的 Tool 改为安全。
 
-foreground Subagent 配置位于 `subagents` 域。`enabled` 默认 `true`；`maxDepth`、`maxActiveChildren`、`maxSteps`、`maxTokens` 和 `timeoutSeconds` 都必须为正数。gate 只决定是否注册 Subagent tool source，预算值由不可变 `AgentSettings` 传给每个 child run。`Subagent` 是基础 eager tool，不经 ToolSearch 延迟加载。
+foreground Subagent 配置位于 `subagents` 域。`enabled` 默认 `true`；`maxDepth=3`、`maxActiveChildren=4` 是默认结构限制。`maxSteps`、`maxTokens` 和 `timeoutSeconds` 缺省时不限制，显式配置时必须为正数；这些可选预算由不可变 `AgentSettings` 传给每个 child run。`Subagent` 是基础 eager tool，不经 ToolSearch 延迟加载，并允许多个独立 child 调用在全局 `tools.maxParallelCalls` 范围内并发执行。
 
 `backgroundTasks.enabled` 默认 `true`，可独立于 `subagents.enabled` 关闭。它只在 interactive effective gate 下生效；关闭后不会撤销 foreground Subagent，而会移除 Bash/Subagent 的 background 参数、Task tools 和完成通知 source。TaskList/TaskCancel 注册后属于 searchable tool，仍通过 ToolSearch 按需发现。
 

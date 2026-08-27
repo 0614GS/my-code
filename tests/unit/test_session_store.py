@@ -82,6 +82,26 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
     assert all("role" not in entry and "origin" not in entry for entry in entries)
 
 
+def test_trailing_tool_repair_is_idempotent_and_keeps_resume_reason(
+    tmp_path: Path,
+) -> None:
+    session = Session(tmp_path, SESSION_ID)
+    human, assistant, _, _ = _chain()
+    session.append_human_message(human)
+    session.append_assistant_message(assistant)
+
+    restored = Session.restore(tmp_path, SESSION_ID)
+    assert isinstance(restored.conversation[-1], ToolResultBatch)
+    assert (
+        "interrupted before the session resumed"
+        in restored.conversation[-1].content[0].content
+    )
+    count = len(restored.conversation)
+
+    assert restored.close_unresolved_tool_calls("user abort") is None
+    assert len(restored.conversation) == count
+
+
 def test_codec_round_trip_each_message_variant() -> None:
     for message in _chain():
         record = message_to_record(message)

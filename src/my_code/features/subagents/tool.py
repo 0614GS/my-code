@@ -89,6 +89,12 @@ class SubagentTool(Tool):
         del tool_input, context
         return False
 
+    def is_concurrency_safe(self, tool_input: JsonObject) -> bool:
+        """Independent child runs own isolated sessions, providers, and task state."""
+
+        del tool_input
+        return True
+
     def validate_input(self, tool_input: JsonObject) -> None:
         allowed_keys = {"agent_type", "description", "prompt"}
         if self.allow_background:
@@ -245,7 +251,39 @@ class SubagentTool(Tool):
         task_id = payload.get("task_id") if isinstance(payload, dict) else None
         if status == "started" and isinstance(task_id, str):
             return ToolResultPresentation(summary=f"Subagent started: {task_id}")
+        if output.is_error and isinstance(payload, dict):
+            detail = next(
+                (
+                    str(payload[key])
+                    for key in ("error", "error_kind", "message", "reason")
+                    if payload.get(key)
+                ),
+                None,
+            )
+            summary = (
+                "Subagent aborted by user"
+                if status == "cancelled" and payload.get("reason") == "user_abort"
+                else "Subagent failed"
+            )
+            return ToolResultPresentation(summary=summary, detail=detail)
         return ToolResultPresentation(summary=f"Subagent {status or 'completed'}")
+
+    def cancelled_output(self, tool_input: JsonObject) -> ToolOutput:
+        agent_type = tool_input.get("agent_type")
+        return ToolOutput(
+            json.dumps(
+                {
+                    "status": "cancelled",
+                    "reason": "user_abort",
+                    "agent_type": (
+                        agent_type if isinstance(agent_type, str) else "unknown"
+                    ),
+                    "message": "Subagent was aborted by the user.",
+                },
+                ensure_ascii=False,
+            ),
+            is_error=True,
+        )
 
 
 __all__ = ["SubagentTool"]

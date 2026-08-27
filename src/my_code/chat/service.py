@@ -57,6 +57,8 @@ from my_code.chat.views import (
     SessionUsageView,
     SessionView,
     SkillCapabilityView,
+    SubagentActivityView,
+    SubagentTaskView,
     ToolCapabilityView,
 )
 from my_code.config.settings import AgentSettings
@@ -88,6 +90,7 @@ from my_code.runtime.state import AppState
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
 from my_code.sessions.session import Session
 from my_code.skills.tool import restore_skill_permissions
+from my_code.tasks.models import SubagentTaskView as RuntimeSubagentTaskView
 from my_code.tools.executor import ToolExecutor
 
 
@@ -102,6 +105,15 @@ class BackgroundWakeSignal(Protocol):
     async def wait_for_change(self, after_revision: int) -> int: ...
 
     def pulse(self) -> None: ...
+
+
+class SubagentActivitySource(Protocol):
+    @property
+    def activity_revision(self) -> int: ...
+
+    def task_views(self, owner_run_id: str) -> tuple[RuntimeSubagentTaskView, ...]: ...
+
+    async def wait_for_activity(self, after_revision: int) -> int: ...
 
 
 class ChatService:
@@ -122,6 +134,7 @@ class ChatService:
         background_notifications: BackgroundNotificationSource | None = None,
         background_wake_signal: BackgroundWakeSignal | None = None,
         background_tasks: BackgroundTaskRegistry | None = None,
+        subagents: SubagentActivitySource | None = None,
     ) -> None:
         self.agent = agent
         self.context = context
@@ -136,6 +149,7 @@ class ChatService:
         self.background_notifications = background_notifications
         self.background_wake_signal = background_wake_signal
         self._background_tasks = background_tasks
+        self._subagents = subagents
 
     async def initialize(self) -> SessionView:
         """Start optional capabilities before publishing the initial UI snapshot."""
@@ -246,11 +260,14 @@ class ChatService:
 
     def background_tasks(self) -> tuple[BackgroundTaskView, ...]:
         registry = self._background_tasks
-        if registry is None:
+        if registry is None and self._subagents is None:
             return ()
         owner = self.state.session.session_id
         views: list[BackgroundTaskView] = []
-        for item in registry.tasks_for(owner):
+        for item in () if registry is None else registry.tasks_for(owner):
+            if item.task_type == "subagent" and self._subagents is not None:
+                continue
+            assert registry is not None
             snapshot = registry.tasks.snapshot(item.task_id)
             output_path = item.details.get("output_file")
             views.append(
@@ -270,7 +287,71 @@ class ChatService:
                     ),
                 )
             )
+        if self._subagents is not None:
+            views.extend(
+                BackgroundTaskView(
+                    task_id=item.task_id,
+                    task_type=(
+                        "subagent/background"
+                        if item.background
+                        else "subagent/foreground"
+                    ),
+                    summary=item.description,
+                    status=item.status,
+                    created_at=item.created_at,
+                    started_at=item.started_at,
+                    finished_at=item.finished_at,
+                    output_path=None,
+                    error=item.error,
+                )
+                for item in self.subagent_tasks()
+            )
         return tuple(views)
+
+    def subagent_tasks(self) -> tuple[SubagentTaskView, ...]:
+        if self._subagents is None:
+            return ()
+        return tuple(
+            SubagentTaskView(
+                task_id=item.task_id,
+                run_id=item.run_id,
+                agent_type=item.agent_type,
+                description=item.description,
+                background=item.background,
+                status=item.status,
+                created_at=item.created_at,
+                started_at=item.started_at,
+                finished_at=item.finished_at,
+                input_tokens=item.input_tokens,
+                output_tokens=item.output_tokens,
+                reasoning=item.reasoning,
+                text=item.text,
+                activities=tuple(
+                    SubagentActivityView(
+                        activity.kind,
+                        activity.summary,
+                        activity.detail,
+                        activity.is_error,
+                    )
+                    for activity in item.activities
+                ),
+                error=item.error,
+            )
+            for item in self._subagents.task_views(self.state.session.session_id)
+        )
+
+    async def stream_subagent_activity(
+        self,
+    ) -> AsyncIterator[tuple[SubagentTaskView, ...]]:
+        if self._subagents is None:
+            return
+        revision = -1
+        while True:
+            current = self._subagents.activity_revision
+            if current != revision:
+                revision = current
+                yield self.subagent_tasks()
+            revision = await self._subagents.wait_for_activity(revision)
 
     async def reload_skills(self) -> CapabilitiesView:
         async with self.state.operation_lock():
@@ -317,8 +398,14 @@ class ChatService:
                 self.state.context_runtime,
                 AgentTurnInput(prompt, tuple(item.attachment for item in loaded)),
             )
-            async for event in self._project_agent_events(session, events):
-                yield event
+            try:
+                async for event in self._project_agent_events(session, events):
+                    yield event
+            except asyncio.CancelledError:
+                session.close_unresolved_tool_calls(
+                    "Tool execution was aborted by the user."
+                )
+                raise
 
     async def stream_background_notifications(self) -> AsyncIterator[TurnEvent]:
         """Watch terminal background tasks and run idle continuations."""

@@ -103,6 +103,7 @@ def decode_entry(value: object) -> DecodedEntry:
             entry.model_limits,
             entry.model_limit_source,
             entry.compact_trigger_tokens,
+            entry.provider_protocol,
         )
     if isinstance(entry, SessionMetadataRecord):
         return SessionMetadata(
@@ -174,6 +175,7 @@ def encode_start(start: SessionStart) -> JsonObject:
             start.model_limits,
             start.model_limit_source,
             start.compact_trigger_tokens,
+            start.provider_protocol,
         )
     )
 
@@ -457,6 +459,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
             "model_limits",
             "model_limit_source",
             "compact_trigger_tokens",
+            "provider_protocol",
         }
         actual_expected = expected_fields | (frozenset(data) & optional)
     _require_exact_fields(data, actual_expected)
@@ -491,6 +494,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
             _model_limits(data.get("model_limits")),
             _optional_non_empty_string(data, "model_limit_source"),
             _optional_positive_int(data, "compact_trigger_tokens"),
+            _optional_non_empty_string(data, "provider_protocol"),
         )
     if kind == "session_metadata":
         return SessionMetadataRecord(

@@ -21,6 +21,7 @@ class SlashCommandAction(StrEnum):
     SKILLS = "skills"
     MCP = "mcp"
     TASKS = "tasks"
+    AGENTS = "agents"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,7 @@ class CommandOutcome:
     skill_operation: str | None = None
     mcp_operation: tuple[str, str] | None = None
     show_tasks: bool = False
+    show_agents: bool = False
 
 
 class SlashCommandRegistry:
@@ -96,8 +98,11 @@ class SlashCommandRegistry:
                 ),
                 SlashCommand(
                     "tasks",
-                    "List this session's background tasks",
+                    "List Bash and Subagent tasks",
                     SlashCommandAction.TASKS,
+                ),
+                SlashCommand(
+                    "agents", "Open the live Subagent viewer", SlashCommandAction.AGENTS
                 ),
                 SlashCommand(
                     "provider",
@@ -171,6 +176,8 @@ class SlashCommandRegistry:
                 return CommandOutcome(show_tools=True)
             case SlashCommandAction.TASKS:
                 return CommandOutcome(show_tasks=True)
+            case SlashCommandAction.AGENTS:
+                return CommandOutcome(show_agents=True)
             case SlashCommandAction.PROVIDER:
                 return CommandOutcome(open_provider_manager=True)
             case SlashCommandAction.RESUME:

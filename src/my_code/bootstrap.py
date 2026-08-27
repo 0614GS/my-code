@@ -132,6 +132,7 @@ class ApplicationAssembly:
     background_notifications: BackgroundTaskNotificationSource | None = None
     background_wake_signal: BackgroundTaskWakeSignal | None = None
     background_tasks: BackgroundTaskRegistry | None = None
+    subagents: SubagentController | None = None
 
 
 async def discover_active_model(
@@ -290,6 +291,7 @@ def _assemble_agent(
             model_limits=descriptor.limits,
             model_limit_source=descriptor.source.value,
             compact_trigger_tokens=model_environment.compact_trigger_tokens,
+            provider_protocol=settings.protocol.value,
         ),
     )
     effective_background_enabled = (
@@ -434,7 +436,27 @@ def _assemble_agent(
         provider_leases,
         provider_runtime.environment,
         build_run,
+        session_start=lambda spec, lease, environment: SessionStart(
+            session_id=spec.session.session_id,
+            created_at=datetime.now(UTC).isoformat(),
+            cwd=str(settings.cwd),
+            provider_id=lease.connection.id,
+            model=lease.connection.model,
+            permission_mode=(
+                spec.permission_policy.mode.value
+                if spec.permission_policy is not None
+                else permission_policy.mode.value
+            ),
+            max_steps=spec.max_steps,
+            max_output_tokens=settings.max_output_tokens,
+            context_chars=settings.context_chars,
+            model_limits=environment.descriptor.limits,
+            model_limit_source=environment.descriptor.source.value,
+            compact_trigger_tokens=environment.compact_trigger_tokens,
+            provider_protocol=lease.connection.protocol.value,
+        ),
     )
+    subagents: SubagentController | None = None
     if settings.subagents_enabled:
         subagents = SubagentController(
             runs=run_factory,
@@ -513,6 +535,7 @@ def _assemble_agent(
         background_notifications=background_notifications,
         background_wake_signal=background_wake_signal,
         background_tasks=background_registry,
+        subagents=subagents,
     )
 
 
@@ -549,6 +572,7 @@ def bootstrap_chat(
         background_notifications=assembled.background_notifications,
         background_wake_signal=assembled.background_wake_signal,
         background_tasks=assembled.background_tasks,
+        subagents=assembled.subagents,
     )
 
 

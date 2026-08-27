@@ -6,7 +6,7 @@
 - provider-neutral 流式 text、reasoning、usage 和 continuation 建模。
 - 多 step Agent loop、带安全屏障和并发上限的 ToolRound，以及 step 上限。
 - 默认开启的通用后台执行：Bash 显式后台或 timeout 自动移交、Subagent foreground/background、统一 Task 查询/取消/单次通知，以及受控临时输出文件；headless 入口仍不启用后台执行。
-- 默认开启的 Subagent：固定 `explore`/`general` 角色、独立 child Session/run/provider lease/prompt、权限收窄与多维预算。
+- 默认开启的 Subagent：固定 `explore`/`general` 角色、独立 child Session/run/provider lease/prompt、权限收窄、结构限制与可选执行预算。
 - 默认关闭的 MCP stdio server：分层配置、保守 project trust、连接/重连/关闭、增量发现、全量 catalog、provider-neutral ToolSearch 与标准权限执行。
 - 默认关闭的 Skill：project/user/builtin 分层发现、严格 frontmatter、lazy load、原子 reload、Conversation attachment 激活与 additive session 权限规则。
 - Read、Write、Edit、Glob、Grep、Bash 与 TodoWrite。
@@ -44,7 +44,7 @@
 
 `claude-code/` 用于学习行为和安全不变量。my-code 不机械复刻其实验功能、压缩产物、ports/adapters 或内部包结构；有意差异以本文件和模块文档为准。
 
-参考实现的 Agent Tool 主要用 `maxTurns` 限制 child，且全局 token-budget continuation 不用于 subagent。my-code 有意保留等价的 `max_steps`，并额外在 child run 上设置累计 token ceiling；已完成的 provider 响应会保留，预算在下一次请求前阻止继续消费。
+参考实现的 Agent Tool schema 不暴露 `maxTurns`；该值来自可选 agent definition，且内置 Explore/general-purpose 默认不设置。全局 token-budget continuation 也不用于 subagent。my-code 同样默认不限制 child 的 step、累计 token 或运行时长，但保留可选的 `maxSteps`、`maxTokens`、`timeoutSeconds` 设置；显式 token ceiling 会保留已完成的 provider 响应，并在下一次请求前阻止继续消费。
 
 终端交互借鉴 Codex/参考实现的即时 slash 建议、默认首项、Enter 执行和分层选择器语法，但继续使用 `prompt_toolkit + Rich` 与普通终端 scrollback。视觉层使用终端语义色、自适应低对比度用户表面和原生光标，不复制 ratatui/Ink renderer。Provider 配置以 Enter 驱动的核心流程和按需 Advanced 代替 Ink 表单或快捷键密集型编辑器；Welcome 使用 my-code 自有 ASCII 标识。
 

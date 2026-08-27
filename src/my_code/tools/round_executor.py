@@ -102,18 +102,10 @@ class ToolRoundExecutor:
             # 对尚未产生结果的调用逐一补齐稳定错误。先发出事件，Agent 可以
             # 在重新抛出取消前把整条 user tool-result 消息持久化。
             completed_ids = {result.tool_use_id for result in results}
-            message = "Tool execution was cancelled."
             for call in calls:
                 if call.id in completed_ids:
                     continue
-                result = ToolResult(
-                    tool_use_id=call.id,
-                    content=message,
-                    presentation=self.executor.present_error(
-                        call, message, tools=active_tools
-                    ),
-                    is_error=True,
-                )
+                result = self.executor.cancelled_result(call, tools=active_tools)
                 results.append(result)
                 yield ToolCallFinished(
                     call=call,

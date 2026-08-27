@@ -39,6 +39,7 @@ from my_code.chat.history import (
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.service import ChatService
 from my_code.chat.status import ContextStatus, RuntimeStatus
+from my_code.chat.views import SubagentTaskView
 from my_code.features.file_mentions.models import PathSuggestion
 from my_code.permissions.models import (
     PermissionBehavior,
@@ -68,6 +69,7 @@ from my_code.tui.panels import (
 )
 from my_code.tui.presentation import (
     format_context_usage,
+    render_agent_view,
     render_context_status,
     render_mcp,
     render_skills,
@@ -123,6 +125,9 @@ class MyCodeApp(TurnFlowMixin):
         self._todos_expanded = True
         self._status: RuntimeStatus | None = None
         self._context_status: ContextStatus | None = None
+        self._status_warning = ""
+        self._agents: tuple[SubagentTaskView, ...] = ()
+        self._agent_scroll = 0
         self._panel: str | None = None
         self._panel_index = 0
         self._sessions: tuple[SessionSummary, ...] = ()
@@ -194,6 +199,7 @@ class MyCodeApp(TurnFlowMixin):
 
         def start_background() -> None:
             self._spawn(self._watch_background_notifications())
+            self._spawn(self._watch_subagent_activity())
 
         try:
             await self.application.run_async(pre_run=start_background)
@@ -234,6 +240,7 @@ class MyCodeApp(TurnFlowMixin):
             "provider_remove_credential",
             "provider_review",
             "provider_models",
+            "agents",
         }:
             return True
         return self._busy
@@ -315,7 +322,10 @@ class MyCodeApp(TurnFlowMixin):
             return "Starting my-code…"
         context = self._context_status
         context_usage = format_context_usage(context) if context is not None else "…"
-        return status_line(status, context_usage)
+        rendered = status_line(status, context_usage)
+        return rendered + (
+            f" · ! {self._status_warning}" if self._status_warning else ""
+        )
 
     def _reasoning_summary(self) -> str:
         if not self._reasoning_parts:
@@ -351,7 +361,26 @@ class MyCodeApp(TurnFlowMixin):
             return provider_review_panel(self._provider_form, self._panel_index)
         if self._panel == "provider_models":
             return provider_models_panel(self._provider_models, self._panel_index)
+        if self._panel == "agents":
+            return self._agent_panel_text()
         return ""
+
+    def _agent_panel_text(self) -> str:
+        if self._panel_index == 0:
+            lines = ["Main session · F6 cycles through agent views"]
+            lines.extend(
+                ("○ " if item.status in {"succeeded", "failed", "cancelled"} else "● ")
+                + f"{item.description} · {item.status} · "
+                f"{'background' if item.background else 'foreground'}"
+                for item in self._agents
+            )
+            lines.append("↑↓ select · Enter view · Esc close")
+            return "\n".join(lines)
+        index = self._panel_index - 1
+        if index >= len(self._agents):
+            self._panel_index = 0
+            return "Main session"
+        return render_agent_view(self._agents[index], scroll=self._agent_scroll)
 
     def _permission_selecting(self) -> bool:
         return self._panel == "permission" and self._permission_mode == "select"
@@ -427,6 +456,8 @@ class MyCodeApp(TurnFlowMixin):
             await self._write(render_mcp(capabilities))
         if outcome.show_tasks:
             await self._write(render_tasks(self.runtime.background_tasks()))
+        if outcome.show_agents:
+            self._open_agents()
         if outcome.open_session_picker:
             await self._open_resume()
         if outcome.open_provider_manager:
@@ -471,6 +502,22 @@ class MyCodeApp(TurnFlowMixin):
             )
             self._busy = False
 
+    async def _watch_subagent_activity(self) -> None:
+        stream = getattr(self.runtime, "stream_subagent_activity", None)
+        if stream is None:
+            return
+        try:
+            async for tasks in stream():
+                self._agents = tasks
+                if self._panel == "agents" and self._panel_index > len(tasks):
+                    self._panel_index = 0
+                self._invalidate()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._status_warning = f"agent watcher: {type(error).__name__}"
+            self._invalidate()
+
     async def _run_compaction(self) -> None:
         self._busy = True
         self._activity = "Compacting conversation…"
@@ -502,6 +549,35 @@ class MyCodeApp(TurnFlowMixin):
         self._provider_selected_index = self._panel_index
         self._open_panel("provider_select")
 
+    def _open_agents(self) -> None:
+        self._agents = self.runtime.subagent_tasks()
+        self._panel_index = 0
+        self._agent_scroll = 0
+        self._open_panel("agents")
+
+    def _cycle_agent_view(self) -> None:
+        self._agents = self.runtime.subagent_tasks()
+        if self._panel != "agents":
+            self._saved_draft = self.buffer.text
+            self._panel = "agents"
+            self._panel_index = 1 if self._agents else 0
+        else:
+            self._panel_index = (self._panel_index + 1) % (len(self._agents) + 1)
+            if self._panel_index == 0:
+                self._close_panel()
+                return
+        self._agent_scroll = 0
+        self._invalidate()
+
+    def _scroll_agent(self, offset: int | None) -> None:
+        if self._panel != "agents" or self._panel_index == 0:
+            return
+        if offset is None:
+            self._agent_scroll = 0
+        else:
+            self._agent_scroll = max(0, self._agent_scroll + offset)
+        self._invalidate()
+
     def _open_panel(self, name: str) -> None:
         self._saved_draft = self.buffer.text
         self.buffer.set_document(Document(""), bypass_readonly=True)
@@ -532,6 +608,8 @@ class MyCodeApp(TurnFlowMixin):
             size = 4
         elif self._panel == "provider_models":
             size = min(len(self._provider_models), 8)
+        elif self._panel == "agents":
+            size = len(self._agents) + 1
         else:
             size = 0
         if size:
@@ -615,6 +693,12 @@ class MyCodeApp(TurnFlowMixin):
             self._panel_index = 0
             self.buffer.set_document(Document(""), bypass_readonly=True)
             self._invalidate()
+        elif self._panel == "agents":
+            if self._panel_index == 0:
+                self._close_panel()
+            else:
+                self._agent_scroll = 0
+                self._invalidate()
 
     def _start_provider_form(
         self,
@@ -883,9 +967,17 @@ class MyCodeApp(TurnFlowMixin):
             await self._write(renderable)
 
     def _refresh_status(self) -> None:
-        self._status = self.runtime.status()
-        self._context_status = self.runtime.context_status()
-        self._todos = self._status.todos
+        warnings: list[str] = []
+        try:
+            self._status = self.runtime.status()
+            self._todos = self._status.todos
+        except Exception as error:
+            warnings.append(f"status: {type(error).__name__}")
+        try:
+            self._context_status = self.runtime.context_status()
+        except Exception as error:
+            warnings.append(f"context: {type(error).__name__}")
+        self._status_warning = ", ".join(warnings)
         self._invalidate()
 
 

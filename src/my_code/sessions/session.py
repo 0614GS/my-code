@@ -70,6 +70,13 @@ class Session:
         return self._store.session_id
 
     @property
+    def start(self) -> SessionStart:
+        return self._store.start
+
+    def configure_start(self, start: SessionStart) -> None:
+        self._store.configure_start(start)
+
+    @property
     def conversation(self) -> tuple[ConversationEntry, ...]:
         return self._conversation.conversation
 
@@ -302,32 +309,44 @@ class Session:
         return boundary
 
     def _repair_trailing_tool_calls(self) -> None:
+        self.close_unresolved_tool_calls(
+            "Tool execution was interrupted before the session resumed."
+        )
+
+    def close_unresolved_tool_calls(self, message: str) -> ToolResultBatch | None:
+        """Idempotently close a trailing assistant tool-use message."""
+
         conversation = self._conversation.conversation
-        repairs = _trailing_tool_repairs(conversation)
+        repairs = _trailing_tool_repairs(conversation, message)
         if repairs is None:
-            return
-        source = conversation[-1]
-        assert isinstance(source, AssistantMessage)
-        self.append_tool_results(repairs, source)
+            return None
+        source = next(
+            entry
+            for entry in reversed(conversation)
+            if isinstance(entry, AssistantMessage)
+        )
+        return self.append_tool_results(repairs, source)
 
 
 def _trailing_tool_repairs(
     messages: tuple[ConversationEntry, ...],
+    message: str,
 ) -> tuple[ToolResult, ...] | None:
-    if not messages or not isinstance(messages[-1], AssistantMessage):
+    meaningful = tuple(
+        entry for entry in messages if not isinstance(entry, AttachmentMessage)
+    )
+    if not meaningful or not isinstance(meaningful[-1], AssistantMessage):
         return None
     calls = tuple(
-        block for block in messages[-1].content if isinstance(block, ToolCall)
+        block for block in meaningful[-1].content if isinstance(block, ToolCall)
     )
     if not calls:
         return None
     return tuple(
         ToolResult(
             tool_use_id=call.id,
-            content="Tool execution was interrupted before the session resumed.",
-            presentation=generic_tool_result_presentation(
-                "Tool execution was interrupted before the session resumed.", True
-            ),
+            content=message,
+            presentation=generic_tool_result_presentation(message, True),
             is_error=True,
         )
         for call in calls

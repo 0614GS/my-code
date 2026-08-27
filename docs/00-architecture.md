@@ -52,7 +52,7 @@ flowchart TB
 
     subgraph Subagents["Subagent / Background Task"]
         SubagentTool["Subagent Tool<br/>标准 Tool 调用"]
-        Controller["SubagentController<br/>权限/工具收窄 + 预算限制"]
+        Controller["SubagentController<br/>权限/工具收窄 + 可选预算"]
         ChildRun["AgentRun<br/>own Session + AgentEngine + provider lease"]
         ForegroundResult["Foreground<br/>一个闭合 ToolResult"]
         BackgroundResult["Background<br/>立即返回 task_id / run_id"]

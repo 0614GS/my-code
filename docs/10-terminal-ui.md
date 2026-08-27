@@ -6,7 +6,7 @@
 
 模块按职责拆分：`app.py` 只编排 ChatService、生命周期与临时面板状态；`turns.py` 消费前后台 turn 事件；`layout.py` 构造非全屏动态区；`key_bindings.py` 负责按键路由；`composer.py` 持有独立 slash 选择状态并适配 path 补全；`panels.py` 生成带语义样式的临时面板；`theme.py` 与 `terminal.py` 统一颜色和原生光标策略；`presentation.py` 投影运行时能力；`widgets.py` 生成 Rich scrollback renderable。Provider 表单状态和 resume 摘要分别留在 `provider_screen.py` 与 `resume_screen.py`。
 
-状态栏只渲染最近一次安全的 context 快照，并在启动、回合结束、会话恢复或配置变更等稳定边界刷新。prompt_toolkit 的重绘回调不会在工具调用等待结果的中间态重新执行 context 规划。
+状态栏只渲染最近一次安全的 context 快照，并在启动、回合结束、会话恢复或配置变更等稳定边界刷新。普通状态与 context 状态分别隔离刷新；刷新失败时保留最近有效值并显示短警告，异常不会逃逸到 prompt-toolkit event loop。prompt-toolkit 的重绘回调不会在工具调用等待结果的中间态重新执行 context 规划。
 
 TUI 通过语义子模块直接使用能力的真实所有者：
 
@@ -47,7 +47,9 @@ TUI 注册 `PermissionHandler`，在底部临时面板展示 `chat.permissions.P
 
 ## Slash 命令
 
-Slash command 在 prompt 进入模型前本地解析。除原有命令外，`/usage`、`/tools`、`/skills [reload]`、`/mcp [refresh|reconnect <server>]` 和 `/tasks` 只调用 ChatService 的窄接口。`/tasks` 不提供直接取消；取消仍由 Agent 的 `TaskCancel` 经过权限系统完成。
+Slash command 在 prompt 进入模型前本地解析。除原有命令外，`/usage`、`/tools`、`/skills [reload]`、`/mcp [refresh|reconnect <server>]`、`/tasks` 和 `/agents` 只调用 ChatService 的窄接口。`/tasks` 同时显示 Bash 与前后台 Subagent，但不提供直接取消；取消仍由 Agent 的 `TaskCancel` 经过权限系统完成。
+
+`/agents` 打开只读 Subagent 面板，F6 按主会话、活跃 child、最近结束 child 的顺序快速循环。面板显示状态、前后台属性、usage、最近 200 条安全展示事件和当前文本/reasoning 流；隐藏 reasoning 不投影内容。终态 child 在当前进程内最多保留 20 个。PageUp/PageDown 浏览，End 回到实时尾部；Subagent 面板中的 Esc 只回到主会话，主会话中的 Esc 才取消前台回合。
 
 ## 输入与临时面板
 

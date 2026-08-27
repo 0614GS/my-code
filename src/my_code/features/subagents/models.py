@@ -39,25 +39,19 @@ class SubagentDefinition:
 class SubagentLimits:
     max_depth: int = 3
     max_active_children: int = 4
-    max_steps: int = 20
-    max_tokens: int = 100_000
-    timeout_seconds: float = 300.0
+    max_steps: int | None = None
+    max_tokens: int | None = None
+    timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        if (
-            min(
-                self.max_depth,
-                self.max_active_children,
-                self.max_steps,
-                self.max_tokens,
-            )
-            < 1
-        ):
-            raise ValueError(
-                "Subagent depth, active child, step, and token limits must be positive"
-            )
-        if self.timeout_seconds <= 0:
-            raise ValueError("Subagent timeout must be positive")
+        if min(self.max_depth, self.max_active_children) < 1:
+            raise ValueError("Subagent depth and active child limits must be positive")
+        if self.max_steps is not None and self.max_steps < 1:
+            raise ValueError("Subagent step limit must be positive or null")
+        if self.max_tokens is not None and self.max_tokens < 1:
+            raise ValueError("Subagent token limit must be positive or null")
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
+            raise ValueError("Subagent timeout must be positive or null")
 
 
 @dataclass(frozen=True, slots=True)

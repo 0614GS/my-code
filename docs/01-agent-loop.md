@@ -10,7 +10,7 @@
 
 前台 Agent 继续使用 ProviderRouter；并发 child run 由 `AgentRunFactory` 创建，每个 run 持有独立 Session、Agent 组件和 `ProviderClientLease`。已有 run 捕获创建时的 provider binding，运行期 provider switch 只影响之后创建的 lease。
 
-foreground Subagent 由模型可见的标准 Tool 启动。`SubagentController` 只把显式 prompt/attachments 交给 child，不复制父 transcript；child 结束后关闭 run/lease，并把一个结构化终态作为父 ToolResult 返回。调用方取消 foreground 等待时，TaskSupervisor 会取消 child task，child run 的 `finally` 负责关闭 lease。
+foreground Subagent 由模型可见的标准 Tool 启动。`SubagentController` 只把显式 prompt/attachments 交给 child，不复制父 transcript；controller 消费 child 的 `AgentRun.stream()` 并发布有界、安全的活动快照，同时保持最终 outcome 语义。child 结束后关闭 run/lease，并把一个结构化终态作为父 ToolResult 返回。调用方取消 foreground 等待时，TaskSupervisor 会取消 child task，child run 的 `finally` 负责关闭 lease。
 
 启用 background gate 后，Subagent 与 Bash 都可立即返回 task ID；普通 Bash 超过其 timeout 前台等待预算后会把同一进程原地转为后台，不再把 timeout 当作运行期限。TaskList/TaskCancel 通过 root run owner 访问两类任务，完成通知由 attachment source 在后续 step 规划前产生。Session 接受 durable payload 后才 acknowledge registry；Conversation 按 task ID 去重，所以 inspect、失败规划、compact retry 或 resume 不会吞掉或重复通知。
 
@@ -43,7 +43,7 @@ ChatService.stream(prompt)
 - 正常完成与 step 上限直接使用 `agent.models` 中的两个终态值，不再额外包装 completed event。
 - provider 缺少最终响应、事件序号不连续或展示块重叠时立即失败。
 - context overflow 先尝试一次 reactive compact，再重新构造请求。
-- 工具取消时为尚未完成的调用补齐错误结果，提交闭合的 ToolResultBatch 后继续抛出取消。
+- 用户取消工具轮时，为尚未完成的调用补齐工具专属的 user-abort 错误结果，按原调用顺序提交闭合的 ToolResultBatch 后继续抛出取消；Session 层只对仍未闭合的尾部调用做幂等兜底。恢复历史残缺使用独立的 session-resume 中断原因。
 - 网络或模型失败不会撤销已经提交的 HumanMessage，恢复时仍能看到用户输入。
 - 带 token ceiling 的 child run 会累计每个完整响应的 input/cache/output usage；已完成响应不会被丢弃，达到上限后下一次模型请求以结构化 task failure 终止。
 

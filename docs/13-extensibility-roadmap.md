@@ -375,7 +375,7 @@ PENDING ──> RUNNING ──> SUCCEEDED
 - child 使用独立 Session、独立 run capsule、spawn 时工具快照子集和收窄后的权限。
 - child 只接收显式 prompt/attachments，不复制完整父 transcript。
 - child 终态被归一化为父 ToolCall 的一个 ToolResult；失败和取消同样闭合。
-- 设置最大嵌套深度、每父任务最大活跃 child 数、step/token/timeout 预算。
+- 设置最大嵌套深度、每父任务最大活跃 child 数，以及可选的 step/token/timeout 预算。
 
 验收证据：
 
@@ -384,7 +384,7 @@ PENDING ──> RUNNING ──> SUCCEEDED
 - 两个角色使用不同的专用 PromptRegistry、相同 cwd/environment 与根目录 AGENTS.md；child request 不含父 transcript。Explore 明确面向父 agent 报告文件证据，General 报告变更、验证和风险。
 - child 复制父 PermissionPolicy 的 mode/rules，`AgentRunSpec.allow_permission_updates=false`，因此不能持久化或在运行期扩大父级 ask/deny；workspace 安全检查保持不变。
 - child run 使用独立 UUID Session、AgentRun capsule 和 provider lease；TaskSupervisor 负责父子关系、timeout 和取消，调用方取消 foreground wait 会向 child 传播。
-- 预算默认值为 depth 3、每 parent 活跃 child 4、20 steps、100000 累计 tokens 和 300 秒；均可通过 `subagents` settings 正数配置。累计 token ceiling 保留已完成响应，在下一次请求前停止继续消费。
+- 默认保留 depth 3、每 parent 活跃 child 4 的结构限制；step、累计 token 和 timeout 默认无限，可通过 `subagents` settings 配置正数限制。累计 token ceiling 保留已完成响应，在下一次请求前停止继续消费。Subagent 调用声明为并发安全，实际重叠仍受全局 tool 并发度和活跃 child 上限约束。
 - SUB-01 由 `tests/integration/test_subagent_lifecycle.py` 验证两份 transcript、单一父 ToolResult 和 run/lease 回收；SUB-02 由 `tests/integration/test_subagent_permissions.py` 验证能力交集、ask/deny 与 workspace 逃逸；`test_subagent_explore_safety.py` 验证 default/allow/bypass 和输入规范化都不能突破 Explore 只读边界。
 - `tests/unit/test_subagent_controller.py` 覆盖深度/活跃数/step/token/timeout、失败闭合和 foreground 取消；`tests/unit/test_agent_budget.py` 覆盖累计 token ceiling。
 - M4a 完成时第 10 节五条命令全部通过，完整测试结果为 `437 passed`；没有新增第三方依赖，架构临时豁免仍为空。

@@ -50,9 +50,38 @@ class TaskEvent:
     snapshot: TaskSnapshot
 
 
+@dataclass(frozen=True, slots=True)
+class SubagentActivityView:
+    kind: str
+    summary: str
+    detail: str | None = None
+    is_error: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentTaskView:
+    task_id: str
+    run_id: str
+    agent_type: str
+    description: str
+    background: bool
+    status: str
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+    input_tokens: int
+    output_tokens: int
+    reasoning: str
+    text: str
+    activities: tuple[SubagentActivityView, ...]
+    error: str | None = None
+
+
 __all__ = [
     "TaskEvent",
     "TaskFailure",
     "TaskSnapshot",
     "TaskStatus",
+    "SubagentActivityView",
+    "SubagentTaskView",
 ]

@@ -208,6 +208,12 @@ class Tool(ABC):
         del tool_input
         return ToolResultPresentation(summary=compact_text(message))
 
+    def cancelled_output(self, tool_input: JsonObject) -> ToolOutput:
+        """Project a user abort into a stable, model-visible error output."""
+
+        del tool_input
+        return ToolOutput("Tool execution was aborted by the user.", is_error=True)
+
     def to_model_result(self, output: ToolOutput) -> str:
         """把工具原始输出序列化为发送给模型的内容。"""
 

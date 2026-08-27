@@ -41,9 +41,9 @@ DEFAULT_CONTEXT_CHARS = 160_000
 DEFAULT_MAX_PARALLEL_TOOL_CALLS = 4
 DEFAULT_SUBAGENT_MAX_DEPTH = 3
 DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN = 4
-DEFAULT_SUBAGENT_MAX_STEPS = 20
-DEFAULT_SUBAGENT_MAX_TOKENS = 100_000
-DEFAULT_SUBAGENT_TIMEOUT_SECONDS = 300.0
+DEFAULT_SUBAGENT_MAX_STEPS: int | None = None
+DEFAULT_SUBAGENT_MAX_TOKENS: int | None = None
+DEFAULT_SUBAGENT_TIMEOUT_SECONDS: float | None = None
 DEFAULT_SUBAGENTS_ENABLED = True
 DEFAULT_BACKGROUND_TASKS_ENABLED = True
 
@@ -78,9 +78,9 @@ class AgentSettings:
     subagents_enabled: bool = DEFAULT_SUBAGENTS_ENABLED
     subagent_max_depth: int = DEFAULT_SUBAGENT_MAX_DEPTH
     subagent_max_active_children: int = DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN
-    subagent_max_steps: int = DEFAULT_SUBAGENT_MAX_STEPS
-    subagent_max_tokens: int = DEFAULT_SUBAGENT_MAX_TOKENS
-    subagent_timeout_seconds: float = DEFAULT_SUBAGENT_TIMEOUT_SECONDS
+    subagent_max_steps: int | None = DEFAULT_SUBAGENT_MAX_STEPS
+    subagent_max_tokens: int | None = DEFAULT_SUBAGENT_MAX_TOKENS
+    subagent_timeout_seconds: float | None = DEFAULT_SUBAGENT_TIMEOUT_SECONDS
     background_tasks_enabled: bool = DEFAULT_BACKGROUND_TASKS_ENABLED
     skills_enabled: bool = False
     mcp_enabled: bool = False
@@ -112,12 +112,19 @@ class AgentSettings:
             ("max_parallel_tool_calls", self.max_parallel_tool_calls),
             ("subagent_max_depth", self.subagent_max_depth),
             ("subagent_max_active_children", self.subagent_max_active_children),
-            ("subagent_max_steps", self.subagent_max_steps),
-            ("subagent_max_tokens", self.subagent_max_tokens),
         ):
             if value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
-        if self.subagent_timeout_seconds <= 0:
+        for name, value in (
+            ("subagent_max_steps", self.subagent_max_steps),
+            ("subagent_max_tokens", self.subagent_max_tokens),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be a positive integer or null")
+        if (
+            self.subagent_timeout_seconds is not None
+            and self.subagent_timeout_seconds <= 0
+        ):
             raise ValueError("subagent_timeout_seconds must be positive")
 
     @property

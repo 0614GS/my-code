@@ -9,6 +9,8 @@ from my_code.conversation.models import (
     ToolCall,
     ToolResult,
 )
+from my_code.features.subagents.models import SubagentParentContext
+from my_code.features.subagents.tool import SubagentTool
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
@@ -99,3 +101,36 @@ async def test_round_executor_cancellation_closes_every_call(tmp_path: Path) -> 
     assert any(
         isinstance(event, ToolRoundCompleted) and event.cancelled for event in events
     )
+
+
+def test_subagent_user_abort_projection_is_stable_json(tmp_path: Path) -> None:
+    from typing import cast
+
+    from my_code.features.subagents.controller import SubagentController
+
+    runner = build_round_executor(tmp_path)
+    tool = SubagentTool(
+        cast(SubagentController, object()),
+        parent=SubagentParentContext("11111111-1111-1111-1111-111111111111"),
+        policy=PermissionPolicy(PermissionMode.BYPASS),
+        allow_background=False,
+    )
+    catalog = ToolCatalogSnapshot.from_tools((tool,))
+    call = ToolCall(
+        "sub",
+        "Subagent",
+        {"agent_type": "explore", "description": "inspect", "prompt": "work"},
+    )
+
+    result = runner.executor.cancelled_result(call, tools=catalog)
+
+    import json
+
+    assert json.loads(result.content) == {
+        "status": "cancelled",
+        "reason": "user_abort",
+        "agent_type": "explore",
+        "message": "Subagent was aborted by the user.",
+    }
+    assert result.is_error
+    assert result.presentation.summary == "Subagent aborted by user"

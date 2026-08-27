@@ -28,6 +28,7 @@ class SessionStartedRecord:
     model_limits: ModelLimits = ModelLimits()
     model_limit_source: str | None = None
     compact_trigger_tokens: int | None = None
+    provider_protocol: str | None = None
     type: Literal["session_started"] = "session_started"
     schema_version: Literal[5] = 5
 

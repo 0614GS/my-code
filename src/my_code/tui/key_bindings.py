@@ -20,6 +20,7 @@ _NAVIGATION_PANELS = {
     "provider_remove_credential",
     "provider_review",
     "provider_models",
+    "agents",
 }
 _PROVIDER_PANELS = {
     "provider_actions",
@@ -69,6 +70,10 @@ class KeyBindingHost(Protocol):
 
     def _dismiss_slash(self) -> None: ...
 
+    def _cycle_agent_view(self) -> None: ...
+
+    def _scroll_agent(self, offset: int | None) -> None: ...
+
 
 def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
     bindings = KeyBindings()
@@ -102,6 +107,8 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
             host._resolve_permission(PermissionConfirmation(False))
         elif host._panel in _PROVIDER_PANELS:
             host._provider_back()
+        elif host._panel == "agents":
+            host._close_panel()
         elif host._panel is not None:
             host._close_panel()
         elif host._foreground_task is not None:
@@ -182,6 +189,26 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
         del event
         host._todos_expanded = not host._todos_expanded
         host._invalidate()
+
+    @bindings.add("f6")
+    def cycle_agents(event: KeyPressEvent) -> None:
+        del event
+        host._cycle_agent_view()
+
+    @bindings.add("pageup")
+    def agent_page_up(event: KeyPressEvent) -> None:
+        del event
+        host._scroll_agent(20)
+
+    @bindings.add("pagedown")
+    def agent_page_down(event: KeyPressEvent) -> None:
+        del event
+        host._scroll_agent(-20)
+
+    @bindings.add("end")
+    def agent_live_tail(event: KeyPressEvent) -> None:
+        del event
+        host._scroll_agent(None)
 
     for key, choice in (
         ("1", "allow"),

@@ -16,6 +16,7 @@ from my_code.model.capabilities import ActiveModelEnvironment
 from my_code.permissions.policy import PermissionPolicy
 from my_code.prompts.registry import PromptRegistry
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
+from my_code.sessions.models import SessionStart
 from my_code.sessions.session import Session
 from my_code.tools.catalog import ToolCatalog
 from my_code.tools.executor import ToolExecutor
@@ -59,6 +60,9 @@ class AgentRunComponents:
 type AgentRunBuilder = Callable[
     [AgentRunSpec, ProviderClientLease, ActiveModelEnvironment],
     AgentRunComponents,
+]
+type SessionStartResolver = Callable[
+    [AgentRunSpec, ProviderClientLease, ActiveModelEnvironment], SessionStart
 ]
 
 
@@ -120,10 +124,12 @@ class AgentRunFactory:
         leases: ProviderLeaseRegistry,
         environment: Callable[[], ActiveModelEnvironment],
         build: AgentRunBuilder,
+        session_start: SessionStartResolver | None = None,
     ) -> None:
         self._leases = leases
         self._environment = environment
         self._build = build
+        self._session_start = session_start
         self._runs: dict[str, AgentRun] = {}
         self._accepting = True
 
@@ -139,6 +145,9 @@ class AgentRunFactory:
         environment = self._environment()
         provider = self._leases.acquire()
         try:
+            if self._session_start is not None:
+                start = self._session_start(spec, provider, environment)
+                spec.session.configure_start(start)
             components = self._build(spec, provider, environment)
         except BaseException:
             await provider.close()

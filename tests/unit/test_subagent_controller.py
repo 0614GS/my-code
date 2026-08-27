@@ -23,6 +23,7 @@ from my_code.features.subagents.task_tools import (
 )
 from my_code.features.subagents.tool import SubagentTool
 from my_code.features.subagents.wake import BackgroundTaskWakeSignal
+from my_code.foundation.json import JsonObject
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
@@ -141,6 +142,37 @@ def test_subagent_schema_requires_fixed_type_and_rejects_tools(tmp_path: Path) -
                 "tools": ["Read"],
             }
         )
+
+
+def test_subagent_invocations_are_concurrency_safe_for_every_role_and_mode(
+    tmp_path: Path,
+) -> None:
+    controller, _, _ = build_controller(tmp_path, background_enabled=True)
+    tool = SubagentTool(
+        controller,
+        parent=parent(),
+        policy=PermissionPolicy(PermissionMode.BYPASS),
+    )
+
+    for agent_type in SubagentType:
+        foreground: JsonObject = {
+            "agent_type": agent_type.value,
+            "description": "inspect",
+            "prompt": "work",
+        }
+        background: JsonObject = {**foreground, "background": True}
+        assert tool.is_concurrency_safe(foreground) is True
+        assert tool.is_concurrency_safe(background) is True
+
+
+def test_subagent_execution_budgets_are_unlimited_by_default() -> None:
+    limits = SubagentLimits()
+
+    assert limits.max_depth == 3
+    assert limits.max_active_children == 4
+    assert limits.max_steps is None
+    assert limits.max_tokens is None
+    assert limits.timeout_seconds is None
 
 
 @pytest.mark.asyncio
@@ -346,7 +378,7 @@ async def test_active_child_and_depth_limits_are_enforced_before_spawn(
 
 
 @pytest.mark.asyncio
-async def test_child_run_spec_captures_step_budget_and_disables_permission_updates(
+async def test_child_run_spec_captures_explicit_budgets_and_disables_permission_updates(
     tmp_path: Path,
 ) -> None:
     limits = SubagentLimits(max_steps=7, max_tokens=900)
@@ -378,6 +410,29 @@ async def test_child_run_spec_captures_step_budget_and_disables_permission_updat
     factory.release.set()
     completed = await handle.wait()
     assert completed.status is TaskStatus.SUCCEEDED
+    await tasks.close()
+
+
+@pytest.mark.asyncio
+async def test_default_child_run_spec_has_no_step_or_token_budget(
+    tmp_path: Path,
+) -> None:
+    controller, factory, tasks = build_controller(tmp_path)
+    _, handle = await controller.start(
+        SubagentSpec(SubagentType.EXPLORE, "inspect", "unlimited test"),
+        parent=parent(),
+        parent_policy=PermissionPolicy(PermissionMode.BYPASS),
+        available_tools={},
+        tool_snapshot_version=1,
+    )
+    await factory.entered.wait()
+
+    spec = factory.specs[0]
+    assert spec.max_steps is None
+    assert spec.max_tokens is None
+
+    factory.release.set()
+    assert (await handle.wait()).status is TaskStatus.SUCCEEDED
     await tasks.close()
 
 
@@ -420,6 +475,8 @@ async def test_child_failure_closes_parent_tool_result_and_run(tmp_path: Path) -
     assert outcome.result.is_error is True
     assert '"status": "failed"' in outcome.result.content
     assert "child failed" in outcome.result.content
+    assert outcome.result.presentation.summary == "Subagent failed"
+    assert outcome.result.presentation.detail == "child failed"
     assert tasks.snapshots()[0].status is TaskStatus.FAILED
     assert factory.runs[0].closed is True
     assert controller.active_children(parent().run_id) == 0

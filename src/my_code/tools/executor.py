@@ -147,6 +147,39 @@ class ToolExecutor:
                 pass
         return generic_tool_result_presentation(message, True)
 
+    def cancelled_result(
+        self,
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+    ) -> ToolResult:
+        """Return the tool-specific protocol result used for an outer user abort."""
+
+        active_tools = self.tools if tools is None else tools
+        resolved_call, tool, _, _ = self._resolve(call, active_tools, None)
+        actual_call = resolved_call if tool is not None else call
+        tool_input = to_json_object(actual_call.input)
+        try:
+            output = (
+                tool.cancelled_output(tool_input)
+                if tool is not None
+                else ToolOutput(
+                    "Tool execution was aborted by the user.", is_error=True
+                )
+            )
+            presentation = (
+                self._present_result(tool, tool_input, output)
+                if tool is not None
+                else generic_tool_result_presentation(output.content, True)
+            )
+            content = (
+                tool.to_model_result(output) if tool is not None else output.content
+            )
+        except Exception:
+            content = "Tool execution was aborted by the user."
+            presentation = generic_tool_result_presentation(content, True)
+        return ToolResult(call.id, content, presentation, is_error=True)
+
     async def execute(
         self,
         call: ToolCall,

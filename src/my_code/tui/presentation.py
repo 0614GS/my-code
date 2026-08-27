@@ -1,9 +1,17 @@
 """Pure text and table projections used by the terminal frontend."""
 
+from datetime import UTC, datetime
+
 from rich.console import RenderableType
 
 from my_code.chat.status import ContextStatus
-from my_code.chat.views import BackgroundTaskView, CapabilitiesView, SessionUsageView
+from my_code.chat.views import (
+    BackgroundTaskView,
+    CapabilitiesView,
+    SessionUsageView,
+    SubagentActivityView,
+    SubagentTaskView,
+)
 from my_code.tui.widgets import capability_table
 
 
@@ -108,12 +116,57 @@ def render_tasks(tasks: tuple[BackgroundTaskView, ...]) -> RenderableType:
     return capability_table(title, rows or (("No background tasks for this session",),))
 
 
+def render_agent_view(task: SubagentTaskView, *, scroll: int = 0) -> str:
+    mode = "background" if task.background else "foreground"
+    lines = [
+        f"{task.description} · {task.agent_type} · {mode}",
+        f"Status: {task.status} · Elapsed: {_elapsed(task)} · Run: {task.run_id}",
+        f"Usage: {task.input_tokens} input / {task.output_tokens} output tokens",
+    ]
+    if task.error:
+        lines.append(f"Error: {task.error}")
+    activities = list(task.activities)
+    if task.reasoning:
+        activities.append(SubagentActivityView("reasoning", task.reasoning))
+    if task.text:
+        activities.append(SubagentActivityView("text", task.text))
+    end = max(0, len(activities) - scroll)
+    start = max(0, end - 30)
+    lines.append("Recent activity:")
+    for item in activities[start:end]:
+        marker = "!" if item.is_error else "·"
+        lines.append(f"{marker} {item.kind}: {item.summary}")
+        if item.detail:
+            lines.append(f"  {item.detail}")
+    lines.append("↑↓ switch agent · PageUp/PageDown scroll · End live tail · Esc main")
+    return "\n".join(lines)
+
+
+def _elapsed(task: SubagentTaskView) -> str:
+    start = task.started_at or task.created_at
+    end = task.finished_at
+    try:
+        started = datetime.fromisoformat(start)
+        finished = datetime.fromisoformat(end) if end is not None else datetime.now(UTC)
+        seconds = max(0, int((finished - started).total_seconds()))
+    except (TypeError, ValueError):
+        return "unknown"
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return (
+        f"{hours}h {minutes:02d}m {seconds:02d}s"
+        if hours
+        else f"{minutes}m {seconds:02d}s"
+    )
+
+
 __all__ = [
     "format_context_usage",
     "render_context_status",
     "render_mcp",
     "render_skills",
     "render_tasks",
+    "render_agent_view",
     "render_tools",
     "render_usage",
 ]
