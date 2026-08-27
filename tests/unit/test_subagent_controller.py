@@ -144,6 +144,27 @@ def test_subagent_schema_requires_fixed_type_and_rejects_tools(tmp_path: Path) -
         )
 
 
+def test_subagent_background_schema_explains_both_boolean_modes(
+    tmp_path: Path,
+) -> None:
+    controller, _, _ = build_controller(tmp_path, background_enabled=True)
+    tool = SubagentTool(
+        controller,
+        parent=parent(),
+        policy=PermissionPolicy(PermissionMode.BYPASS),
+    )
+
+    properties = tool.definition.input_schema["properties"]
+    assert isinstance(properties, dict)
+    background = properties["background"]
+    assert isinstance(background, dict)
+    assert background["default"] is False
+    assert background["description"] == (
+        "When true, run asynchronously and return a task ID immediately. "
+        "When false or omitted, wait for completion and return the final result."
+    )
+
+
 def test_subagent_invocations_are_concurrency_safe_for_every_role_and_mode(
     tmp_path: Path,
 ) -> None:

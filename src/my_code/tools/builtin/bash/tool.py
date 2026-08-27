@@ -86,7 +86,13 @@ class BashTool(Tool):
                             "background": {
                                 "type": "boolean",
                                 "default": False,
-                                "description": "Run in the background immediately",
+                                "description": (
+                                    "When true, run asynchronously and return a task "
+                                    "ID immediately. When false or omitted, wait for "
+                                    "completion up to the timeout; if that wait "
+                                    "expires, "
+                                    "the command continues in the background."
+                                ),
                             }
                         }
                         if self.background_enabled

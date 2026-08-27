@@ -73,7 +73,11 @@ class SubagentTool(Tool):
         if self.allow_background:
             properties["background"] = {
                 "type": "boolean",
-                "description": "Return a task ID immediately instead of waiting",
+                "description": (
+                    "When true, run asynchronously and return a task ID "
+                    "immediately. When false or omitted, wait for completion "
+                    "and return the final result."
+                ),
                 "default": False,
             }
         return ModelToolDefinition(

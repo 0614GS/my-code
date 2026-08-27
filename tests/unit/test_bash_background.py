@@ -31,6 +31,23 @@ def build_tool(
     return tool, tasks, registry
 
 
+def test_background_schema_explains_explicit_and_default_execution_modes(
+    tmp_path: Path,
+) -> None:
+    tool, _, _ = build_tool(tmp_path)
+
+    properties = tool.definition.input_schema["properties"]
+    assert isinstance(properties, dict)
+    background = properties["background"]
+    assert isinstance(background, dict)
+    assert background["default"] is False
+    assert background["description"] == (
+        "When true, run asynchronously and return a task ID immediately. "
+        "When false or omitted, wait for completion up to the timeout; if that "
+        "wait expires, the command continues in the background."
+    )
+
+
 @pytest.mark.asyncio
 async def test_supervised_foreground_uses_and_removes_private_output(
     tmp_path: Path,
