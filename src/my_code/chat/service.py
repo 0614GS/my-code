@@ -47,7 +47,13 @@ from my_code.chat.history import (
     HistoryToolCall,
     ResumedSession,
 )
-from my_code.chat.permissions import DeferredPermissionPrompter, PermissionHandler
+from my_code.chat.permissions import (
+    DeferredPermissionPrompter,
+    PermissionHandler,
+    PermissionModeSwitch,
+    PermissionModeView,
+    permission_mode_view,
+)
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import (
     BackgroundTaskView,
@@ -85,6 +91,7 @@ from my_code.model.capabilities import (
     resolve_environment,
 )
 from my_code.model.primitives import ReasoningPresentation
+from my_code.permissions.models import PermissionMode
 from my_code.providers.discovery import resolve_without_network
 from my_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
 from my_code.runtime.state import AppState
@@ -602,6 +609,53 @@ class ChatService:
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:
         self.permission_prompter.set_handler(handler)
+
+    def permission_modes(self) -> tuple[PermissionModeView, ...]:
+        """Project process-local mode state without exposing the mutable policy."""
+
+        state = self.state.permissions
+        current = state.policy.mode
+        return tuple(
+            permission_mode_view(
+                mode,
+                current=mode is current,
+                sandbox_active=state.sandbox_active,
+                requires_confirmation=state.requires_full_access_confirmation(mode),
+            )
+            for mode in (
+                PermissionMode.DEFAULT,
+                PermissionMode.ACCEPT_EDITS,
+                PermissionMode.BYPASS,
+            )
+        )
+
+    def current_permission_mode(self) -> PermissionModeView:
+        current = self.state.permissions.policy.mode
+        return permission_mode_view(
+            current,
+            current=True,
+            sandbox_active=self.state.permissions.sandbox_active,
+            requires_confirmation=(self.state.permissions.full_access_pending),
+        )
+
+    def cycle_permission_mode(self) -> PermissionModeSwitch:
+        target, needs_confirmation = self.state.permissions.request_cycle()
+        view = permission_mode_view(
+            target,
+            current=not needs_confirmation,
+            sandbox_active=self.state.permissions.sandbox_active,
+            requires_confirmation=needs_confirmation,
+        )
+        return PermissionModeSwitch(view, not needs_confirmation, needs_confirmation)
+
+    def confirm_full_access(self, allow: bool) -> PermissionModeView:
+        mode = self.state.permissions.confirm_full_access(allow)
+        return permission_mode_view(
+            mode,
+            current=True,
+            sandbox_active=self.state.permissions.sandbox_active,
+            requires_confirmation=False,
+        )
 
     def providers(self) -> tuple[ProviderView, ...]:
         return self.provider_manager.list(self.state.provider.router.connection.id)

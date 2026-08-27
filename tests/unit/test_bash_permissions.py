@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from my_code.tools.builtin.bash.permissions import (
+    BashEffect,
     analyze_bash_command,
     bash_rule_matches,
     suggest_bash_permission,
@@ -133,3 +134,45 @@ def test_escaped_exact_suggestion_does_not_become_a_wildcard(tmp_path: Path) -> 
 
     assert bash_rule_matches(suggestion.rule_content, "rm *.tmp") is True
     assert bash_rule_matches(suggestion.rule_content, "rm secrets.tmp") is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "mkdir -p build/output",
+        "touch src/new.py",
+        "cp src/a.py src/b.py",
+        "mv src/a.py src/b.py",
+        "rm -r build/output",
+        "rmdir build/output",
+        "sed -i 's/old/new/g' src/a.py",
+        "cat README.md > build/readme.txt",
+        "git status && touch build/stamp",
+    ],
+)
+def test_static_workspace_file_commands_have_workspace_edit_effect(
+    tmp_path: Path, command: str
+) -> None:
+    assert analyze_bash_command(command, tmp_path).effect is BashEffect.WORKSPACE_EDIT
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "touch $TARGET",
+        "touch $(pwd)/stamp",
+        "sudo touch build/stamp",
+        "cp /etc/passwd copied.txt",
+        "rm -r .",
+        "rm .git/config",
+        "mkdir ../outside",
+        "rm *.tmp",
+        "sed -i -e 's/old/new/' src/a.py",
+        "cat README.md > .my-code/settings.json",
+        "git status && curl example.com",
+    ],
+)
+def test_unproven_or_sensitive_edits_have_unknown_effect(
+    tmp_path: Path, command: str
+) -> None:
+    assert analyze_bash_command(command, tmp_path).effect is BashEffect.UNKNOWN

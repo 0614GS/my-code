@@ -45,6 +45,8 @@ TUI 只渲染投影，不重新解释 Conversation 或读取工具结果文件�
 
 TUI 注册 `PermissionHandler`，在底部临时面板展示 `chat.permissions.PermissionRequest` 并返回 `PermissionConfirmation`。Bash 固定显示 Yes、自动生成的 remembered-allow 和 No，默认选中 No，快捷键为 1–3，不进入手工 prefix 或拒绝反馈输入；其他工具保留允许、拒绝、反馈和 suggestion。Provider API key 字段使用密码 processor；无 handler 时权限请求默认拒绝。
 
+普通 composer 空闲或主 Agent 运行时，Shift+Tab 循环 `Ask for me → Approve edits → Full access`。右侧 footer 始终显示友好模式名；Full Access 始终为红色。无 sandbox 时首次进入 Full Access 使用默认 No 的危险确认面板，拒绝或 Esc 保持原模式；确认只在当前进程有效。权限、provider、agent 与危险确认等临时面板打开时不切换模式，危险确认与工具权限请求串行展示。
+
 ## Slash 命令
 
 Slash command 在 prompt 进入模型前本地解析。除原有命令外，`/usage`、`/tools`、`/skills [reload]`、`/mcp [refresh|reconnect <server>]`、`/tasks` 和 `/agents` 只调用 ChatService 的窄接口。`/tasks` 同时显示 Bash 与前后台 Subagent，但不提供直接取消；取消仍由 Agent 的 `TaskCancel` 经过权限系统完成。

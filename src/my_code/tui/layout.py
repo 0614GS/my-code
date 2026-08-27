@@ -44,7 +44,7 @@ def build_terminal_layout(
     dynamic_text: Callable[[], AnyFormattedText],
     todo_text: Callable[[], AnyFormattedText],
     has_todos: Callable[[], bool],
-    status_text: Callable[[], str],
+    status_text: Callable[[], AnyFormattedText],
     slash_menu_text: Callable[[], AnyFormattedText],
     has_slash_menu: Callable[[], bool],
     input: Input | None,

@@ -64,7 +64,9 @@ class CapturingAgent:
         return AgentTurnSucceeded("done", 1, TokenUsage())
 
 
-def _bootstrap_runtime(tmp_path: Path) -> ChatService:
+def _bootstrap_runtime(
+    tmp_path: Path, permission_mode: PermissionMode = PermissionMode.DEFAULT
+) -> ChatService:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     paths = MyCodePaths.discover(
@@ -76,7 +78,7 @@ def _bootstrap_runtime(tmp_path: Path) -> ChatService:
         paths=paths,
         provider_id="anthropic",
         model="test-model",
-        permission_mode=PermissionMode.DEFAULT,
+        permission_mode=permission_mode,
         max_steps=3,
         max_output_tokens=1024,
         context_chars=10_000,
@@ -96,6 +98,82 @@ def test_app_state_is_the_single_runtime_owner(tmp_path: Path) -> None:
     assert runtime.state.permissions.policy is runtime.tool_executor.policy
     assert runtime.state.tools.catalog.snapshot() == runtime.tool_executor.tools
     assert runtime.state.session.session_id == _CURRENT_SESSION_ID
+
+
+def test_runtime_permission_modes_cycle_without_persisting_settings(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    configured = runtime.settings.permission_mode
+
+    assert [item.display_name for item in runtime.permission_modes()] == [
+        "Ask for me",
+        "Approve edits",
+        "Full access",
+    ]
+    assert runtime.cycle_permission_mode().mode.value == "acceptEdits"
+    pending = runtime.cycle_permission_mode()
+    assert pending.requires_confirmation is True
+    assert runtime.status().permission_mode == "acceptEdits"
+    runtime.confirm_full_access(True)
+    assert runtime.status().permission_mode == "bypassPermissions"
+    assert runtime.cycle_permission_mode().mode.value == "default"
+    assert runtime.settings.permission_mode is configured
+
+
+@pytest.mark.parametrize("mode", [PermissionMode.PLAN, PermissionMode.DONT_ASK])
+def test_non_carousel_permission_mode_cycles_back_to_default(
+    tmp_path: Path, mode: PermissionMode
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.state.permissions.policy.mode = mode
+
+    switched = runtime.cycle_permission_mode()
+
+    assert switched.changed is True
+    assert runtime.state.permissions.policy.mode is PermissionMode.DEFAULT
+
+
+def test_full_access_confirmation_is_per_process_and_skipped_in_sandbox(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.state.permissions.policy.mode = PermissionMode.ACCEPT_EDITS
+
+    assert runtime.cycle_permission_mode().requires_confirmation is True
+    runtime.confirm_full_access(True)
+    runtime.cycle_permission_mode()
+    runtime.cycle_permission_mode()
+    runtime.cycle_permission_mode()
+    assert runtime.status().permission_mode == "bypassPermissions"
+
+    runtime.state.permissions.full_access_confirmed = False
+    runtime.state.permissions.sandbox_active = True
+    runtime.state.permissions.policy.mode = PermissionMode.ACCEPT_EDITS
+    switched = runtime.cycle_permission_mode()
+    assert switched.requires_confirmation is False
+    assert runtime.status().permission_mode == "bypassPermissions"
+
+
+def test_rejecting_bypass_startup_falls_back_to_default(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path, PermissionMode.BYPASS)
+
+    assert runtime.current_permission_mode().requires_confirmation is True
+    assert runtime.status().permission_mode == "default"
+    current = runtime.confirm_full_access(False)
+
+    assert current.value == "default"
+
+
+def test_full_access_confirmation_cannot_elevate_without_pending_switch(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+
+    current = runtime.confirm_full_access(True)
+
+    assert current.value == "default"
+    assert runtime.status().permission_mode == "default"
 
 
 @pytest.mark.asyncio

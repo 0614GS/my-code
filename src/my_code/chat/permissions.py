@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from my_code.foundation.json import JsonObject
 from my_code.permissions.models import (
     PermissionConfirmation,
+    PermissionMode,
     PermissionPrompt,
     PermissionUpdate,
 )
@@ -20,6 +21,47 @@ class PermissionRequest:
     message: str
     presentation: ToolUsePresentation
     suggestions: tuple[PermissionUpdate, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionModeView:
+    value: str
+    display_name: str
+    current: bool
+    dangerous: bool
+    sandbox_active: bool
+    requires_confirmation: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionModeSwitch:
+    mode: PermissionModeView
+    changed: bool
+    requires_confirmation: bool
+
+
+_MODE_NAMES = {
+    PermissionMode.DEFAULT: "Ask for me",
+    PermissionMode.ACCEPT_EDITS: "Approve edits",
+    PermissionMode.BYPASS: "Full access",
+}
+
+
+def permission_mode_view(
+    mode: PermissionMode,
+    *,
+    current: bool,
+    sandbox_active: bool,
+    requires_confirmation: bool,
+) -> PermissionModeView:
+    return PermissionModeView(
+        mode.value,
+        _MODE_NAMES.get(mode, mode.value),
+        current,
+        mode is PermissionMode.BYPASS,
+        sandbox_active,
+        requires_confirmation,
+    )
 
 
 type PermissionHandler = Callable[
@@ -80,4 +122,7 @@ __all__ = [
     "DeferredPermissionPrompter",
     "PermissionHandler",
     "PermissionRequest",
+    "PermissionModeSwitch",
+    "PermissionModeView",
+    "permission_mode_view",
 ]

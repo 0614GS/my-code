@@ -138,7 +138,12 @@ class BashTool(Tool):
     ) -> ReadOnlyAssessment:
         command = required_string(tool_input, "command")
         analysis = analyze_bash_command(command, context.cwd)
-        return ReadOnlyAssessment(analysis.is_read_only, analysis.reason)
+        reason = (
+            analysis.reason
+            if analysis.is_read_only or not analysis.is_workspace_edit
+            else "command is not in the read-only command allowlist"
+        )
+        return ReadOnlyAssessment(analysis.is_read_only, reason)
 
     async def check_permissions(
         self, tool_input: JsonObject, context: ToolPermissionContext
@@ -226,6 +231,14 @@ class BashTool(Tool):
                 message="Bash command was proven read-only.",
                 reason=PermissionDecisionReason(
                     PermissionDecisionKind.TOOL, "bash-read-only"
+                ),
+            )
+        if context.mode is PermissionMode.ACCEPT_EDITS and analysis.is_workspace_edit:
+            return ToolPermissionResult.allow(
+                tool_input,
+                message="Bash command is a proven safe workspace edit.",
+                reason=PermissionDecisionReason(
+                    PermissionDecisionKind.MODE, "acceptEdits"
                 ),
             )
         return ToolPermissionResult.passthrough(

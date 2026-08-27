@@ -14,6 +14,7 @@ from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from my_code.permissions.models import PermissionConfirmation
 
 _NAVIGATION_PANELS = {
+    "full_access",
     "resume",
     "provider_select",
     "provider_actions",
@@ -72,6 +73,10 @@ class KeyBindingHost(Protocol):
 
     def _cycle_agent_view(self) -> None: ...
 
+    def _cycle_permission_mode(self) -> None: ...
+
+    def _resolve_full_access(self, allow: bool) -> None: ...
+
     def _scroll_agent(self, offset: int | None) -> None: ...
 
 
@@ -105,6 +110,8 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
             host.buffer.cancel_completion()
         elif host._panel == "permission":
             host._resolve_permission(PermissionConfirmation(False))
+        elif host._panel == "full_access":
+            host._resolve_full_access(False)
         elif host._panel in _PROVIDER_PANELS:
             host._provider_back()
         elif host._panel == "agents":
@@ -142,6 +149,8 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
         del event
         if host._panel == "provider_form":
             host._spawn(host._advance_provider(-1))
+        elif host._panel is None:
+            host._cycle_permission_mode()
 
     @bindings.add("up")
     def up(event: KeyPressEvent) -> None:

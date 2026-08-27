@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from my_code.permissions.models import PermissionRule
@@ -14,20 +15,35 @@ from my_code.tools.builtin.bash.ast import (
     parse_bash,
 )
 from my_code.tools.builtin.bash.semantics import command_is_read_only
+from my_code.tools.paths import is_sensitive_write_path
 
 _SAFE_ENVIRONMENT_NAMES = frozenset({"LANG", "LANGUAGE", "TZ", "NO_COLOR"})
 _SAFE_LOCALE_NAME = re.compile(r"LC_[A-Z0-9_]+")
+
+
+class BashEffect(StrEnum):
+    READ_ONLY = "read-only"
+    WORKSPACE_EDIT = "workspace-edit"
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
 class BashAnalysis:
     """Stable permission facts derived from one Bash input."""
 
-    is_read_only: bool
+    effect: BashEffect
     reason: str
     commands: tuple[str, ...] = ()
     match_commands: tuple[str, ...] = ()
     ast: BashAstResult | None = None
+
+    @property
+    def is_read_only(self) -> bool:
+        return self.effect is BashEffect.READ_ONLY
+
+    @property
+    def is_workspace_edit(self) -> bool:
+        return self.effect is BashEffect.WORKSPACE_EDIT
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +70,7 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
     coverage_sources = tuple(item.rule_source for item in semantic_commands)
     if not ast.is_complete:
         return BashAnalysis(
-            False,
+            BashEffect.UNKNOWN,
             ast.reason,
             coverage_sources or ast.command_sources,
             ast.command_sources,
@@ -62,17 +78,14 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
         )
     if any(not _environment_is_safe(item) for item in semantic_commands):
         return BashAnalysis(
-            False,
+            BashEffect.UNKNOWN,
             "environment prefix can alter command behavior",
             coverage_sources,
             ast.command_sources,
             ast,
         )
     redirect_reason = _redirections_allow_read_only(ast.redirections, cwd)
-    if redirect_reason is not None:
-        return BashAnalysis(
-            False, redirect_reason, coverage_sources, ast.command_sources, ast
-        )
+    read_only_reason = redirect_reason
     for item in semantic_commands:
         if item.unquoted_glob_indices and item.argv[0] not in {
             "wc",
@@ -84,7 +97,7 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
             "file",
         }:
             return BashAnalysis(
-                False,
+                BashEffect.UNKNOWN,
                 f"unquoted glob arguments are unsupported for {item.argv[0]!r}",
                 coverage_sources,
                 ast.command_sources,
@@ -92,16 +105,170 @@ def analyze_bash_command(command: str, cwd: Path) -> BashAnalysis:
             )
         safe, reason = command_is_read_only(item.argv, cwd)
         if not safe:
+            read_only_reason = reason
+            break
+    else:
+        if redirect_reason is None:
             return BashAnalysis(
-                False, reason, coverage_sources, ast.command_sources, ast
+                BashEffect.READ_ONLY,
+                "every Bash subcommand is statically proven read-only",
+                coverage_sources,
+                ast.command_sources,
+                ast,
             )
+
+    edit_reason = _workspace_edit_reason(semantic_commands, ast.redirections, cwd)
+    if edit_reason is None:
+        return BashAnalysis(
+            BashEffect.WORKSPACE_EDIT,
+            "every Bash subcommand is read-only or a safe workspace edit",
+            coverage_sources,
+            ast.command_sources,
+            ast,
+        )
     return BashAnalysis(
-        True,
-        "every Bash subcommand is statically proven read-only",
+        BashEffect.UNKNOWN,
+        edit_reason or read_only_reason or "command effect could not be proven",
         coverage_sources,
         ast.command_sources,
         ast,
     )
+
+
+_EDIT_FLAGS: dict[str, frozenset[str]] = {
+    "mkdir": frozenset({"-p", "--parents"}),
+    "touch": frozenset({"-c", "--no-create"}),
+    "cp": frozenset({"-a", "-f", "-n", "-p", "-r", "-R", "--recursive", "--force"}),
+    "mv": frozenset({"-f", "-n", "--force", "--no-clobber"}),
+    "rm": frozenset({"-d", "-f", "-r", "-R", "--dir", "--force", "--recursive"}),
+    "rmdir": frozenset({"-p", "--parents", "--ignore-fail-on-non-empty"}),
+}
+
+
+def _workspace_edit_reason(
+    commands: tuple[SimpleCommand, ...],
+    redirects: tuple[Redirection, ...],
+    cwd: Path,
+) -> str | None:
+    has_edit = False
+    for redirect in redirects:
+        if redirect.kind == "input":
+            if not _safe_redirect_target(redirect.target, cwd):
+                return "input redirection references a path outside the workspace"
+        elif redirect.kind == "output" and redirect.target != "/dev/null":
+            reason = _unsafe_edit_path(redirect.target, cwd)
+            if reason is not None:
+                return reason
+            has_edit = True
+    for command in commands:
+        read_only, _ = command_is_read_only(command.argv, cwd)
+        if read_only:
+            continue
+        reason = _safe_edit_command(command.argv, cwd)
+        if reason is not None:
+            return reason
+        has_edit = True
+    return None if has_edit else "command is not a proven workspace edit"
+
+
+def _safe_edit_command(argv: tuple[str, ...], cwd: Path) -> str | None:
+    name = argv[0]
+    if name == "sed":
+        return _safe_sed_edit(argv[1:], cwd)
+    allowed = _EDIT_FLAGS.get(name)
+    if allowed is None:
+        return f"command {name!r} is not a supported workspace edit"
+    operands: list[str] = []
+    options = True
+    for argument in argv[1:]:
+        if options and argument == "--":
+            options = False
+        elif options and argument.startswith("-"):
+            if argument not in allowed:
+                return f"unsupported option {argument!r} for {name!r}"
+        else:
+            options = False
+            operands.append(argument)
+    minimum = 2 if name in {"cp", "mv"} else 1
+    if len(operands) < minimum:
+        return f"{name!r} has too few static path operands"
+    for operand in operands:
+        reason = _unsafe_edit_path(operand, cwd)
+        if reason is not None:
+            return reason
+    return None
+
+
+def _safe_sed_edit(arguments: tuple[str, ...], cwd: Path) -> str | None:
+    if not arguments:
+        return "sed has no arguments"
+    index = 0
+    in_place = False
+    while index < len(arguments) and arguments[index].startswith("-"):
+        option = arguments[index]
+        if (
+            option in {"-i", "--in-place"}
+            or option.startswith("-i")
+            or option.startswith("--in-place=")
+        ):
+            in_place = True
+        elif option == "--":
+            index += 1
+            break
+        else:
+            return f"unsupported sed edit option {option!r}"
+        index += 1
+    if not in_place or index >= len(arguments):
+        return "sed is not a conservative in-place edit"
+    program = arguments[index]
+    paths = arguments[index + 1 :]
+    if not paths or not _safe_sed_substitution(program):
+        return "sed program is not a conservative substitution"
+    for path in paths:
+        reason = _unsafe_edit_path(path, cwd)
+        if reason is not None:
+            return reason
+    return None
+
+
+def _safe_sed_substitution(program: str) -> bool:
+    if len(program) < 4 or program[0] != "s" or program[1].isalnum():
+        return False
+    delimiter = program[1]
+    cursor = 2
+    for _ in range(2):
+        escaped = False
+        while cursor < len(program):
+            character = program[cursor]
+            cursor += 1
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == delimiter:
+                break
+        else:
+            return False
+    return re.fullmatch(r"[gIp0-9]*", program[cursor:]) is not None
+
+
+def _unsafe_edit_path(value: str, cwd: Path) -> str | None:
+    if value in {"", "-"} or any(character in value for character in "*?["):
+        return f"dynamic or glob path {value!r} is not a proven workspace path"
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = cwd / candidate
+    try:
+        resolved = candidate.resolve(strict=False)
+        root = cwd.resolve(strict=False)
+        relative = resolved.relative_to(root)
+    except (OSError, ValueError):
+        return f"path {value!r} is outside the workspace"
+    if not relative.parts:
+        return "the workspace root cannot be an edit target"
+    if is_sensitive_write_path(cwd, resolved):
+        return f"path {value!r} is sensitive and requires approval"
+    return None
 
 
 def suggest_bash_permission(command: str, cwd: Path) -> BashPermissionSuggestion:

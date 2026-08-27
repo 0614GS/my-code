@@ -51,6 +51,7 @@ from my_code.tui.composer import ComposerCompleter, SlashMenuState
 from my_code.tui.key_bindings import build_key_bindings
 from my_code.tui.layout import build_terminal_layout
 from my_code.tui.panels import (
+    full_access_panel,
     permission_panel,
     provider_actions_panel,
     provider_form_panel,
@@ -131,6 +132,7 @@ class MyCodeApp(TurnFlowMixin):
         self._permission_request: PermissionRequest | None = None
         self._permission_future: asyncio.Future[PermissionConfirmation] | None = None
         self._permission_mode = "select"
+        self._full_access_resolved: asyncio.Event | None = None
         self._saved_draft = ""
         self._path_suggestions: tuple[PathSuggestion, ...] = ()
         self._mention_span: tuple[int, int] | None = None
@@ -162,7 +164,7 @@ class MyCodeApp(TurnFlowMixin):
             dynamic_text=self._dynamic_text,
             todo_text=self._todo_display,
             has_todos=lambda: bool(self._todos),
-            status_text=self._status_text,
+            status_text=self._status_display,
             slash_menu_text=self._slash_menu_text,
             has_slash_menu=self._slash_active,
             input=input,
@@ -186,6 +188,9 @@ class MyCodeApp(TurnFlowMixin):
             for entry in view.history:
                 if isinstance(entry, HistoryText) and entry.role == "user":
                     self._history.append_string(entry.text)
+        current_mode = getattr(self.runtime, "current_permission_mode", None)
+        if current_mode is not None and current_mode().requires_confirmation:
+            self._open_full_access_confirmation()
         self._running = True
 
         def start_background() -> None:
@@ -225,6 +230,7 @@ class MyCodeApp(TurnFlowMixin):
         if self._panel == "permission":
             return self._permission_mode == "select"
         if self._panel in {
+            "full_access",
             "resume",
             "provider_select",
             "provider_actions",
@@ -318,12 +324,42 @@ class MyCodeApp(TurnFlowMixin):
             f" · ! {self._status_warning}" if self._status_warning else ""
         )
 
+    def _status_display(self) -> FormattedText:
+        status = self._status
+        if status is None:
+            return FormattedText([("class:secondary", "Starting my-code…")])
+        context = self._context_status
+        usage = format_context_usage(context) if context is not None else "…"
+        left = (
+            f"{status.model} · {status.context_entry_count} context entries    {usage}"
+        )
+        if self._status_warning:
+            left += f" · ! {self._status_warning}"
+        labels = {
+            "default": ("Ask for me", "class:secondary"),
+            "acceptEdits": ("Approve edits", "class:success"),
+            "bypassPermissions": ("Full access", "class:error"),
+        }
+        label, style = labels.get(
+            status.permission_mode, (status.permission_mode, "class:secondary")
+        )
+        right = f"{label} · Shift+Tab"
+        padding = max(2, self.console.width - len(left) - len(right))
+        if len(left) + len(right) + padding > self.console.width:
+            keep = max(0, self.console.width - len(right) - padding - 1)
+            left = left[:keep].rstrip() + ("…" if keep else "")
+        return FormattedText(
+            [("class:secondary", left), ("", " " * padding), (style, right)]
+        )
+
     def _reasoning_summary(self) -> str:
         if not self._reasoning_parts:
             return ""
         return "Thinking · " + " ".join("".join(self._reasoning_parts).split())[-300:]
 
     def _panel_text(self) -> AnyFormattedText:
+        if self._panel == "full_access":
+            return full_access_panel(self._panel_index)
         if self._panel == "permission" and self._permission_request is not None:
             return permission_panel(
                 self._permission_request, self._permission_mode, self._panel_index
@@ -382,6 +418,42 @@ class MyCodeApp(TurnFlowMixin):
 
     def _permission_selecting(self) -> bool:
         return self._panel == "permission" and self._permission_mode == "select"
+
+    def _cycle_permission_mode(self) -> None:
+        switch = getattr(self.runtime, "cycle_permission_mode", None)
+        if switch is None:
+            return
+        result = switch()
+        if result.requires_confirmation:
+            self._open_full_access_confirmation()
+        else:
+            self._refresh_status()
+
+    def _open_full_access_confirmation(self) -> None:
+        if self._panel is not None:
+            return
+        self._saved_draft = self.buffer.text
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._panel = "full_access"
+        self._panel_index = 0
+        self._full_access_resolved = asyncio.Event()
+        self._invalidate()
+
+    def _resolve_full_access(self, allow: bool) -> None:
+        if self._panel != "full_access":
+            return
+        confirm = getattr(self.runtime, "confirm_full_access", None)
+        if confirm is not None:
+            confirm(allow)
+        resolved = self._full_access_resolved
+        self._full_access_resolved = None
+        self._panel = None
+        self.buffer.set_document(
+            Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
+        )
+        self._refresh_status()
+        if resolved is not None:
+            resolved.set()
 
     async def _submit_buffer(self) -> None:
         line = self.buffer.text
@@ -611,6 +683,8 @@ class MyCodeApp(TurnFlowMixin):
             size = len(self._sessions)
         elif self._panel == "permission" and self._permission_mode == "select":
             size = len(self._permission_options())
+        elif self._panel == "full_access":
+            size = 2
         elif self._panel == "provider_select":
             size = min(len(self._providers), 8) + 1
         elif self._panel == "provider_actions":
@@ -631,7 +705,9 @@ class MyCodeApp(TurnFlowMixin):
             self._invalidate()
 
     async def _panel_enter(self) -> None:
-        if self._panel == "permission":
+        if self._panel == "full_access":
+            self._resolve_full_access(self._panel_index == 1)
+        elif self._panel == "permission":
             value = self.buffer.text.strip()
             if self._permission_mode == "select":
                 self._choose_permission(self._permission_options()[self._panel_index])
@@ -859,6 +935,8 @@ class MyCodeApp(TurnFlowMixin):
     async def _ask_permission(
         self, request: PermissionRequest
     ) -> PermissionConfirmation:
+        if self._full_access_resolved is not None:
+            await self._full_access_resolved.wait()
         if self._permission_future is not None:
             raise RuntimeError("A permission request is already active")
         restore_panel = self._panel

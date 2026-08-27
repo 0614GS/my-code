@@ -125,9 +125,12 @@ def test_only_safe_environment_prefixes_inherit_read_only_semantics(
 
 
 async def _decide(
-    tmp_path: Path, command: str, *rules: PermissionRule
+    tmp_path: Path,
+    command: str,
+    *rules: PermissionRule,
+    mode: PermissionMode = PermissionMode.DEFAULT,
 ) -> PermissionBehavior:
-    policy = PermissionPolicy(PermissionMode.DEFAULT, rules=rules)
+    policy = PermissionPolicy(mode, rules=rules)
     tool = BashTool()
     tool_input: JsonObject = {"command": command}
     local = await tool.check_permissions(
@@ -135,6 +138,28 @@ async def _decide(
     )
     decision = policy.decide(PermissionRequest(tool.definition.name, tool_input, local))
     return decision.behavior
+
+
+@pytest.mark.asyncio
+async def test_accept_edits_allows_only_proven_workspace_edit_bash(
+    tmp_path: Path,
+) -> None:
+    assert (
+        await _decide(
+            tmp_path,
+            "mkdir -p build && touch build/stamp",
+            mode=PermissionMode.ACCEPT_EDITS,
+        )
+        is PermissionBehavior.ALLOW
+    )
+    assert (
+        await _decide(
+            tmp_path,
+            "touch ../outside",
+            mode=PermissionMode.ACCEPT_EDITS,
+        )
+        is PermissionBehavior.ASK
+    )
 
 
 @pytest.mark.asyncio

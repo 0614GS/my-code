@@ -39,6 +39,16 @@ def permission_panel(
     )
 
 
+def full_access_panel(selected: int = 0) -> FormattedText:
+    return _picker(
+        "Full access can modify files and run commands without asking.\n"
+        "No OS sandbox is active for this process.",
+        ("No, keep current mode", "Yes, enable Full access"),
+        selected,
+        "↑↓ select · Enter confirm · Esc keep current mode",
+    )
+
+
 def _suggestion_scope(request: PermissionRequest) -> str:
     if not request.suggestions or not request.suggestions[0].rules:
         return "this exact command"
@@ -172,6 +182,7 @@ def _picker(
 
 
 __all__ = [
+    "full_access_panel",
     "permission_panel",
     "provider_actions_panel",
     "provider_form_panel",

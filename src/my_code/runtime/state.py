@@ -1,12 +1,13 @@
 """Explicit ownership graph for mutable runtime state."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from my_code.context.session import ContextRuntime
 from my_code.mcp.runtime import McpRuntime
 from my_code.model.capabilities import ActiveModelEnvironment
+from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
 from my_code.providers.leases import ProviderLeaseRegistry
 from my_code.providers.router import ProviderConnection, ProviderRouter
@@ -27,11 +28,61 @@ class WorkspaceState:
         return self.workspace.root
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class PermissionState:
-    """The sole runtime reference to the mutable permission policy."""
+    """The sole runtime permission state, including process-local UI consent."""
 
     policy: PermissionPolicy
+    sandbox_active: bool = False
+    full_access_confirmed: bool = False
+    full_access_pending: bool = field(default=False, init=False)
+
+    _CYCLE = (
+        PermissionMode.DEFAULT,
+        PermissionMode.ACCEPT_EDITS,
+        PermissionMode.BYPASS,
+    )
+
+    def __post_init__(self) -> None:
+        if self.requires_full_access_confirmation():
+            # A configured bypass startup must not become active before the TUI
+            # can show its process-local risk confirmation.
+            self.policy.mode = PermissionMode.DEFAULT
+            self.full_access_pending = True
+
+    def next_mode(self) -> PermissionMode:
+        try:
+            index = self._CYCLE.index(self.policy.mode)
+        except ValueError:
+            return PermissionMode.DEFAULT
+        return self._CYCLE[(index + 1) % len(self._CYCLE)]
+
+    def requires_full_access_confirmation(
+        self, mode: PermissionMode | None = None
+    ) -> bool:
+        candidate = self.policy.mode if mode is None else mode
+        return (
+            candidate is PermissionMode.BYPASS
+            and not self.sandbox_active
+            and not self.full_access_confirmed
+        )
+
+    def request_cycle(self) -> tuple[PermissionMode, bool]:
+        target = self.next_mode()
+        if self.requires_full_access_confirmation(target):
+            self.full_access_pending = True
+            return target, True
+        self.policy.mode = target
+        return target, False
+
+    def confirm_full_access(self, allow: bool) -> PermissionMode:
+        if not self.full_access_pending:
+            return self.policy.mode
+        self.full_access_pending = False
+        if allow:
+            self.full_access_confirmed = True
+            self.policy.mode = PermissionMode.BYPASS
+        return self.policy.mode
 
 
 @dataclass(frozen=True, slots=True)

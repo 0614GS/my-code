@@ -2,7 +2,9 @@
 
 ## 所有权
 
-`permissions` 拥有规则表示、工具局部判断、全局决策顺序和用户确认协议。活动 `PermissionPolicy` 的唯一引用位于 `AppState.permissions`。`config.permission_updates` 负责把获批的长期更新写入设置，然后再更新这一个 policy。
+`permissions` 拥有规则表示、工具局部判断、全局决策顺序和用户确认协议。活动 `PermissionPolicy` 的唯一引用位于 `AppState.permissions`；同一 runtime state 还持有进程内 Full Access 确认与 sandbox capability。`config.permission_updates` 负责把获批的长期更新写入设置，然后再更新这一个 policy。
+
+TUI 的 Shift+Tab 只在进程内循环 `default → acceptEdits → bypassPermissions → default`，不会写设置；`plan` 和 `dontAsk` 首次轮播回到 `default`。当前 bootstrap 报告无 OS sandbox，因此每个进程首次进入 `bypassPermissions` 前必须确认。启动配置已经是 bypass 时，拒绝确认会回退到 `default`。
 
 ## 决策数据
 
@@ -30,6 +32,8 @@
 显式 deny、受保护路径和工具声明的不可绕过检查不会被 bypass mode 静默覆盖。
 Bash 的 local remembered-allow 也可覆盖匹配的内容级 ask，但不能覆盖 deny、Plan
 mode 拒绝或 Explore/工具硬安全边界；其他工具不获得这一优先级例外。
+
+`acceptEdits` 除 Write/Edit 外，还可自动放行 Bash 分析器确定为 `workspace-edit` 的静态命令。该分类只覆盖路径均可证明位于工作区且不涉及敏感命名空间的保守文件命令和输出重定向；动态参数、包装器、外部路径、工作区根删除与未知语法继续 fail closed。
 
 ## 规则
 

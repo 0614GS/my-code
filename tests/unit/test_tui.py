@@ -21,7 +21,11 @@ from my_code.chat.events import (
     TurnSucceeded,
 )
 from my_code.chat.history import HistoryText
-from my_code.chat.permissions import PermissionRequest
+from my_code.chat.permissions import (
+    PermissionModeSwitch,
+    PermissionModeView,
+    PermissionRequest,
+)
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import CapabilitiesView, SessionView, SubagentTaskView
 from my_code.config.providers import ProviderProtocol
@@ -54,6 +58,8 @@ class FakeRuntime:
         self.has_stored_key = True
         self.credential_source = credential_source
         self.agents: tuple[SubagentTaskView, ...] = ()
+        self.permission_mode = "default"
+        self.full_access_confirmed = False
 
     async def initialize(self) -> SessionView:
         return SessionView(self.status(), self.history)
@@ -81,7 +87,7 @@ class FakeRuntime:
             provider_id="anthropic",
             base_url=None,
             model="test-model",
-            permission_mode="default",
+            permission_mode=self.permission_mode,
             credential_source=self.credential_source.value,
             context_entry_count=len(self.prompts) * 2,
             conversation_entry_count=len(self.prompts) * 2,
@@ -145,6 +151,52 @@ class FakeRuntime:
     async def suggest_paths(self, query: str):
         del query
         return ()
+
+    def current_permission_mode(self) -> PermissionModeView:
+        names = {
+            "default": "Ask for me",
+            "acceptEdits": "Approve edits",
+            "bypassPermissions": "Full access",
+        }
+        return PermissionModeView(
+            self.permission_mode,
+            names[self.permission_mode],
+            True,
+            self.permission_mode == "bypassPermissions",
+            False,
+            self.permission_mode == "bypassPermissions"
+            and not self.full_access_confirmed,
+        )
+
+    def cycle_permission_mode(self) -> PermissionModeSwitch:
+        order = ("default", "acceptEdits", "bypassPermissions")
+        target = order[(order.index(self.permission_mode) + 1) % len(order)]
+        needs_confirmation = (
+            target == "bypassPermissions" and not self.full_access_confirmed
+        )
+        if not needs_confirmation:
+            self.permission_mode = target
+        view = PermissionModeView(
+            target,
+            {
+                "default": "Ask for me",
+                "acceptEdits": "Approve edits",
+                "bypassPermissions": "Full access",
+            }[target],
+            not needs_confirmation,
+            target == "bypassPermissions",
+            False,
+            needs_confirmation,
+        )
+        return PermissionModeSwitch(view, not needs_confirmation, needs_confirmation)
+
+    def confirm_full_access(self, allow: bool) -> PermissionModeView:
+        if allow:
+            self.full_access_confirmed = True
+            self.permission_mode = "bypassPermissions"
+        elif self.permission_mode == "bypassPermissions":
+            self.permission_mode = "default"
+        return self.current_permission_mode()
 
 
 @pytest.mark.asyncio
@@ -374,6 +426,63 @@ def test_status_render_uses_cached_context_during_an_in_flight_tool_call() -> No
     app._context_status = FakeRuntime().context_status()
 
     assert app._status_text().endswith("0.1k / 200k")
+
+
+def test_footer_right_aligns_friendly_permission_mode_with_semantic_style() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), width=100, force_terminal=False),
+    )
+    runtime.permission_mode = "bypassPermissions"
+    runtime.full_access_confirmed = True
+    app._status = runtime.status()
+    app._context_status = runtime.context_status()
+
+    fragments = to_formatted_text(app._status_display())
+
+    assert fragment_list_to_text(fragments).rstrip().endswith("Full access · Shift+Tab")
+    assert any(
+        fragment[0] == "class:error" and "Full access" in fragment[1]
+        for fragment in fragments
+    )
+
+
+def test_permission_mode_cycle_opens_risk_panel_and_defaults_to_no() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(runtime)  # type: ignore[arg-type]
+    app._status = runtime.status()
+    app.buffer.text = "draft"
+
+    app._cycle_permission_mode()
+    app._cycle_permission_mode()
+
+    assert runtime.permission_mode == "acceptEdits"
+    assert app._panel == "full_access"
+    assert app._panel_index == 0
+    assert app.buffer.text == ""
+    app._resolve_full_access(False)
+    assert runtime.permission_mode == "acceptEdits"
+    assert app.buffer.text == "draft"
+
+
+def test_accepting_full_access_only_prompts_once_per_process() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(runtime)  # type: ignore[arg-type]
+    app._status = runtime.status()
+    app._cycle_permission_mode()
+    app._cycle_permission_mode()
+    app._resolve_full_access(True)
+
+    assert runtime.permission_mode == "bypassPermissions"
+    assert app._panel is None
+    app._cycle_permission_mode()
+    app._cycle_permission_mode()
+    assert runtime.permission_mode == "acceptEdits"
+    app._cycle_permission_mode()
+    assert runtime.permission_mode == "bypassPermissions"
+    assert app._panel is None
 
 
 def test_slash_menu_is_below_composer_and_uses_terminal_background() -> None:

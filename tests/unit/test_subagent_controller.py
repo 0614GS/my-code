@@ -404,14 +404,16 @@ async def test_child_run_spec_captures_explicit_budgets_and_disables_permission_
 ) -> None:
     limits = SubagentLimits(max_steps=7, max_tokens=900)
     controller, factory, tasks = build_controller(tmp_path, limits=limits)
+    parent_policy = PermissionPolicy(PermissionMode.DEFAULT)
     started, handle = await controller.start(
         SubagentSpec(SubagentType.GENERAL, "explicit prompt", "budget test"),
         parent=parent(),
-        parent_policy=PermissionPolicy(PermissionMode.DEFAULT),
+        parent_policy=parent_policy,
         available_tools={},
         tool_snapshot_version=9,
     )
     await factory.entered.wait()
+    parent_policy.mode = PermissionMode.ACCEPT_EDITS
 
     spec = factory.specs[0]
     assert spec.run_id == started.run_id
@@ -431,6 +433,16 @@ async def test_child_run_spec_captures_explicit_budgets_and_disables_permission_
     factory.release.set()
     completed = await handle.wait()
     assert completed.status is TaskStatus.SUCCEEDED
+    _, next_handle = await controller.start(
+        SubagentSpec(SubagentType.GENERAL, "next prompt", "new mode snapshot"),
+        parent=parent(),
+        parent_policy=parent_policy,
+        available_tools={},
+        tool_snapshot_version=10,
+    )
+    assert (await next_handle.wait()).status is TaskStatus.SUCCEEDED
+    assert factory.specs[1].permission_policy is not None
+    assert factory.specs[1].permission_policy.mode is PermissionMode.ACCEPT_EDITS
     await tasks.close()
 
 
