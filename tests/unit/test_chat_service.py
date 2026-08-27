@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
@@ -35,6 +36,7 @@ from my_code.conversation.models import (
 )
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.state import CompactBoundary
+from my_code.features.background_tasks.registry import BackgroundTask
 from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
@@ -231,6 +233,84 @@ async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> 
     assert active.compact_count == 1
     assert active.context_entries == (summary,)
     assert status.compact_count == 1
+
+
+@pytest.mark.asyncio
+async def test_initialize_and_usage_return_safe_frontend_snapshots(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    user = HumanMessage("measure this")
+    runtime.state.session.append_human_message(user)
+    runtime.state.session.append_assistant_message(
+        AssistantMessage(
+            (TextContent("measured"),),
+            TokenUsage(11, 3, 5, 7, True),
+            parent_uuid=user.uuid,
+        )
+    )
+
+    view = await runtime.initialize()
+    usage = runtime.session_usage()
+    capabilities = runtime.capabilities()
+
+    assert view.status.session_id == _CURRENT_SESSION_ID
+    assert view.history[:2] == (
+        HistoryText("user", "measure this"),
+        HistoryText("assistant", "measured"),
+    )
+    assert usage.request_count == 1
+    assert usage.input_tokens == 11
+    assert usage.cache_creation_input_tokens == 5
+    assert usage.cache_read_input_tokens == 7
+    assert usage.total_input_tokens == 23
+    assert usage.output_tokens == 3
+    assert all(isinstance(tool.name, str) for tool in capabilities.tools)
+    assert runtime.state.skills.started is True
+    assert runtime.state.mcp.started is True
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_background_task_view_is_owner_scoped(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    registry = runtime._background_tasks
+    assert registry is not None
+    owned_id = str(uuid4())
+    foreign_id = str(uuid4())
+    owned = BackgroundTask(
+        owned_id,
+        _CURRENT_SESSION_ID,
+        "bash",
+        "safe summary",
+        {"output_file": "/private/owned.output"},
+    )
+    foreign = BackgroundTask(
+        foreign_id,
+        "another-session",
+        "subagent",
+        "must not leak",
+    )
+    registry.register(owned)
+    registry.register(foreign)
+
+    async def finish() -> object:
+        return None
+
+    owned_handle = await registry.tasks.submit(finish, name="owned", task_id=owned_id)
+    foreign_handle = await registry.tasks.submit(
+        finish, name="foreign", task_id=foreign_id
+    )
+    await owned_handle.wait()
+    await foreign_handle.wait()
+
+    views = runtime.background_tasks()
+
+    assert [(item.task_id, item.output_path) for item in views] == [
+        (owned_id, "/private/owned.output")
+    ]
+    assert all("must not leak" not in item.summary for item in views)
+    await runtime.close()
 
 
 @pytest.mark.asyncio

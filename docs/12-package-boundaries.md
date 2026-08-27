@@ -91,7 +91,7 @@ AST 测试检查：
 - 跨模块导入是否来自声明了 `__all__` 的公开语义模块。
 - 是否导入私有模块、wildcard 或未声明符号。
 - 是否跨所有者 re-export。
-- Provider SDK、Textual、Session 私有 JSONL 实现、AppState 和 bootstrap 是否泄漏。
+- Provider SDK、prompt_toolkit/Rich、Session 私有 JSONL 实现、AppState 和 bootstrap 是否泄漏。
 - 是否存在 Session 之外的可写 conversation collection 或第二份 permission 权威来源。
 
 测试可以导入实现细节以验证局部行为，但生产依赖必须满足上述规则。

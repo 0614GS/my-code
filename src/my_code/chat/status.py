@@ -17,6 +17,10 @@ class RuntimeStatus:
     context_entry_count: int
     conversation_entry_count: int
     todos: tuple[TodoItem, ...]
+    tool_count: int = 0
+    skill_count: int = 0
+    mcp_connected_count: int = 0
+    mcp_server_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)

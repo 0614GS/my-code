@@ -49,6 +49,16 @@ from my_code.chat.history import (
 )
 from my_code.chat.permissions import DeferredPermissionPrompter, PermissionHandler
 from my_code.chat.status import ContextStatus, RuntimeStatus
+from my_code.chat.views import (
+    BackgroundTaskView,
+    CapabilitiesView,
+    CapabilityDiagnosticView,
+    McpServerView,
+    SessionUsageView,
+    SessionView,
+    SkillCapabilityView,
+    ToolCapabilityView,
+)
 from my_code.config.settings import AgentSettings
 from my_code.context.engine import ContextEngine
 from my_code.conversation.attachments import AttachmentPayload
@@ -62,6 +72,7 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.file_mentions.loader import AttachmentLoader
 from my_code.features.file_mentions.models import PathSuggestion
 from my_code.features.file_mentions.suggestions import WorkspacePathSuggester
@@ -110,6 +121,7 @@ class ChatService:
         path_suggester: WorkspacePathSuggester | None = None,
         background_notifications: BackgroundNotificationSource | None = None,
         background_wake_signal: BackgroundWakeSignal | None = None,
+        background_tasks: BackgroundTaskRegistry | None = None,
     ) -> None:
         self.agent = agent
         self.context = context
@@ -123,6 +135,140 @@ class ChatService:
         self.path_suggester = path_suggester or WorkspacePathSuggester(settings.cwd)
         self.background_notifications = background_notifications
         self.background_wake_signal = background_wake_signal
+        self._background_tasks = background_tasks
+
+    async def initialize(self) -> SessionView:
+        """Start optional capabilities before publishing the initial UI snapshot."""
+
+        async with self.state.operation_lock():
+            await self.state.start()
+            return self.current_session_view()
+
+    def current_session_view(self) -> SessionView:
+        session = self.state.session
+        return SessionView(self.status(), self._project_history(session))
+
+    def session_usage(self) -> SessionUsageView:
+        usages = (
+            message.usage
+            for message in self.state.session.conversation
+            if isinstance(message, AssistantMessage)
+        )
+        request_count = 0
+        input_tokens = 0
+        output_tokens = 0
+        cache_creation = 0
+        cache_read = 0
+        for usage in usages:
+            request_count += 1
+            input_tokens += usage.input_tokens
+            output_tokens += usage.output_tokens
+            cache_creation += usage.cache_creation_input_tokens
+            cache_read += usage.cache_read_input_tokens
+        return SessionUsageView(
+            request_count,
+            input_tokens,
+            cache_creation,
+            cache_read,
+            output_tokens,
+            self.context_status(),
+        )
+
+    def capabilities(self) -> CapabilitiesView:
+        """Return a fresh catalog snapshot without leaking runtime objects."""
+
+        tools = self.state.tools.snapshot()
+        skill_snapshot = self.state.skills.catalog.snapshot()
+        return CapabilitiesView(
+            tools=tuple(
+                ToolCapabilityView(
+                    registration.tool.definition.name,
+                    registration.tool.definition.description,
+                    str(registration.source),
+                )
+                for registration in tools.registrations
+            ),
+            skills=tuple(
+                SkillCapabilityView(
+                    entry.name,
+                    entry.description,
+                    str(entry.source),
+                    entry.compatibility,
+                )
+                for entry in skill_snapshot.entries
+            ),
+            skill_diagnostics=tuple(
+                CapabilityDiagnosticView(
+                    str(diagnostic.source),
+                    diagnostic.code.value,
+                    diagnostic.message,
+                )
+                for diagnostic in skill_snapshot.diagnostics
+            ),
+            mcp_servers=tuple(
+                McpServerView(
+                    server.name,
+                    server.state.value,
+                    server.tool_names,
+                    (
+                        CapabilityDiagnosticView(
+                            server.name,
+                            server.diagnostic.code.value,
+                            server.diagnostic.message,
+                        )
+                        if server.diagnostic is not None
+                        else None
+                    ),
+                )
+                for server in self.state.mcp.snapshots()
+            ),
+        )
+
+    def background_tasks(self) -> tuple[BackgroundTaskView, ...]:
+        registry = self._background_tasks
+        if registry is None:
+            return ()
+        owner = self.state.session.session_id
+        views: list[BackgroundTaskView] = []
+        for item in registry.tasks_for(owner):
+            snapshot = registry.tasks.snapshot(item.task_id)
+            output_path = item.details.get("output_file")
+            views.append(
+                BackgroundTaskView(
+                    task_id=item.task_id,
+                    task_type=item.task_type,
+                    summary=item.summary,
+                    status=snapshot.status.value,
+                    created_at=snapshot.created_at,
+                    started_at=snapshot.started_at,
+                    finished_at=snapshot.finished_at,
+                    output_path=(output_path if isinstance(output_path, str) else None),
+                    error=(
+                        snapshot.failure.message
+                        if snapshot.failure is not None
+                        else None
+                    ),
+                )
+            )
+        return tuple(views)
+
+    async def reload_skills(self) -> CapabilitiesView:
+        async with self.state.operation_lock():
+            await self.state.start()
+            self.state.skills.reload()
+            return self.capabilities()
+
+    async def refresh_mcp(self, server: str) -> CapabilitiesView:
+        async with self.state.operation_lock():
+            await self.state.start()
+            await self.state.mcp.refresh(server)
+            return self.capabilities()
+
+    async def reconnect_mcp(self, server: str) -> CapabilitiesView:
+        async with self.state.operation_lock():
+            await self.state.start()
+            await self.state.mcp.reconnect(server)
+            return self.capabilities()
 
     async def submit(self, prompt: str) -> TurnOutcome:
         async with self.state.operation_lock():
@@ -239,6 +385,7 @@ class ChatService:
     def status(self) -> RuntimeStatus:
         session = self.state.session
         connection = self.state.provider.router.connection
+        capabilities = self.capabilities()
         return RuntimeStatus(
             session_id=session.session_id,
             cwd=str(self.settings.cwd),
@@ -250,6 +397,12 @@ class ChatService:
             context_entry_count=session.context_entry_count,
             conversation_entry_count=session.conversation_entry_count,
             todos=project_todos(session.conversation).todos,
+            tool_count=len(capabilities.tools),
+            skill_count=len(capabilities.skills),
+            mcp_connected_count=sum(
+                server.state == "connected" for server in capabilities.mcp_servers
+            ),
+            mcp_server_count=len(capabilities.mcp_servers),
         )
 
     def context_status(self) -> ContextStatus:

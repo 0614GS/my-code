@@ -1,109 +1,67 @@
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
-from typing import cast
+from io import StringIO
 
 import pytest
+from prompt_toolkit.data_structures import Size
+from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
+from prompt_toolkit.input.defaults import create_pipe_input
+from prompt_toolkit.layout import Window
+from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.output.color_depth import ColorDepth
 from rich.console import Console
-from textual.widgets import Input, OptionList
+from rich.padding import Padding
 
 from my_code.chat.events import (
-    BackgroundInvocationFinished,
-    BackgroundInvocationStarted,
-    MaxStepsReached,
-    ReasoningCompleted,
-    ReasoningDelta,
-    ReasoningStarted,
     TextCompleted,
     TextDelta,
     TextStarted,
-    TodoListUpdated,
-    ToolFinished,
-    ToolStarted,
     TurnEvent,
-    TurnOutcome,
     TurnSucceeded,
 )
-from my_code.chat.history import HistoryText, ResumedSession
-from my_code.chat.permissions import PermissionHandler, PermissionRequest
-from my_code.chat.service import ChatService
+from my_code.chat.history import HistoryText
+from my_code.chat.permissions import PermissionRequest
 from my_code.chat.status import ContextStatus, RuntimeStatus
+from my_code.chat.views import CapabilitiesView, SessionView
 from my_code.config.providers import ProviderProtocol
-from my_code.conversation.presentation import ToolResultPresentation
-from my_code.features.file_mentions.models import PathSuggestion
-from my_code.features.todos.models import TodoItem
-from my_code.model.primitives import ReasoningPresentation
-from my_code.permissions.models import (
-    PermissionBehavior,
-    PermissionConfirmation,
-    PermissionRule,
-    PermissionUpdate,
-    PermissionUpdateDestination,
-)
+from my_code.permissions.models import PermissionConfirmation
 from my_code.providers.manager import ProviderUpdate, ProviderView
-from my_code.sessions.catalog import SessionSummary
 from my_code.tools.presentation import ToolUsePresentation
-from my_code.tui.app import MyCodeApp, _format_context_usage, _render_context_status
+from my_code.tui.app import MyCodeApp
 from my_code.tui.commands import SlashCommandRegistry
-from my_code.tui.provider_screen import ProviderScreen
-from my_code.tui.resume_screen import ResumeScreen
-from my_code.tui.widgets import (
-    ActivityBar,
-    AssistantMessage,
-    PermissionPanel,
-    ReasoningMessage,
-    StatusBar,
-    SystemMessage,
-    TodoPanel,
-    ToolCallMessage,
-    UserMessage,
-)
+from my_code.tui.presentation import format_context_usage, render_context_status
+from my_code.tui.provider_screen import ProviderForm
+from my_code.tui.terminal import NativeCursorVt100Output, terminal_color_depth
+from my_code.tui.theme import TerminalPalette, TuiTheme
+from my_code.tui.widgets import user_message
 
 
 class FakeRuntime:
-    def __init__(self, *, request_permission: bool = False) -> None:
+    def __init__(self, *, history: tuple[HistoryText, ...] = ()) -> None:
         self.prompts: list[str] = []
-        self.permission_handler: PermissionHandler | None = None
-        self.request_permission = request_permission
-        self.permission_result: PermissionConfirmation | None = None
+        self.history = history
+        self.permission_handler = None
+        self.submitted = asyncio.Event()
         self.provider_updates: list[ProviderUpdate] = []
-        self.resumed_session_ids: list[str] = []
-        self.session_summaries: tuple[SessionSummary, ...] = ()
-        self.compact_calls = 0
-        self.todos: tuple[TodoItem, ...] = ()
-        self.todo_update: tuple[TodoItem, ...] | None = None
-        self.path_suggestions: tuple[PathSuggestion, ...] = ()
 
-    async def submit(self, prompt: str) -> TurnOutcome:
-        self.prompts.append(prompt)
-        return TurnSucceeded("**model response**", 1, 10, 2)
+    async def initialize(self) -> SessionView:
+        return SessionView(self.status(), self.history)
+
+    def set_permission_handler(self, handler):
+        self.permission_handler = handler
 
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
         self.prompts.append(prompt)
-        if self.request_permission:
-            assert self.permission_handler is not None
-            use = ToolUsePresentation("Write", "a.txt", "Writing a.txt")
-            yield ToolStarted("tool-1", use)
-            self.permission_result = await self.permission_handler(
-                PermissionRequest("Write", {"path": "a.txt"}, "Allow this write?", use)
-            )
-            yield ToolFinished(
-                "tool-1",
-                not self.permission_result.allowed,
-                ToolResultPresentation(
-                    summary=(
-                        "Wrote 4 bytes to a.txt"
-                        if self.permission_result.allowed
-                        else "Permission denied"
-                    )
-                ),
-            )
-        if self.todo_update is not None:
-            self.todos = self.todo_update
-            yield TodoListUpdated(self.todos)
-        yield TextDelta("**model ")
-        yield TextDelta("response**")
+        self.submitted.set()
+        yield TextStarted()
+        yield TextDelta("**model response**")
+        yield TextCompleted("**model response**")
         yield TurnSucceeded("**model response**", 1, 10, 2)
+
+    async def stream_background_notifications(self) -> AsyncIterator[TurnEvent]:
+        while True:
+            await asyncio.sleep(3600)
+            yield TextDelta("")
 
     def status(self) -> RuntimeStatus:
         return RuntimeStatus(
@@ -116,7 +74,9 @@ class FakeRuntime:
             credential_source="stored",
             context_entry_count=len(self.prompts) * 2,
             conversation_entry_count=len(self.prompts) * 2,
-            todos=self.todos,
+            todos=(),
+            tool_count=5,
+            skill_count=1,
         )
 
     def context_status(self) -> ContextStatus:
@@ -124,220 +84,412 @@ class FakeRuntime:
             estimated_input_tokens=100,
             reserved_output_tokens=20,
             estimated_total_tokens=120,
-            message_chars=200,
-            system_chars=50,
-            tool_schema_chars=75,
+            message_chars=300,
+            system_chars=100,
+            tool_schema_chars=200,
             message_limit_chars=1000,
-            context_entry_count=2,
-            conversation_entry_count=2,
+            context_entry_count=0,
+            conversation_entry_count=0,
             replacement_count=1,
-            compact_count=self.compact_calls,
+            compact_count=0,
+            input_limit_tokens=200_000,
+            compact_trigger_tokens=180_000,
         )
 
-    async def compact(self) -> ContextStatus:
-        self.compact_calls += 1
-        return self.context_status()
-
-    async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
-        return tuple(item for item in self.path_suggestions if query in item.path)
-
-    def set_permission_handler(self, handler: PermissionHandler) -> None:
-        self.permission_handler = handler
+    def capabilities(self) -> CapabilitiesView:
+        return CapabilitiesView((), (), (), ())
 
     def providers(self) -> tuple[ProviderView, ...]:
         return (
             ProviderView(
-                id="anthropic",
-                protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
-                model="test-model",
-                base_url=None,
-                active=True,
-                has_stored_key=True,
+                "anthropic",
+                ProviderProtocol.ANTHROPIC_MESSAGES,
+                "test-model",
+                None,
+                True,
+                True,
             ),
         )
-
-    async def refresh_provider_models(self, provider_id: str) -> ProviderView:
-        return self.providers()[0]
 
     async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
         self.provider_updates.append(update)
         return self.status()
 
-    async def list_sessions(self) -> tuple[SessionSummary, ...]:
-        return self.session_summaries
+    async def suggest_paths(self, query: str):
+        del query
+        return ()
 
-    async def resume_session(self, session_id: str) -> ResumedSession:
-        self.resumed_session_ids.append(session_id)
-        return ResumedSession(
-            status=self.status(),
-            history=(
-                HistoryText("user", "old prompt"),
-                HistoryText("assistant", "old response"),
-            ),
+
+@pytest.mark.asyncio
+async def test_inline_host_submits_multiline_and_keeps_normal_scrollback() -> None:
+    runtime = FakeRuntime()
+    stream = StringIO()
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=stream, width=100, force_terminal=False),
         )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("first\x1b\rsecond\r")
+        await asyncio.wait_for(runtime.submitted.wait(), 1)
+        assert runtime.prompts == ["first\nsecond"]
+        await asyncio.sleep(0.05)
+        pipe.send_bytes(b"\x04")
+        await running
+
+    output = stream.getvalue()
+    assert "model response" in output
+    assert "Done · 1 steps" in output
+    assert "\x1b[?1049" not in output
 
 
-class MaxStepsRuntime(FakeRuntime):
-    async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
-        self.prompts.append(prompt)
-        yield MaxStepsReached(3, 3, 30, 6)
+@pytest.mark.asyncio
+async def test_ctrl_d_requires_an_empty_composer() -> None:
+    runtime = FakeRuntime()
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("draft")
+        pipe.send_bytes(b"\x04")
+        await asyncio.sleep(0.05)
+        assert not running.done()
+        pipe.send_bytes(b"\x03\x04")
+        await running
 
 
-class ReasoningRuntime(FakeRuntime):
-    async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
-        self.prompts.append(prompt)
-        yield ReasoningStarted("verbatim")
-        yield ReasoningDelta("verbatim", 0, "first draft")
-        yield ReasoningCompleted(ReasoningPresentation("verbatim", ("first final",)))
-        yield ReasoningStarted("summary")
-        yield ReasoningDelta("summary", 0, "second draft")
-        yield ReasoningCompleted(ReasoningPresentation("summary", ("second final",)))
-        yield TextStarted()
-        yield TextDelta("draft")
-        yield TextCompleted("corrected")
-        yield TurnSucceeded("corrected", 1, 1, 1)
+@pytest.mark.asyncio
+async def test_startup_renders_safe_restored_history() -> None:
+    stream = StringIO()
+    runtime = FakeRuntime(
+        history=(
+            HistoryText("user", "old prompt"),
+            HistoryText("assistant", "old answer"),
+        )
+    )
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=stream, force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_bytes(b"\x04")
+        await running
+
+    assert "old prompt" in stream.getvalue()
+    assert "old answer" in stream.getvalue()
 
 
-class InterruptedReasoningRuntime(FakeRuntime):
-    async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
-        self.prompts.append(prompt)
-        yield ReasoningStarted("summary")
-        yield ReasoningDelta("summary", 0, "complete")
-        yield ReasoningCompleted(ReasoningPresentation("summary", ("complete",)))
-        yield ReasoningStarted("summary")
-        yield ReasoningDelta("summary", 0, "partial")
-        raise RuntimeError("provider failed")
+def test_slash_opens_command_suggestions_while_typing() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app.buffer.text = "/"
+
+    assert app._slash_active()
+    assert app._slash_menu.selected == 0
+    assert {item.name for item in app._slash_menu.matches} >= {
+        "help",
+        "provider",
+        "resume",
+    }
+    menu = app._slash_menu_text()
+    assert menu[0][0] == "class:selected"
 
 
-class BackgroundRuntime(FakeRuntime):
-    def __init__(self, *, error: str | None = None) -> None:
-        super().__init__()
-        self.entered = asyncio.Event()
-        self.release = asyncio.Event()
-        self.error = error
+def test_tab_only_inserts_the_selected_slash_command() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app.buffer.text = "/sta"
 
-    async def stream_background_notifications(self) -> AsyncIterator[TurnEvent]:
-        yield BackgroundInvocationStarted()
-        self.entered.set()
-        await self.release.wait()
-        if self.error is None:
-            yield TextStarted()
-            yield TextDelta("background response")
-            yield TextCompleted("background response")
-        yield BackgroundInvocationFinished(self.error)
+    app._accept_slash(execute=False)
+
+    assert app.buffer.text == "/status "
+    assert runtime.prompts == []
+    assert not app._slash_active()
 
 
-def test_slash_registry_filters_candidates_by_prefix() -> None:
-    matches = SlashCommandRegistry.default().matching("/st")
+@pytest.mark.asyncio
+async def test_slash_menu_is_started_by_real_input_without_tab() -> None:
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            FakeRuntime(),  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("/")
+        for _ in range(20):
+            if app._slash_active():
+                break
+            await asyncio.sleep(0.01)
 
-    assert [command.name for command in matches] == ["status"]
+        assert app._slash_active()
+        assert len(app._slash_menu.matches) > 1
+        pipe.send_bytes(b"\x03\x04")
+        await running
 
 
-def test_provider_slash_command_requests_manager_screen() -> None:
-    outcome = SlashCommandRegistry.default().dispatch(
-        "/provider", status=FakeRuntime().status()
+def test_composer_preserves_the_native_terminal_cursor() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
     )
 
-    assert outcome is not None
-    assert outcome.open_provider_manager is True
+    shape = app.application.cursor.get_cursor_shape(app.application)
+    assert shape.value == "_NEVER_CHANGE"
 
 
-def test_resume_slash_command_requests_session_picker() -> None:
-    outcome = SlashCommandRegistry.default().dispatch(
-        "/resume", status=FakeRuntime().status()
+def test_vt_output_shows_cursor_without_disabling_terminal_blink() -> None:
+    stream = StringIO()
+    output = NativeCursorVt100Output(stream, lambda: Size(rows=24, columns=80))
+
+    output.hide_cursor()
+    output.show_cursor()
+    output.flush()
+
+    rendered = stream.getvalue()
+    assert "\x1b[?12h" in rendered
+    assert "\x1b[?25h" in rendered
+    assert "\x1b[?12l" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_enter_executes_the_default_selected_slash_command() -> None:
+    runtime = FakeRuntime()
+    stream = StringIO()
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=stream, force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("/sta")
+        for _ in range(20):
+            if app._slash_menu.current is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert app._slash_menu.current is not None
+        assert app._slash_menu.current.name == "status"
+        pipe.send_text("\r")
+        await asyncio.sleep(0.05)
+        pipe.send_bytes(b"\x04")
+        await running
+
+    assert runtime.prompts == []
+    assert "Session:" in stream.getvalue()
+
+
+def test_status_render_uses_cached_context_during_an_in_flight_tool_call() -> None:
+    class InFlightRuntime(FakeRuntime):
+        def context_status(self) -> ContextStatus:
+            raise ValueError("Unresolved tool use in model input: call_01")
+
+    runtime = InFlightRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._status = runtime.status()
+    app._context_status = FakeRuntime().context_status()
+
+    assert app._status_text().endswith("0.1k / 200k")
+
+
+def test_slash_menu_is_below_composer_and_uses_terminal_background() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
     )
 
-    assert outcome is not None
-    assert outcome.open_session_picker is True
+    composer_index = next(
+        index
+        for index, child in enumerate(app.body.children)
+        if getattr(child, "content", None) is app.input_control
+    )
+    menu_index = app.body.children.index(app.slash_menu)
+    assert menu_index > composer_index
+
+    style = app.application.style
+    assert style is not None
+    normal = style.get_attrs_for_style_str("class:completion-menu.meta.completion")
+    selected = style.get_attrs_for_style_str("class:completion-menu.completion.current")
+    assert normal.bgcolor == "default"
+    assert selected.bgcolor == "default"
+    assert selected.reverse is False
+    menu_window = app.completions_menu.content
+    assert isinstance(menu_window, Window)
+    assert menu_window.right_margins == []
 
 
-def test_context_and_compact_commands_request_runtime_actions() -> None:
+def test_user_message_uses_a_full_width_background() -> None:
+    theme = TuiTheme(TerminalPalette((48, 10, 36)))
+    message = user_message("hello", theme)
+
+    assert isinstance(message, Padding)
+    assert message.expand is True
+    assert message.style == "on #49273e"
+
+
+def test_theme_adapts_user_surface_to_light_and_dark_terminals() -> None:
+    dark = TerminalPalette((0, 0, 0))
+    light = TerminalPalette((255, 255, 255))
+
+    assert dark.surface == "#1f1f1f"
+    assert light.surface == "#f5f5f5"
+    assert dark.accent == "#46a6e8"
+    assert light.accent == "#005f87"
+
+
+def test_windows_terminal_forces_true_color(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WT_SESSION", "test-session")
+
+    assert terminal_color_depth(DummyOutput()) is ColorDepth.DEPTH_24_BIT
+
+
+def test_slash_navigation_does_not_wrap_in_the_wrong_direction() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app.buffer.text = "/"
+
+    app._move_slash(-1)
+    assert app._slash_menu.selected == 0
+    app._move_slash(1)
+    assert app._slash_menu.selected == 1
+
+
+@pytest.mark.asyncio
+async def test_real_arrow_sequences_move_slash_selection_in_screen_direction() -> None:
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            FakeRuntime(),  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("/")
+        for _ in range(20):
+            if app._slash_active():
+                break
+            await asyncio.sleep(0.01)
+
+        assert app._slash_menu.selected == 0
+        pipe.send_bytes(b"\x1b[B")
+        await asyncio.sleep(0.05)
+        assert app._slash_menu.selected == 1
+        pipe.send_bytes(b"\x1b[A")
+        await asyncio.sleep(0.05)
+        assert app._slash_menu.selected == 0
+
+        pipe.send_bytes(b"\x03\x04")
+        await running
+
+
+@pytest.mark.asyncio
+async def test_provider_picker_uses_enter_for_primary_actions() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app.buffer.text = "draft"
+    app._open_provider()
+
+    assert app._panel == "provider_select"
+    await app._panel_enter()
+    assert app._panel == "provider_actions"
+    assert "Use this provider" in fragment_list_to_text(
+        to_formatted_text(app._panel_text())
+    )
+
+    await app._panel_enter()
+    assert [update.id for update in runtime.provider_updates] == ["anthropic"]
+    assert app._panel is None
+    assert app.buffer.text == "draft"
+
+
+@pytest.mark.asyncio
+async def test_provider_configuration_has_core_review_and_optional_advanced_steps() -> (
+    None
+):
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._provider_selected_index = -1
+    app._start_provider_form(ProviderForm())
+    core_values = (
+        "gateway",
+        "openai-responses",
+        "https://example.test/v1",
+        "model-x",
+        "secret",
+    )
+    for value in core_values:
+        app.buffer.text = value
+        await app._panel_enter()
+
+    assert app._panel == "provider_review"
+    assert "Advanced settings" in fragment_list_to_text(
+        to_formatted_text(app._panel_text())
+    )
+    app._panel_index = 2
+    await app._panel_enter()
+    assert app._panel == "provider_form"
+    assert "1/7" in fragment_list_to_text(to_formatted_text(app._panel_text()))
+
+
+def test_new_slash_commands_have_strict_subcommands() -> None:
     registry = SlashCommandRegistry.default()
     status = FakeRuntime().status()
 
-    context = registry.dispatch("/context", status=status)
-    compact = registry.dispatch("/compact", status=status)
-
-    assert context is not None and context.show_context is True
-    assert compact is not None and compact.compact_context is True
-
-
-@pytest.mark.asyncio
-async def test_tui_dispatches_selected_slash_command_locally() -> None:
-    runtime = FakeRuntime()
-    app = _app(runtime)
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        prompt = app.query_one("#prompt", Input)
-        prompt.value = "/st"
-        await pilot.pause()
-
-        palette = app.query_one("#command-palette", OptionList)
-        assert palette.display is True
-        assert palette.get_option_at_index(0).id == "status"
-
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert runtime.prompts == []
-        assert len(app.query(SystemMessage)) == 1
+    assert registry.dispatch("/usage", status=status).show_usage  # type: ignore[union-attr]
+    assert registry.dispatch("/tools", status=status).show_tools  # type: ignore[union-attr]
+    skills = registry.dispatch("/skills reload", status=status)
+    mcp = registry.dispatch("/mcp refresh local", status=status)
+    assert skills is not None and skills.skill_operation == "reload"
+    assert mcp is not None and mcp.mcp_operation == ("refresh", "local")
+    assert registry.dispatch("/tasks", status=status).show_tasks  # type: ignore[union-attr]
+    invalid = registry.dispatch("/mcp refresh", status=status)
+    assert invalid is not None and invalid.message.startswith("Usage:")
 
 
-@pytest.mark.asyncio
-async def test_tui_selects_path_suggestion_without_submitting() -> None:
-    runtime = FakeRuntime()
-    runtime.path_suggestions = (
-        PathSuggestion("docs/a file.md", False, "docs/a file.md"),
-    )
-    app = _app(runtime)
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        prompt = app.query_one("#prompt", Input)
-        prompt.value = "review @docs/a"
-        prompt.cursor_position = len(prompt.value)
-        await pilot.pause()
-
-        palette = app.query_one("#command-palette", OptionList)
-        assert palette.display is True
-        assert palette.get_option_at_index(0).id == "path:0"
-
-        await pilot.press("tab")
-        await pilot.pause()
-
-        assert prompt.value == 'review @"docs/a file.md" '
-        assert palette.display is False
-        assert runtime.prompts == []
-
-
-@pytest.mark.asyncio
-async def test_context_and_compact_render_runtime_diagnostics() -> None:
-    runtime = FakeRuntime()
-    app = _app(runtime)
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        assert app.query_one(StatusBar).context_usage == "0.1k / 200k"
-
-        app.query_one("#prompt", Input).value = "/context"
-        await pilot.press("enter")
-        await pilot.pause()
-        context = str(app.query(SystemMessage)[-1].render())
-        assert "Context: 0.1k / 200k" in context
-        assert "Measured by: local estimate" in context
-        assert "Characters:" not in context
-
-        app.query_one("#prompt", Input).value = "/compact"
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert runtime.compact_calls == 1
-        assert "Conversation compacted" in str(app.query(SystemMessage)[-1].render())
-
-
-def test_context_usage_uses_estimated_input_over_effective_input_max() -> None:
+def test_context_usage_remains_compact() -> None:
     status = FakeRuntime().context_status()
-
-    assert _format_context_usage(status) == "0.1k / 200k"
-    assert _render_context_status(status).splitlines() == [
+    assert format_context_usage(status) == "0.1k / 200k"
+    assert render_context_status(status).splitlines() == [
         "Context: 0.1k / 200k",
         "Measured by: local estimate",
         "Compact at: 180k (auto)",
@@ -346,380 +498,62 @@ def test_context_usage_uses_estimated_input_over_effective_input_max() -> None:
 
 
 @pytest.mark.asyncio
-async def test_background_invocation_owns_busy_ui_and_restores_input() -> None:
-    runtime = BackgroundRuntime()
-    app = _app(runtime)
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        await asyncio.wait_for(runtime.entered.wait(), 1)
-        await pilot.pause()
-        prompt = app.query_one("#prompt", Input)
-        assert prompt.disabled is True
-        assert app.query_one(ActivityBar).display is True
-
-        runtime.release.set()
-        await pilot.pause(0.1)
-
-        assert prompt.disabled is False
-        assert app.query_one(ActivityBar).display is False
-        assert [item.source for item in app.query(AssistantMessage)] == [
-            "background response"
-        ]
-        assert not app.query(UserMessage)
-
-
-@pytest.mark.asyncio
-async def test_background_invocation_error_is_rendered_and_ui_recovers() -> None:
-    runtime = BackgroundRuntime(error="provider failed")
-    app = _app(runtime)
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        await asyncio.wait_for(runtime.entered.wait(), 1)
-        runtime.release.set()
-        await pilot.pause(0.1)
-
-        prompt = app.query_one("#prompt", Input)
-        assert prompt.disabled is False
-        errors = [str(item.render()) for item in app.query(SystemMessage)]
-        assert errors == ["Background continuation failed: provider failed"]
-
-
-@pytest.mark.asyncio
-async def test_provider_slash_command_opens_profile_editor() -> None:
-    app = _app(FakeRuntime())
-
-    async with app.run_test(size=(110, 36)) as pilot:
-        app.query_one("#prompt", Input).value = "/provider"
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert isinstance(app.screen, ProviderScreen)
-        assert app.screen.query_one("#provider-key", Input).password is True
-        await pilot.press("escape")
-
-
-@pytest.mark.asyncio
-async def test_resume_picker_selects_session_and_replaces_conversation() -> None:
+async def test_permission_panel_returns_feedback_and_restores_draft() -> None:
     runtime = FakeRuntime()
-    session_id = "12345678-1234-1234-1234-123456789abc"
-    runtime.session_summaries = (
-        SessionSummary(
-            session_id=session_id,
-            title="Fix session resume",
-            updated_at=datetime.now(UTC),
-        ),
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
     )
-    app = _app(runtime)
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        app.query_one("#prompt", Input).value = "/resume"
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert isinstance(app.screen, ResumeScreen)
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert runtime.resumed_session_ids == [session_id]
-        assert [message.prompt for message in app.query(UserMessage)] == ["old prompt"]
-        assert [message.source for message in app.query(AssistantMessage)] == [
-            "old response"
-        ]
-
-
-@pytest.mark.asyncio
-async def test_provider_editor_submits_password_key_to_runtime() -> None:
-    runtime = FakeRuntime()
-    app = _app(runtime)
-
-    async with app.run_test(size=(110, 36)) as pilot:
-        app.query_one("#prompt", Input).value = "/provider"
-        await pilot.press("enter")
-        await pilot.pause()
-        await pilot.click("#provider-new")
-        app.screen.query_one("#provider-id", Input).value = "gateway"
-        app.screen.query_one(
-            "#provider-url", Input
-        ).value = "https://gateway.example/api"
-        app.screen.query_one("#provider-model", Input).value = "gateway-model"
-        app.screen.query_one("#provider-key", Input).value = "secret-key"
-
-        await pilot.click("#provider-save")
-        await pilot.pause()
-
-        assert runtime.provider_updates == [
-            ProviderUpdate(
-                id="gateway",
-                model="gateway-model",
-                base_url="https://gateway.example/api",
-                api_key="secret-key",
-            )
-        ]
-
-
-@pytest.mark.asyncio
-async def test_permission_request_uses_inline_panel_and_returns_explicit_choice() -> (
-    None
-):
-    app = _app(FakeRuntime())
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        permission = asyncio.create_task(
-            app._ask_permission(
-                PermissionRequest(
-                    "Write",
-                    {"path": "a.txt"},
-                    "Allow this write?",
-                    ToolUsePresentation("Write", "a.txt", "Writing a.txt"),
-                )
-            )
-        )
-        await pilot.pause()
-
-        panel = app.query_one(PermissionPanel)
-        assert panel.display is True
-        assert app.query_one("#prompt", Input).display is False
-        options = app.query_one("#permission-options", OptionList)
-        assert [option.id for option in options.options] == [
-            "yes",
-            "no",
-            "feedback",
-        ]
-        await pilot.press("1")
-
-        assert await permission == PermissionConfirmation(True)
-
-
-@pytest.mark.asyncio
-async def test_permission_feedback_is_returned_to_runtime() -> None:
-    app = _app(FakeRuntime())
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        permission = asyncio.create_task(
-            app._ask_permission(
-                PermissionRequest(
-                    "Bash",
-                    {"command": "git push"},
-                    "Run command?",
-                    ToolUsePresentation("Bash", "git push", "Running command"),
-                )
-            )
-        )
-        await pilot.pause()
-        await pilot.press("3")
-
-        feedback = app.query_one("#permission-feedback", Input)
-        assert feedback.display is True
-        feedback.value = "Do not push; only show the diff."
-        await pilot.press("enter")
-
-        assert await permission == PermissionConfirmation(
-            False, "Do not push; only show the diff."
-        )
-
-
-@pytest.mark.asyncio
-async def test_permission_remember_captures_bash_prefix() -> None:
-    app = _app(FakeRuntime())
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        permission = asyncio.create_task(
-            app._ask_permission(
-                PermissionRequest(
-                    "Bash",
-                    {"command": "git diff"},
-                    "Run command?",
-                    ToolUsePresentation("Bash", "git diff", "Running command"),
-                )
-            )
-        )
-        await pilot.pause()
-        await pilot.press("4")
-        await pilot.pause()
-
-        prefix = app.query_one("#permission-prefix", Input)
-        assert prefix.display is True
-        prefix.value = "git diff:*"
-        await pilot.press("enter")
-
-        assert await permission == PermissionConfirmation(
-            True,
-            updates=(
-                PermissionUpdate.add_rules(
-                    (
-                        PermissionRule(
-                            "Bash",
-                            PermissionBehavior.ALLOW,
-                            "git diff:*",
-                            source="localSettings",
-                        ),
-                    ),
-                    destination=PermissionUpdateDestination.LOCAL,
-                ),
-            ),
-        )
-
-
-@pytest.mark.asyncio
-async def test_permission_remember_uses_whole_tool_rule_for_non_bash() -> None:
-    app = _app(FakeRuntime())
-    suggestion = PermissionUpdate.add_rules(
-        (
-            PermissionRule(
+    app.buffer.text = "unfinished draft"
+    pending = asyncio.create_task(
+        app._ask_permission(
+            PermissionRequest(
                 "Write",
-                PermissionBehavior.ALLOW,
-                "a.txt",
-                source="localSettings",
-            ),
-        ),
-        destination=PermissionUpdateDestination.LOCAL,
-    )
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        permission = asyncio.create_task(
-            app._ask_permission(
-                PermissionRequest(
-                    "Write",
-                    {"path": "a.txt", "content": "x"},
-                    "Allow this write?",
-                    ToolUsePresentation("Write", "a.txt", "Writing a.txt"),
-                    suggestions=(suggestion,),
-                )
+                {"path": "a.txt"},
+                "Allow this write?",
+                ToolUsePresentation("Write", "a.txt", "Writing a.txt"),
             )
         )
-        await pilot.pause()
-        await pilot.press("4")
-
-        assert await permission == PermissionConfirmation(
-            True,
-            updates=(suggestion,),
-        )
-
-
-@pytest.mark.asyncio
-async def test_tui_streams_markdown_and_updates_tool_result_in_place() -> None:
-    runtime = FakeRuntime(request_permission=True)
-    app = _app(runtime)
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        app.query_one("#prompt", Input).value = "write it"
-        await pilot.press("enter")
-        await pilot.pause()
-        await pilot.press("1")
-        await pilot.pause()
-
-        tool = app.query_one(ToolCallMessage)
-        assistant = app.query_one(AssistantMessage)
-        assert tool.result == ToolResultPresentation(summary="Wrote 4 bytes to a.txt")
-        assert assistant.source == "**model response**"
-        assert runtime.permission_result == PermissionConfirmation(True)
-
-
-@pytest.mark.asyncio
-async def test_tui_atomically_completes_multiple_reasoning_and_text_blocks() -> None:
-    app = _app(ReasoningRuntime())
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        app.query_one("#prompt", Input).value = "think"
-        await pilot.press("enter")
-        await pilot.pause()
-
-        reasoning = list(app.query(ReasoningMessage))
-        assert len(reasoning) == 2
-        assert [item.parts for item in reasoning] == [
-            ["first final"],
-            ["second final"],
-        ]
-        assert all(item.completed and not item.interrupted for item in reasoning)
-        assert list(app.query(AssistantMessage))[-1].source == "corrected"
-
-
-@pytest.mark.asyncio
-async def test_tui_marks_only_active_reasoning_interrupted() -> None:
-    app = _app(InterruptedReasoningRuntime())
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        app.query_one("#prompt", Input).value = "think"
-        await pilot.press("enter")
-        await pilot.pause()
-
-        reasoning = list(app.query(ReasoningMessage))
-        assert len(reasoning) == 2
-        assert reasoning[0].interrupted is False
-        assert reasoning[1].interrupted is True
-
-
-@pytest.mark.asyncio
-async def test_tui_renders_structured_max_steps_terminal_outcome() -> None:
-    app = _app(MaxStepsRuntime())
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        app.query_one("#prompt", Input).value = "keep working"
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert "Reached max steps (3)" in str(app.query(SystemMessage)[-1].render())
-        assert app.query_one("#prompt", Input).disabled is False
-
-
-@pytest.mark.asyncio
-async def test_tui_updates_and_toggles_todo_panel_during_turn() -> None:
-    runtime = FakeRuntime()
-    runtime.todo_update = (
-        TodoItem("Inspect implementation", "completed", "Inspecting implementation"),
-        TodoItem("Run tests", "in_progress", "Running tests"),
-        TodoItem("Write docs", "pending", "Writing docs"),
     )
-    app = _app(runtime)
+    await asyncio.sleep(0)
+    app._choose_permission("feedback")
+    app.buffer.text = "Use another file."
+    await app._panel_enter()
 
-    async with app.run_test(size=(100, 36)) as pilot:
-        panel = app.query_one(TodoPanel)
-        assert panel.display is False
-
-        app.query_one("#prompt", Input).value = "continue"
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert panel.display is True
-        assert panel.expanded is True
-        assert panel.todos == runtime.todo_update
-        console = Console(width=100, color_system=None)
-        with console.capture() as capture:
-            console.print(panel.render())
-        assert "✓ Inspect implementation" in capture.get()
-        activity = app.query_one(ActivityBar)
-        assert "Running tests" in str(activity.query_one("Label").render())
-
-        await pilot.press("ctrl+t")
-        assert panel.expanded is False
-
-        runtime.todo_update = (TodoItem("Write docs", "in_progress", "Writing docs"),)
-        app.query_one("#prompt", Input).value = "continue again"
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert panel.todos == runtime.todo_update
-        assert panel.expanded is False
+    assert await pending == PermissionConfirmation(False, "Use another file.")
+    assert app.buffer.text == "unfinished draft"
 
 
-@pytest.mark.asyncio
-async def test_tui_hides_panel_when_todos_are_cleared() -> None:
-    runtime = FakeRuntime()
-    runtime.todos = (TodoItem("Run tests", "in_progress", "Running tests"),)
-    runtime.todo_update = ()
-    app = _app(runtime)
+def test_provider_form_preserves_all_fields_and_password() -> None:
+    update = ProviderForm(
+        provider_id="gateway",
+        protocol=ProviderProtocol.OPENAI_RESPONSES.value,
+        base_url="https://gateway.example/v1",
+        model="model-x",
+        context_window="200000",
+        max_input="180000",
+        max_output="16000",
+        compact_trigger="150000",
+        reasoning_enabled="yes",
+        reasoning_effort="high",
+        reasoning_context="all_turns",
+        api_key="secret-key",
+    ).build_update()
 
-    async with app.run_test(size=(100, 36)) as pilot:
-        panel = app.query_one(TodoPanel)
-        assert panel.display is True
-
-        app.query_one("#prompt", Input).value = "finish"
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert panel.todos == ()
-        assert panel.display is False
+    assert update.id == "gateway"
+    assert update.protocol is ProviderProtocol.OPENAI_RESPONSES
+    assert update.api_key == "secret-key"
+    assert update.limits.context_window_tokens == 200_000
+    assert update.compact.trigger_input_tokens == 150_000
+    assert update.reasoning.effort == "high"
 
 
-def _app(runtime: object) -> MyCodeApp:
-    return MyCodeApp(cast(ChatService, runtime))
+def test_provider_form_accepts_short_protocol_names() -> None:
+    update = ProviderForm(
+        provider_id="gateway",
+        protocol="openai",
+        model="model-x",
+    ).build_update()
+
+    assert update.protocol is ProviderProtocol.OPENAI_RESPONSES

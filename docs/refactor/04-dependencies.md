@@ -77,7 +77,7 @@ ALLOWED_DEPENDENCIES = {
 - `context` 不得导入具体 Provider、ToolExecutor、Session 或 UI。
 - `permissions` 不得导入 Tool、Workspace 实现或 UI。
 - `workspace` 不得导入 PermissionRule。
-- `agent` 不得导入 OpenAI、Anthropic、Textual、CLI 或 JSONL record。
+- `agent` 不得导入 OpenAI、Anthropic、prompt_toolkit、Rich、CLI 或 JSONL record。
 - `agent` 不得负责 session catalog、resume 或保存活动 Session 单例。
 - `providers` 不得导入 Agent、Context、Tools、Chat 或 UI。
 - `tui` 不得直接导入 Agent、Provider SDK、SessionStore、ToolExecutor、Conversation 或 Context；它可以从公开语义模块读取安全展示 DTO。

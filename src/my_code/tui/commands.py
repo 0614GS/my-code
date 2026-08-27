@@ -17,6 +17,11 @@ class SlashCommandAction(StrEnum):
     RESUME = "resume"
     CLEAR = "clear"
     EXIT = "exit"
+    USAGE = "usage"
+    TOOLS = "tools"
+    SKILLS = "skills"
+    MCP = "mcp"
+    TASKS = "tasks"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +41,11 @@ class CommandOutcome:
     open_session_picker: bool = False
     show_context: bool = False
     compact_context: bool = False
+    show_usage: bool = False
+    show_tools: bool = False
+    skill_operation: str | None = None
+    mcp_operation: tuple[str, str] | None = None
+    show_tasks: bool = False
 
 
 class SlashCommandRegistry:
@@ -72,6 +82,23 @@ class SlashCommandRegistry:
                     "compact",
                     "Compact the current conversation",
                     SlashCommandAction.COMPACT,
+                ),
+                SlashCommand(
+                    "usage", "Show session token usage", SlashCommandAction.USAGE
+                ),
+                SlashCommand(
+                    "tools", "List active tools and sources", SlashCommandAction.TOOLS
+                ),
+                SlashCommand(
+                    "skills", "List or reload skills", SlashCommandAction.SKILLS
+                ),
+                SlashCommand(
+                    "mcp", "Show or refresh MCP servers", SlashCommandAction.MCP
+                ),
+                SlashCommand(
+                    "tasks",
+                    "List this session's background tasks",
+                    SlashCommandAction.TASKS,
                 ),
                 SlashCommand(
                     "auth", "Show authentication status", SlashCommandAction.AUTH
@@ -116,8 +143,22 @@ class SlashCommandRegistry:
             return CommandOutcome(
                 f"Unknown command: /{parts[0]}. Type /help to list commands."
             )
-        if len(parts) > 1:
-            return CommandOutcome(f"/{command.name} does not accept arguments yet.")
+        arguments = parts[1:]
+        if command.action is SlashCommandAction.SKILLS:
+            if not arguments:
+                return CommandOutcome(skill_operation="list")
+            if len(arguments) == 1 and arguments[0].casefold() == "reload":
+                return CommandOutcome(skill_operation="reload")
+            return CommandOutcome("Usage: /skills [reload]")
+        if command.action is SlashCommandAction.MCP:
+            if not arguments:
+                return CommandOutcome(mcp_operation=("list", ""))
+            operation = arguments[0].casefold() if arguments else ""
+            if len(arguments) == 2 and operation in {"refresh", "reconnect"}:
+                return CommandOutcome(mcp_operation=(operation, arguments[1]))
+            return CommandOutcome("Usage: /mcp [refresh|reconnect <server>]")
+        if arguments:
+            return CommandOutcome(f"/{command.name} does not accept arguments.")
 
         match command.action:
             case SlashCommandAction.HELP:
@@ -128,6 +169,12 @@ class SlashCommandRegistry:
                 return CommandOutcome(show_context=True)
             case SlashCommandAction.COMPACT:
                 return CommandOutcome(compact_context=True)
+            case SlashCommandAction.USAGE:
+                return CommandOutcome(show_usage=True)
+            case SlashCommandAction.TOOLS:
+                return CommandOutcome(show_tools=True)
+            case SlashCommandAction.TASKS:
+                return CommandOutcome(show_tasks=True)
             case SlashCommandAction.AUTH:
                 return CommandOutcome(_render_auth(status))
             case SlashCommandAction.PROVIDER:
@@ -176,6 +223,11 @@ def _render_status(status: RuntimeStatus) -> str:
             f"Authentication: {status.credential_source}",
             f"Context entries: {status.context_entry_count}",
             f"Conversation entries: {status.conversation_entry_count}",
+            (
+                f"Capabilities: {status.tool_count} tools · "
+                f"{status.skill_count} skills · "
+                f"{status.mcp_connected_count}/{status.mcp_server_count} MCP"
+            ),
         )
     )
 

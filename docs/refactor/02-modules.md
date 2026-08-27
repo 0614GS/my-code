@@ -20,7 +20,7 @@ src/my_code/
 ├── prompts/            # system prompt 片段和解析
 ├── config/             # settings、路径和分层配置
 ├── auth/               # provider 凭据
-├── tui/                # Textual host
+├── tui/                # prompt_toolkit + Rich host
 ├── cli/                # 命令行 host
 └── bootstrap.py        # 唯一组合根
 ```

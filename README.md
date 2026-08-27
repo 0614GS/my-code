@@ -60,7 +60,7 @@ mycode --provider company-gateway auth login
 
 `MY_CODE_PROVIDER`、`MY_CODE_API_KEY`、`ANTHROPIC_BASE_URL`、`--provider` 和 `--base-url` 可用于临时覆盖。
 
-交互模式使用 Textual 构建的组件化 TUI，支持流式 Markdown、工具调用及简略结果、运行状态和固定输入区。需要授权时，输入区会切换为 `Yes`、`No`、`No, and tell my-code why` 三项内联选择；拒绝原因会返回模型。在输入框键入 `/` 会显示候选命令，可用方向键选择、Tab 补全、Enter 执行；`/provider` 可安全配置 Provider URL、模型和 API Key，`/resume` 可选择并恢复当前项目的历史会话。单次 `-p` 模式不启动 TUI。
+交互模式使用 `prompt_toolkit + Rich` 构建非全屏 TUI：完成的 Markdown、工具结果和回合统计保留在普通终端 scrollback，底部只动态维护多行输入、补全、活动状态与临时面板。需要授权时，输入区会切换为允许、拒绝、反馈和可选 remember；拒绝原因会返回模型。在输入框键入 `/` 会显示透明候选菜单并默认选中第一项，Enter 直接执行、Tab 只补全；TUI 保留终端原生光标形态与闪烁。`/provider` 可安全配置 Provider URL、模型和 API Key，`/resume` 可选择并恢复历史会话，`/usage`、`/tools`、`/skills`、`/mcp`、`/tasks` 展示已有运行时能力。单次 `-p` 模式不启动 TUI。
 
 与 Claude Code 的目录边界一致，用户配置及运行状态默认放在 `~/.my-code/`，可用 `MY_CODE_CONFIG_DIR` 整体迁移。项目共享配置为 `.my-code/settings.json`，本地覆盖为已忽略的 `.my-code/settings.local.json`；读取配置不会主动创建这些目录。完整布局和优先级见 [docs/09-storage-and-settings.md](docs/09-storage-and-settings.md)，终端层边界见 [docs/10-terminal-ui.md](docs/10-terminal-ui.md)。
 

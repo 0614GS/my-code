@@ -58,7 +58,7 @@ conversation -> tools -> permissions -> conversation
 至少检查以下规则：
 
 - `openai` 和 `anthropic` SDK 只能出现在 `providers`；
-- `textual` 只能出现在 `tui`；
+- `prompt_toolkit` 与 `rich` 只能出现在 `tui`；
 - JSONL record 只能由 `sessions` 定义和解析；
 - `bootstrap` 不能被任何其他生产模块导入；
 - `claude-code` 参考源码不能成为生产 import 或打包输入。

@@ -16,7 +16,7 @@
 - token budget、工具结果替换、自动/手动/reactive compact。
 - `@path` 文件或目录 attachment、路径补全与 AGENTS 用户上下文。
 - provider profile、凭据存储、模型发现缓存和运行期切换。
-- 非交互 print 模式与 Textual TUI。
+- 非交互 print 模式与 `prompt_toolkit + Rich` 原生 scrollback TUI。参考实现使用 Ink；本项目有意采用 Python 原生非全屏 host，不实现自定义可交互 transcript，也不保留 Textual inline 双 host。
 - Ruff、Pyright standard、pytest 和 AST 架构守卫。
 
 ## 明确延后
@@ -45,6 +45,8 @@
 `claude-code/` 用于学习行为和安全不变量。my-code 不机械复刻其实验功能、压缩产物、ports/adapters 或内部包结构；有意差异以本文件和模块文档为准。
 
 参考实现的 Agent Tool 主要用 `maxTurns` 限制 child，且全局 token-budget continuation 不用于 subagent。my-code 有意保留等价的 `max_steps`，并额外在 child run 上设置累计 token ceiling；已完成的 provider 响应会保留，预算在下一次请求前阻止继续消费。
+
+终端交互借鉴 Codex/参考实现的即时 slash 建议、默认首项、Enter 执行和分层选择器语法，但继续使用 `prompt_toolkit + Rich` 与普通终端 scrollback。视觉层使用终端语义色、自适应低对比度用户表面和原生光标，不复制 ratatui/Ink renderer。Provider 配置以 Enter 驱动的核心流程和按需 Advanced 代替 Ink 表单或快捷键密集型编辑器；Welcome 使用 my-code 自有 ASCII 标识。
 
 本项目采用参考实现风格的 fresh child 与只读 Explore，但有意保留 Codex 风格的显式 role definition、独立 run/Session 和能力收窄。角色不可由用户扩展；Explore 是不能派生 child 的只读叶子，General 继承 spawn step 的普通/动态/Skill/MCP/Task 工具，并在深度允许时继续派生两种角色。
 

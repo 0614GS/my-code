@@ -1,30 +1,30 @@
-"""负责渲染 my-code、但不持有运行时的 Textual 应用。"""
+"""Native, non-full-screen prompt_toolkit host with Rich scrollback output."""
+
+from __future__ import annotations
 
 import asyncio
+from typing import Any, cast
 
-from textual import on, work
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
-from textual.events import Key
-from textual.widgets import Input, OptionList
-from textual.widgets.option_list import Option
+from prompt_toolkit.application import Application, run_in_terminal
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.document import Document
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.formatted_text import AnyFormattedText, FormattedText
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.input import Input
+from prompt_toolkit.layout import BufferControl
+from prompt_toolkit.layout.processors import (
+    BeforeInput,
+    ConditionalProcessor,
+    PasswordProcessor,
+)
+from prompt_toolkit.output import Output
+from rich.console import Console, RenderableType
 
 from my_code.chat.events import (
-    AttachmentLoaded,
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
-    MaxStepsReached,
-    ReasoningCompleted,
-    ReasoningDelta,
-    ReasoningStarted,
-    TextCompleted,
-    TextDelta,
-    TextStarted,
-    TodoListUpdated,
-    ToolFinished,
-    ToolStarted,
-    TurnSucceeded,
+    TurnEvent,
 )
 from my_code.chat.history import (
     HistoryEntry,
@@ -34,904 +34,803 @@ from my_code.chat.history import (
 )
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.service import ChatService
-from my_code.chat.status import ContextStatus
+from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.features.file_mentions.models import PathSuggestion
-from my_code.permissions.models import PermissionConfirmation
-from my_code.tui.commands import SlashCommandRegistry
-from my_code.tui.completion import format_path_mention, mention_at_cursor
-from my_code.tui.provider_screen import ProviderScreen
-from my_code.tui.resume_screen import ResumeScreen
+from my_code.permissions.models import (
+    PermissionBehavior,
+    PermissionConfirmation,
+    PermissionUpdate,
+    PermissionUpdateDestination,
+)
+from my_code.permissions.rules import validate_bash_rule_content
+from my_code.permissions.updates import permission_rule_for_destination
+from my_code.providers.manager import ProviderView
+from my_code.sessions.catalog import SessionSummary
+from my_code.tools.presentation import ToolUsePresentation
+from my_code.tui.commands import CommandOutcome, SlashCommandRegistry
+from my_code.tui.completion import mention_at_cursor
+from my_code.tui.composer import ComposerCompleter, SlashMenuState
+from my_code.tui.key_bindings import build_key_bindings
+from my_code.tui.layout import build_terminal_layout
+from my_code.tui.panels import (
+    permission_panel,
+    provider_actions_panel,
+    provider_form_panel,
+    provider_models_panel,
+    provider_review_panel,
+    provider_select_panel,
+    resume_panel,
+)
+from my_code.tui.presentation import (
+    format_context_usage,
+    render_context_status,
+    render_mcp,
+    render_skills,
+    render_tasks,
+    render_tools,
+    render_usage,
+)
+from my_code.tui.provider_screen import (
+    PROVIDER_ADVANCED_FIELDS,
+    PROVIDER_CORE_FIELDS,
+    ProviderForm,
+)
+from my_code.tui.terminal import terminal_supports_true_color
+from my_code.tui.theme import TuiTheme
+from my_code.tui.turns import TurnFlowMixin
 from my_code.tui.widgets import (
-    ActivityBar,
-    AssistantMessage,
-    PermissionPanel,
-    ReasoningMessage,
-    StatusBar,
-    SystemMessage,
-    TodoPanel,
-    ToolCallMessage,
-    UserMessage,
-    WelcomePanel,
+    assistant_message,
+    reasoning_message,
+    status_line,
+    system_message,
+    todo_text,
+    tool_message,
+    user_message,
+    welcome,
 )
 
 
-class MyCodeApp(App[None]):
-    """类似 Claude Code REPL 外壳的组件化终端 UI。"""
-
-    ENABLE_COMMAND_PALETTE = False
-    BINDINGS = [Binding("ctrl+t", "toggle_todos", "Toggle todos", show=False)]
-    CSS = """
-    Screen {
-        background: #171717;
-        color: #e8e4df;
-    }
-
-    #conversation {
-        height: 1fr;
-        padding: 1 2 0 2;
-        scrollbar-color: #6f625a;
-        scrollbar-background: #171717;
-    }
-
-    TodoPanel {
-        display: none;
-        width: 100%;
-        height: auto;
-        max-height: 10;
-        overflow-y: auto;
-        padding: 0 3;
-        border-top: solid #3a3532;
-        background: #1e1c1b;
-    }
-
-    WelcomePanel {
-        width: 100%;
-        height: auto;
-        min-height: 7;
-        padding: 1 2;
-        margin-bottom: 1;
-        border: round #d97757;
-        content-align: center middle;
-        text-align: center;
-        background: #1e1c1b;
-    }
-
-    .message {
-        width: 100%;
-        height: auto;
-        margin-bottom: 1;
-    }
-
-    UserMessage {
-        padding: 0 1;
-        border-left: thick #d97757;
-        background: #211f1e;
-    }
-
-    AssistantMessage {
-        padding: 0 1 0 2;
-        background: #171717;
-    }
-
-    SystemMessage {
-        padding: 0 2;
-        color: #a9a19a;
-    }
-
-    SystemMessage.error {
-        color: #ff7b72;
-        border-left: thick #ff7b72;
-    }
-
-    #composer {
-        height: auto;
-        max-height: 14;
-        padding: 0 2 1 2;
-        background: #171717;
-    }
-
-    #command-palette {
-        display: none;
-        height: auto;
-        max-height: 7;
-        margin: 0 1;
-        border: round #6f625a;
-        background: #211f1e;
-        color: #e8e4df;
-    }
-
-    #command-palette > .option-list--option-highlighted {
-        background: #56372d;
-        color: #fff8f2;
-    }
-
-    ActivityBar {
-        display: none;
-        height: 1;
-        margin: 0 1;
-        color: #d97757;
-    }
-
-    ActivityBar LoadingIndicator {
-        width: 4;
-        height: 1;
-        color: #d97757;
-    }
-
-    #prompt {
-        height: 3;
-        border: round #6f625a;
-        background: #211f1e;
-        color: #f3efeb;
-        padding: 0 1;
-    }
-
-    #prompt:focus {
-        border: round #d97757;
-    }
-
-    StatusBar {
-        height: 1;
-        margin: 0 1;
-        color: #8f8882;
-    }
-
-    ProviderScreen {
-        align: center middle;
-        background: #000000 65%;
-    }
-
-    ResumeScreen {
-        align: center middle;
-        background: #000000 65%;
-    }
-
-    #resume-dialog {
-        width: 88%;
-        max-width: 100;
-        height: 70%;
-        min-height: 12;
-        padding: 1 2;
-        border: round #d97757;
-        background: #211f1e;
-    }
-
-    #resume-title {
-        height: 1;
-        color: #ffb38a;
-        text-style: bold;
-    }
-
-    #resume-description, #resume-hint {
-        height: 1;
-        color: #8f8882;
-    }
-
-    #resume-list {
-        height: 1fr;
-        margin: 1 0;
-        background: #211f1e;
-    }
-
-    #resume-list > .option-list--option {
-        height: 3;
-    }
-
-    #resume-list > .option-list--option-highlighted {
-        background: #56372d;
-        color: #fff8f2;
-    }
-
-    #provider-dialog {
-        width: 92%;
-        max-width: 100;
-        height: 30;
-        padding: 1 2;
-        border: round #d97757;
-        background: #211f1e;
-    }
-
-    #provider-title {
-        height: 1;
-        color: #ffb38a;
-        text-style: bold;
-    }
-
-    #provider-description, #provider-key-status, #provider-error {
-        height: 1;
-        color: #8f8882;
-    }
-
-    #provider-error {
-        color: #ff7b72;
-    }
-
-    #provider-content {
-        height: 1fr;
-        margin-top: 1;
-    }
-
-    #provider-list {
-        width: 30%;
-        height: 100%;
-        border: round #6f625a;
-        margin-right: 2;
-    }
-
-    #provider-form {
-        width: 1fr;
-        height: 100%;
-    }
-
-    #provider-form Label {
-        height: 1;
-    }
-
-    #provider-form Input {
-        height: 3;
-        margin-bottom: 1;
-    }
-
-    #provider-actions {
-        height: 3;
-        align-horizontal: right;
-    }
-
-    #provider-actions Button {
-        margin-left: 1;
-    }
-
-    PermissionPanel {
-        display: none;
-        width: 100%;
-        height: auto;
-        max-height: 18;
-        padding: 0 1;
-        border-top: round #d97757;
-        background: #211f1e;
-    }
-
-    #permission-title {
-        height: 1;
-        color: #ffb38a;
-        text-style: bold;
-    }
-
-    #permission-detail {
-        height: auto;
-        max-height: 5;
-        margin: 0 1;
-    }
-
-    #permission-question {
-        height: 1;
-        margin: 0 1;
-        text-style: bold;
-    }
-
-    #permission-options {
-        height: 3;
-        margin: 0 1;
-        background: #211f1e;
-    }
-
-    #permission-options > .option-list--option-highlighted {
-        background: #56372d;
-        color: #fff8f2;
-    }
-
-    #permission-feedback, #permission-prefix {
-        display: none;
-        height: 3;
-        margin: 0 1;
-        border: round #d97757;
-    }
-
-    #permission-hint {
-        height: 1;
-        margin: 0 1;
-        color: #8f8882;
-    }
-
-    ToolCallMessage {
-        padding: 0 1 0 2;
-        color: #a9a19a;
-    }
-
-    ToolCallMessage.error {
-        color: #ff7b72;
-    }
-    """
+class MyCodeApp(TurnFlowMixin):
+    """Inline terminal application; canonical state stays in ChatService."""
 
     def __init__(
         self,
         runtime: ChatService,
         *,
         commands: SlashCommandRegistry | None = None,
+        input: Input | None = None,
+        output: Output | None = None,
+        console: Console | None = None,
     ) -> None:
-        super().__init__(ansi_color=True)
         self.runtime = runtime
         self.commands = commands or SlashCommandRegistry.default()
+        self.theme = TuiTheme.detect()
+        self.console = console or Console(
+            color_system="truecolor" if terminal_supports_true_color() else "auto"
+        )
         self._busy = False
-        self._suggestion_mode: str | None = None
+        self._running = False
+        self._activity = ""
+        self._stream_text = ""
+        self._reasoning_parts: list[str] = []
+        self._todos = ()
+        self._todos_expanded = True
+        self._status: RuntimeStatus | None = None
+        self._context_status: ContextStatus | None = None
+        self._panel: str | None = None
+        self._panel_index = 0
+        self._sessions: tuple[SessionSummary, ...] = ()
+        self._providers: tuple[ProviderView, ...] = ()
+        self._provider_form: ProviderForm | None = None
+        self._provider_selected_index = 0
+        self._provider_fields = PROVIDER_CORE_FIELDS
+        self._provider_field = 0
+        self._provider_models: tuple[str, ...] = ()
+        self._permission_request: PermissionRequest | None = None
+        self._permission_future: asyncio.Future[PermissionConfirmation] | None = None
+        self._permission_mode = "select"
+        self._saved_draft = ""
         self._path_suggestions: tuple[PathSuggestion, ...] = ()
         self._mention_span: tuple[int, int] | None = None
-        self._suggestion_request = 0
+        self._suggestion_revision = 0
+        self._foreground_task: asyncio.Task[None] | None = None
+        self._background_tools: dict[str, ToolUsePresentation] = {}
+        self._tasks: set[asyncio.Task[object]] = set()
+        self._history = InMemoryHistory()
+        self._slash_menu = SlashMenuState()
+        self.buffer = Buffer(
+            multiline=True,
+            history=self._history,
+            completer=ComposerCompleter(self),
+            complete_while_typing=Condition(self._complete_while_typing),
+            read_only=Condition(lambda: self._composer_read_only()),
+        )
+        self.buffer.on_text_changed += self._on_text_changed
+        prompt = BeforeInput(FormattedText([("class:prompt", "› ")]))
+        password = ConditionalProcessor(
+            PasswordProcessor(), Condition(lambda: self._provider_password_field())
+        )
+        self.input_control = BufferControl(
+            buffer=self.buffer, input_processors=[prompt, password]
+        )
+        self.key_bindings = build_key_bindings(self)
+        terminal_layout = build_terminal_layout(
+            input_control=self.input_control,
+            key_bindings=self.key_bindings,
+            dynamic_text=self._dynamic_text,
+            todo_text=self._todo_display,
+            has_todos=lambda: bool(self._todos),
+            status_text=self._status_text,
+            slash_menu_text=self._slash_menu_text,
+            has_slash_menu=self._slash_active,
+            input=input,
+            output=output,
+            theme=self.theme,
+        )
+        self.application: Application[None] = terminal_layout.application
+        self.body = terminal_layout.body
+        self.completions_menu = terminal_layout.completions_menu
+        self.slash_menu = terminal_layout.slash_menu
         self.runtime.set_permission_handler(self._ask_permission)
 
-    def compose(self) -> ComposeResult:
-        status = self.runtime.status()
-        context_usage = _format_context_usage(self.runtime.context_status())
-        with VerticalScroll(id="conversation"):
-            yield WelcomePanel(status)
-        yield TodoPanel(status.todos)
-        with Vertical(id="composer"):
-            yield OptionList(id="command-palette", compact=True)
-            yield ActivityBar(status.todos)
-            yield PermissionPanel()
-            yield Input(
-                placeholder="Ask my-code anything, or type / for commands",
-                id="prompt",
+    async def run_async(self) -> None:
+        view = await self.runtime.initialize()
+        self._status = view.status
+        self._context_status = self.runtime.context_status()
+        self._todos = view.status.todos
+        await self._write(welcome(view.status, self.theme))
+        if view.history:
+            await self._render_history(view.history)
+            for entry in view.history:
+                if isinstance(entry, HistoryText) and entry.role == "user":
+                    self._history.append_string(entry.text)
+        self._running = True
+
+        def start_background() -> None:
+            self._spawn(self._watch_background_notifications())
+
+        try:
+            await self.application.run_async(pre_run=start_background)
+        finally:
+            self._running = False
+            for task in tuple(self._tasks):
+                task.cancel()
+            if self._tasks:
+                await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+
+    def _spawn(self, coroutine: Any) -> asyncio.Task[Any]:
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(cast(asyncio.Task[object], task))
+        task.add_done_callback(self._tasks.discard)
+        return task
+
+    async def _write(self, renderable: RenderableType, *, clear: bool = False) -> None:
+        def render() -> None:
+            if clear:
+                self.console.clear()
+            self.console.print(renderable)
+
+        if self._running:
+            await run_in_terminal(render)
+        else:
+            render()
+
+    def _invalidate(self) -> None:
+        self.application.invalidate()
+
+    def _composer_read_only(self) -> bool:
+        if self._panel == "permission":
+            return self._permission_mode == "select"
+        if self._panel in {
+            "resume",
+            "provider_select",
+            "provider_actions",
+            "provider_review",
+            "provider_models",
+        }:
+            return True
+        return self._busy
+
+    def _complete_while_typing(self) -> bool:
+        return False
+
+    def _slash_active(self) -> bool:
+        return self._panel is None and not self._busy and bool(self._slash_menu.matches)
+
+    def _slash_menu_text(self) -> FormattedText:
+        matches = self._slash_menu.matches
+        if not matches:
+            return FormattedText()
+        selected = self._slash_menu.selected
+        start = max(0, min(selected - 3, len(matches) - 7))
+        visible = matches[start : start + 7]
+        name_width = max(len(command.name) for command in visible) + 2
+        fragments: list[tuple[str, str]] = []
+        for offset, command in enumerate(visible):
+            index = start + offset
+            style = "class:selected" if index == selected else ""
+            meta_style = style if index == selected else "class:secondary"
+            fragments.extend(
+                [
+                    (style, f"  /{command.name:<{name_width}}"),
+                    (meta_style, command.description),
+                    ("", "\n" if offset + 1 < len(visible) else ""),
+                ]
             )
-            yield StatusBar(status, context_usage)
+        return FormattedText(fragments)
 
-    def on_mount(self) -> None:
-        self.query_one("#prompt", Input).focus()
-        self._watch_background_notifications()
+    def _move_slash(self, offset: int) -> None:
+        self._slash_menu.move(offset)
+        self._invalidate()
 
-    @work(group="background-notifications")
+    def _dismiss_slash(self) -> None:
+        self._slash_menu.dismiss(self.buffer.text)
+        self._invalidate()
+
+    def _accept_slash(self, *, execute: bool) -> None:
+        command = self._slash_menu.current
+        if command is None:
+            return
+        text = f"/{command.name}" + ("" if execute else " ")
+        self.buffer.set_document(Document(text, len(text)), bypass_readonly=True)
+        self._slash_menu.dismiss(text)
+        if execute:
+            self._spawn(self._submit_buffer())
+        self._invalidate()
+
+    def _provider_password_field(self) -> bool:
+        return (
+            self._panel == "provider_form"
+            and self._provider_fields[self._provider_field][0] == "api_key"
+        )
+
+    def _dynamic_text(self) -> AnyFormattedText:
+        if self._panel is not None:
+            return self._panel_text()
+        parts = [part for part in (self._activity, self._reasoning_summary()) if part]
+        if self._stream_text:
+            parts.append(self._stream_text)
+        return "\n".join(parts)
+
+    def _todo_display(self) -> str:
+        return todo_text(self._todos, expanded=self._todos_expanded)
+
+    def _status_text(self) -> str:
+        status = self._status
+        if status is None:
+            return "Starting my-code…"
+        context = self._context_status
+        context_usage = format_context_usage(context) if context is not None else "…"
+        return status_line(status, context_usage)
+
+    def _reasoning_summary(self) -> str:
+        if not self._reasoning_parts:
+            return ""
+        return "Thinking · " + " ".join("".join(self._reasoning_parts).split())[-300:]
+
+    def _panel_text(self) -> AnyFormattedText:
+        if self._panel == "permission" and self._permission_request is not None:
+            return permission_panel(
+                self._permission_request, self._permission_mode, self._panel_index
+            )
+        if self._panel == "resume":
+            return resume_panel(self._sessions, self._panel_index)
+        if self._panel == "provider_select":
+            return provider_select_panel(self._providers, self._panel_index)
+        if self._panel == "provider_actions" and self._providers:
+            return provider_actions_panel(
+                self._providers[self._provider_selected_index], self._panel_index
+            )
+        if self._panel == "provider_form" and self._provider_form is not None:
+            return provider_form_panel(
+                self._provider_form,
+                self._provider_fields,
+                self._provider_field,
+                self.buffer.text,
+                self._provider_models,
+            )
+        if self._panel == "provider_review" and self._provider_form is not None:
+            return provider_review_panel(self._provider_form, self._panel_index)
+        if self._panel == "provider_models":
+            return provider_models_panel(self._provider_models, self._panel_index)
+        return ""
+
+    def _permission_selecting(self) -> bool:
+        return self._panel == "permission" and self._permission_mode == "select"
+
+    async def _submit_buffer(self) -> None:
+        line = self.buffer.text
+        if not line.strip():
+            return
+        self.buffer.reset()
+        self._history.append_string(line)
+        outcome = self.commands.dispatch(line, status=self.runtime.status())
+        if outcome is not None:
+            try:
+                await self._handle_command(outcome)
+            except Exception as error:
+                await self._write(
+                    system_message(f"Command failed: {error}", error=True)
+                )
+        else:
+            self._foreground_task = asyncio.current_task()
+            try:
+                await self._run_turn(line, self.runtime.stream(line), user=True)
+            finally:
+                self._foreground_task = None
+
+    async def _handle_command(self, outcome: CommandOutcome) -> None:
+        if outcome.clear_screen:
+            await self._write(welcome(self.runtime.status(), self.theme), clear=True)
+        if outcome.message:
+            await self._write(system_message(outcome.message))
+        if outcome.show_context:
+            context = self.runtime.context_status()
+            self._context_status = context
+            await self._write(system_message(render_context_status(context)))
+        if outcome.compact_context:
+            await self._run_compaction()
+        if outcome.show_usage:
+            usage = self.runtime.session_usage()
+            self._context_status = usage.context
+            await self._write(system_message(render_usage(usage)))
+        if outcome.show_tools:
+            await self._write(render_tools(self.runtime.capabilities()))
+        if outcome.skill_operation is not None:
+            if outcome.skill_operation == "reload":
+                self._busy = True
+                self._activity = "Reloading skills…"
+                try:
+                    capabilities = await self.runtime.reload_skills()
+                finally:
+                    self._busy = False
+                    self._activity = ""
+                    self._refresh_status()
+            else:
+                capabilities = self.runtime.capabilities()
+            await self._write(render_skills(capabilities))
+        if outcome.mcp_operation is not None:
+            operation, server = outcome.mcp_operation
+            if operation == "list":
+                capabilities = self.runtime.capabilities()
+            else:
+                self._busy = True
+                self._activity = f"MCP {operation} · {server}…"
+                try:
+                    capabilities = (
+                        await self.runtime.refresh_mcp(server)
+                        if operation == "refresh"
+                        else await self.runtime.reconnect_mcp(server)
+                    )
+                finally:
+                    self._busy = False
+                    self._activity = ""
+                    self._refresh_status()
+            await self._write(render_mcp(capabilities))
+        if outcome.show_tasks:
+            await self._write(render_tasks(self.runtime.background_tasks()))
+        if outcome.open_session_picker:
+            await self._open_resume()
+        if outcome.open_provider_manager:
+            self._open_provider()
+        if outcome.should_exit:
+            self.application.exit()
+
     async def _watch_background_notifications(self) -> None:
         stream = getattr(self.runtime, "stream_background_notifications", None)
         if stream is None:
             return
-        prompt = self.query_one("#prompt", Input)
-        activity = self.query_one(ActivityBar)
-        assistant: AssistantMessage | None = None
-        active_reasoning: ReasoningMessage | None = None
-        tools: dict[str, ToolCallMessage] = {}
-        invocation_active = False
+        invocation: list[TurnEvent] = []
         try:
             async for event in stream():
                 if isinstance(event, BackgroundInvocationStarted):
-                    invocation_active = True
+                    invocation = []
+                    self._saved_draft = self.buffer.text
                     self._busy = True
-                    self._close_suggestions()
-                    prompt.disabled = True
-                    activity.display = True
-                    assistant = None
-                    active_reasoning = None
-                    tools = {}
-                elif isinstance(event, TextStarted):
-                    assistant = AssistantMessage("")
-                    await self._mount_message(assistant)
-                elif isinstance(event, TextDelta):
-                    if assistant is None:
-                        assistant = AssistantMessage("")
-                        await self._mount_message(assistant)
-                    await assistant.append_delta(event.text)
-                    self._scroll_to_end()
-                elif isinstance(event, TextCompleted):
-                    if assistant is None:
-                        assistant = AssistantMessage("")
-                        await self._mount_message(assistant)
-                    await assistant.complete_stream(event.text)
-                    assistant = None
-                elif isinstance(event, ReasoningStarted):
-                    active_reasoning = ReasoningMessage(event.disclosure)
-                    await self._mount_message(active_reasoning)
-                elif isinstance(event, ReasoningDelta):
-                    if active_reasoning is None:
-                        active_reasoning = ReasoningMessage(event.disclosure)
-                        await self._mount_message(active_reasoning)
-                    active_reasoning.append_delta(event.part_index, event.text)
-                    self._scroll_to_end()
-                elif isinstance(event, ReasoningCompleted):
-                    if active_reasoning is None:
-                        active_reasoning = ReasoningMessage(
-                            event.presentation.disclosure
-                        )
-                        await self._mount_message(active_reasoning)
-                    active_reasoning.load_presentation(event.presentation)
-                    active_reasoning = None
-                elif isinstance(event, ToolStarted):
-                    if assistant is not None:
-                        await assistant.finish_stream()
-                        assistant = None
-                    tool = ToolCallMessage(event.tool_use_id, event.presentation)
-                    tools[event.tool_use_id] = tool
-                    await self._mount_message(tool)
-                elif isinstance(event, ToolFinished):
-                    tool = tools.get(event.tool_use_id)
-                    if tool is not None:
-                        tool.finish(event.presentation, is_error=event.is_error)
-                        self._scroll_to_end()
-                elif isinstance(event, TodoListUpdated):
-                    self.query_one(TodoPanel).set_todos(event.todos)
-                    activity.set_todos(event.todos)
-                elif isinstance(event, MaxStepsReached):
-                    await self._mount_message(
-                        SystemMessage(
-                            f"Error: Reached max steps ({event.max_steps})",
-                            error=True,
-                        )
-                    )
+                    self._activity = "Handling background task…"
+                    self._background_tools = {}
                 elif isinstance(event, BackgroundInvocationFinished):
-                    if active_reasoning is not None:
-                        active_reasoning.interrupt()
-                        active_reasoning = None
-                    if assistant is not None:
-                        await assistant.finish_stream()
-                        assistant = None
-                    if event.error is not None:
-                        await self._mount_message(
-                            SystemMessage(
+                    if event.error:
+                        await self._write(
+                            system_message(
                                 f"Background continuation failed: {event.error}",
                                 error=True,
                             )
                         )
-                    invocation_active = False
-                    self._restore_after_background_invocation(prompt, activity)
+                    self._busy = False
+                    self._activity = ""
+                    self._background_tools = {}
+                    self._refresh_status()
+                else:
+                    invocation.append(event)
+                    await self._consume_background_event(event)
+                self._invalidate()
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            await self._mount_message(
-                SystemMessage(f"Background watcher failed: {error}", error=True)
+            await self._write(
+                system_message(f"Background watcher failed: {error}", error=True)
             )
-        finally:
-            if invocation_active:
-                if active_reasoning is not None:
-                    active_reasoning.interrupt()
-                if assistant is not None:
-                    await assistant.finish_stream()
-                self._restore_after_background_invocation(prompt, activity)
-
-    def _restore_after_background_invocation(
-        self,
-        prompt: Input,
-        activity: ActivityBar,
-    ) -> None:
-        activity.display = False
-        prompt.disabled = False
-        prompt.focus()
-        self._busy = False
-        status = self.runtime.status()
-        self.query_one(StatusBar).set_status(
-            status, _format_context_usage(self.runtime.context_status())
-        )
-        self.query_one(TodoPanel).set_todos(status.todos)
-        activity.set_todos(status.todos)
-
-    def action_toggle_todos(self) -> None:
-        self.query_one(TodoPanel).toggle()
-
-    @on(Input.Changed, "#prompt")
-    def update_slash_suggestions(self, event: Input.Changed) -> None:
-        palette = self.query_one("#command-palette", OptionList)
-        matches = self.commands.matching(event.value)
-        if matches:
-            self._suggestion_request += 1
-            self._suggestion_mode = "command"
-            self._path_suggestions = ()
-            self._mention_span = None
-            palette.set_options(
-                Option(
-                    f"[bold #ffb38a]/{command.name}[/]  [dim]{command.description}[/]",
-                    id=command.name,
-                )
-                for command in matches
-            )
-            palette.display = True
-            palette.highlighted = 0
-            return
-        mention = mention_at_cursor(event.value, event.input.cursor_position)
-        if mention is None or self._busy or event.input.disabled:
-            self._close_suggestions()
-            return
-        start, end, query = mention
-        self._suggestion_request += 1
-        request = self._suggestion_request
-        self._mention_span = (start, end)
-        self._suggestion_mode = "path"
-        palette.display = False
-        self._load_path_suggestions(request, query, start, end)
-
-    @work(group="path-suggestions")
-    async def _load_path_suggestions(
-        self, request: int, query: str, start: int, end: int
-    ) -> None:
-        suggestions = await self.runtime.suggest_paths(query)
-        if (
-            request != self._suggestion_request
-            or self._busy
-            or self._suggestion_mode != "path"
-            or self._mention_span != (start, end)
-        ):
-            return
-        palette = self.query_one("#command-palette", OptionList)
-        self._path_suggestions = suggestions
-        palette.set_options(
-            Option(
-                (
-                    f"[bold #ffb38a]{suggestion.display}[/]  "
-                    f"[dim]{'directory' if suggestion.is_directory else 'file'}[/]"
-                ),
-                id=f"path:{index}",
-            )
-            for index, suggestion in enumerate(suggestions)
-        )
-        palette.display = bool(suggestions)
-        if suggestions:
-            palette.highlighted = 0
-
-    async def on_key(self, event: Key) -> None:
-        prompt = self.query_one("#prompt", Input)
-        palette = self.query_one("#command-palette", OptionList)
-        if not prompt.has_focus or not palette.display or palette.option_count == 0:
-            return
-        if event.key == "down":
-            palette.action_cursor_down()
-        elif event.key == "up":
-            palette.action_cursor_up()
-        elif event.key == "tab":
-            self._select_highlighted_suggestion(prompt, palette)
-            event.prevent_default()
-            event.stop()
-
-    @on(OptionList.OptionSelected, "#command-palette")
-    async def select_slash_command(self, event: OptionList.OptionSelected) -> None:
-        if self._suggestion_mode == "path":
-            self._select_path_option(event.option_id)
-        elif event.option_id is not None:
-            await self._process_line(f"/{event.option_id}")
-
-    @on(Input.Submitted, "#prompt")
-    async def submit_prompt(self, event: Input.Submitted) -> None:
-        if self._busy:
-            return
-        palette = self.query_one("#command-palette", OptionList)
-        line = event.value
-        if palette.display and palette.option_count:
-            if self._suggestion_mode == "path":
-                self._select_highlighted_suggestion(
-                    self.query_one("#prompt", Input), palette
-                )
-                return
-            command_name = _highlighted_option_id(palette)
-            if command_name is not None:
-                line = f"/{command_name}"
-        await self._process_line(line)
-
-    async def _process_line(self, line: str) -> None:
-        prompt = self.query_one("#prompt", Input)
-        prompt.value = ""
-        self._close_suggestions()
-        if not line.strip():
-            return
-
-        outcome = self.commands.dispatch(line, status=self.runtime.status())
-        if outcome is not None:
-            if outcome.clear_screen:
-                await self._clear_messages()
-            if outcome.message:
-                await self._mount_message(SystemMessage(outcome.message))
-            if outcome.open_provider_manager:
-                self._manage_providers()
-            if outcome.open_session_picker:
-                self._resume_session()
-            if outcome.show_context:
-                await self._mount_message(
-                    SystemMessage(_render_context_status(self.runtime.context_status()))
-                )
-            if outcome.compact_context:
-                self._compact_context()
-            if outcome.should_exit:
-                self.exit()
-            return
-        self._run_agent_turn(line)
-
-    @work(exclusive=True, group="agent-turn")
-    async def _run_agent_turn(self, prompt_text: str) -> None:
-        self._busy = True
-        self._close_suggestions()
-        prompt = self.query_one("#prompt", Input)
-        activity = self.query_one(ActivityBar)
-        prompt.disabled = True
-        activity.display = True
-        await self._mount_message(UserMessage(prompt_text))
-        assistant: AssistantMessage | None = None
-        active_reasoning: ReasoningMessage | None = None
-        tools: dict[str, ToolCallMessage] = {}
-        had_display = False
-        completed = False
-        try:
-            async for event in self.runtime.stream(prompt_text):
-                if isinstance(event, AttachmentLoaded):
-                    await self._mount_message(SystemMessage(event.display))
-                elif isinstance(event, TextStarted):
-                    assistant = AssistantMessage("")
-                    had_display = True
-                    await self._mount_message(assistant)
-                elif isinstance(event, TextDelta):
-                    if assistant is None:
-                        assistant = AssistantMessage("")
-                        had_display = True
-                        await self._mount_message(assistant)
-                    await assistant.append_delta(event.text)
-                    self._scroll_to_end()
-                elif isinstance(event, TextCompleted):
-                    if assistant is None:
-                        assistant = AssistantMessage("")
-                        had_display = True
-                        await self._mount_message(assistant)
-                    await assistant.complete_stream(event.text)
-                    assistant = None
-                elif isinstance(event, ReasoningStarted):
-                    active_reasoning = ReasoningMessage(event.disclosure)
-                    had_display = True
-                    await self._mount_message(active_reasoning)
-                elif isinstance(event, ReasoningDelta):
-                    if active_reasoning is None:
-                        active_reasoning = ReasoningMessage(event.disclosure)
-                        had_display = True
-                        await self._mount_message(active_reasoning)
-                    active_reasoning.append_delta(event.part_index, event.text)
-                    self._scroll_to_end()
-                elif isinstance(event, ReasoningCompleted):
-                    if active_reasoning is None:
-                        active_reasoning = ReasoningMessage(
-                            event.presentation.disclosure
-                        )
-                        had_display = True
-                        await self._mount_message(active_reasoning)
-                    active_reasoning.load_presentation(event.presentation)
-                    active_reasoning = None
-                elif isinstance(event, ToolStarted):
-                    if assistant is not None:
-                        await assistant.finish_stream()
-                        assistant = None
-                    tool_message = ToolCallMessage(
-                        event.tool_use_id,
-                        event.presentation,
-                    )
-                    tools[event.tool_use_id] = tool_message
-                    await self._mount_message(tool_message)
-                elif isinstance(event, ToolFinished):
-                    finished_message = tools.get(event.tool_use_id)
-                    if finished_message is not None:
-                        finished_message.finish(
-                            event.presentation, is_error=event.is_error
-                        )
-                        self._scroll_to_end()
-                elif isinstance(event, TodoListUpdated):
-                    self.query_one(TodoPanel).set_todos(event.todos)
-                    activity.set_todos(event.todos)
-                elif isinstance(event, TurnSucceeded):
-                    completed = True
-                elif isinstance(event, MaxStepsReached):
-                    completed = True
-                    await self._mount_message(
-                        SystemMessage(
-                            f"Error: Reached max steps ({event.max_steps})",
-                            error=True,
-                        )
-                    )
-        except Exception as error:
-            await self._mount_message(SystemMessage(f"Error: {error}", error=True))
-        finally:
-            if not completed and active_reasoning is not None:
-                active_reasoning.interrupt()
-            if assistant is not None:
-                await assistant.finish_stream()
-            if completed is False and not tools and not had_display:
-                await self._mount_message(AssistantMessage("<no text response>"))
-            activity.display = False
-            prompt.disabled = False
-            prompt.focus()
             self._busy = False
-            status = self.runtime.status()
-            self.query_one(StatusBar).set_status(
-                status, _format_context_usage(self.runtime.context_status())
-            )
-            self.query_one(TodoPanel).set_todos(status.todos)
-            activity.set_todos(status.todos)
 
-    @work(exclusive=True, group="provider-dialog")
-    async def _manage_providers(self) -> None:
-        try:
-            update = await self.push_screen_wait(
-                ProviderScreen(
-                    self.runtime.providers(),
-                    getattr(self.runtime, "refresh_provider_models", None),
-                )
-            )
-            if update is None:
-                return
-            status = await self.runtime.configure_provider(update)
-        except Exception as error:
-            await self._mount_message(
-                SystemMessage(f"Provider configuration failed: {error}", error=True)
-            )
-        else:
-            self.query_one(StatusBar).set_status(
-                status, _format_context_usage(self.runtime.context_status())
-            )
-            self.query_one(TodoPanel).set_todos(status.todos)
-            self.query_one(ActivityBar).set_todos(status.todos)
-            welcome = self.query_one(WelcomePanel)
-            welcome.status = status
-            welcome.refresh()
-            endpoint = status.base_url or "SDK default"
-            await self._mount_message(
-                SystemMessage(
-                    f"Using provider {status.provider_id!r} · "
-                    f"{status.model} · {endpoint}"
-                )
-            )
-        finally:
-            self.query_one("#prompt", Input).focus()
-
-    @work(exclusive=True, group="resume-dialog")
-    async def _resume_session(self) -> None:
-        prompt = self.query_one("#prompt", Input)
-        prompt.disabled = True
-        try:
-            sessions = await self.runtime.list_sessions()
-            if not sessions:
-                await self._mount_message(
-                    SystemMessage("No conversations found to resume.")
-                )
-                return
-            session_id = await self.push_screen_wait(ResumeScreen(sessions))
-            if session_id is None:
-                return
-            resumed = await self.runtime.resume_session(session_id)
-            await self._render_history(resumed.history)
-            self.query_one(StatusBar).set_status(
-                resumed.status, _format_context_usage(self.runtime.context_status())
-            )
-            self.query_one(TodoPanel).set_todos(
-                resumed.status.todos, reset_session=True
-            )
-            self.query_one(ActivityBar).set_todos(resumed.status.todos)
-            welcome = self.query_one(WelcomePanel)
-            welcome.status = resumed.status
-            welcome.refresh()
-        except Exception as error:
-            await self._mount_message(
-                SystemMessage(f"Failed to resume conversation: {error}", error=True)
-            )
-        finally:
-            prompt.disabled = False
-            prompt.focus()
-
-    @work(exclusive=True, group="agent-turn")
-    async def _compact_context(self) -> None:
-        prompt = self.query_one("#prompt", Input)
-        activity = self.query_one(ActivityBar)
+    async def _run_compaction(self) -> None:
         self._busy = True
-        prompt.disabled = True
-        activity.display = True
+        self._activity = "Compacting conversation…"
         try:
             status = await self.runtime.compact()
-            await self._mount_message(
-                SystemMessage(
-                    "Conversation compacted.\n" + _render_context_status(status)
+            self._context_status = status
+            await self._write(
+                system_message(
+                    "Conversation compacted.\n" + render_context_status(status)
                 )
             )
         except Exception as error:
-            await self._mount_message(
-                SystemMessage(f"Compaction failed: {error}", error=True)
-            )
+            await self._write(system_message(f"Compaction failed: {error}", error=True))
         finally:
-            activity.display = False
-            prompt.disabled = False
-            prompt.focus()
             self._busy = False
-            runtime_status = self.runtime.status()
-            self.query_one(StatusBar).set_status(
-                runtime_status, _format_context_usage(self.runtime.context_status())
+            self._activity = ""
+            self._refresh_status()
+
+    async def _open_resume(self) -> None:
+        self._sessions = await self.runtime.list_sessions()
+        self._panel_index = 0
+        self._open_panel("resume")
+
+    def _open_provider(self) -> None:
+        self._providers = self.runtime.providers()
+        self._panel_index = next(
+            (i for i, item in enumerate(self._providers) if item.active), 0
+        )
+        self._provider_selected_index = self._panel_index
+        self._open_panel("provider_select")
+
+    def _open_panel(self, name: str) -> None:
+        self._saved_draft = self.buffer.text
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._panel = name
+        self._invalidate()
+
+    def _close_panel(self) -> None:
+        self._panel = None
+        self._provider_form = None
+        self.buffer.set_document(
+            Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
+        )
+        self._invalidate()
+
+    def _move_panel(self, offset: int) -> None:
+        if self._panel == "resume":
+            size = len(self._sessions)
+        elif self._panel == "permission" and self._permission_mode == "select":
+            size = len(self._permission_options())
+        elif self._panel == "provider_select":
+            size = min(len(self._providers), 8) + 1
+        elif self._panel == "provider_actions":
+            size = 3
+        elif self._panel == "provider_review":
+            size = 4
+        elif self._panel == "provider_models":
+            size = min(len(self._provider_models), 8)
+        else:
+            size = 0
+        if size:
+            self._panel_index = (self._panel_index + offset) % size
+            self._invalidate()
+
+    async def _panel_enter(self) -> None:
+        if self._panel == "permission":
+            value = self.buffer.text.strip()
+            if self._permission_mode == "select":
+                self._choose_permission(self._permission_options()[self._panel_index])
+            elif self._permission_mode == "feedback" and value:
+                self._resolve_permission(PermissionConfirmation(False, value))
+            elif self._permission_mode == "prefix" and value:
+                await self._submit_permission_prefix(value)
+        elif self._panel == "resume" and self._sessions:
+            session_id = self._sessions[self._panel_index].session_id
+            try:
+                resumed = await self.runtime.resume_session(session_id)
+                self._status = resumed.status
+                self._context_status = self.runtime.context_status()
+                self._todos = resumed.status.todos
+                self._panel = None
+                self.buffer.set_document(Document(""), bypass_readonly=True)
+                await self._write(welcome(resumed.status, self.theme), clear=True)
+                await self._render_history(resumed.history)
+            except Exception as error:
+                await self._write(
+                    system_message(
+                        f"Failed to resume conversation: {error}", error=True
+                    )
+                )
+                self._close_panel()
+        elif self._panel == "provider_select":
+            if self._panel_index == min(len(self._providers), 8):
+                self._provider_selected_index = -1
+                self._start_provider_form(ProviderForm())
+            else:
+                self._provider_selected_index = self._panel_index
+                self._panel = "provider_actions"
+                self._panel_index = 0
+                self.buffer.set_document(Document(""), bypass_readonly=True)
+                self._invalidate()
+        elif self._panel == "provider_actions":
+            if self._panel_index == 0:
+                self._provider_form = ProviderForm.from_view(
+                    self._providers[self._provider_selected_index]
+                )
+                await self._save_provider()
+            elif self._panel_index == 1:
+                self._start_provider_form(
+                    ProviderForm.from_view(
+                        self._providers[self._provider_selected_index]
+                    )
+                )
+            else:
+                self._provider_back()
+        elif self._panel == "provider_form":
+            await self._advance_provider(1)
+        elif self._panel == "provider_review":
+            if self._panel_index == 0:
+                await self._save_provider()
+            elif self._panel_index == 1:
+                await self._refresh_provider()
+            elif self._panel_index == 2:
+                self._start_provider_form(
+                    self._provider_form, fields=PROVIDER_ADVANCED_FIELDS
+                )
+            else:
+                self._panel = "provider_select"
+                self._panel_index = max(self._provider_selected_index, 0)
+                self._invalidate()
+        elif self._panel == "provider_models" and self._provider_models:
+            assert self._provider_form is not None
+            self._provider_form.model = self._provider_models[self._panel_index]
+            self._panel = "provider_review"
+            self._panel_index = 0
+            self.buffer.set_document(Document(""), bypass_readonly=True)
+            self._invalidate()
+
+    def _start_provider_form(
+        self,
+        form: ProviderForm | None,
+        *,
+        fields: tuple[tuple[str, str], ...] = PROVIDER_CORE_FIELDS,
+    ) -> None:
+        if form is None:
+            return
+        self._provider_form = form
+        self._provider_fields = fields
+        self._provider_field = 0
+        self._panel = "provider_form"
+        self._load_provider_field()
+
+    def _load_provider_field(self) -> None:
+        assert self._provider_form is not None
+        name = self._provider_fields[self._provider_field][0]
+        value = cast(str, getattr(self._provider_form, name))
+        self.buffer.set_document(Document(value, len(value)), bypass_readonly=True)
+        self._invalidate()
+
+    async def _advance_provider(self, offset: int) -> None:
+        form = self._provider_form
+        if form is None:
+            return
+        name = self._provider_fields[self._provider_field][0]
+        setattr(form, name, self.buffer.text)
+        target = self._provider_field + offset
+        if target >= len(self._provider_fields):
+            self._panel = "provider_review"
+            self._panel_index = 0
+            self.buffer.set_document(Document(""), bypass_readonly=True)
+            self._invalidate()
+            return
+        self._provider_field = max(0, target)
+        self._load_provider_field()
+
+    async def _refresh_provider(self) -> None:
+        form = self._provider_form
+        if form is None:
+            return
+        if self._provider_selected_index < 0:
+            await self._write(
+                system_message("Save this provider before discovering models.")
             )
-            self.query_one(TodoPanel).set_todos(runtime_status.todos)
-            activity.set_todos(runtime_status.todos)
+            return
+        try:
+            view = await self.runtime.refresh_provider_models(form.provider_id.strip())
+            self._provider_models = view.models
+        except Exception as error:
+            await self._write(
+                system_message(f"Model discovery failed: {error}", error=True)
+            )
+            return
+        if not self._provider_models:
+            await self._write(system_message("No models were discovered."))
+            return
+        self._panel = "provider_models"
+        self._panel_index = next(
+            (
+                i
+                for i, model in enumerate(self._provider_models[:8])
+                if model == form.model
+            ),
+            0,
+        )
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._invalidate()
 
-    async def _render_history(
-        self,
-        history: tuple[HistoryEntry, ...],
-    ) -> None:
-        await self._clear_messages()
-        for entry in history:
-            if isinstance(entry, HistoryText):
-                if entry.role == "user":
-                    await self._mount_message(UserMessage(entry.text))
-                elif entry.role == "assistant":
-                    await self._mount_message(AssistantMessage(entry.text))
-                else:
-                    await self._mount_message(SystemMessage(entry.text))
-            elif isinstance(entry, HistoryReasoning):
-                item = ReasoningMessage(entry.presentation.disclosure, expanded=False)
-                item.load_presentation(entry.presentation)
-                await self._mount_message(item)
-            elif isinstance(entry, HistoryToolCall):
-                tool = ToolCallMessage(entry.tool_use_id, entry.use)
-                tool.finish(entry.result, is_error=entry.is_error)
-                await self._mount_message(tool)
+    async def _save_provider(self) -> None:
+        form = self._provider_form
+        if form is None:
+            return
+        try:
+            status = await self.runtime.configure_provider(form.build_update())
+        except Exception as error:
+            await self._write(
+                system_message(f"Provider configuration failed: {error}", error=True)
+            )
+            return
+        self._status = status
+        self._context_status = self.runtime.context_status()
+        self._panel = None
+        self._provider_form = None
+        self.buffer.set_document(
+            Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
+        )
+        await self._write(
+            system_message(f"Using provider {status.provider_id!r} · {status.model}")
+        )
+        self._invalidate()
 
-    async def _mount_message(
-        self,
-        message: UserMessage
-        | AssistantMessage
-        | ReasoningMessage
-        | SystemMessage
-        | ToolCallMessage,
-    ) -> None:
-        conversation = self.query_one("#conversation", VerticalScroll)
-        await conversation.mount(message)
-        conversation.scroll_end(animate=False)
-
-    def _scroll_to_end(self) -> None:
-        self.query_one("#conversation", VerticalScroll).scroll_end(animate=False)
-
-    async def _clear_messages(self) -> None:
-        for message in list(self.query(".message")):
-            await message.remove()
+    def _provider_back(self) -> None:
+        if self._panel == "provider_actions":
+            self._panel = "provider_select"
+            self._panel_index = max(self._provider_selected_index, 0)
+        elif self._panel == "provider_models":
+            self._panel = "provider_review"
+            self._panel_index = 1
+        elif self._panel in {"provider_form", "provider_review"}:
+            if self._provider_selected_index >= 0:
+                self._panel = "provider_actions"
+                self._panel_index = 1
+            else:
+                self._panel = "provider_select"
+                self._panel_index = min(len(self._providers), 8)
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._invalidate()
 
     async def _ask_permission(
         self, request: PermissionRequest
     ) -> PermissionConfirmation:
-        prompt = self.query_one("#prompt", Input)
-        activity = self.query_one(ActivityBar)
-        panel = self.query_one(PermissionPanel)
-        self._close_suggestions()
-        prompt.display = False
-        activity.display = False
+        if self._permission_future is not None:
+            raise RuntimeError("A permission request is already active")
+        self._saved_draft = self.buffer.text
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._permission_request = request
+        self._permission_mode = "select"
+        self._panel_index = 1
+        self._panel = "permission"
+        self._permission_future = asyncio.get_running_loop().create_future()
+        self._invalidate()
         try:
-            return await panel.ask(request)
+            return await self._permission_future
         finally:
-            prompt.display = True
-            activity.display = True
+            self._permission_future = None
+            self._permission_request = None
+            self._panel = None
+            self.buffer.set_document(
+                Document(self._saved_draft, len(self._saved_draft)),
+                bypass_readonly=True,
+            )
+            self._invalidate()
 
-    def _select_highlighted_suggestion(
-        self, prompt: Input, palette: OptionList
+    def _choose_permission(self, choice: str) -> None:
+        request = self._permission_request
+        if choice == "allow":
+            self._resolve_permission(PermissionConfirmation(True))
+        elif choice == "deny":
+            self._resolve_permission(PermissionConfirmation(False))
+        elif choice == "feedback":
+            self._permission_mode = "feedback"
+            self.buffer.set_document(Document(""), bypass_readonly=True)
+        elif choice == "remember" and request is not None:
+            if request.tool_name == "Bash":
+                self._permission_mode = "prefix"
+                self.buffer.set_document(Document(""), bypass_readonly=True)
+            elif request.suggestions:
+                self._resolve_permission(
+                    PermissionConfirmation(True, updates=request.suggestions)
+                )
+        self._invalidate()
+
+    def _permission_options(self) -> tuple[str, ...]:
+        request = self._permission_request
+        options = ["allow", "deny", "feedback"]
+        if request is not None and (request.tool_name == "Bash" or request.suggestions):
+            options.append("remember")
+        return tuple(options)
+
+    async def _submit_permission_prefix(self, raw: str) -> None:
+        try:
+            content = validate_bash_rule_content(raw)
+        except ValueError as error:
+            await self._write(
+                system_message(f"Invalid Bash prefix: {error}", error=True)
+            )
+            self.buffer.reset()
+            return
+        update = PermissionUpdate.add_rules(
+            (
+                permission_rule_for_destination(
+                    "Bash",
+                    PermissionBehavior.ALLOW,
+                    PermissionUpdateDestination.LOCAL,
+                    content,
+                ),
+            ),
+            destination=PermissionUpdateDestination.LOCAL,
+        )
+        self._resolve_permission(PermissionConfirmation(True, updates=(update,)))
+
+    def _resolve_permission(self, result: PermissionConfirmation) -> None:
+        future = self._permission_future
+        if future is not None and not future.done():
+            future.set_result(result)
+
+    def _on_text_changed(self, _: Buffer) -> None:
+        if self._panel is not None or self._busy:
+            return
+        self._slash_menu.update(self.buffer.text, self.commands)
+        self._invalidate()
+        mention = mention_at_cursor(self.buffer.text, self.buffer.cursor_position)
+        self._suggestion_revision += 1
+        revision = self._suggestion_revision
+        if mention is None:
+            self._mention_span = None
+            self._path_suggestions = ()
+            return
+        start, end, query = mention
+        self._mention_span = (start, end)
+        self._spawn(self._load_paths(revision, query, start, end))
+
+    async def _load_paths(
+        self, revision: int, query: str, start: int, end: int
     ) -> None:
-        option_id = _highlighted_option_id(palette)
-        if option_id is None:
+        suggestions = await self.runtime.suggest_paths(query)
+        if revision != self._suggestion_revision or self._mention_span != (start, end):
             return
-        if self._suggestion_mode == "path":
-            self._select_path_option(option_id)
-            return
-        prompt.value = f"/{option_id} "
-        prompt.cursor_position = len(prompt.value)
+        self._path_suggestions = suggestions
+        if suggestions:
+            self.buffer.start_completion(select_first=True)
 
-    def _select_path_option(self, option_id: str | None) -> None:
-        if option_id is None or not option_id.startswith("path:"):
-            return
-        try:
-            suggestion = self._path_suggestions[int(option_id.partition(":")[2])]
-        except (ValueError, IndexError):
-            return
-        if self._mention_span is None:
-            return
-        prompt = self.query_one("#prompt", Input)
-        start, end = self._mention_span
-        replacement = format_path_mention(suggestion.path) + " "
-        prompt.value = prompt.value[:start] + replacement + prompt.value[end:]
-        prompt.cursor_position = start + len(replacement)
-        self._close_suggestions()
+    async def _render_history(self, history: tuple[HistoryEntry, ...]) -> None:
+        for entry in history:
+            if isinstance(entry, HistoryText):
+                renderable = (
+                    user_message(entry.text, self.theme)
+                    if entry.role == "user"
+                    else assistant_message(entry.text)
+                    if entry.role == "assistant"
+                    else system_message(entry.text)
+                )
+            elif isinstance(entry, HistoryReasoning):
+                renderable = reasoning_message(entry.presentation)
+            else:
+                assert isinstance(entry, HistoryToolCall)
+                renderable = tool_message(
+                    entry.use, entry.result, is_error=entry.is_error
+                )
+            await self._write(renderable)
 
-    def _close_suggestions(self) -> None:
-        self._suggestion_request += 1
-        self._suggestion_mode = None
-        self._path_suggestions = ()
-        self._mention_span = None
-        try:
-            self.query_one("#command-palette", OptionList).display = False
-        except Exception:
-            pass
+    def _refresh_status(self) -> None:
+        self._status = self.runtime.status()
+        self._context_status = self.runtime.context_status()
+        self._todos = self._status.todos
+        self._invalidate()
 
 
 class MyCodeTui:
-    """保留精简启动器，使 CLI 不依赖 Textual 的 App API。"""
-
     def __init__(self, runtime: ChatService) -> None:
         self.app = MyCodeApp(runtime)
 
@@ -939,48 +838,4 @@ class MyCodeTui:
         await self.app.run_async()
 
 
-def _highlighted_option_id(palette: OptionList) -> str | None:
-    highlighted = palette.highlighted
-    if highlighted is None:
-        return None
-    return palette.get_option_at_index(highlighted).id
-
-
-def _render_context_status(status: ContextStatus) -> str:
-    measured = (
-        "provider calibrated"
-        if status.measurement == "reported_calibrated"
-        else "local estimate"
-    )
-    lines = [
-        f"Context: {_format_context_usage(status)}",
-        f"Measured by: {measured}",
-        (
-            f"Compact at: {_format_token_k(status.compact_trigger_tokens)}"
-            + (
-                " (auto)"
-                if status.configured_compact_trigger_tokens is None
-                else " (configured)"
-            )
-        ),
-        f"Compactions: {status.replacement_count} micro · {status.compact_count} full",
-    ]
-    if status.warning:
-        lines.append(f"Warning: {status.warning}")
-    return "\n".join(lines)
-
-
-def _format_context_usage(status: ContextStatus) -> str:
-    used = status.input_tokens or status.estimated_input_tokens
-    return f"{_format_token_k(used)} / {_format_token_k(status.input_limit_tokens)}"
-
-
-def _format_token_k(tokens: int) -> str:
-    value = f"{tokens / 1000:.1f}".removesuffix(".0")
-    return f"{value}k"
-
-
-__all__ = [
-    "MyCodeApp",
-    "MyCodeTui",
-]
+__all__ = ["MyCodeApp", "MyCodeTui"]

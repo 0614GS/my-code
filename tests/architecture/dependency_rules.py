@@ -92,6 +92,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "context",
             "conversation",
             "features.file_mentions",
+            "features.background_tasks",
             "features.todos",
             "foundation",
             "model",
@@ -100,6 +101,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "runtime",
             "sessions",
             "skills",
+            "tasks",
             "tools",
         }
     ),
@@ -355,7 +357,7 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
                             imported_module,
                         )
                     )
-                if top_level == "textual" and source != "tui":
+                if top_level in {"prompt_toolkit", "rich"} and source != "tui":
                     leaks.append(
                         TechnicalLeak(
                             relative_path,

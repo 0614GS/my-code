@@ -131,6 +131,7 @@ class ApplicationAssembly:
     session: Session
     background_notifications: BackgroundTaskNotificationSource | None = None
     background_wake_signal: BackgroundTaskWakeSignal | None = None
+    background_tasks: BackgroundTaskRegistry | None = None
 
 
 async def discover_active_model(
@@ -507,6 +508,7 @@ def _assemble_agent(
         session=session,
         background_notifications=background_notifications,
         background_wake_signal=background_wake_signal,
+        background_tasks=background_registry,
     )
 
 
@@ -542,6 +544,7 @@ def bootstrap_chat(
         path_suggester=WorkspacePathSuggester(settings.cwd),
         background_notifications=assembled.background_notifications,
         background_wake_signal=assembled.background_wake_signal,
+        background_tasks=assembled.background_tasks,
     )
 
 
