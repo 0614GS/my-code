@@ -47,10 +47,10 @@ my-code 不追求逐项追平 Claude Code，也不会机械翻译其实现。参
 
 需要 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和一个受支持的 Provider。
 
+一条命令安装：
+
 ```bash
-git clone https://github.com/0614GS/my-code.git
-cd my-code
-uv tool install .
+uv tool install git+https://github.com/0614GS/my-code.git
 mycode
 ```
 
