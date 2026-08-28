@@ -43,6 +43,12 @@ Context 会把 Conversation entries 转换为有序 `ModelInputItem`，不会修
 
 摘要不是隐藏缓存，而是新的 `ConversationSummaryMessage`。恢复时 Session 根据私有 compact boundary 派生 `context_entries`，因此 compact 后仍可继续对话。
 
+Compact 使用独立的内部输出策略：默认请求 20,000 tokens，若已知模型声明了更低的输出上限则收窄到该上限，并显式关闭该请求的 reasoning。摘要契约是非空的结构化 Markdown handoff；解析层会清除完整的 `analysis`/`analyze` 草稿块，并兼容解包旧的 `summary` 标签和整段 Markdown fence。
+
+输出因 `max_tokens` 或 `max_output_tokens` 截断时，未完成内容不会进入 proposal；同一输入最多重试一次，重试提示要求完整内容不超过 16,000 tokens。若 compact 输入本身被 provider 拒绝为超长，则只对本次摘要视图执行有损重试：以 `UserInput` 开始的完整轮次为边界，每次移除当前最老的 20%（至少一轮），保留最新轮次并加入较早上下文省略标记，初次请求之外最多裁剪重试三次。该裁剪不删除完整 transcript。
+
+一次成功 compact 中所有已完成模型调用的 token usage 会累计到 `CompactionOutcome.usage`；只有每次调用都由 provider 上报时，累计值的 `provider_reported` 才为真。任意重试全部失败时不会返回 proposal，因此 replacements、summary、boundary 与 Session 均不推进；只有最终成功后才执行上述原子提交。
+
 ## Session context state 生命周期
 
 每个活动 Session 配对一个独立 `ContextRuntime`，每个 subagent run 也独占一个。它持有：

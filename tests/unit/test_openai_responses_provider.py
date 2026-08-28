@@ -300,6 +300,43 @@ def test_request_is_stateless_and_requests_safe_reasoning_summary() -> None:
     assert params["include"] == ["reasoning.encrypted_content"]
 
 
+def test_request_can_disable_reasoning_without_changing_provider_profile() -> None:
+    provider = _provider()
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (UserInput((InputText("hello"),)),),
+        (),
+        100,
+        reasoning_mode="disabled",
+    )
+
+    params = provider._request_params(request)
+
+    assert "reasoning" not in params
+    assert "include" not in params
+
+
+def test_incomplete_response_preserves_provider_reason() -> None:
+    provider = _provider()
+    response = SimpleNamespace(
+        status="incomplete",
+        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output=[
+            Item(
+                {
+                    "type": "message",
+                    "id": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "partial"}],
+                }
+            )
+        ],
+        usage=None,
+    )
+
+    assert provider._response(response).stop_reason == "max_output_tokens"
+
+
 def test_stream_normalizer_serializes_interleaved_output_items() -> None:
     normalizer = _OpenAIStreamNormalizer()
     reasoning_delta = SimpleNamespace(

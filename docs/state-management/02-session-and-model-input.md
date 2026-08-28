@@ -95,6 +95,7 @@ class ModelRequest:
     input: tuple[ModelInputItem, ...]
     tools: tuple[ModelToolDefinition, ...]
     max_output_tokens: int
+    reasoning_mode: Literal["inherit", "disabled"] = "inherit"
 
 
 type ModelInputItem = UserInput | AssistantOutput | ToolOutputs

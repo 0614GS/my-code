@@ -57,6 +57,8 @@ Slash command 在 prompt 进入模型前本地解析。除原有命令外，`/us
 
 Enter 提交，Alt+Enter（或 Esc 后 Enter）换行。输入 `/` 会立即在 composer 下方展示命令及说明，继续输入时按前缀过滤并默认选中第一项；Enter 直接执行选中的本地命令，Tab 只补全。候选使用终端默认背景，只通过前景色和粗体标记当前项，并且不绘制内部滚动条。Esc 按候选菜单、临时面板、当前 turn 的顺序处理；空闲 Ctrl+C 清空，空输入 Ctrl+D 退出，Ctrl+T 切换 Todo。turn 和后台 continuation 期间 composer 只读，已有草稿保留。
 
+应用退出时先擦除底部动态布局，再将光标交还 shell；Welcome、历史、已完成回合和退出提示等 scrollback 内容保留，terminal 中不残留 composer、状态栏或临时面板。
+
 TUI 不发送光标形状控制序列，并覆盖 prompt_toolkit 默认的“显示光标时关闭闪烁”行为；VT 重绘只发送光标可见性，因此宽度、形状与闪烁沿用用户终端配置。启动时优先读取终端颜色提示，并在真实 TTY 上用有界 OSC 11 探测背景；用户消息和 composer 使用由背景推导的低对比度表面，探测失败则保持透明。
 
 固化到 scrollback 的用户 prompt 使用一条铺满可用宽度的低对比度背景带和 `›` 标记，AI Markdown 继续使用终端默认背景，因此恢复历史和新回合都能清楚区分双方消息。

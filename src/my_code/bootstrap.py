@@ -239,7 +239,10 @@ def _build_agent_components(
         binding_resolver=binding,
         model_environment=environment,
     )
-    context = ContextEngine(planner, ContextCompactor(model_call))
+    context = ContextEngine(
+        planner,
+        ContextCompactor(model_call, model_environment=environment),
+    )
     tool_round = ToolRoundExecutor(
         tool_executor,
         max_parallel_calls=settings.max_parallel_tool_calls,

@@ -108,7 +108,7 @@ class AnthropicProvider(ModelClient):
                 system=self._system(request.system_prompt),
                 messages=self._messages(request.input, binding=self.binding),
                 tools=self._tools(request),
-                **cast(Any, self._reasoning_params()),
+                **cast(Any, self._reasoning_params(request)),
             ) as stream:
                 async for event in stream:
                     if event.type == "content_block_start":
@@ -356,8 +356,8 @@ class AnthropicProvider(ModelClient):
             ),
         )
 
-    def _reasoning_params(self) -> dict[str, object]:
-        if not self.reasoning.enabled:
+    def _reasoning_params(self, request: ModelRequest) -> dict[str, object]:
+        if request.reasoning_mode == "disabled" or not self.reasoning.enabled:
             return {}
         params: dict[str, object] = {"thinking": {"type": "adaptive"}}
         if self.reasoning.effort != "auto":

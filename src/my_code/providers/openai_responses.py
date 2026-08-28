@@ -263,10 +263,11 @@ class OpenAIResponsesProvider(ModelClient):
                 for tool in request.tools
             ],
             "max_output_tokens": request.max_output_tokens,
-            "include": ["reasoning.encrypted_content"],
         }
-        if self.reasoning.enabled:
-            params["reasoning"] = reasoning
+        if request.reasoning_mode != "disabled":
+            params["include"] = ["reasoning.encrypted_content"]
+            if self.reasoning.enabled:
+                params["reasoning"] = reasoning
         return params
 
     def _input(self, items: Iterable[ModelInputItem]) -> list[object]:
@@ -357,9 +358,20 @@ class OpenAIResponsesProvider(ModelClient):
             or 0
         )
         total_input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        status = str(getattr(response, "status", "unknown"))
+        stop_reason = status
+        if status == "incomplete":
+            incomplete_details = getattr(response, "incomplete_details", None)
+            reason = (
+                incomplete_details.get("reason")
+                if isinstance(incomplete_details, dict)
+                else getattr(incomplete_details, "reason", None)
+            )
+            if isinstance(reason, str) and reason:
+                stop_reason = reason
         return ModelOutput(
             tuple(content),
-            str(getattr(response, "status", "unknown")),
+            stop_reason,
             TokenUsage(
                 input_tokens=max(0, total_input_tokens - cached_tokens),
                 output_tokens=int(getattr(usage, "output_tokens", 0) or 0),

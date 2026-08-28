@@ -202,6 +202,14 @@ class FakeRuntime:
         return self.current_permission_mode()
 
 
+class RecordingOutput(DummyOutput):
+    def __init__(self) -> None:
+        self.erase_down_calls = 0
+
+    def erase_down(self) -> None:
+        self.erase_down_calls += 1
+
+
 @pytest.mark.asyncio
 async def test_inline_host_submits_multiline_and_keeps_normal_scrollback() -> None:
     runtime = FakeRuntime()
@@ -226,6 +234,27 @@ async def test_inline_host_submits_multiline_and_keeps_normal_scrollback() -> No
     assert "model response" in output
     assert "Done · 1 steps" in output
     assert "\x1b[?1049" not in output
+
+
+@pytest.mark.asyncio
+async def test_exit_erases_dynamic_composer_region() -> None:
+    runtime = FakeRuntime()
+    output = RecordingOutput()
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=output,
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        erase_calls_before_exit = output.erase_down_calls
+
+        pipe.send_bytes(b"\x04")
+        await running
+
+    assert output.erase_down_calls == erase_calls_before_exit + 1
 
 
 @pytest.mark.asyncio

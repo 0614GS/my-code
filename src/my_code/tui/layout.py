@@ -103,6 +103,7 @@ def build_terminal_layout(
         layout=Layout(body, focused_element=input_control),
         key_bindings=key_bindings,
         full_screen=False,
+        erase_when_done=True,
         mouse_support=False,
         input=input,
         output=resolved_output,

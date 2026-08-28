@@ -84,6 +84,20 @@ def test_anthropic_cache_breakpoints_end_static_and_session_prefixes() -> None:
     assert "cache_control" not in blocks[3]
 
 
+def test_anthropic_request_can_disable_reasoning() -> None:
+    provider = object.__new__(AnthropicProvider)
+    provider.reasoning = ReasoningConfig(True, "high", "auto")
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (UserInput((InputText("hello"),)),),
+        (),
+        100,
+        reasoning_mode="disabled",
+    )
+
+    assert provider._reasoning_params(request) == {}
+
+
 def test_user_context_and_attachments_surround_conversation_messages() -> None:
     user_context = UserInput((InputText("user context"),))
     history = AssistantOutput((ModelTextBlock("history"),))

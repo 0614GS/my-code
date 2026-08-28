@@ -70,7 +70,7 @@ class ContextPlan:
 
 @dataclass(frozen=True, slots=True)
 class CompactionOutcome:
-    """A compaction proposal with no persistence side effect."""
+    """A side-effect-free proposal whose usage aggregates completed attempts."""
 
     replacements: tuple[ContentReplacement, ...]
     summary: ConversationSummaryMessage

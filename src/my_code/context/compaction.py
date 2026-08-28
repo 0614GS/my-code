@@ -1,6 +1,7 @@
 """使用独立模型请求生成可继续工作的会话摘要。"""
 
 import re
+from collections.abc import Callable
 
 from my_code.context.models import CompactionOutcome
 from my_code.context.planner import ContextPlanner
@@ -13,7 +14,9 @@ from my_code.conversation.models import (
     HumanMessage,
 )
 from my_code.conversation.state import CompactBoundary, CompactTrigger
+from my_code.model.capabilities import ActiveModelEnvironment
 from my_code.model.client import ModelClient, collect_model_output
+from my_code.model.errors import ModelContextOverflow
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
     InputText,
@@ -26,10 +29,9 @@ from my_code.model.request import (
 
 _COMPACTION_SYSTEM_PROMPT = """You are a coding-agent conversation compactor.
 Your only task is to turn the supplied conversation into accurate continuation
-state. Do not call tools, continue the task, or invent facts. Respond with plain
-text containing exactly one non-empty <summary> block. Do not add analysis,
-Markdown fences, or text outside that block. Only the contents of <summary> will
-be shown to the continuing agent."""
+state. Do not call tools, continue the task, expose private reasoning, or invent
+facts. Respond with one complete, self-contained Markdown handoff for the
+continuing agent."""
 
 _COMPACTION_REQUEST = """Create the continuation summary now.
 
@@ -39,7 +41,7 @@ Inspect the conversation chronologically and preserve:
 - tool and test outcomes, errors, attempted fixes, and unresolved uncertainty;
 - the exact current work state and the next action, if one is still required.
 
-In <summary>, write compact but operational continuation state using these sections:
+Write compact but operational continuation state using these Markdown sections:
 1. Current goal and user intent
 2. User directives and feedback
 3. Technical decisions and invariants
@@ -50,15 +52,29 @@ In <summary>, write compact but operational continuation state using these secti
 Preserve the wording of recent user-authored messages when it defines the current
 task or corrects earlier direction. Distinguish completed work from proposed work.
 Exclude tool-result bulk, redundant narration, and private reasoning. Do not
-acknowledge this instruction or add text outside the summary XML tag.
+acknowledge this instruction. Return only the continuation handoff."""
 
-Required response shape:
-<summary>
-continuation state
-</summary>"""
+_TRUNCATION_RETRY_REQUEST = _COMPACTION_REQUEST + """
 
-_SUMMARY_PATTERN = re.compile(r"<summary>([\s\S]*?)</summary>")
-_ANALYZE_PATTERN = re.compile(r"<analyze>[\s\S]*?</analyze>")
+The previous response was cut off by the output token limit. Produce a complete
+handoff this time and keep its content at or below 16,000 tokens. Prefer concise
+coverage of every operationally important fact over detail that cannot fit."""
+
+_ANALYSIS_PATTERN = re.compile(
+    r"<(?:analysis|analyze)(?:\s[^>]*)?>[\s\S]*?</(?:analysis|analyze)\s*>",
+    re.IGNORECASE,
+)
+_SUMMARY_TAG_PATTERN = re.compile(
+    r"</?summary(?:\s[^>]*)?>?",
+    re.IGNORECASE,
+)
+_DEFAULT_MAX_OUTPUT_TOKENS = 20_000
+_MAX_OUTPUT_RETRIES = 1
+_MAX_INPUT_RETRIES = 3
+_OMITTED_CONTEXT_MARKER = (
+    "[Earlier context was omitted because the compact request exceeded the "
+    "model input limit.]"
+)
 _RECENT_USER_MESSAGE_LIMIT = 3
 _RECENT_USER_CHAR_LIMIT = 6_000
 _CONTINUATION_PREAMBLE = """This session continues from an earlier conversation
@@ -71,36 +87,95 @@ summary to the user."""
 class ContextCompactor:
     """生成 compact 摘要与无持久化副作用的 context outcome。"""
 
-    def __init__(self, provider: ModelClient, *, max_output_tokens: int = 2048) -> None:
+    def __init__(
+        self,
+        provider: ModelClient,
+        *,
+        max_output_tokens: int = _DEFAULT_MAX_OUTPUT_TOKENS,
+        model_environment: Callable[[], ActiveModelEnvironment] | None = None,
+    ) -> None:
         if max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
         self.provider = provider
         self.max_output_tokens = max_output_tokens
+        self._model_environment = model_environment
 
     async def summarize(
         self, messages: tuple[ModelInputItem, ...]
     ) -> tuple[str, TokenUsage]:
-        response = await collect_model_output(
-            self.provider,
-            ModelRequest(
+        output_budget = self._effective_output_budget()
+        groups = _conversation_turn_groups(messages)
+        visible_groups = groups
+        input_retries = 0
+        output_attempts = 0
+        usage_parts: list[TokenUsage] = []
+        omitted_earlier_context = False
+
+        while True:
+            visible_messages = _render_visible_groups(
+                visible_groups,
+                omitted_earlier_context=omitted_earlier_context,
+            )
+            request_text = (
+                _TRUNCATION_RETRY_REQUEST
+                if output_attempts > 0
+                else _COMPACTION_REQUEST
+            )
+            request = ModelRequest(
                 system_prompt=SystemPrompt.from_text(
                     _COMPACTION_SYSTEM_PROMPT,
                     key="my-code.compaction",
                 ),
-                input=_append_summary_request(messages),
+                input=_append_summary_request(visible_messages, request_text),
                 tools=(),
-                max_output_tokens=self.max_output_tokens,
-            ),
-        )
-        response_text = "\n".join(
-            block.text
-            for block in response.content
-            if isinstance(block, ModelTextBlock)
-        ).strip()
-        if not response_text:
-            raise RuntimeError("Compaction model returned no text summary")
-        summary = _extract_summary(response_text)
-        return summary, response.usage
+                max_output_tokens=output_budget,
+                reasoning_mode="disabled",
+            )
+            try:
+                response = await collect_model_output(self.provider, request)
+            except ModelContextOverflow as error:
+                if input_retries >= _MAX_INPUT_RETRIES:
+                    raise ModelContextOverflow(
+                        "Compaction input still exceeded the model context window "
+                        f"after {input_retries} cropping retries"
+                    ) from error
+                cropped = _crop_oldest_turns(visible_groups)
+                if cropped is None:
+                    raise ModelContextOverflow(
+                        "Compaction input exceeded the model context window and "
+                        "only the latest safe conversation turn remains"
+                    ) from error
+                visible_groups = cropped
+                omitted_earlier_context = True
+                input_retries += 1
+                continue
+
+            usage_parts.append(response.usage)
+            if _is_output_truncation(response.stop_reason):
+                output_attempts += 1
+                if output_attempts > _MAX_OUTPUT_RETRIES:
+                    raise RuntimeError(
+                        "Compaction output was truncated after "
+                        f"{output_attempts} attempts "
+                        f"(stop_reason={response.stop_reason}, "
+                        f"max_output_tokens={output_budget})"
+                    )
+                continue
+
+            response_text = "\n".join(
+                block.text
+                for block in response.content
+                if isinstance(block, ModelTextBlock)
+            ).strip()
+            if not response_text:
+                raise RuntimeError("Compaction model returned no text summary")
+            return _extract_summary(response_text), _sum_usage(usage_parts)
+
+    def _effective_output_budget(self) -> int:
+        if self._model_environment is None:
+            return self.max_output_tokens
+        model_limit = self._model_environment().descriptor.limits.max_output_tokens
+        return min(self.max_output_tokens, model_limit or self.max_output_tokens)
 
     async def compact(
         self,
@@ -144,8 +219,9 @@ class ContextCompactor:
 
 def _append_summary_request(
     items: tuple[ModelInputItem, ...],
+    request_text: str = _COMPACTION_REQUEST,
 ) -> tuple[ModelInputItem, ...]:
-    instruction = InputText(_COMPACTION_REQUEST)
+    instruction = InputText(request_text)
     if items and isinstance(items[-1], UserInput):
         last = items[-1]
         return items[:-1] + (UserInput(content=last.content + (instruction,)),)
@@ -153,40 +229,72 @@ def _append_summary_request(
 
 
 def _extract_summary(response_text: str) -> str:
-    """Extract a tagged summary or one unambiguously plain fallback body."""
+    """Normalize modern Markdown and permissively unwrap legacy output."""
 
-    matches: list[str] = _SUMMARY_PATTERN.findall(response_text)
-    opening_markers = response_text.count("<summary")
-    closing_markers = response_text.count("</summary")
-    if (
-        len(matches) == 1
-        and opening_markers == 1
-        and closing_markers == 1
-        and matches[0].strip()
-    ):
-        return matches[0].strip()
-    if len(matches) > 1 or "<summary" in response_text or "</summary" in response_text:
-        raise RuntimeError(
-            "Compaction model must return exactly one non-empty <summary> block"
-        )
-    fallback = _strip_enclosing_fence(response_text.strip())
-    analyze_matches = _ANALYZE_PATTERN.findall(fallback)
-    if len(analyze_matches) > 1:
-        raise RuntimeError(
-            "Compaction model must return exactly one non-empty <summary> block"
-        )
-    if analyze_matches:
-        fallback = _ANALYZE_PATTERN.sub("", fallback, count=1)
-    if "<analyze" in fallback or "</analyze" in fallback:
-        raise RuntimeError(
-            "Compaction model must return exactly one non-empty <summary> block"
-        )
-    summary = fallback.strip()
+    summary = _strip_enclosing_fence(response_text.strip())
+    summary = _ANALYSIS_PATTERN.sub("", summary)
+    summary = _SUMMARY_TAG_PATTERN.sub("\n", summary)
+    summary = _strip_enclosing_fence(summary.strip())
+    summary = summary.strip()
     if not summary:
-        raise RuntimeError(
-            "Compaction model must return exactly one non-empty <summary> block"
-        )
+        raise RuntimeError("Compaction model returned an empty summary")
     return summary
+
+
+def _is_output_truncation(stop_reason: str) -> bool:
+    return stop_reason.casefold() in {"max_tokens", "max_output_tokens"}
+
+
+def _sum_usage(parts: list[TokenUsage]) -> TokenUsage:
+    return TokenUsage(
+        input_tokens=sum(part.input_tokens for part in parts),
+        output_tokens=sum(part.output_tokens for part in parts),
+        cache_creation_input_tokens=sum(
+            part.cache_creation_input_tokens for part in parts
+        ),
+        cache_read_input_tokens=sum(part.cache_read_input_tokens for part in parts),
+        provider_reported=all(part.provider_reported for part in parts),
+    )
+
+
+def _conversation_turn_groups(
+    items: tuple[ModelInputItem, ...],
+) -> tuple[tuple[ModelInputItem, ...], ...]:
+    groups: list[tuple[ModelInputItem, ...]] = []
+    current: list[ModelInputItem] = []
+    seen_user = False
+    for item in items:
+        if isinstance(item, UserInput) and seen_user:
+            groups.append(tuple(current))
+            current = []
+        current.append(item)
+        if isinstance(item, UserInput):
+            seen_user = True
+    if current:
+        groups.append(tuple(current))
+    return tuple(groups)
+
+
+def _crop_oldest_turns(
+    groups: tuple[tuple[ModelInputItem, ...], ...],
+) -> tuple[tuple[ModelInputItem, ...], ...] | None:
+    if len(groups) <= 1:
+        return None
+    remove_count = max(1, len(groups) // 5)
+    remove_count = min(remove_count, len(groups) - 1)
+    return groups[remove_count:]
+
+
+def _render_visible_groups(
+    groups: tuple[tuple[ModelInputItem, ...], ...],
+    *,
+    omitted_earlier_context: bool,
+) -> tuple[ModelInputItem, ...]:
+    flattened = tuple(item for group in groups for item in group)
+    if not omitted_earlier_context:
+        return flattened
+    marker = UserInput((InputText(_OMITTED_CONTEXT_MARKER),))
+    return (marker, *flattened)
 
 
 def _strip_enclosing_fence(text: str) -> str:
