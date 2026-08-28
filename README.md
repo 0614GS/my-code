@@ -30,7 +30,7 @@ Claude Code 是 my-code 最重要的行为参考之一：两者都围绕终端 A
 | 终端界面 | Claude Code 自有交互体验 | `prompt_toolkit + Rich`，保留原生 terminal scrollback |
 | 项目阶段 | 完整产品与生态 | 早期开发，优先保持实现清晰和可验证 |
 
-my-code 不追求逐项追平 Claude Code，也不会机械翻译其实现。参考行为、安全不变量和有意保留的差异记录在 [MVP scope](docs/08-mvp-scope.md) 中。
+my-code 不追求逐项追平 Claude Code，也不会机械翻译其实现。参考行为、安全不变量和有意保留的差异记录在[当前能力范围](docs/09-current-scope.md)中。
 
 ## 已实现能力
 
@@ -65,9 +65,9 @@ Provider 的协议、Base URL、默认模型和模型目录只来自 `~/.my-code
 my-code 仍处于早期开发阶段。它已经具备完整的交互式 Agent 主路径，但目前提供的是应用层权限与工作区保护，不是 OS 级沙箱；请勿对不受信任的项目关闭权限确认。
 
 - [架构手册](docs/README.md)
-- [当前 MVP 范围](docs/08-mvp-scope.md)
-- [存储与配置](docs/09-storage-and-settings.md)
-- [模块边界与依赖方向](docs/12-package-boundaries.md)
+- [当前能力范围](docs/09-current-scope.md)
+- [Provider、配置与存储](docs/06-providers-settings-storage.md)
+- [包边界与架构守卫](docs/08-package-boundaries.md)
 
 ## 参与开发
 

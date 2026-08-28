@@ -1,0 +1,42 @@
+# 终端 UI
+
+`tui` 是 `mycode` 的交互式 host。它使用 `prompt_toolkit + Rich` 处理输入、底部动态区、临时面板和事件渲染，但不读取 JSONL、不执行工具、不构造 `ModelRequest`，也不持有 AgentEngine。
+
+## Host 边界
+
+主应用使用普通 terminal scrollback，而不是全屏 alternate buffer。已完成内容通过串行的 terminal 输出固化；composer、状态栏和临时交互保留在底部动态区。只有 `Ctrl+T` transcript pager 临时使用 alternate buffer。
+
+TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义模块读取安全 DTO。它不会直接访问 Session、Conversation、Context、ToolExecutor、ToolCatalog、TaskSupervisor、MCP/Skill runtime 或 Provider SDK。
+
+模块按 UI 职责拆分：`app.py` 负责编排，`turns.py` 消费事件，`layout.py` 和 `key_bindings.py` 管理动态区与按键，`picker.py`/`panels.py` 管理临时交互，`widgets.py`/`theme.py`/`terminal.py` 管理展示和终端能力。
+
+## 事件与展示
+
+一次 prompt 调用 `ChatService.stream()`，TUI 消费 text/reasoning started、delta、completed，attachment、tool started/finished、Todo 更新和 turn 终态。
+
+- delta 只存在于动态区；completed 到达后先清除预览，再把最终 Rich renderable 固化到 scrollback。
+- 连续 ToolCall 组成一个稳定有序块，并行完成只按 call ID 更新原位置，不重排。
+- 异常、取消、max-steps 和后台 continuation 使用同样的“移除动态副本后固化终态”边界。
+- 状态栏只在启动、turn 结束、Session 恢复或配置变化等安全边界刷新 context snapshot；重绘 callback 不重新执行 context 规划。
+
+恢复历史和实时事件使用相同的安全投影。工具展示优先使用执行时持久化的 presentation；TUI 不重新解释原始 Conversation 或读取外置结果文件。
+
+## Transcript 与 Agent 视图
+
+`Ctrl+T` 打开当前 Session 的只读 transcript，包括用户/助手文本、允许披露的 reasoning、工具参数与持久化结果、summary 和 durable attachments。投影不包含内部 UUID、provider replay、token 调试元数据、hidden/redacted reasoning，也不展开外置文件。
+
+`/agents` 和 F6 可查看主会话、活跃 child 与最近结束 child 的进程内安全视图。选择只改变 UI 投影，不切换核心 Session，也不取消 child。
+
+## 输入、命令与临时面板
+
+Enter 提交，Shift+Enter 或 Ctrl+J 换行；Esc 按候选菜单、临时面板、当前 turn 的优先级处理。Turn 和后台 continuation 期间 composer 只读但保留草稿。
+
+Slash commands 在进入模型前本地解析。`/resume`、`/provider`、`/model`、`/usage`、`/tools`、`/skills`、`/mcp`、`/tasks` 和 `/agents` 都只调用 ChatService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
+
+Permission、Full Access、Provider 和 Resume 共用 composer 下方的 interaction host。工具权限默认安全拒绝；无 OS sandbox 时首次进入 Full Access 必须经过当前进程有效的危险确认。API key 输入使用密码处理，面板只显示是否已配置。
+
+## 生命周期
+
+首次启动缺少有效 Provider 时，先完成 Provider 向导再组装聊天 runtime。退出时 TUI 关闭 transcript、取消 UI watcher、清除底部动态布局并交还光标；外层随后按 AppState 顺序关闭任务、扩展和 Provider。
+
+主要源码入口：`src/my_code/tui/app.py`、`src/my_code/tui/turns.py`、`src/my_code/tui/layout.py`、`src/my_code/tui/key_bindings.py`、`src/my_code/chat/service.py`。

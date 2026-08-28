@@ -1,177 +1,123 @@
 # 当前总体架构
 
-本文描述当前代码已经实现的运行时结构。图中的重点是组件所有权、统一 Conversation 数据流，以及 MCP、Skill、Subagent 和后台任务如何复用统一执行路径。精确的包依赖允许表仍以 `tests/architecture/dependency_rules.py` 为准。
+my-code 是一个 provider-neutral 的模块化单体。核心设计只有一条主线：Session 保存已经发生的事实，Context 为一次模型调用构造投影，Agent 协调模型与工具，所有可变 runtime 能力从 AppState 进入。
 
-## 总体架构图
+## 组件图
 
 ```mermaid
 flowchart TB
-    Bootstrap["bootstrap<br/>唯一 composition root"]
+    Bootstrap["bootstrap.py<br/>唯一 composition root"]
+    Host["CLI / TUI"]
+    Chat["ChatService<br/>用户级用例"]
 
-    subgraph Host["Host 层"]
-        CLI["CLI / TUI"]
-        Chat["ChatService<br/>用户级用例协调"]
+    subgraph Runtime["AppState"]
+        Session["active Session + ContextRuntime"]
+        Workspace["WorkspaceState"]
+        Permissions["PermissionState"]
+        Tools["ToolState / ToolCatalog"]
+        Tasks["TaskSupervisor"]
+        Runs["AgentRunFactory"]
+        ProviderRuntime["ProviderRuntime / leases"]
+        MCP["McpRuntime"]
+        Skills["SkillRuntime"]
     end
 
-    subgraph Runtime["Application runtime：AppState 唯一持有"]
-        AppState["AppState<br/>operation lock + active Session + ContextRuntime"]
-        Workspace["WorkspaceState<br/>工作区安全边界"]
-        Permissions["PermissionState<br/>PermissionPolicy"]
-        ToolState["ToolState<br/>versioned ToolCatalog"]
-        Tasks["TaskSupervisor<br/>任务状态机 + 取消树"]
-        Runs["AgentRunFactory<br/>独立 run capsule"]
-        ProviderRuntime["ProviderRuntime<br/>前台 ProviderRouter"]
-        Leases["ProviderLeaseRegistry<br/>每个 child run 独立 client/stream"]
-        MCP["McpRuntime<br/>连接、发现、refresh、ToolSearch"]
-        Skills["SkillRuntime / SkillCatalog<br/>发现、lazy load、原子 reload"]
+    subgraph Turn["一次 foreground turn"]
+        Agent["AgentEngine"]
+        Snapshot["ToolExposureSnapshot"]
+        Context["ContextEngine"]
+        Model["ModelClient"]
+        Provider["Anthropic / OpenAI adapters"]
+        Round["ToolRoundExecutor"]
+        Executor["ToolExecutor"]
     end
 
-    subgraph Sources["动态能力来源"]
-        Builtins["Builtin tools"]
-        Features["Feature tools<br/>Todo / Subagent / Task tools"]
-        McpTools["MCP Tool adapters"]
-        SkillTool["Skill Tool"]
-        SkillRoots["Skill sources<br/>project > user > builtin / normalized external"]
-    end
+    Sources["Builtins / Features / MCP / Skill"]
+    Child["AgentRun<br/>child Session + Agent + lease"]
 
-    subgraph Foreground["前台 Agent turn"]
-        Agent["AgentEngine<br/>turn / step 状态机"]
-        Snapshot["ToolCatalogSnapshot<br/>不可变 step 工具快照"]
-        Context["ContextEngine<br/>ContextPlanningState → ModelRequest"]
-        Model["ModelClient<br/>provider-neutral stream"]
-        Provider["Anthropic / OpenAI Responses adapters"]
-        Round["ToolRoundExecutor<br/>安全并行组 + 不安全屏障"]
-        Executor["ToolExecutor<br/>校验 → 权限 → hook → 执行"]
-        SelectedTools["当前 ToolExposureSnapshot<br/>full catalog + direct tools + definitions"]
-    end
-
-    subgraph SessionBoundary["Session 边界"]
-        ParentSession["Parent Session<br/>ConversationEntry[] + JSONL"]
-        ChildSession["Child Session<br/>独立 transcript / JSONL"]
-    end
-
-    subgraph Subagents["Subagent / Background Task"]
-        SubagentTool["Subagent Tool<br/>标准 Tool 调用"]
-        Controller["SubagentController<br/>权限/工具收窄 + 可选预算"]
-        ChildRun["AgentRun<br/>own Session + AgentEngine + provider lease"]
-        ForegroundResult["Foreground<br/>一个闭合 ToolResult"]
-        BackgroundResult["Background<br/>立即返回 task_id / run_id"]
-        TaskTools["TaskList / TaskCancel"]
-        Notification["完成通知<br/>下一安全 step 单次投递"]
-    end
-
-    Bootstrap -. "构造并注入" .-> CLI
-    Bootstrap -. "构造并注入" .-> AppState
-    CLI --> Chat
-    Chat --> AppState
+    Bootstrap -.构造.-> Host
+    Bootstrap -.构造.-> Runtime
+    Host --> Chat
+    Chat --> Runtime
     Chat --> Agent
 
-    AppState -. "owns" .-> Workspace
-    AppState -. "owns" .-> Permissions
-    AppState -. "owns" .-> ToolState
-    AppState -. "owns" .-> Tasks
-    AppState -. "owns" .-> Runs
-    AppState -. "owns" .-> ProviderRuntime
-    AppState -. "owns" .-> MCP
-    AppState -. "owns" .-> Skills
-    ProviderRuntime -. "owns" .-> Leases
-    AppState -. "active" .-> ParentSession
-
-    Builtins -. "register source" .-> ToolState
-    Features -. "register source" .-> ToolState
-    MCP --> McpTools
-    McpTools -. "atomic source" .-> ToolState
-    SkillRoots --> Skills
-    Skills --> SkillTool
-    SkillTool -. "feature source" .-> ToolState
-
-    Agent -->|"每个 step 捕获"| Snapshot
-    ToolState -->|"snapshot"| Snapshot
+    Sources -.原子发布.-> Tools
+    Tools --> Snapshot
+    Session --> Context
     Snapshot --> Context
-    ParentSession -->|"context_entries + replacements + replay"| Context
-    Context --> Model
-    Model --> Provider
-    Provider -->|"AssistantMessage / ToolCalls"| Agent
-    Agent -->|"同一 step snapshot"| Round
-    Snapshot --> SelectedTools
-    Round --> Executor
+    Context --> Model --> Provider
+    Provider --> Agent
+    Agent --> Session
+    Agent --> Round --> Executor
+    Snapshot --> Round
     Permissions --> Executor
-    SelectedTools --> Executor
-    Executor -->|"每调用一个闭合 ToolResult"| Round
-    Round -->|"ToolResultBatch 按调用顺序"| Agent
-    Agent -->|"提交 Human / Assistant facts"| ParentSession
-    Agent -->|"原子提交 ToolResultBatch → AttachmentMessage[]"| ParentSession
+    Workspace --> Executor
+    Executor --> Session
 
-    Executor -->|"invoke"| SubagentTool
-    SubagentTool --> Controller
-    Controller --> Runs
-    Controller --> Tasks
-    Runs --> ChildRun
-    Leases --> ChildRun
-    ChildRun -. "owns" .-> ChildSession
-    Controller --> ForegroundResult
-    Controller --> BackgroundResult
-    ForegroundResult --> SubagentTool
-    BackgroundResult --> SubagentTool
-    Executor -->|"invoke"| TaskTools
-    TaskTools --> Controller
-    Tasks -->|"terminal snapshot"| Controller
-    Controller --> Notification
-    Notification -->|"durable AttachmentMessage"| ParentSession
-
-    classDef owner fill:#e8f0fe,stroke:#3367d6,color:#172b4d;
-    classDef boundary fill:#e6f4ea,stroke:#188038,color:#17351f;
-    classDef execution fill:#fff4e5,stroke:#e37400,color:#4a2b00;
-    classDef extension fill:#f3e8fd,stroke:#9334e6,color:#32115a;
-
-    class AppState,ToolState,Tasks,Runs,ProviderRuntime,Leases,MCP,Skills owner;
-    class ParentSession,ChildSession,Workspace,Permissions boundary;
-    class Agent,Snapshot,Context,Model,Provider,Round,Executor,SelectedTools execution;
-    class Builtins,Features,McpTools,SkillTool,SkillRoots,SubagentTool,Controller,ChildRun,ForegroundResult,BackgroundResult,TaskTools,Notification extension;
+    Runs --> Child
+    Tasks --> Child
+    ProviderRuntime --> Child
+    MCP -.Tool source.-> Sources
+    Skills -.Tool source.-> Sources
 ```
 
-## 读图约定
+虚线表示组装、所有权或 Tool source 发布，实线表示主要调用/数据流。精确包依赖以 `tests/architecture/dependency_rules.py` 为准。
 
-- 实线表示主要调用或数据流；虚线表示组装、所有权或 Tool source 注册关系。
-- `AppState` 是 application-lifetime runtime 的唯一入口，但不是可被任意模块反向查找的全局 service locator。
-- `Session` 拥有有序 Conversation facts，包括结构化 `AttachmentMessage`；MCP 连接、Skill 索引、任务状态和 provider stream 不进入 Conversation。
-- `session.conversation` 是当前分支的完整事实序列；`session.context_entries` 是从最新 compact summary 开始派生的规划后缀。`ContextRuntime` 缓存 prompt section 与用户上下文，切换 Session 或创建 child run 时重建。
-- 每个 step 只捕获一次不可变 `ToolCatalogSnapshot`。模型请求里的工具定义和随后执行 ToolCall 的实例来自同一快照。
-- 所有工具来源最终都发布为标准 `Tool`，并经过同一个 `ToolExecutor` 权限、取消与错误归一化流水线。
-- Subagent 使用独立 child Session、AgentEngine 和 provider lease；foreground 返回一个 ToolResult，background 先返回 task ID，完成后 pulse 无 payload revision signal，并只在安全 step 边界通过统一 attachment source 通知。父 turn 已结束时，交互式 host 会启动不追加 HumanMessage 的 continuation。
+## 四个边界
 
-模型输入只有一条数据流：
+### AppState：runtime 所有权
+
+`runtime.state.AppState` 持有活动 Session、配对的 `ContextRuntime`、workspace、permission policy、工具目录、任务树、child run factory、MCP/Skill runtime 和 ProviderRuntime。它提供统一 operation lock 和关闭顺序，但不构造 Context、不执行 Agent loop，也不能被任意模块通过全局函数查找。
+
+### Session：事实与持久化
+
+`sessions.session.Session` 是 canonical `ConversationEntry[]`、context entries、compact state、工具结果和 provider replay 的唯一公开所有者。所有事实通过语义方法 persistence-first 提交；恢复先完整构造候选，再原子替换活动引用。
+
+### Context 与 Model：请求语言
+
+`ContextEngine` 从不可变 Session snapshot、prompt cache、工具 definitions 和模型环境构造一次性 `ModelRequest`。`model` 定义公共请求、输出和流事件；Provider adapter 只负责公共类型与 wire schema 之间的映射。
+
+### Tool：统一能力入口
+
+内置 Tool、Feature、MCP 和 Skill 使用同一 ToolCatalog。每个 step 捕获不可变 snapshot；模型 definitions、调用校验和 ToolRound 执行保持版本一致。所有调用经过输入校验、PermissionPolicy、Workspace 安全边界、取消和结果闭合。
+
+## 唯一数据流
 
 ```text
-Session-owned ConversationEntry[]
-        ↓ Context normalization（Attachment 原位投影为 UserInput）
-provider-neutral ModelInputItem[]
-        ↓ Provider adapter
-Anthropic / OpenAI wire input
+用户输入
+  -> Session 提交 HumanMessage
+  -> ContextPlanningState
+  -> ordered ModelInputItem[]
+  -> Provider wire request
+  -> 完整 AssistantMessage
+  -> 可选 ToolRound / ToolResultBatch / Attachment
+  -> 下一 step 从最新 Session 重新投影
 ```
 
-Provider 包只认识 `ModelInputItem`，永远不导入或识别 Attachment、Skill、Todo 类型。
+流式 delta、task progress、MCP connection、Skill index 和 permission prompt 都是运行期状态，不进入 Conversation。Provider replay 是与 canonical content 分离的 opaque sidecar，只有 binding 匹配的 adapter 可以消费。
+
+## 扩展与并发
+
+ToolCatalog source 更新只影响下一个 step。并行 ToolRound 在安全调用之间并发，在不安全调用处设置屏障，并始终按原 ToolCall 顺序形成 batch。
+
+Subagent 是标准 Tool 之上的纵向能力。每个 child run 使用独立 Session、Agent 组件、ContextRuntime 和 provider lease；父级只接收结构化 ToolResult 或后台 task ID。TaskSupervisor 管理进程内任务和取消树，最终结果通过 durable Attachment 进入父 Session。
 
 ## 关键生命周期
 
-启动顺序：
-
 ```text
-bootstrap 组装 → MCP start → Skills start → 接收用户 turn
+启动：bootstrap -> AppState.start -> MCP / Skills -> 接受 turn
+
+关闭：TaskSupervisor -> AgentRunFactory -> SkillRuntime
+      -> McpRuntime -> ProviderRuntime
 ```
 
-关闭顺序：
+Session replace 会同时重建 ContextRuntime。Provider switch 原子更新前台连接和新 lease 的来源，但不改写 Session facts，也不影响已创建 child lease。
 
-```text
-TaskSupervisor → AgentRunFactory / provider leases → SkillRuntime
-    → McpRuntime → foreground ProviderRuntime
-```
+## 继续阅读
 
-更细的职责和验证依据见：
-
-- [01-agent-loop.md](01-agent-loop.md)：一次 turn/step 的运行过程。
-- [04-tool-system.md](04-tool-system.md)：ToolCatalog、权限和并行 ToolRound。
-- [06-mcp-and-tool-discovery.md](06-mcp-and-tool-discovery.md)：MCP 生命周期和动态发现。
-- [12-package-boundaries.md](12-package-boundaries.md)：模块所有权和静态依赖方向。
-- [13-extensibility-roadmap.md](13-extensibility-roadmap.md)：M0–M6 的需求、决策和验收证据。
-- [state-management/01-state-ownership.md](state-management/01-state-ownership.md)：状态与持久化边界。
+- [Runtime 与 Agent loop](01-runtime-and-agent-loop.md)
+- [状态、对话与 Session](02-state-conversation-sessions.md)
+- [Context 与模型输入](03-context-and-model-input.md)
+- [工具、权限与工作区](04-tools-permissions-workspace.md)
+- [扩展能力](05-extensions.md)
+- [包边界与架构守卫](08-package-boundaries.md)
