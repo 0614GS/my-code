@@ -1,9 +1,82 @@
 """Safe, frontend-neutral snapshots exposed by :mod:`my_code.chat`."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 from my_code.chat.history import HistoryEntry
 from my_code.chat.status import ContextStatus, RuntimeStatus
+from my_code.model.primitives import ReasoningPresentation
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptField:
+    key: str
+    value: "TranscriptValue"
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptValue:
+    kind: Literal["scalar", "object", "array"]
+    scalar: str | None = None
+    fields: tuple[TranscriptField, ...] = ()
+    items: tuple["TranscriptValue", ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptText:
+    role: Literal["user", "assistant"]
+    text: str
+    kind: Literal["text"] = field(default="text", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptReasoning:
+    presentation: ReasoningPresentation
+    kind: Literal["reasoning"] = field(default="reasoning", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptToolCall:
+    name: str
+    input: TranscriptValue
+    kind: Literal["tool_call"] = field(default="tool_call", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptToolResult:
+    name: str
+    content: str
+    is_error: bool
+    kind: Literal["tool_result"] = field(default="tool_result", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptSummary:
+    content: str
+    kind: Literal["summary"] = field(default="summary", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptAttachment:
+    attachment_kind: str
+    value: TranscriptValue
+    kind: Literal["attachment"] = field(default="attachment", init=False)
+
+
+type TranscriptEntry = (
+    TranscriptText
+    | TranscriptReasoning
+    | TranscriptToolCall
+    | TranscriptToolResult
+    | TranscriptSummary
+    | TranscriptAttachment
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptView:
+    revision: int
+    entries: tuple[TranscriptEntry, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,4 +193,14 @@ __all__ = [
     "SkillCapabilityView",
     "SubagentTaskView",
     "ToolCapabilityView",
+    "TranscriptAttachment",
+    "TranscriptEntry",
+    "TranscriptField",
+    "TranscriptReasoning",
+    "TranscriptSummary",
+    "TranscriptText",
+    "TranscriptToolCall",
+    "TranscriptToolResult",
+    "TranscriptValue",
+    "TranscriptView",
 ]

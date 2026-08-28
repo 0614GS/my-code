@@ -42,8 +42,6 @@ def build_terminal_layout(
     input_control: BufferControl,
     key_bindings: KeyBindings,
     dynamic_text: Callable[[], AnyFormattedText],
-    todo_text: Callable[[], AnyFormattedText],
-    has_todos: Callable[[], bool],
     status_text: Callable[[], AnyFormattedText],
     slash_menu_text: Callable[[], AnyFormattedText],
     has_slash_menu: Callable[[], bool],
@@ -69,14 +67,6 @@ def build_terminal_layout(
                 content=_formatted_control(dynamic_text),
                 height=Dimension(min=0, max=12),
                 dont_extend_height=True,
-            ),
-            ConditionalContainer(
-                Window(
-                    content=_formatted_control(todo_text),
-                    height=Dimension(min=1, max=10),
-                    dont_extend_height=True,
-                ),
-                Condition(has_todos),
             ),
             Window(height=1, char="─", style="class:border"),
             Window(height=SURFACE_VERTICAL_PADDING, style="class:surface"),

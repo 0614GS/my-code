@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, cast
 
-from prompt_toolkit.application import Application, run_in_terminal
+from prompt_toolkit.application import Application, in_terminal, run_in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
@@ -24,6 +24,7 @@ from prompt_toolkit.layout.processors import (
 )
 from prompt_toolkit.output import Output
 from rich.console import Console, RenderableType
+from rich.padding import Padding
 
 from my_code.chat.events import (
     BackgroundInvocationFinished,
@@ -33,6 +34,7 @@ from my_code.chat.events import (
 from my_code.chat.history import (
     HistoryEntry,
     HistoryText,
+    HistoryToolCall,
 )
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.service import ChatService
@@ -44,7 +46,7 @@ from my_code.permissions.models import (
 )
 from my_code.providers.manager import ProviderView
 from my_code.sessions.catalog import SessionSummary
-from my_code.tools.presentation import ToolUsePresentation
+from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.commands import CommandOutcome, SlashCommandRegistry
 from my_code.tui.completion import mention_at_cursor
 from my_code.tui.composer import ComposerCompleter, SlashMenuState
@@ -78,13 +80,17 @@ from my_code.tui.provider_screen import (
 )
 from my_code.tui.terminal import terminal_supports_true_color
 from my_code.tui.theme import TuiTheme
+from my_code.tui.transcript import TranscriptPager
 from my_code.tui.turns import TurnFlowMixin
 from my_code.tui.widgets import (
+    assistant_message,
     history_message,
     status_line,
     streaming_assistant_message,
+    streaming_renderable,
     system_message,
-    todo_text,
+    todo_snapshot,
+    tool_activity_message,
     welcome,
 )
 
@@ -113,7 +119,7 @@ class MyCodeApp(TurnFlowMixin):
         self._stream_text = ""
         self._reasoning_parts: list[str] = []
         self._todos = ()
-        self._todos_expanded = True
+        self._tool_activity: ToolActivityGroup | None = None
         self._status: RuntimeStatus | None = None
         self._context_status: ContextStatus | None = None
         self._status_warning = ""
@@ -142,7 +148,9 @@ class MyCodeApp(TurnFlowMixin):
         self._history_ready = asyncio.Event()
         self._startup_error: Exception | None = None
         self._submission_pending = False
-        self._background_tools: dict[str, ToolUsePresentation] = {}
+        self._has_scrollback_output = False
+        self._last_scrollback_was_user = False
+        self._transcript_pager: TranscriptPager | None = None
         self._tasks: set[asyncio.Task[object]] = set()
         self._history = InMemoryHistory()
         self._slash_menu = SlashMenuState()
@@ -166,8 +174,6 @@ class MyCodeApp(TurnFlowMixin):
             input_control=self.input_control,
             key_bindings=self.key_bindings,
             dynamic_text=self._dynamic_text,
-            todo_text=self._todo_display,
-            has_todos=lambda: bool(self._todos),
             status_text=self._status_display,
             slash_menu_text=self._slash_menu_text,
             has_slash_menu=self._slash_active,
@@ -187,7 +193,6 @@ class MyCodeApp(TurnFlowMixin):
         self._context_status = self.runtime.context_status()
         self._todos = view.status.todos
         await self._write(welcome(view.status, self.theme))
-        await self._write(system_message("Capabilities are initializing…"))
         self._activity = "Initializing capabilities…"
         current_mode = getattr(self.runtime, "current_permission_mode", None)
         if current_mode is not None and current_mode().requires_confirmation:
@@ -202,6 +207,8 @@ class MyCodeApp(TurnFlowMixin):
             await self.application.run_async(pre_run=start_background)
         finally:
             self._running = False
+            if self._transcript_pager is not None:
+                self._transcript_pager.close()
             for task in tuple(self._tasks):
                 task.cancel()
             if self._tasks:
@@ -255,7 +262,18 @@ class MyCodeApp(TurnFlowMixin):
         def render() -> None:
             if clear:
                 self.console.clear()
+                self._has_scrollback_output = False
+                self._last_scrollback_was_user = False
+            is_user = isinstance(renderable, Padding)
+            if (
+                self._has_scrollback_output
+                and not self._last_scrollback_was_user
+                and not is_user
+            ):
+                self.console.print()
             self.console.print(renderable)
+            self._has_scrollback_output = True
+            self._last_scrollback_was_user = is_user
 
         if self._running:
             await run_in_terminal(render)
@@ -264,6 +282,23 @@ class MyCodeApp(TurnFlowMixin):
 
     def _invalidate(self) -> None:
         self.application.invalidate()
+
+    async def _open_transcript(self) -> None:
+        if self._transcript_pager is not None:
+            return
+        pager = TranscriptPager(
+            self.runtime,
+            input=self.application.input,
+            output=self.application.output,
+        )
+        self._transcript_pager = pager
+        try:
+            async with in_terminal():
+                await pager.run_async()
+        finally:
+            pager.close()
+            self._transcript_pager = None
+            self._invalidate()
 
     def _composer_read_only(self) -> bool:
         if self._panel == "permission":
@@ -337,8 +372,26 @@ class MyCodeApp(TurnFlowMixin):
     def _dynamic_text(self) -> AnyFormattedText:
         if self._panel is not None:
             return self._panel_text()
-        parts = [part for part in (self._activity, self._reasoning_summary()) if part]
+        parts = [
+            part
+            for part in (
+                "" if self._tool_activity else self._activity,
+                self._reasoning_summary(),
+            )
+            if part
+        ]
         fragments = list(to_formatted_text("\n".join(parts)))
+        if self._tool_activity:
+            if fragments:
+                fragments.append(("", "\n"))
+            fragments.extend(
+                to_formatted_text(
+                    streaming_renderable(
+                        tool_activity_message(self._tool_activity, tail=6),
+                        self.console.width,
+                    )
+                )
+            )
         if self._stream_text:
             if fragments:
                 fragments.append(("", "\n"))
@@ -348,9 +401,6 @@ class MyCodeApp(TurnFlowMixin):
                 )
             )
         return FormattedText(fragments)
-
-    def _todo_display(self) -> str:
-        return todo_text(self._todos, expanded=self._todos_expanded)
 
     def _status_text(self) -> str:
         status = self._status
@@ -605,8 +655,14 @@ class MyCodeApp(TurnFlowMixin):
                     self._saved_draft = self.buffer.text
                     self._busy = True
                     self._activity = "Handling background task…"
-                    self._background_tools = {}
+                    self._stream_text = ""
+                    self._reasoning_parts = []
+                    self._tool_activity = None
                 elif isinstance(event, BackgroundInvocationFinished):
+                    partial_text = self._retire_transient_content()
+                    self._busy = False
+                    self._activity = ""
+                    await self._interrupt_and_flush_tools()
                     if event.error:
                         await self._write(
                             system_message(
@@ -614,9 +670,8 @@ class MyCodeApp(TurnFlowMixin):
                                 error=True,
                             )
                         )
-                    self._busy = False
-                    self._activity = ""
-                    self._background_tools = {}
+                    if partial_text:
+                        await self._write(assistant_message(partial_text))
                     self._refresh_status()
                 else:
                     invocation.append(event)
@@ -1091,10 +1146,44 @@ class MyCodeApp(TurnFlowMixin):
             self.buffer.start_completion(select_first=True)
 
     async def _render_history(self, history: tuple[HistoryEntry, ...]) -> None:
-        for start in range(0, len(history), 20):
-            for entry in history[start : start + 20]:
+        previous_todos = ()
+        group: ToolActivityGroup | None = None
+        pending_todos: tuple[Any, ...] | None = None
+        for index, entry in enumerate(history):
+            if isinstance(entry, HistoryToolCall):
+                if entry.todos is not None and not entry.is_error:
+                    pending_todos = entry.todos
+                else:
+                    if group is None:
+                        group = ToolActivityGroup()
+                    group.start(entry.tool_use_id, entry.use)
+                    group.finish(
+                        entry.tool_use_id, entry.result, is_error=entry.is_error
+                    )
+                if entry.ends_tool_batch and pending_todos is not None:
+                    if group:
+                        await self._write(tool_activity_message(group))
+                        group = None
+                    if pending_todos != previous_todos:
+                        await self._write(todo_snapshot(pending_todos))
+                        previous_todos = pending_todos
+                    pending_todos = None
+            else:
+                if group:
+                    await self._write(tool_activity_message(group))
+                    group = None
+                if pending_todos is not None:
+                    if pending_todos != previous_todos:
+                        await self._write(todo_snapshot(pending_todos))
+                        previous_todos = pending_todos
+                    pending_todos = None
                 await self._write(history_message(entry, self.theme))
-            await asyncio.sleep(0)
+            if index and index % 20 == 0:
+                await asyncio.sleep(0)
+        if group:
+            await self._write(tool_activity_message(group))
+        if pending_todos is not None and pending_todos != previous_todos:
+            await self._write(todo_snapshot(pending_todos))
 
     def _refresh_status(self) -> None:
         warnings: list[str] = []

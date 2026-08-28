@@ -36,7 +36,6 @@ class KeyBindingHost(Protocol):
     buffer: Buffer
     _panel: str | None
     _busy: bool
-    _todos_expanded: bool
     _mention_span: tuple[int, int] | None
     _path_suggestions: tuple[Any, ...]
     _foreground_task: Any
@@ -78,6 +77,8 @@ class KeyBindingHost(Protocol):
     def _resolve_full_access(self, allow: bool) -> None: ...
 
     def _scroll_agent(self, offset: int | None) -> None: ...
+
+    async def _open_transcript(self) -> None: ...
 
 
 def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
@@ -196,8 +197,7 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
     @bindings.add("c-t")
     def ctrl_t(event: KeyPressEvent) -> None:
         del event
-        host._todos_expanded = not host._todos_expanded
-        host._invalidate()
+        host._spawn(host._open_transcript())
 
     @bindings.add("f6")
     def cycle_agents(event: KeyPressEvent) -> None:

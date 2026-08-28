@@ -2,7 +2,7 @@
 
 ## 边界
 
-`tui` 是 `mycode` 唯一的聊天 host，使用 `prompt_toolkit + Rich` 负责底部动态布局、按键、slash 命令和事件渲染。它不读取 JSONL、不执行工具、不构造 ModelRequest，也不持有 AgentEngine。应用使用 `full_screen=False`，不进入 alternate screen、不接管鼠标；已完成内容通过 `run_in_terminal()` 串行固化到终端 scrollback。launch 要求 stdin/stdout 都是 TTY；`--session <uuid>` 仍通过同一 TUI 恢复。
+`tui` 是 `mycode` 唯一的聊天 host，使用 `prompt_toolkit + Rich` 负责底部动态布局、按键、slash 命令和事件渲染。它不读取 JSONL、不执行工具、不构造 ModelRequest，也不持有 AgentEngine。主应用使用 `full_screen=False`，不进入 alternate screen、不接管鼠标；已完成内容通过 `run_in_terminal()` 串行固化到终端 scrollback，composer 自然跟随 scrollback，仅在内容占满 terminal 时随原生滚动落到底部。只有临时 transcript pager 使用 alternate buffer。launch 要求 stdin/stdout 都是 TTY；`--session <uuid>` 仍通过同一 TUI 恢复。
 
 模块按职责拆分：`app.py` 只编排 ChatService、生命周期与临时面板状态；`turns.py` 消费前后台 turn 事件；`layout.py` 构造非全屏动态区；`key_bindings.py` 负责按键路由；`composer.py` 持有独立 slash 选择状态并适配 path 补全；`panels.py` 生成带语义样式的临时面板；`theme.py` 与 `terminal.py` 统一颜色和原生光标策略；`presentation.py` 投影运行时能力；`widgets.py` 生成 Rich scrollback renderable。Provider 表单状态和 resume 摘要分别留在 `provider_screen.py` 与 `resume_screen.py`。
 
@@ -29,7 +29,9 @@ TUI 只通过 `ChatService` 获取 session history、usage、工具、Skill、MC
 - todo list updated。
 - `TurnSucceeded` 或 `MaxStepsReached` 终态。
 
-text/reasoning 的 delta 只存在于底部动态区；completed 事件到达后清除动态副本并用 Rich 固化。工具完成、每回合 steps 与 token usage、max-steps、异常和中断各自固化成独立行。已固化内容不原地修改。
+text/reasoning 的 delta 只存在于底部动态区；completed 事件到达后清除动态副本并用 Rich 固化。连续工具调用从第一个 started 事件起组成一个有序动态块，完成事件只按 ID 更新原位置，并行完成不重排；块内按相邻类别显示 `Explored`、`Ran commands`、`Changed files` 或 `Called tools`。进入 text、reasoning、Todo、系统消息或回合终态前先移除动态副本，再一次性固化完整工具块；异常、取消、max-steps、后台 continuation 和中断工具遵守相同边界。动态区只展示工具块尾部，scrollback 保留完整块。
+
+Markdown 的流式和最终输出共用 Codex 风格 renderable：标题保留左对齐 `#` 标记，H1 为粗体下划线、H2 为粗体、H3 为粗斜体；行内代码和链接为 cyan，链接带下划线，引用使用绿色 `> `。代码块保留语法高亮但使用 terminal 默认背景且无大块 padding，表格无外框，水平线为短 `———`。所有顶层 scrollback block 之间保持一个空行，Markdown 内部不叠加额外的顶层间距。
 
 ## 恢复历史
 
@@ -40,6 +42,14 @@ Chat 从 Session facts 投影 `HistoryEntry`：
 - `HistoryToolCall` 使用执行时保存的 presentation 快照。
 
 TUI 只渲染投影，不重新解释 Conversation 或读取工具结果文件。
+
+成功且实际改变状态的 TodoWrite 在事件位置输出一次 `• Updated Plan` 快照：completed、in-progress、pending 分别使用 `✔`、高亮 `□`、dim `□`；清空列表显示 `(no tasks)`。Todo 不在 composer 上方常驻，成功 TodoWrite 不再重复渲染普通工具结果，失败调用仍保留在工具组。恢复历史从成功 TodoWrite 的安全投影重建同一快照。
+
+## Transcript
+
+`Ctrl+T` 打开独立的全屏 alternate-buffer pager，初始位于持久化会话尾部；↑/↓、PageUp/PageDown、Home/End 导航，`Ctrl+T`、Esc 或 q 返回。pager 不修改主 composer 草稿或原生 scrollback。停留在尾部时会按 revision 跟随新持久化 entry；主动向上滚动后保留当前位置。
+
+完整投影由 `ChatService.current_transcript_view()` 提供不可变判别联合 DTO。顺序和内容来自当前 Session 的本地持久化 conversation：user text、assistant 内容块、允许披露的 reasoning、完整工具参数与持久化结果、conversation summary 和 durable attachment。参数、JSON 与 attachment 使用缩进 key/value 树；普通工具输出按 literal text 展示。投影不包含消息/父节点/工具 UUID、provider binding、token 等调试元数据，不展开外置工具结果文件，也不披露 hidden 或 redacted reasoning；TUI 仍不依赖 Conversation、Session 私有类型或 JSONL codec。
 
 ## 权限
 
@@ -55,9 +65,13 @@ Slash command 在 prompt 进入模型前本地解析。除原有命令外，`/us
 
 ## 输入与临时面板
 
-Enter 提交，Alt+Enter（或 Esc 后 Enter）换行。输入 `/` 会立即在 composer 下方展示命令及说明，继续输入时按前缀过滤并默认选中第一项；Enter 直接执行选中的本地命令，Tab 只补全。候选使用终端默认背景，只通过前景色和粗体标记当前项，并且不绘制内部滚动条。Esc 按候选菜单、临时面板、当前 turn 的顺序处理；空闲 Ctrl+C 清空，空输入 Ctrl+D 退出，Ctrl+T 切换 Todo。turn 和后台 continuation 期间 composer 只读，已有草稿保留。
+Enter 提交，Alt+Enter（或 Esc 后 Enter）换行。输入 `/` 会立即在 composer 下方展示命令及说明，继续输入时按前缀过滤并默认选中第一项；Enter 直接执行选中的本地命令，Tab 只补全。候选使用终端默认背景，只通过前景色和粗体标记当前项，并且不绘制内部滚动条。Esc 按候选菜单、临时面板、当前 turn 的顺序处理；空闲 Ctrl+C 清空，空输入 Ctrl+D 退出，Ctrl+T 打开 transcript。turn 和后台 continuation 期间 composer 只读，已有草稿保留。
 
-应用退出时先擦除底部动态布局，再将光标交还 shell；Welcome、历史、已完成回合和退出提示等 scrollback 内容保留，terminal 中不残留 composer、状态栏或临时面板。
+应用退出时先同步关闭 transcript application，再取消 startup/background watcher，随后擦除底部动态布局并将光标交还 shell；外层 runtime 继续按既有顺序关闭。Welcome、历史、已完成回合和退出提示等 scrollback 内容保留，terminal 中不残留 composer、状态栏或临时面板。
+
+启动期间的 capability 初始化进度只存在于底部动态区，不写入 scrollback；初始化完成后由 Ready 状态取代，不留下过期提示。
+
+流式 Markdown 和 reasoning 从动态预览固化到 scrollback 时，先移除动态投影再输出最终 Rich renderable，禁止最终内容与旧预览在同一帧重复出现并扩大 inline renderer 高度。
 
 TUI 不发送光标形状控制序列，并覆盖 prompt_toolkit 默认的“显示光标时关闭闪烁”行为；VT 重绘只发送光标可见性，因此宽度、形状与闪烁沿用用户终端配置。启动时优先读取终端颜色提示，并在真实 TTY 上用有界 OSC 11 探测背景；用户消息和 composer 使用由背景推导的低对比度表面，探测失败则保持透明。
 

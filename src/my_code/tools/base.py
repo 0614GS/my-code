@@ -15,7 +15,11 @@ from my_code.conversation.presentation import ToolResultPresentation
 from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import PermissionUpdate, PermissionUpdateDestination
-from my_code.tools.presentation import ToolUsePresentation, compact_text
+from my_code.tools.presentation import (
+    ToolUsePresentation,
+    compact_text,
+    tool_display_category,
+)
 from my_code.workspace.local import Workspace
 
 if TYPE_CHECKING:
@@ -189,6 +193,7 @@ class Tool(ABC):
             display_name=self.user_facing_name(tool_input),
             summary=self.get_tool_use_summary(tool_input),
             activity=self.get_activity_description(tool_input),
+            category=tool_display_category(self.definition.name),
         )
 
     def present_result(

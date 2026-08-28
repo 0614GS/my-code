@@ -11,7 +11,7 @@ from my_code.permissions.models import (
     PermissionPrompt,
     PermissionUpdate,
 )
-from my_code.tools.presentation import ToolUsePresentation
+from my_code.tools.presentation import ToolUsePresentation, tool_display_category
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +90,7 @@ class DeferredPermissionPrompter:
             display_name=request.display_name,
             summary=request.summary,
             activity=request.activity,
+            category=tool_display_category(request.tool_name),
         )
         task = asyncio.current_task()
         if task is not None:

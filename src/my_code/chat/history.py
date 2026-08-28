@@ -5,6 +5,7 @@ from typing import Literal
 
 from my_code.chat.status import RuntimeStatus
 from my_code.conversation.presentation import ToolResultPresentation
+from my_code.features.todos.models import TodoItem
 from my_code.model.primitives import ReasoningPresentation
 from my_code.tools.presentation import ToolUsePresentation
 
@@ -31,6 +32,8 @@ class HistoryToolCall:
     result: ToolResultPresentation
     is_error: bool
     running: bool = False
+    todos: tuple[TodoItem, ...] | None = None
+    ends_tool_batch: bool = False
 
 
 type HistoryEntry = HistoryText | HistoryReasoning | HistoryToolCall

@@ -1,8 +1,9 @@
 """Stateful user-level chat orchestration."""
 
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator
-from dataclasses import replace
+from dataclasses import fields, is_dataclass, replace
 from typing import Protocol
 
 from my_code.agent.engine import AgentEngine
@@ -66,13 +67,24 @@ from my_code.chat.views import (
     SkillCapabilityView,
     SubagentTaskView,
     ToolCapabilityView,
+    TranscriptAttachment,
+    TranscriptEntry,
+    TranscriptField,
+    TranscriptReasoning,
+    TranscriptSummary,
+    TranscriptText,
+    TranscriptToolCall,
+    TranscriptToolResult,
+    TranscriptValue,
+    TranscriptView,
 )
 from my_code.config.providers import ProviderProfile
 from my_code.config.settings import AgentSettings
 from my_code.context.engine import ContextEngine
-from my_code.conversation.attachments import AttachmentPayload
+from my_code.conversation.attachments import AttachmentPayload, is_durable_attachment
 from my_code.conversation.models import (
     AssistantMessage,
+    AttachmentMessage,
     ConversationSummaryMessage,
     HumanMessage,
     ReasoningContent,
@@ -86,6 +98,7 @@ from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.file_mentions.loader import AttachmentLoader
 from my_code.features.file_mentions.models import PathSuggestion
 from my_code.features.file_mentions.suggestions import WorkspacePathSuggester
+from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
 from my_code.features.todos.projection import project_todos
 from my_code.model.capabilities import (
     CapabilitySource,
@@ -110,7 +123,7 @@ from my_code.tasks.models import (
     SubagentTranscriptTool,
 )
 from my_code.tools.executor import ToolExecutor
-from my_code.tools.presentation import ToolUsePresentation
+from my_code.tools.presentation import ToolUsePresentation, tool_display_category
 
 
 class BackgroundNotificationSource(Protocol):
@@ -159,7 +172,10 @@ def _project_subagent_entry(
             ReasoningPresentation(entry.disclosure, entry.parts), entry.streaming
         )
     use = ToolUsePresentation(
-        entry.use.display_name, entry.use.summary, entry.use.activity
+        entry.use.display_name,
+        entry.use.summary,
+        entry.use.activity,
+        tool_display_category(entry.use.display_name),
     )
     result = (
         ToolResultPresentation(
@@ -275,6 +291,64 @@ class ChatService:
     def current_session_view(self) -> SessionView:
         session = self.state.session
         return SessionView(self.status(), self._project_history(session))
+
+    def current_transcript_view(self) -> TranscriptView:
+        """Return the complete persisted conversation without storage internals."""
+
+        conversation = self.state.session.conversation
+        tool_names = {
+            block.id: block.name
+            for message in conversation
+            if isinstance(message, AssistantMessage)
+            for block in message.content
+            if isinstance(block, ToolCall)
+        }
+        entries: list[TranscriptEntry] = []
+        for message in conversation:
+            if isinstance(message, HumanMessage):
+                entries.append(TranscriptText("user", message.content))
+            elif isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextContent):
+                        entries.append(TranscriptText("assistant", block.text))
+                    elif isinstance(block, ReasoningContent):
+                        presentation = block.presentation
+                        if presentation.disclosure in {"hidden", "redacted"}:
+                            presentation = ReasoningPresentation(
+                                presentation.disclosure, ()
+                            )
+                        entries.append(TranscriptReasoning(presentation))
+                    else:
+                        entries.append(
+                            TranscriptToolCall(
+                                block.name, _transcript_value(block.input)
+                            )
+                        )
+            elif isinstance(message, ToolResultBatch):
+                entries.extend(
+                    TranscriptToolResult(
+                        tool_names.get(result.tool_use_id, "Tool"),
+                        result.content,
+                        result.is_error,
+                    )
+                    for result in message.content
+                )
+            elif isinstance(message, ConversationSummaryMessage):
+                entries.append(TranscriptSummary(message.content))
+            elif isinstance(message, AttachmentMessage) and is_durable_attachment(
+                message.payload
+            ):
+                entries.append(
+                    TranscriptAttachment(
+                        message.payload.kind,
+                        _transcript_value(message.payload, omitted={"owner_run_id"}),
+                    )
+                )
+        digest = hashlib.sha256(
+            "\0".join(message.uuid for message in conversation).encode()
+        ).digest()
+        revision = int.from_bytes(digest[:8], "big")
+        return TranscriptView(revision, tuple(entries))
 
     def session_usage(self) -> SessionUsageView:
         usages = (
@@ -845,6 +919,9 @@ class ChatService:
             elif isinstance(message, ConversationSummaryMessage):
                 history.append(HistoryText("system", "Conversation compacted"))
             elif isinstance(message, AssistantMessage):
+                tool_ids = [
+                    block.id for block in message.content if isinstance(block, ToolCall)
+                ]
                 for block in message.content:
                     if isinstance(block, TextContent) and block.text:
                         history.append(HistoryText("assistant", block.text))
@@ -852,6 +929,20 @@ class ChatService:
                         history.append(HistoryReasoning(block.presentation))
                     elif isinstance(block, ToolCall):
                         result = results.get(block.id)
+                        todos = None
+                        if (
+                            block.name == TODO_WRITE_TOOL_NAME
+                            and result is not None
+                            and not result.is_error
+                        ):
+                            try:
+                                todos = parse_todo_input(block.input)
+                                if todos and all(
+                                    todo.status == "completed" for todo in todos
+                                ):
+                                    todos = ()
+                            except (TypeError, ValueError):
+                                pass
                         history.append(
                             HistoryToolCall(
                                 tool_use_id=block.id,
@@ -866,9 +957,53 @@ class ChatService:
                                     )
                                 ),
                                 is_error=result is None or result.is_error,
+                                todos=todos,
+                                ends_tool_batch=bool(tool_ids)
+                                and block.id == tool_ids[-1],
                             )
                         )
         return tuple(history)
+
+
+def _transcript_value(
+    value: object, *, omitted: frozenset[str] | set[str] = frozenset()
+) -> TranscriptValue:
+    """Freeze JSON-like and dataclass values into a frontend-neutral tree."""
+
+    if is_dataclass(value) and not isinstance(value, type):
+        return TranscriptValue(
+            "object",
+            fields=tuple(
+                TranscriptField(
+                    item.name,
+                    _transcript_value(getattr(value, item.name), omitted=omitted),
+                )
+                for item in fields(value)
+                if item.name != "kind" and item.name not in omitted
+            ),
+        )
+    if isinstance(value, dict):
+        return TranscriptValue(
+            "object",
+            fields=tuple(
+                TranscriptField(str(key), _transcript_value(item, omitted=omitted))
+                for key, item in value.items()
+            ),
+        )
+    if isinstance(value, (list, tuple)):
+        return TranscriptValue(
+            "array",
+            items=tuple(_transcript_value(item, omitted=omitted) for item in value),
+        )
+    if value is None:
+        scalar = "null"
+    elif value is True:
+        scalar = "true"
+    elif value is False:
+        scalar = "false"
+    else:
+        scalar = str(value)
+    return TranscriptValue("scalar", scalar=scalar)
 
 
 def _project_turn_outcome(

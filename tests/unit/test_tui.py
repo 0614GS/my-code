@@ -7,20 +7,28 @@ from prompt_toolkit.data_structures import Size
 from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.layout import Window
+from prompt_toolkit.layout.containers import VerticalAlign
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.output.color_depth import ColorDepth
-from rich.console import Console
+from rich.console import Console, RenderableType
 from rich.padding import Padding
 
 from my_code.auth.credentials import CredentialSource
 from my_code.chat.events import (
+    MaxStepsReached,
+    ReasoningCompleted,
+    ReasoningDelta,
+    ReasoningStarted,
     TextCompleted,
     TextDelta,
     TextStarted,
+    TodoListUpdated,
+    ToolFinished,
+    ToolStarted,
     TurnEvent,
     TurnSucceeded,
 )
-from my_code.chat.history import HistoryText
+from my_code.chat.history import HistoryText, HistoryToolCall
 from my_code.chat.permissions import (
     PermissionModeSwitch,
     PermissionModeView,
@@ -29,6 +37,9 @@ from my_code.chat.permissions import (
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import CapabilitiesView, SessionView, SubagentTaskView
 from my_code.config.providers import ProviderProtocol
+from my_code.conversation.presentation import ToolResultPresentation
+from my_code.features.todos.models import TodoItem
+from my_code.model.primitives import ReasoningPresentation
 from my_code.permissions.models import PermissionConfirmation
 from my_code.providers.manager import ProviderUpdate, ProviderView
 from my_code.tools.presentation import ToolUsePresentation
@@ -39,7 +50,7 @@ from my_code.tui.presentation import format_context_usage, render_context_status
 from my_code.tui.provider_screen import ProviderForm
 from my_code.tui.terminal import NativeCursorVt100Output, terminal_color_depth
 from my_code.tui.theme import TerminalPalette, TuiTheme
-from my_code.tui.widgets import user_message
+from my_code.tui.widgets import assistant_message, system_message, user_message
 
 
 class FakeRuntime:
@@ -210,6 +221,22 @@ class RecordingOutput(DummyOutput):
         self.erase_down_calls += 1
 
 
+class RecordingMyCodeApp(MyCodeApp):
+    def __init__(self, runtime: FakeRuntime) -> None:
+        super().__init__(
+            runtime,  # type: ignore[arg-type]
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        self.write_snapshots: list[tuple[str, tuple[str, ...], RenderableType]] = []
+
+    async def _write(self, renderable: RenderableType, *, clear: bool = False) -> None:
+        del clear
+        self.write_snapshots.append(
+            (self._stream_text, tuple(self._reasoning_parts), renderable)
+        )
+
+
 @pytest.mark.asyncio
 async def test_inline_host_submits_multiline_and_keeps_normal_scrollback() -> None:
     runtime = FakeRuntime()
@@ -328,7 +355,10 @@ async def test_startup_keeps_composer_visible_and_queues_one_submission() -> Non
         await asyncio.wait_for(runtime.initializing.wait(), 1)
 
         assert "my-code" in stream.getvalue()
-        assert "Capabilities are initializing" in stream.getvalue()
+        assert "Capabilities are initializing" not in stream.getvalue()
+        assert "Initializing capabilities" in fragment_list_to_text(
+            to_formatted_text(app._dynamic_text())
+        )
         assert app._composer_read_only() is False
 
         pipe.send_text("queued prompt\r\r")
@@ -591,6 +621,193 @@ def test_slash_menu_is_below_composer_and_uses_terminal_background() -> None:
     assert menu_window.right_margins == []
 
 
+def test_dynamic_layout_naturally_follows_terminal_scrollback() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+
+    assert app.body.align is VerticalAlign.JUSTIFY
+
+
+@pytest.mark.asyncio
+async def test_completed_markdown_retires_live_projection_before_scrollback() -> None:
+    app = RecordingMyCodeApp(FakeRuntime())
+    markdown = "# Result\n\n" + "\n".join(f"- item {index}" for index in range(20))
+
+    async def events() -> AsyncIterator[TurnEvent]:
+        yield TextStarted()
+        yield TextDelta(markdown)
+        yield TextCompleted(markdown)
+        yield ReasoningStarted("summary")
+        yield ReasoningDelta("summary", 0, "safe reasoning")
+        yield ReasoningCompleted(ReasoningPresentation("summary", ("safe reasoning",)))
+        yield TurnSucceeded(markdown, 1, 10, 2)
+
+    await app._run_turn("", events(), user=False)
+
+    assert len(app.write_snapshots) == 3
+    assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
+    assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+
+
+@pytest.mark.asyncio
+async def test_success_fallback_retires_partial_markdown_before_scrollback() -> None:
+    app = RecordingMyCodeApp(FakeRuntime())
+
+    async def events() -> AsyncIterator[TurnEvent]:
+        yield TextDelta("partial **answer**")
+        yield TurnSucceeded("partial **answer**", 1, 10, 2)
+
+    await app._run_turn("", events(), user=False)
+
+    assert len(app.write_snapshots) == 2
+    assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
+
+
+@pytest.mark.asyncio
+async def test_max_steps_retires_partial_projection_before_scrollback() -> None:
+    app = RecordingMyCodeApp(FakeRuntime())
+
+    async def events() -> AsyncIterator[TurnEvent]:
+        yield TextDelta("partial answer")
+        yield ReasoningDelta("summary", 0, "partial reasoning")
+        yield MaxStepsReached(10, 10, 100, 20)
+
+    await app._run_turn("", events(), user=False)
+
+    assert len(app.write_snapshots) == 2
+    assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
+    assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+
+
+@pytest.mark.asyncio
+async def test_failed_turn_retires_partial_projection_before_writes() -> None:
+    app = RecordingMyCodeApp(FakeRuntime())
+
+    async def events() -> AsyncIterator[TurnEvent]:
+        yield TextDelta("partial answer")
+        yield ReasoningDelta("summary", 0, "partial reasoning")
+        raise RuntimeError("stream failed")
+
+    await app._run_turn("", events(), user=False)
+
+    assert len(app.write_snapshots) == 2
+    assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
+    assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_turn_retires_partial_projection_before_writes() -> None:
+    app = RecordingMyCodeApp(FakeRuntime())
+
+    async def events() -> AsyncIterator[TurnEvent]:
+        yield TextDelta("partial answer")
+        yield ReasoningDelta("summary", 0, "partial reasoning")
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await app._run_turn("", events(), user=False)
+
+    assert len(app.write_snapshots) == 2
+    assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
+    assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+
+
+@pytest.mark.asyncio
+async def test_background_completion_retires_live_projection_before_scrollback() -> (
+    None
+):
+    app = RecordingMyCodeApp(FakeRuntime())
+    app._stream_text = "background answer"
+    app._reasoning_parts = ["background reasoning"]
+
+    await app._consume_background_event(TextCompleted("background answer"))
+
+    assert len(app.write_snapshots) == 1
+    assert app.write_snapshots[0][:2] == ("", ("background reasoning",))
+
+
+@pytest.mark.asyncio
+async def test_turn_groups_tools_in_start_order_even_when_completion_is_reversed() -> (
+    None
+):
+    app = RecordingMyCodeApp(FakeRuntime())
+
+    async def events() -> AsyncIterator[TurnEvent]:
+        yield ToolStarted(
+            "read", ToolUsePresentation("Read", "a.py", "Reading", "explore")
+        )
+        yield ToolStarted(
+            "bash", ToolUsePresentation("Bash", "pytest", "Running", "command")
+        )
+        yield ToolFinished("bash", False, ToolResultPresentation("passed"))
+        yield ToolFinished("read", False, ToolResultPresentation("10 lines"))
+        yield TextStarted()
+        yield TextCompleted("done")
+        yield TurnSucceeded("done", 1, 10, 2)
+
+    await app._run_turn("", events(), user=False)
+
+    stream = StringIO()
+    console = Console(file=stream, width=80, force_terminal=False)
+    console.print(app.write_snapshots[0][2])
+    rendered = stream.getvalue()
+    assert rendered.index("Read") < rendered.index("Bash")
+    assert len(app.write_snapshots) == 3
+
+
+@pytest.mark.asyncio
+async def test_successful_todo_write_only_emits_changed_plan_snapshot() -> None:
+    app = RecordingMyCodeApp(FakeRuntime())
+    todos = (TodoItem("Run tests", "in_progress", "Running tests"),)
+
+    async def events() -> AsyncIterator[TurnEvent]:
+        yield ToolStarted(
+            "todo",
+            ToolUsePresentation("Update Todos", "1 item", "Updating todos"),
+        )
+        yield ToolFinished("todo", False, ToolResultPresentation("updated"))
+        yield TodoListUpdated(todos)
+        yield TurnSucceeded("", 1, 10, 2)
+
+    await app._run_turn("", events(), user=False)
+
+    stream = StringIO()
+    console = Console(file=stream, width=80, force_terminal=False)
+    for _, _, renderable in app.write_snapshots:
+        console.print(renderable)
+    rendered = stream.getvalue()
+    assert rendered.count("Updated Plan") == 1
+    assert "Update Todos" not in rendered
+    assert "Run tests" in rendered
+
+
+@pytest.mark.asyncio
+async def test_resume_history_rebuilds_todo_snapshot_without_tool_row() -> None:
+    app = RecordingMyCodeApp(FakeRuntime())
+    todos = (TodoItem("Run tests", "in_progress", "Running tests"),)
+    history = (
+        HistoryToolCall(
+            "todo",
+            ToolUsePresentation("Update Todos", "1 item", "Updating todos"),
+            ToolResultPresentation("updated"),
+            False,
+            todos=todos,
+            ends_tool_batch=True,
+        ),
+    )
+
+    await app._render_history(history)
+
+    stream = StringIO()
+    Console(file=stream, force_terminal=False).print(app.write_snapshots[0][2])
+    rendered = stream.getvalue()
+    assert "Updated Plan" in rendered
+    assert "Update Todos" not in rendered
+
+
 def test_user_message_matches_composer_vertical_padding() -> None:
     theme = TuiTheme(TerminalPalette((48, 10, 36)))
     message = user_message("hello", theme)
@@ -600,6 +817,23 @@ def test_user_message_matches_composer_vertical_padding() -> None:
     assert message.style == "on #49273e"
     assert message.top == SURFACE_VERTICAL_PADDING
     assert message.bottom == SURFACE_VERTICAL_PADDING
+
+
+@pytest.mark.asyncio
+async def test_scrollback_blocks_have_exactly_one_blank_line_between_them() -> None:
+    stream = StringIO()
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=stream, width=40, force_terminal=False),
+    )
+
+    await app._write(user_message("hello", app.theme))
+    await app._write(assistant_message("answer"))
+    await app._write(system_message("done"))
+
+    lines = [line.rstrip() for line in stream.getvalue().splitlines()]
+    assert lines == ["", " › hello", "", "answer", "", "done"]
 
 
 def test_streaming_assistant_text_renders_markdown_before_completion() -> None:

@@ -19,16 +19,28 @@ from my_code.chat.events import (
 )
 from my_code.chat.history import HistoryText, HistoryToolCall
 from my_code.chat.service import ChatService
+from my_code.chat.views import (
+    TranscriptAttachment,
+    TranscriptReasoning,
+    TranscriptSummary,
+    TranscriptText,
+    TranscriptToolCall,
+    TranscriptToolResult,
+)
 from my_code.config.paths import MyCodePaths
 from my_code.config.settings import AgentSettings
 from my_code.context.models import CompactionOutcome
 from my_code.context.session import ContextRuntime
-from my_code.conversation.attachments import TodoReminderAttachment
+from my_code.conversation.attachments import (
+    FileMentionAttachment,
+    TodoReminderAttachment,
+)
 from my_code.conversation.models import (
     AssistantMessage,
     AttachmentMessage,
     ConversationSummaryMessage,
     HumanMessage,
+    ReasoningContent,
     TextContent,
     ToolCall,
     ToolResult,
@@ -43,7 +55,7 @@ from my_code.model.capabilities import (
     ModelDescriptor,
     ModelLimits,
 )
-from my_code.model.primitives import TokenUsage
+from my_code.model.primitives import ReasoningPresentation, TokenUsage
 from my_code.permissions.models import PermissionMode
 from my_code.providers.discovery import ModelDiscoveryService
 from my_code.providers.manager import ProviderManager, ProviderUpdate
@@ -669,9 +681,11 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
                 display_name="Read",
                 summary="old.py",
                 activity="Reading old.py",
+                category="explore",
             ),
             result=snapshot,
             is_error=False,
+            ends_tool_batch=True,
         ),
     )
 
@@ -778,3 +792,65 @@ async def test_stream_prevents_session_switch_until_turn_finishes(
     await turn
     await resume
     assert runtime.status().session_id == _TARGET_SESSION_ID
+
+
+def test_complete_transcript_view_projects_persisted_content_only(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    session = runtime.state.session
+    user = HumanMessage("show everything")
+    session.append_human_message(user)
+    assistant = AssistantMessage(
+        (
+            ReasoningContent("reason-1", ReasoningPresentation("redacted", ())),
+            TextContent("answer"),
+            ToolCall("call-1", "Read", {"path": "a.py", "lines": [1, 2]}),
+        ),
+        TokenUsage(),
+        parent_uuid=user.uuid,
+    )
+    session.append_assistant_message(assistant)
+    session.append_tool_results(
+        (
+            ToolResult(
+                "call-1",
+                "literal **untrusted** output",
+                ToolResultPresentation("read it"),
+            ),
+        ),
+        assistant,
+    )
+    session.append_attachment(FileMentionAttachment("a.py", "print('x')"))
+    session.append_attachment(TodoReminderAttachment("transient reminder"))
+    parent = session.causal_head_uuid
+    assert parent is not None
+    summary = ConversationSummaryMessage("durable summary", parent_uuid=parent)
+    session.commit_compaction(
+        (), summary, CompactBoundary(parent, summary.uuid, "manual", 10)
+    )
+
+    view = runtime.current_transcript_view()
+
+    assert any(isinstance(entry, TranscriptText) for entry in view.entries)
+    reasoning = next(
+        entry for entry in view.entries if isinstance(entry, TranscriptReasoning)
+    )
+    assert reasoning.presentation.parts == ()
+    call = next(
+        entry for entry in view.entries if isinstance(entry, TranscriptToolCall)
+    )
+    assert tuple(field.key for field in call.input.fields) == ("path", "lines")
+    result = next(
+        entry for entry in view.entries if isinstance(entry, TranscriptToolResult)
+    )
+    assert result.content == "literal **untrusted** output"
+    assert any(isinstance(entry, TranscriptSummary) for entry in view.entries)
+    attachments = tuple(
+        entry for entry in view.entries if isinstance(entry, TranscriptAttachment)
+    )
+    assert tuple(entry.attachment_kind for entry in attachments) == ("file_mention",)
+    assert "call-1" not in repr(view)
+
+    session.append_human_message(HumanMessage("new", parent_uuid=summary.uuid))
+    assert runtime.current_transcript_view().revision != view.revision
