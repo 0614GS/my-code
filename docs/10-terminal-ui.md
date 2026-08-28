@@ -4,7 +4,7 @@
 
 `tui` 是 `mycode` 唯一的聊天 host，使用 `prompt_toolkit + Rich` 负责底部动态布局、按键、slash 命令和事件渲染。它不读取 JSONL、不执行工具、不构造 ModelRequest，也不持有 AgentEngine。主应用使用 `full_screen=False`，不进入 alternate screen、不接管鼠标；已完成内容通过 `run_in_terminal()` 串行固化到终端 scrollback，composer 自然跟随 scrollback，仅在内容占满 terminal 时随原生滚动落到底部。只有临时 transcript pager 使用 alternate buffer。launch 要求 stdin/stdout 都是 TTY；`--session <uuid>` 仍通过同一 TUI 恢复。
 
-模块按职责拆分：`app.py` 只编排 ChatService、生命周期与临时面板状态；`turns.py` 消费前后台 turn 事件；`layout.py` 构造非全屏动态区；`key_bindings.py` 负责按键路由；`composer.py` 持有独立 slash 选择状态并适配 path 补全；`panels.py` 生成带语义样式的临时面板；`theme.py` 与 `terminal.py` 统一颜色和原生光标策略；`presentation.py` 投影运行时能力；`widgets.py` 生成 Rich scrollback renderable。Provider 表单状态和 resume 摘要分别留在 `provider_screen.py` 与 `resume_screen.py`。
+模块按职责拆分：`app.py` 只编排 ChatService、生命周期与临时面板转换；`turns.py` 消费前后台 turn 事件；`layout.py` 构造非全屏动态区；`key_bindings.py` 负责按键路由；`composer.py` 适配 slash 与 path 补全；`picker.py` 统一稳定 row key、选择边界和可视窗口；`panels.py` 生成带语义样式的临时面板；`theme.py` 与 `terminal.py` 统一颜色和原生光标策略；`presentation.py` 投影运行时能力；`widgets.py` 生成 Rich scrollback renderable。Provider 表单状态和 resume 摘要分别留在 `provider_screen.py` 与 `resume_screen.py`。
 
 状态栏只渲染最近一次安全的 context 快照，并在启动、回合结束、会话恢复或配置变更等稳定边界刷新。普通状态与 context 状态分别隔离刷新；刷新失败时保留最近有效值并显示短警告，异常不会逃逸到 prompt-toolkit event loop。prompt-toolkit 的重绘回调不会在工具调用等待结果的中间态重新执行 context 规划。
 
@@ -65,7 +65,9 @@ Slash command 在 prompt 进入模型前本地解析。除原有命令外，`/us
 
 ## 输入与临时面板
 
-Enter 提交，Alt+Enter（或 Esc 后 Enter）换行。输入 `/` 会立即在 composer 下方展示命令及说明，继续输入时按前缀过滤并默认选中第一项；Enter 直接执行选中的本地命令，Tab 只补全。候选使用终端默认背景，只通过前景色和粗体标记当前项，并且不绘制内部滚动条。Esc 按候选菜单、临时面板、当前 turn 的顺序处理；空闲 Ctrl+C 清空，空输入 Ctrl+D 退出，Ctrl+T 打开 transcript。turn 和后台 continuation 期间 composer 只读，已有草稿保留。
+Enter 提交，Shift+Enter 或 Ctrl+J 换行；传统终端若不能区分 Shift+Enter 与 Enter，应使用 Ctrl+J。逻辑续行使用与 `› ` 等宽的空白前缀，使正文始终对齐。输入 `/` 会立即在 composer 下方展示命令及说明，继续输入时按前缀过滤并默认选中第一项；Enter 直接执行选中的本地命令，Tab 只补全。Slash 候选、命令二级页、permission 和 Full Access 共用 composer 下方的 interaction host；同一时刻只显示最高优先级的交互，path completion 位于其后。候选使用终端默认背景，只通过前景色和粗体标记当前项，并且不绘制内部滚动条。Esc 按候选菜单、临时面板、当前 turn 的顺序处理；主应用与 transcript 只保留 50ms 的原始 VT Escape 序列判定，应用层不再等待后续按键。空闲 Ctrl+C 清空，空输入 Ctrl+D 退出，Ctrl+T 打开 transcript。turn 和后台 continuation 期间 composer 只读，已有草稿保留。
+
+所有选择页使用同一份带稳定 action key 的 rows 驱动渲染、导航和 Enter 动作。默认最多显示七项，长列表随当前项滚动并显示“当前位置/总数”；↑/↓ 在首尾停止，不循环，也不存在不可见但仍可执行的条目。Permission 暂时打断其他面板时会恢复原 row、可视窗口和 composer 草稿。Agent 选择页使用该 interaction host，选中后的完整 child transcript 仍在输入框上方的独立查看区显示。
 
 应用退出时先同步关闭 transcript application，再取消 startup/background watcher，随后擦除底部动态布局并将光标交还 shell；外层 runtime 继续按既有顺序关闭。Welcome、历史、已完成回合和退出提示等 scrollback 内容保留，terminal 中不残留 composer、状态栏或临时面板。
 
@@ -77,4 +79,4 @@ TUI 不发送光标形状控制序列，并覆盖 prompt_toolkit 默认的“显
 
 固化到 scrollback 的用户 prompt 使用一条铺满可用宽度的低对比度背景带和 `›` 标记，AI Markdown 继续使用终端默认背景，因此恢复历史和新回合都能清楚区分双方消息。
 
-resume、provider 和 permission 都投影为底部临时面板。Provider 采用与参考实现相同的“列表选择、方向键导航、Enter 执行主操作、Esc 返回”交互语法：profile 选择后先提供 Use/Configure，配置默认只经过五项核心字段，在 Review 页保存、发现模型或按需进入 Advanced；面板显示不含密钥的凭据来源，本地 Key 存在时提供带二次确认的删除操作。删除不会影响环境 Key；删除当前 Provider 的本地 Key 后连接立即重新解析。`/auth` 不再存在。通过 `--session` 启动时，带 my-code ASCII 标识的 Welcome 面板后立即绘制完整安全历史；`/clear` 只清理当前可见终端并重绘 Welcome，不修改 canonical conversation。
+resume、provider、permission、Full Access 和 Agent 选择都投影为 composer 下方的临时交互。Resume 和 provider/model 列表不在数据层截断，只由公共可视窗口限制当前绘制行数；resume 标题过长时按显示宽度截断，相对更新时间作为独立尾部字段右对齐。Provider 采用与参考实现相同的“列表选择、方向键导航、Enter 执行主操作、Esc 返回”交互语法：profile 选择后先提供 Use/Configure，配置默认只经过五项核心字段，在 Review 页保存、发现模型或按需进入 Advanced；面板显示不含密钥的凭据来源，本地 Key 存在时提供带二次确认的删除操作。删除不会影响环境 Key；删除当前 Provider 的本地 Key 后连接立即重新解析。`/auth` 不再存在。通过 `--session` 启动时，带 `›_  my-code` 紧凑字标的 Welcome 面板后立即绘制完整安全历史；`/clear` 只清理当前可见终端并重绘 Welcome，不修改 canonical conversation。

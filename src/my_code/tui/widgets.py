@@ -52,21 +52,13 @@ class ToolResultPresentationView(Protocol):
 
 def welcome(status: RuntimeStatus, theme: TuiTheme | None = None) -> RenderableType:
     theme = theme or TuiTheme.detect()
-    logo = Text(
-        " __  __ __   __  ____  ___  ____  _____\n"
-        "|  \\/  |\\ \\ / / / ___|/ _ \\|  _ \\| ____|\n"
-        "| |\\/| | \\ V / | |  | | | | | | |  _|\n"
-        "| |  | |  | |  | |__| |_| | |_| | |___\n"
-        "|_|  |_|  |_|   \\____|\\___/|____/|_____|",
-        style="bold magenta",
+    wordmark = Text.assemble(
+        ("›_", "bold cyan"),
+        ("  my-code", "bold italic"),
+        (f" v{__version__}", "dim"),
     )
     details = Group(
-        logo,
-        Text.assemble(
-            ("my-code", "bold"),
-            (f" v{__version__}", "dim"),
-            ("  ·  coding agent with explicit boundaries", "dim"),
-        ),
+        wordmark,
         Text.assemble(
             (status.provider_id, "bold cyan"),
             (" / ", "dim"),

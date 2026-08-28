@@ -96,7 +96,7 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
         if not host._busy:
             host._spawn(host._submit_buffer())
 
-    @bindings.add("escape", "enter")
+    @bindings.add("c-j")
     def newline(event: KeyPressEvent) -> None:
         del event
         if host._panel is None and not host._busy:

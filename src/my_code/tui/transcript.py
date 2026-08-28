@@ -25,7 +25,11 @@ from my_code.chat.views import (
     TranscriptValue,
     TranscriptView,
 )
-from my_code.tui.terminal import terminal_color_depth, terminal_output
+from my_code.tui.terminal import (
+    configure_key_timeouts,
+    terminal_color_depth,
+    terminal_output,
+)
 from my_code.tui.widgets import CodexMarkdown, reasoning_message
 
 
@@ -67,6 +71,7 @@ class TranscriptPager:
             color_depth=terminal_color_depth(resolved_output),
             refresh_interval=0.25,
         )
+        configure_key_timeouts(self.application)
 
     async def run_async(self) -> None:
         self._refresh()

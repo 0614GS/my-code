@@ -6,8 +6,15 @@ from my_code.sessions.catalog import SessionSummary
 
 
 def render_session(summary: SessionSummary, now: datetime | None = None) -> str:
+    title, relative_time = render_session_parts(summary, now)
+    return f"{title}  ·  {relative_time}"
+
+
+def render_session_parts(
+    summary: SessionSummary, now: datetime | None = None
+) -> tuple[str, str]:
     current = now or datetime.now(UTC)
-    return f"{summary.title}  ·  {_relative_time(summary.updated_at, current)}"
+    return summary.title, _relative_time(summary.updated_at, current)
 
 
 def _relative_time(value: datetime, now: datetime) -> str:
@@ -29,4 +36,4 @@ def _relative_time(value: datetime, now: datetime) -> str:
     return f"{months}mo ago" if months < 12 else f"{days // 365}y ago"
 
 
-__all__ = ["render_session"]
+__all__ = ["render_session", "render_session_parts"]

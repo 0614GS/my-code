@@ -5,8 +5,11 @@ from io import StringIO
 
 from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
 from prompt_toolkit.output import DummyOutput
-from rich.console import Console
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.text import Text
 
+from my_code.chat.status import RuntimeStatus
 from my_code.chat.views import (
     TranscriptField,
     TranscriptText,
@@ -25,6 +28,7 @@ from my_code.tui.widgets import (
     streaming_renderable,
     todo_snapshot,
     tool_activity_message,
+    welcome,
 )
 
 
@@ -33,6 +37,36 @@ def _plain(renderable: object, *, width: int = 80) -> str:
     console = Console(file=stream, width=width, force_terminal=False)
     console.print(renderable)
     return "\n".join(line.rstrip() for line in stream.getvalue().splitlines())
+
+
+def test_welcome_uses_a_compact_terminal_wordmark() -> None:
+    status = RuntimeStatus(
+        session_id="session-id",
+        cwd="/workspace",
+        provider_id="provider",
+        base_url=None,
+        model="model",
+        permission_mode="default",
+        credential_source="stored",
+        context_entry_count=0,
+        conversation_entry_count=0,
+        todos=(),
+    )
+
+    rendered = _plain(welcome(status), width=80)
+
+    assert "›_  my-code v" in rendered
+    assert "█" not in rendered
+    assert "__  __" not in rendered
+
+    welcome_panel = welcome(status)
+    assert isinstance(welcome_panel, Panel)
+    assert isinstance(welcome_panel.renderable, Group)
+    wordmark = welcome_panel.renderable.renderables[0]
+    assert isinstance(wordmark, Text)
+    assert wordmark.plain.startswith("›_  my-code v")
+    assert wordmark.spans[0].style == "bold cyan"
+    assert wordmark.spans[1].style == "bold italic"
 
 
 def test_codex_markdown_snapshot_and_streaming_renderer_match() -> None:
@@ -179,6 +213,8 @@ def test_transcript_pager_starts_at_tail_and_preserves_position_on_refresh() -> 
         )
     )
     pager = TranscriptPager(source, output=DummyOutput())
+    assert pager.application.ttimeoutlen == 0.05
+    assert pager.application.timeoutlen == 0.0
     pager._refresh()
 
     assert pager._follow_tail

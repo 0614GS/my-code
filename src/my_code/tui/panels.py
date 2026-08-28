@@ -5,47 +5,81 @@ only turns safe frontend state into compact terminal text.
 """
 
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.utils import get_cwidth
 
 from my_code.chat.permissions import PermissionRequest
+from my_code.chat.views import SubagentTaskView
 from my_code.providers.manager import ProviderView
 from my_code.sessions.catalog import SessionSummary
+from my_code.tui.picker import PickerRow, PickerState, PickerView
 from my_code.tui.provider_screen import ProviderForm
-from my_code.tui.resume_screen import render_session
+from my_code.tui.resume_screen import render_session_parts
 
 
 def permission_panel(
-    request: PermissionRequest, mode: str, selected: int = 1
-) -> FormattedText:
+    request: PermissionRequest, mode: str
+) -> PickerView | FormattedText:
     if mode == "feedback":
         return _message("Permission denied with feedback", "Enter to send · Esc deny")
     if request.tool_name == "Bash":
         choices = [
-            "Yes",
-            f'Yes, and don\'t ask again for "{_suggestion_scope(request)}"',
-            "No",
+            PickerRow("allow", "Yes"),
+            PickerRow(
+                "second",
+                f'Yes, and don\'t ask again for "{_suggestion_scope(request)}"',
+            ),
+            PickerRow("third", "No"),
         ]
         shortcut = "↑↓ select · Enter confirm · 1–3 shortcut · Esc deny"
     else:
-        choices = ["Yes", "No", "No, with feedback"]
+        choices = [
+            PickerRow("allow", "Yes"),
+            PickerRow("second", "No"),
+            PickerRow("third", "No, with feedback"),
+        ]
         shortcut = "↑↓ select · Enter confirm · 1–4 shortcut · Esc deny"
     if request.tool_name != "Bash" and request.suggestions:
-        choices.append("Yes, and remember")
-    return _picker(
+        choices.append(PickerRow("remember", "Yes, and remember"))
+    return PickerView(
         f"Tool use · {request.presentation.display_name}"
         f" ({request.presentation.summary})\n{request.message}",
         tuple(choices),
-        selected,
         shortcut,
     )
 
 
-def full_access_panel(selected: int = 0) -> FormattedText:
-    return _picker(
+def full_access_panel() -> PickerView:
+    return PickerView(
         "Full access can modify files and run commands without asking.\n"
         "No OS sandbox is active for this process.",
-        ("No, keep current mode", "Yes, enable Full access"),
-        selected,
+        (
+            PickerRow("deny", "No, keep current mode"),
+            PickerRow("allow", "Yes, enable Full access"),
+        ),
         "↑↓ select · Enter confirm · Esc keep current mode",
+    )
+
+
+def agent_select_panel(agents: tuple[SubagentTaskView, ...]) -> PickerView:
+    return PickerView(
+        "Main session · F6 cycles through agent views",
+        (
+            PickerRow("main", "Main session"),
+            *(
+                PickerRow(
+                    item.task_id,
+                    (
+                        "○ "
+                        if item.status in {"succeeded", "failed", "cancelled"}
+                        else "● "
+                    )
+                    + f"{item.description} · {item.status} · "
+                    + ("background" if item.background else "foreground"),
+                )
+                for item in agents
+            ),
+        ),
+        "↑↓ select · Enter view · Esc close",
     )
 
 
@@ -55,55 +89,61 @@ def _suggestion_scope(request: PermissionRequest) -> str:
     return request.suggestions[0].rules[0].rule_content or request.tool_name
 
 
-def resume_panel(sessions: tuple[SessionSummary, ...], selected: int) -> FormattedText:
+def resume_panel(sessions: tuple[SessionSummary, ...]) -> PickerView | FormattedText:
     if not sessions:
         return _message("No conversations found to resume", "Esc close")
-    return _picker(
+    return PickerView(
         "Resume a conversation",
-        tuple(render_session(item) for item in sessions[:8]),
-        selected,
+        tuple(
+            PickerRow(item.session_id, *render_session_parts(item)) for item in sessions
+        ),
         "↑↓ select · Enter resume · Esc cancel",
     )
 
 
 def provider_select_panel(
-    providers: tuple[ProviderView, ...], selected: int
-) -> FormattedText:
+    providers: tuple[ProviderView, ...],
+) -> PickerView:
     rows = tuple(
-        f"{'● ' if item.active else ''}{item.id} · {item.model}"
-        for item in providers[:8]
+        PickerRow(
+            f"provider:{item.id}",
+            f"{'● ' if item.active else ''}{item.id} · {item.model}",
+        )
+        for item in providers
     )
-    return _picker(
+    return PickerView(
         "Choose a provider",
-        (*rows, "+ Add provider"),
-        selected,
+        (*rows, PickerRow("add", "+ Add provider")),
         "↑↓ navigate · Enter select · Esc close",
     )
 
 
-def provider_actions_panel(provider: ProviderView, selected: int) -> FormattedText:
-    actions = ["Use this provider", "Configure"]
+def provider_actions_panel(provider: ProviderView) -> PickerView:
+    actions = [
+        PickerRow("use", "Use this provider"),
+        PickerRow("configure", "Configure"),
+    ]
     if provider.has_stored_key:
-        actions.append("Remove saved API key")
-    actions.append("Back")
+        actions.append(PickerRow("remove", "Remove saved API key"))
+    actions.append(PickerRow("back", "Back"))
     detail = (
         f"{provider.id} · {provider.protocol.value} · {provider.model}\n"
         f"{provider.base_url or 'SDK default URL'} · "
         f"{_credential_label(provider)}"
     )
-    return _picker(
-        detail, tuple(actions), selected, "↑↓ navigate · Enter select · Esc back"
-    )
+    return PickerView(detail, tuple(actions), "↑↓ navigate · Enter select · Esc back")
 
 
 def provider_remove_credential_panel(
-    provider: ProviderView, selected: int
-) -> FormattedText:
-    return _picker(
+    provider: ProviderView,
+) -> PickerView:
+    return PickerView(
         f"Remove saved API key for {provider.id!r}?\n"
         "Environment credentials are not affected.",
-        ("Remove saved API key", "Cancel"),
-        selected,
+        (
+            PickerRow("remove", "Remove saved API key"),
+            PickerRow("cancel", "Cancel"),
+        ),
         "↑↓ navigate · Enter confirm · Esc cancel",
     )
 
@@ -132,12 +172,12 @@ def provider_form_panel(
     )
 
 
-def provider_review_panel(form: ProviderForm, selected: int) -> FormattedText:
+def provider_review_panel(form: ProviderForm) -> PickerView:
     actions = (
-        "Save & use",
-        "Discover models",
-        "Advanced settings",
-        "Back to profiles",
+        PickerRow("save", "Save & use"),
+        PickerRow("discover", "Discover models"),
+        PickerRow("advanced", "Advanced settings"),
+        PickerRow("back", "Back to profiles"),
     )
     detail = (
         "Review provider\n"
@@ -146,14 +186,13 @@ def provider_review_panel(form: ProviderForm, selected: int) -> FormattedText:
         f"{form.base_url or 'SDK default URL'} · "
         f"{'new key entered' if form.api_key else 'keep saved key'}"
     )
-    return _picker(detail, actions, selected, "↑↓ navigate · Enter select · Esc cancel")
+    return PickerView(detail, actions, "↑↓ navigate · Enter select · Esc cancel")
 
 
-def provider_models_panel(models: tuple[str, ...], selected: int) -> FormattedText:
-    return _picker(
+def provider_models_panel(models: tuple[str, ...]) -> PickerView:
+    return PickerView(
         "Choose a model",
-        models[:8],
-        selected,
+        tuple(PickerRow(model, model) for model in models),
         "↑↓ navigate · Enter select · Esc back",
     )
 
@@ -170,18 +209,53 @@ def _credential_label(provider: ProviderView) -> str:
     return "not configured"
 
 
-def _picker(
-    title: str, rows: tuple[str, ...], selected: int, hint: str
+def render_picker(
+    view: PickerView, state: PickerState, width: int | None = None
 ) -> FormattedText:
-    fragments: list[tuple[str, str]] = [("class:heading", title), ("", "\n")]
-    for index, row in enumerate(rows):
-        style = "class:selected" if index == selected else ""
-        fragments.append((style, f"  {row}\n"))
+    start, rows = state.visible(view.rows, view.visible_count)
+    fragments: list[tuple[str, str]] = [("class:heading", view.title), ("", "\n")]
+    for offset, row in enumerate(rows):
+        index = start + offset
+        style = "class:selected" if index == state.index else ""
+        if row.trailing is None or width is None:
+            fragments.append((style, f"  {row.label}\n"))
+            continue
+        trailing_width = get_cwidth(row.trailing)
+        label_width = max(1, width - trailing_width - 3)
+        label = _truncate(row.label, label_width)
+        padding = max(1, width - get_cwidth(label) - trailing_width - 2)
+        trailing_style = style or "class:secondary"
+        fragments.extend(
+            (
+                (style, f"  {label}"),
+                (style, " " * padding),
+                (trailing_style, row.trailing),
+                ("", "\n"),
+            )
+        )
+    hint = view.hint
+    if len(view.rows) > view.visible_count:
+        hint += f" · {state.index + 1}/{len(view.rows)}"
     fragments.append(("class:secondary", hint))
     return FormattedText(fragments)
 
 
+def _truncate(value: str, width: int) -> str:
+    if get_cwidth(value) <= width:
+        return value
+    if width <= 1:
+        return "…"[:width]
+    available = width - 1
+    result = ""
+    for character in value:
+        if get_cwidth(result + character) > available:
+            break
+        result += character
+    return result + "…"
+
+
 __all__ = [
+    "agent_select_panel",
     "full_access_panel",
     "permission_panel",
     "provider_actions_panel",
@@ -190,5 +264,6 @@ __all__ = [
     "provider_remove_credential_panel",
     "provider_review_panel",
     "provider_select_panel",
+    "render_picker",
     "resume_panel",
 ]

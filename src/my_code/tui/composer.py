@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
+from prompt_toolkit.layout.processors import (
+    Processor,
+    Transformation,
+    TransformationInput,
+)
 
 from my_code.features.file_mentions.models import PathSuggestion
 from my_code.tui.commands import SlashCommand, SlashCommandRegistry
 from my_code.tui.completion import format_path_mention, mention_at_cursor
+from my_code.tui.picker import PickerRow, PickerState
 
 
 class ComposerCompletionState(Protocol):
@@ -44,13 +50,35 @@ class ComposerCompleter(Completer):
             )
 
 
+class ContinuationIndent(Processor):
+    """Align logical continuation lines with text after the composer prompt."""
+
+    def __init__(self, width: int) -> None:
+        self.width = width
+
+    def apply_transformation(
+        self, transformation_input: TransformationInput
+    ) -> Transformation:
+        if transformation_input.lineno == 0:
+            return Transformation(transformation_input.fragments)
+        return Transformation(
+            [("", " " * self.width), *transformation_input.fragments],
+            source_to_display=lambda index: index + self.width,
+            display_to_source=lambda index: index - self.width,
+        )
+
+
 @dataclass(slots=True)
 class SlashMenuState:
     """Selection state kept separate from prompt_toolkit's text-preview menu."""
 
     matches: tuple[SlashCommand, ...] = ()
-    selected: int = 0
     dismissed_text: str | None = None
+    picker: PickerState = field(default_factory=PickerState)
+
+    @property
+    def selected(self) -> int:
+        return self.picker.index
 
     def update(self, text: str, registry: SlashCommandRegistry) -> None:
         if (
@@ -59,29 +87,36 @@ class SlashMenuState:
             or text == self.dismissed_text
         ):
             self.matches = ()
-            self.selected = 0
+            self.picker.reset()
             return
         matches = registry.matching(text)
         if matches != self.matches:
             self.matches = matches
-            self.selected = 0
+            self.picker.reset()
         elif matches:
-            self.selected = min(self.selected, len(matches) - 1)
+            self.picker.sync(self._rows())
 
     @property
     def current(self) -> SlashCommand | None:
         if not self.matches:
             return None
-        return self.matches[self.selected]
+        self.picker.sync(self._rows())
+        return self.matches[self.picker.index]
 
     def move(self, offset: int) -> None:
-        if self.matches:
-            self.selected = min(max(self.selected + offset, 0), len(self.matches) - 1)
+        self.picker.move(self._rows(), offset)
+
+    def visible(self, limit: int = 7) -> tuple[int, tuple[SlashCommand, ...]]:
+        start, rows = self.picker.visible(self._rows(), limit)
+        return start, self.matches[start : start + len(rows)]
 
     def dismiss(self, text: str) -> None:
         self.dismissed_text = text
         self.matches = ()
-        self.selected = 0
+        self.picker.reset()
+
+    def _rows(self) -> tuple[PickerRow, ...]:
+        return tuple(PickerRow(command.name, command.name) for command in self.matches)
 
 
-__all__ = ["ComposerCompleter", "SlashMenuState"]
+__all__ = ["ComposerCompleter", "ContinuationIndent", "SlashMenuState"]

@@ -49,10 +49,11 @@ from my_code.sessions.catalog import SessionSummary
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.commands import CommandOutcome, SlashCommandRegistry
 from my_code.tui.completion import mention_at_cursor
-from my_code.tui.composer import ComposerCompleter, SlashMenuState
+from my_code.tui.composer import ComposerCompleter, ContinuationIndent, SlashMenuState
 from my_code.tui.key_bindings import build_key_bindings
 from my_code.tui.layout import build_terminal_layout
 from my_code.tui.panels import (
+    agent_select_panel,
     full_access_panel,
     permission_panel,
     provider_actions_panel,
@@ -61,8 +62,10 @@ from my_code.tui.panels import (
     provider_remove_credential_panel,
     provider_review_panel,
     provider_select_panel,
+    render_picker,
     resume_panel,
 )
+from my_code.tui.picker import PickerState, PickerView
 from my_code.tui.presentation import (
     format_context_usage,
     render_agent_view,
@@ -127,7 +130,7 @@ class MyCodeApp(TurnFlowMixin):
         self._agent_scroll = 0
         self._agent_task_id: str | None = None
         self._panel: str | None = None
-        self._panel_index = 0
+        self._panel_picker = PickerState()
         self._sessions: tuple[SessionSummary, ...] = ()
         self._providers: tuple[ProviderView, ...] = ()
         self._provider_form: ProviderForm | None = None
@@ -162,12 +165,14 @@ class MyCodeApp(TurnFlowMixin):
             read_only=Condition(lambda: self._composer_read_only()),
         )
         self.buffer.on_text_changed += self._on_text_changed
-        prompt = BeforeInput(FormattedText([("class:prompt", "› ")]))
+        prompt_text = "› "
+        prompt = BeforeInput(FormattedText([("class:prompt", prompt_text)]))
+        continuation = ContinuationIndent(len(prompt_text))
         password = ConditionalProcessor(
             PasswordProcessor(), Condition(lambda: self._provider_password_field())
         )
         self.input_control = BufferControl(
-            buffer=self.buffer, input_processors=[prompt, password]
+            buffer=self.buffer, input_processors=[prompt, continuation, password]
         )
         self.key_bindings = build_key_bindings(self)
         terminal_layout = build_terminal_layout(
@@ -175,8 +180,8 @@ class MyCodeApp(TurnFlowMixin):
             key_bindings=self.key_bindings,
             dynamic_text=self._dynamic_text,
             status_text=self._status_display,
-            slash_menu_text=self._slash_menu_text,
-            has_slash_menu=self._slash_active,
+            interaction_text=self._interaction_text,
+            has_interaction=self._interaction_active,
             input=input,
             output=output,
             theme=self.theme,
@@ -184,8 +189,19 @@ class MyCodeApp(TurnFlowMixin):
         self.application: Application[None] = terminal_layout.application
         self.body = terminal_layout.body
         self.completions_menu = terminal_layout.completions_menu
+        self.interaction_menu = terminal_layout.interaction_menu
         self.slash_menu = terminal_layout.slash_menu
         self.runtime.set_permission_handler(self._ask_permission)
+
+    @property
+    def _panel_index(self) -> int:
+        """Compatibility surface for tests and focused panel transitions."""
+
+        return self._panel_picker.index
+
+    @_panel_index.setter
+    def _panel_index(self, value: int) -> None:
+        self._panel_picker.reset(value)
 
     async def run_async(self) -> None:
         view = self.runtime.current_session_view()
@@ -322,13 +338,22 @@ class MyCodeApp(TurnFlowMixin):
     def _slash_active(self) -> bool:
         return self._panel is None and not self._busy and bool(self._slash_menu.matches)
 
+    def _interaction_active(self) -> bool:
+        if self._panel == "agents" and self._agent_task_id is not None:
+            return False
+        return self._panel is not None or self._slash_active()
+
+    def _interaction_text(self) -> AnyFormattedText:
+        if self._panel is not None:
+            return self._panel_text()
+        return self._slash_menu_text()
+
     def _slash_menu_text(self) -> FormattedText:
         matches = self._slash_menu.matches
         if not matches:
             return FormattedText()
+        start, visible = self._slash_menu.visible(7)
         selected = self._slash_menu.selected
-        start = max(0, min(selected - 3, len(matches) - 7))
-        visible = matches[start : start + 7]
         name_width = max(len(command.name) for command in visible) + 2
         fragments: list[tuple[str, str]] = []
         for offset, command in enumerate(visible):
@@ -370,8 +395,8 @@ class MyCodeApp(TurnFlowMixin):
         )
 
     def _dynamic_text(self) -> AnyFormattedText:
-        if self._panel is not None:
-            return self._panel_text()
+        if self._panel == "agents" and self._agent_task_id is not None:
+            return self._agent_panel_text()
         parts = [
             part
             for part in (
@@ -446,25 +471,44 @@ class MyCodeApp(TurnFlowMixin):
             return ""
         return "Thinking · " + " ".join("".join(self._reasoning_parts).split())[-300:]
 
-    def _panel_text(self) -> AnyFormattedText:
+    def _panel_view(self) -> PickerView | None:
         if self._panel == "full_access":
-            return full_access_panel(self._panel_index)
+            return full_access_panel()
         if self._panel == "permission" and self._permission_request is not None:
-            return permission_panel(
-                self._permission_request, self._permission_mode, self._panel_index
-            )
+            content = permission_panel(self._permission_request, self._permission_mode)
+            return content if isinstance(content, PickerView) else None
         if self._panel == "resume":
-            return resume_panel(self._sessions, self._panel_index)
+            content = resume_panel(self._sessions)
+            return content if isinstance(content, PickerView) else None
         if self._panel == "provider_select":
-            return provider_select_panel(self._providers, self._panel_index)
+            return provider_select_panel(self._providers)
         if self._panel == "provider_actions" and self._providers:
             return provider_actions_panel(
-                self._providers[self._provider_selected_index], self._panel_index
+                self._providers[self._provider_selected_index]
             )
         if self._panel == "provider_remove_credential" and self._providers:
             return provider_remove_credential_panel(
-                self._providers[self._provider_selected_index], self._panel_index
+                self._providers[self._provider_selected_index]
             )
+        if self._panel == "provider_review" and self._provider_form is not None:
+            return provider_review_panel(self._provider_form)
+        if self._panel == "provider_models":
+            return provider_models_panel(self._provider_models)
+        if self._panel == "agents" and self._agent_task_id is None:
+            return agent_select_panel(self._agents)
+        return None
+
+    def _panel_text(self) -> AnyFormattedText:
+        view = self._panel_view()
+        if view is not None:
+            return render_picker(view, self._panel_picker, self.console.width)
+        if self._panel == "permission" and self._permission_request is not None:
+            return cast(
+                AnyFormattedText,
+                permission_panel(self._permission_request, self._permission_mode),
+            )
+        if self._panel == "resume":
+            return cast(AnyFormattedText, resume_panel(self._sessions))
         if self._panel == "provider_form" and self._provider_form is not None:
             return provider_form_panel(
                 self._provider_form,
@@ -473,25 +517,13 @@ class MyCodeApp(TurnFlowMixin):
                 self.buffer.text,
                 self._provider_models,
             )
-        if self._panel == "provider_review" and self._provider_form is not None:
-            return provider_review_panel(self._provider_form, self._panel_index)
-        if self._panel == "provider_models":
-            return provider_models_panel(self._provider_models, self._panel_index)
         if self._panel == "agents":
             return self._agent_panel_text()
         return ""
 
     def _agent_panel_text(self) -> str:
         if self._agent_task_id is None:
-            lines = ["Main session · F6 cycles through agent views"]
-            lines.extend(
-                ("○ " if item.status in {"succeeded", "failed", "cancelled"} else "● ")
-                + f"{item.description} · {item.status} · "
-                f"{'background' if item.background else 'foreground'}"
-                for item in self._agents
-            )
-            lines.append("↑↓ select · Enter view · Esc close")
-            return "\n".join(lines)
+            return ""
         task = next(
             (item for item in self._agents if item.task_id == self._agent_task_id),
             None,
@@ -692,12 +724,6 @@ class MyCodeApp(TurnFlowMixin):
         try:
             async for tasks in stream():
                 self._agents = tasks
-                if (
-                    self._panel == "agents"
-                    and self._agent_task_id is None
-                    and self._panel_index > len(tasks)
-                ):
-                    self._panel_index = 0
                 self._invalidate()
         except asyncio.CancelledError:
             raise
@@ -792,44 +818,26 @@ class MyCodeApp(TurnFlowMixin):
         self._invalidate()
 
     def _move_panel(self, offset: int) -> None:
-        if self._panel == "resume":
-            size = len(self._sessions)
-        elif self._panel == "permission" and self._permission_mode == "select":
-            size = len(self._permission_options())
-        elif self._panel == "full_access":
-            size = 2
-        elif self._panel == "provider_select":
-            size = min(len(self._providers), 8) + 1
-        elif self._panel == "provider_actions":
-            provider = self._providers[self._provider_selected_index]
-            size = 4 if provider.has_stored_key else 3
-        elif self._panel == "provider_remove_credential":
-            size = 2
-        elif self._panel == "provider_review":
-            size = 4
-        elif self._panel == "provider_models":
-            size = min(len(self._provider_models), 8)
-        elif self._panel == "agents" and self._agent_task_id is None:
-            size = len(self._agents) + 1
-        else:
-            size = 0
-        if size:
-            self._panel_index = (self._panel_index + offset) % size
+        view = self._panel_view()
+        if view is not None:
+            self._panel_picker.move(view.rows, offset)
             self._invalidate()
 
     async def _panel_enter(self) -> None:
+        view = self._panel_view()
+        row = self._panel_picker.current(view.rows) if view is not None else None
+        action = row.key if row is not None else None
         if self._panel == "full_access":
-            self._resolve_full_access(self._panel_index == 1)
+            self._resolve_full_access(action == "allow")
         elif self._panel == "permission":
             value = self.buffer.text.strip()
-            if self._permission_mode == "select":
-                self._choose_permission(self._permission_options()[self._panel_index])
+            if self._permission_mode == "select" and action is not None:
+                self._choose_permission(action)
             elif self._permission_mode == "feedback" and value:
                 self._resolve_permission(PermissionConfirmation(False, value))
-        elif self._panel == "resume" and self._sessions:
-            session_id = self._sessions[self._panel_index].session_id
+        elif self._panel == "resume" and action is not None:
             try:
-                resumed = await self.runtime.resume_session(session_id)
+                resumed = await self.runtime.resume_session(action)
                 self._status = resumed.status
                 self._context_status = self.runtime.context_status()
                 self._todos = resumed.status.todos
@@ -844,42 +852,47 @@ class MyCodeApp(TurnFlowMixin):
                     )
                 )
                 self._close_panel()
-        elif self._panel == "provider_select":
-            if self._panel_index == min(len(self._providers), 8):
+        elif self._panel == "provider_select" and action is not None:
+            if action == "add":
                 self._provider_selected_index = -1
                 self._start_provider_form(ProviderForm())
             else:
-                self._provider_selected_index = self._panel_index
+                provider_id = action.removeprefix("provider:")
+                self._provider_selected_index = next(
+                    i
+                    for i, provider in enumerate(self._providers)
+                    if provider.id == provider_id
+                )
                 self._panel = "provider_actions"
                 self._panel_index = 0
                 self.buffer.set_document(Document(""), bypass_readonly=True)
                 self._invalidate()
-        elif self._panel == "provider_actions":
+        elif self._panel == "provider_actions" and action is not None:
             provider = self._providers[self._provider_selected_index]
-            if self._panel_index == 0:
+            if action == "use":
                 self._provider_form = ProviderForm.from_view(provider)
                 await self._save_provider()
-            elif self._panel_index == 1:
+            elif action == "configure":
                 self._start_provider_form(ProviderForm.from_view(provider))
-            elif provider.has_stored_key and self._panel_index == 2:
+            elif action == "remove":
                 self._panel = "provider_remove_credential"
                 self._panel_index = 1
                 self._invalidate()
             else:
                 self._provider_back()
-        elif self._panel == "provider_remove_credential":
-            if self._panel_index == 0:
+        elif self._panel == "provider_remove_credential" and action is not None:
+            if action == "remove":
                 await self._remove_provider_credential()
             else:
                 self._provider_back()
         elif self._panel == "provider_form":
             await self._advance_provider(1)
-        elif self._panel == "provider_review":
-            if self._panel_index == 0:
+        elif self._panel == "provider_review" and action is not None:
+            if action == "save":
                 await self._save_provider()
-            elif self._panel_index == 1:
+            elif action == "discover":
                 await self._refresh_provider()
-            elif self._panel_index == 2:
+            elif action == "advanced":
                 self._start_provider_form(
                     self._provider_form, fields=PROVIDER_ADVANCED_FIELDS
                 )
@@ -887,18 +900,18 @@ class MyCodeApp(TurnFlowMixin):
                 self._panel = "provider_select"
                 self._panel_index = max(self._provider_selected_index, 0)
                 self._invalidate()
-        elif self._panel == "provider_models" and self._provider_models:
+        elif self._panel == "provider_models" and action is not None:
             assert self._provider_form is not None
-            self._provider_form.model = self._provider_models[self._panel_index]
+            self._provider_form.model = action
             self._panel = "provider_review"
             self._panel_index = 0
             self.buffer.set_document(Document(""), bypass_readonly=True)
             self._invalidate()
-        elif self._panel == "agents":
-            if self._panel_index == 0:
+        elif self._panel == "agents" and action is not None:
+            if action == "main":
                 self._close_panel()
             else:
-                self._agent_task_id = self._agents[self._panel_index - 1].task_id
+                self._agent_task_id = action
                 self._agent_scroll = 0
                 self._invalidate()
 
@@ -961,11 +974,7 @@ class MyCodeApp(TurnFlowMixin):
             return
         self._panel = "provider_models"
         self._panel_index = next(
-            (
-                i
-                for i, model in enumerate(self._provider_models[:8])
-                if model == form.model
-            ),
+            (i for i, model in enumerate(self._provider_models) if model == form.model),
             0,
         )
         self.buffer.set_document(Document(""), bypass_readonly=True)
@@ -1041,7 +1050,7 @@ class MyCodeApp(TurnFlowMixin):
                 self._panel_index = 1
             else:
                 self._panel = "provider_select"
-                self._panel_index = min(len(self._providers), 8)
+                self._panel_index = len(self._providers)
         self.buffer.set_document(Document(""), bypass_readonly=True)
         self._invalidate()
 
@@ -1053,7 +1062,11 @@ class MyCodeApp(TurnFlowMixin):
         if self._permission_future is not None:
             raise RuntimeError("A permission request is already active")
         restore_panel = self._panel
-        restore_index = self._panel_index
+        restore_picker = PickerState(
+            self._panel_picker.index,
+            self._panel_picker.offset,
+            self._panel_picker.selected_key,
+        )
         draft = self._saved_draft if restore_panel == "agents" else self.buffer.text
         self._saved_draft = draft
         self.buffer.set_document(Document(""), bypass_readonly=True)
@@ -1069,7 +1082,7 @@ class MyCodeApp(TurnFlowMixin):
             self._permission_future = None
             self._permission_request = None
             self._panel = restore_panel
-            self._panel_index = restore_index
+            self._panel_picker = restore_picker
             self.buffer.set_document(
                 Document(self._saved_draft, len(self._saved_draft)),
                 bypass_readonly=True,

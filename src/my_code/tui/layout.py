@@ -25,7 +25,11 @@ from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.output import Output
 
 from my_code.tui.dimensions import SURFACE_VERTICAL_PADDING
-from my_code.tui.terminal import terminal_color_depth, terminal_output
+from my_code.tui.terminal import (
+    configure_key_timeouts,
+    terminal_color_depth,
+    terminal_output,
+)
 from my_code.tui.theme import TuiTheme
 
 
@@ -34,7 +38,13 @@ class TerminalLayout:
     application: Application[None]
     body: HSplit
     completions_menu: ConditionalContainer
-    slash_menu: ConditionalContainer
+    interaction_menu: ConditionalContainer
+
+    @property
+    def slash_menu(self) -> ConditionalContainer:
+        """Compatibility alias for callers that inspect the slash host."""
+
+        return self.interaction_menu
 
 
 def build_terminal_layout(
@@ -43,23 +53,24 @@ def build_terminal_layout(
     key_bindings: KeyBindings,
     dynamic_text: Callable[[], AnyFormattedText],
     status_text: Callable[[], AnyFormattedText],
-    slash_menu_text: Callable[[], AnyFormattedText],
-    has_slash_menu: Callable[[], bool],
+    interaction_text: Callable[[], AnyFormattedText],
+    has_interaction: Callable[[], bool],
     input: Input | None,
     output: Output | None,
     theme: TuiTheme,
 ) -> TerminalLayout:
     """Build the non-full-screen dynamic area below terminal scrollback."""
 
-    completions_menu = _completion_menu()
-    slash_menu = ConditionalContainer(
+    active_interaction = Condition(has_interaction)
+    completions_menu = _completion_menu(active_interaction)
+    interaction_menu = ConditionalContainer(
         Window(
-            content=FormattedTextControl(slash_menu_text),
-            height=Dimension(min=1, max=7),
+            content=FormattedTextControl(interaction_text),
+            height=Dimension(min=1, max=12),
             dont_extend_height=True,
             dont_extend_width=True,
         ),
-        Condition(has_slash_menu),
+        active_interaction,
     )
     body = HSplit(
         [
@@ -78,7 +89,7 @@ def build_terminal_layout(
                 style="class:surface",
             ),
             Window(height=SURFACE_VERTICAL_PADDING, style="class:surface"),
-            slash_menu,
+            interaction_menu,
             completions_menu,
             Window(
                 content=_formatted_control(status_text),
@@ -100,10 +111,11 @@ def build_terminal_layout(
         color_depth=terminal_color_depth(resolved_output),
         style=theme.prompt_toolkit_style(),
     )
-    return TerminalLayout(application, body, completions_menu, slash_menu)
+    configure_key_timeouts(application)
+    return TerminalLayout(application, body, completions_menu, interaction_menu)
 
 
-def _completion_menu() -> ConditionalContainer:
+def _completion_menu(active_interaction: Condition) -> ConditionalContainer:
     """Create a completion menu without prompt_toolkit's scrollbar margin."""
 
     return ConditionalContainer(
@@ -117,7 +129,7 @@ def _completion_menu() -> ConditionalContainer:
             style="class:completion-menu",
             z_index=10**8,
         ),
-        filter=has_completions & ~is_done,
+        filter=has_completions & ~is_done & ~active_interaction,
     )
 
 

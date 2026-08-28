@@ -1,6 +1,8 @@
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from io import StringIO
+from time import monotonic
 
 import pytest
 from prompt_toolkit.data_structures import Size
@@ -10,6 +12,7 @@ from prompt_toolkit.layout import Window
 from prompt_toolkit.layout.containers import VerticalAlign
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.output.color_depth import ColorDepth
+from prompt_toolkit.utils import get_cwidth
 from rich.console import Console, RenderableType
 from rich.padding import Padding
 
@@ -42,6 +45,7 @@ from my_code.features.todos.models import TodoItem
 from my_code.model.primitives import ReasoningPresentation
 from my_code.permissions.models import PermissionConfirmation
 from my_code.providers.manager import ProviderUpdate, ProviderView
+from my_code.sessions.catalog import SessionSummary
 from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.app import MyCodeApp
 from my_code.tui.commands import SlashCommandRegistry
@@ -71,6 +75,8 @@ class FakeRuntime:
         self.agents: tuple[SubagentTaskView, ...] = ()
         self.permission_mode = "default"
         self.full_access_confirmed = False
+        self.sessions: tuple[SessionSummary, ...] = ()
+        self.resumed_session_id: str | None = None
 
     async def initialize(self) -> SessionView:
         return SessionView(self.status(), self.history)
@@ -132,6 +138,13 @@ class FakeRuntime:
 
     def subagent_tasks(self):
         return self.agents
+
+    async def list_sessions(self) -> tuple[SessionSummary, ...]:
+        return self.sessions
+
+    async def resume_session(self, session_id: str) -> SessionView:
+        self.resumed_session_id = session_id
+        return self.current_session_view()
 
     async def stream_subagent_activity(self):
         while True:
@@ -250,7 +263,7 @@ async def test_inline_host_submits_multiline_and_keeps_normal_scrollback() -> No
         )
         running = asyncio.create_task(app.run_async())
         await asyncio.sleep(0.05)
-        pipe.send_text("first\x1b\rsecond\r")
+        pipe.send_text("first\nsecond\r")
         await asyncio.wait_for(runtime.submitted.wait(), 1)
         assert runtime.prompts == ["first\nsecond"]
         await asyncio.sleep(0.05)
@@ -261,6 +274,34 @@ async def test_inline_host_submits_multiline_and_keeps_normal_scrollback() -> No
     assert "model response" in output
     assert "Done · 1 steps" in output
     assert "\x1b[?1049" not in output
+
+
+@pytest.mark.asyncio
+async def test_multiline_composer_aligns_continuations_after_prompt() -> None:
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            FakeRuntime(),  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("first\nsecond")
+        for _ in range(20):
+            if app.buffer.text == "first\nsecond":
+                break
+            await asyncio.sleep(0.01)
+
+        content = app.input_control.create_content(width=80, height=8)
+        lines = [
+            fragment_list_to_text(content.get_line(index)).rstrip()
+            for index in range(content.line_count)
+        ]
+        assert lines == ["› first", "  second"]
+
+        pipe.send_bytes(b"\x03\x04")
+        await running
 
 
 @pytest.mark.asyncio
@@ -621,6 +662,31 @@ def test_slash_menu_is_below_composer_and_uses_terminal_background() -> None:
     assert menu_window.right_margins == []
 
 
+def test_command_picker_uses_the_same_host_below_composer() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._sessions = (SessionSummary("session-1", "Visible session", datetime.now(UTC)),)
+    app._open_panel("resume")
+
+    composer_index = next(
+        index
+        for index, child in enumerate(app.body.children)
+        if getattr(child, "content", None) is app.input_control
+    )
+    interaction_index = app.body.children.index(app.interaction_menu)
+
+    assert interaction_index > composer_index
+    assert "Resume a conversation" in fragment_list_to_text(
+        to_formatted_text(app._interaction_text())
+    )
+    assert "Resume a conversation" not in fragment_list_to_text(
+        to_formatted_text(app._dynamic_text())
+    )
+
+
 def test_dynamic_layout_naturally_follows_terminal_scrollback() -> None:
     app = MyCodeApp(
         FakeRuntime(),  # type: ignore[arg-type]
@@ -884,6 +950,109 @@ def test_slash_navigation_does_not_wrap_in_the_wrong_direction() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resume_picker_keeps_every_selected_session_visible_and_resumable() -> (
+    None
+):
+    runtime = FakeRuntime()
+    now = datetime.now(UTC)
+    runtime.sessions = tuple(
+        SessionSummary(
+            f"session-{index}",
+            f"Conversation {index}",
+            now - timedelta(minutes=index),
+        )
+        for index in range(10)
+    )
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    await app._open_resume()
+
+    app._move_panel(-1)
+    assert app._panel_index == 0
+    for _ in range(20):
+        app._move_panel(1)
+
+    assert app._panel_index == 9
+    rendered = fragment_list_to_text(to_formatted_text(app._panel_text()))
+    assert "Conversation 9" in rendered
+    assert "Conversation 0" not in rendered
+    assert "10/10" in rendered
+
+    await app._panel_enter()
+
+    assert runtime.resumed_session_id == "session-9"
+    assert app._panel is None
+
+
+def test_resume_picker_right_aligns_relative_times() -> None:
+    now = datetime.now(UTC)
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False, width=50),
+    )
+    app._sessions = (
+        SessionSummary("short", "短对话", now),
+        SessionSummary("long", "A considerably longer conversation", now),
+    )
+    app._panel = "resume"
+
+    lines = fragment_list_to_text(to_formatted_text(app._panel_text())).splitlines()
+    session_lines = [line for line in lines if line.startswith("  ")]
+
+    assert len(session_lines) == 2
+    assert all(get_cwidth(line) == 50 for line in session_lines)
+    assert all(line.endswith("just now") for line in session_lines)
+
+
+@pytest.mark.asyncio
+async def test_provider_and_model_pickers_do_not_truncate_long_lists() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._providers = tuple(
+        ProviderView(
+            f"provider-{index}",
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            f"model-{index}",
+            None,
+            index == 0,
+            False,
+            CredentialSource.NONE,
+        )
+        for index in range(10)
+    )
+    app._panel = "provider_select"
+    app._panel_index = 0
+    for _ in range(9):
+        app._move_panel(1)
+
+    providers = fragment_list_to_text(to_formatted_text(app._panel_text()))
+    assert "provider-9" in providers
+    assert "provider-0" not in providers
+    await app._panel_enter()
+    assert app._provider_selected_index == 9
+
+    app._provider_form = ProviderForm(model="model-0")
+    app._provider_models = tuple(f"model-{index}" for index in range(10))
+    app._panel = "provider_models"
+    app._panel_index = 0
+    for _ in range(9):
+        app._move_panel(1)
+
+    models = fragment_list_to_text(to_formatted_text(app._panel_text()))
+    assert "model-9" in models
+    assert "model-0" not in models
+    await app._panel_enter()
+    assert app._provider_form.model == "model-9"
+
+
+@pytest.mark.asyncio
 async def test_real_arrow_sequences_move_slash_selection_in_screen_direction() -> None:
     with create_pipe_input() as pipe:
         app = MyCodeApp(
@@ -909,6 +1078,134 @@ async def test_real_arrow_sequences_move_slash_selection_in_screen_direction() -
         assert app._slash_menu.selected == 0
 
         pipe.send_bytes(b"\x03\x04")
+        await running
+
+
+@pytest.mark.asyncio
+async def test_real_arrow_sequences_keep_long_resume_selection_visible() -> None:
+    runtime = FakeRuntime()
+    now = datetime.now(UTC)
+    runtime.sessions = tuple(
+        SessionSummary(f"session-{index}", f"Session {index}", now)
+        for index in range(10)
+    )
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("/resume\r")
+        for _ in range(40):
+            if app._panel == "resume":
+                break
+            await asyncio.sleep(0.01)
+
+        assert app._panel == "resume"
+        pipe.send_bytes(b"\x1b[B" * 8)
+        await asyncio.sleep(0.05)
+
+        assert app._panel_index == 8
+        rendered = fragment_list_to_text(to_formatted_text(app._interaction_text()))
+        assert "Session 8" in rendered
+        assert "Session 0" not in rendered
+
+        pipe.send_bytes(b"\x1b\x03\x04")
+        await running
+
+
+@pytest.mark.asyncio
+async def test_escape_is_responsive_and_ctrl_j_inserts_newline() -> None:
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            FakeRuntime(),  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("/")
+        for _ in range(20):
+            if app._slash_active():
+                break
+            await asyncio.sleep(0.01)
+
+        started = monotonic()
+        pipe.send_bytes(b"\x1b")
+        for _ in range(30):
+            if not app._slash_active():
+                break
+            await asyncio.sleep(0.01)
+
+        assert not app._slash_active()
+        assert monotonic() - started < 0.2
+
+        app.buffer.reset()
+        pipe.send_text("line")
+        pipe.send_bytes(b"\n")
+        for _ in range(20):
+            if app.buffer.text == "line\n":
+                break
+            await asyncio.sleep(0.01)
+        assert app.buffer.text == "line\n"
+
+        pipe.send_bytes(b"\x03\x04")
+        await running
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sequence", (b"\x1b[13;2u", b"\x1b[27;2;13~"))
+async def test_enhanced_terminal_shift_enter_inserts_newline(sequence: bytes) -> None:
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            FakeRuntime(),  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("line")
+        pipe.send_bytes(sequence)
+        for _ in range(20):
+            if app.buffer.text == "line\n":
+                break
+            await asyncio.sleep(0.01)
+
+        assert app.buffer.text == "line\n"
+
+        pipe.send_bytes(b"\x03\x04")
+        await running
+
+
+@pytest.mark.asyncio
+async def test_escape_then_enter_no_longer_inserts_newline() -> None:
+    runtime = FakeRuntime()
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.sleep(0.05)
+        pipe.send_text("submit me")
+        pipe.send_bytes(b"\x1b\r")
+        await asyncio.wait_for(runtime.submitted.wait(), timeout=0.5)
+
+        assert runtime.prompts == ["submit me"]
+
+        for _ in range(50):
+            if not app._busy:
+                break
+            await asyncio.sleep(0.01)
+
+        pipe.send_bytes(b"\x04")
         await running
 
 
@@ -1182,6 +1479,43 @@ async def test_permission_modal_restores_selected_agent_and_blocks_f6() -> None:
     assert await pending == PermissionConfirmation(False)
     assert app._panel == "agents"
     assert app._agent_task_id == "first"
+
+
+@pytest.mark.asyncio
+async def test_permission_modal_restores_picker_cursor_and_viewport() -> None:
+    runtime = FakeRuntime()
+    runtime.agents = tuple(
+        subagent_view(f"agent-{index}", f"Agent {index}") for index in range(10)
+    )
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._open_agents()
+    for _ in range(8):
+        app._move_panel(1)
+    app._panel_text()
+    selected_key = app._panel_picker.selected_key
+    offset = app._panel_picker.offset
+
+    pending = asyncio.create_task(
+        app._ask_permission(
+            PermissionRequest(
+                "Write",
+                {"path": "a.txt"},
+                "Allow write?",
+                ToolUsePresentation("Write", "a.txt", "Writing a.txt"),
+            )
+        )
+    )
+    await asyncio.sleep(0)
+    app._choose_permission("deny")
+    assert await pending == PermissionConfirmation(False)
+
+    assert app._panel == "agents"
+    assert app._panel_picker.selected_key == selected_key
+    assert app._panel_picker.offset == offset
 
 
 def test_provider_form_preserves_all_fields_and_password() -> None:
