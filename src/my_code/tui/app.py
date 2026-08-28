@@ -138,6 +138,10 @@ class MyCodeApp(TurnFlowMixin):
         self._mention_span: tuple[int, int] | None = None
         self._suggestion_revision = 0
         self._foreground_task: asyncio.Task[None] | None = None
+        self._startup_ready = asyncio.Event()
+        self._history_ready = asyncio.Event()
+        self._startup_error: Exception | None = None
+        self._submission_pending = False
         self._background_tools: dict[str, ToolUsePresentation] = {}
         self._tasks: set[asyncio.Task[object]] = set()
         self._history = InMemoryHistory()
@@ -178,24 +182,21 @@ class MyCodeApp(TurnFlowMixin):
         self.runtime.set_permission_handler(self._ask_permission)
 
     async def run_async(self) -> None:
-        view = await self.runtime.initialize()
+        view = self.runtime.current_session_view()
         self._status = view.status
         self._context_status = self.runtime.context_status()
         self._todos = view.status.todos
         await self._write(welcome(view.status, self.theme))
-        if view.history:
-            await self._render_history(view.history)
-            for entry in view.history:
-                if isinstance(entry, HistoryText) and entry.role == "user":
-                    self._history.append_string(entry.text)
+        await self._write(system_message("Capabilities are initializing…"))
+        self._activity = "Initializing capabilities…"
         current_mode = getattr(self.runtime, "current_permission_mode", None)
         if current_mode is not None and current_mode().requires_confirmation:
             self._open_full_access_confirmation()
         self._running = True
 
         def start_background() -> None:
-            self._spawn(self._watch_background_notifications())
-            self._spawn(self._watch_subagent_activity())
+            self._spawn(self._restore_startup_history(view.history))
+            self._spawn(self._initialize_capabilities())
 
         try:
             await self.application.run_async(pre_run=start_background)
@@ -205,6 +206,44 @@ class MyCodeApp(TurnFlowMixin):
                 task.cancel()
             if self._tasks:
                 await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+
+    async def _initialize_capabilities(self) -> None:
+        try:
+            view = await self.runtime.initialize()
+            self._status = view.status
+            self._context_status = self.runtime.context_status()
+            self._todos = view.status.todos
+            await self._history_ready.wait()
+            self._activity = ""
+            await self._write(
+                system_message(
+                    f"Ready · {view.status.tool_count} tools · "
+                    f"{view.status.skill_count} skills"
+                )
+            )
+            self._spawn(self._watch_background_notifications())
+            self._spawn(self._watch_subagent_activity())
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._startup_error = error
+            self._activity = ""
+            await self._write(
+                system_message(f"Capability initialization failed: {error}", error=True)
+            )
+            self.application.exit(exception=error)
+        finally:
+            self._startup_ready.set()
+            self._invalidate()
+
+    async def _restore_startup_history(self, history: tuple[HistoryEntry, ...]) -> None:
+        try:
+            await self._render_history(history)
+            for entry in history:
+                if isinstance(entry, HistoryText) and entry.role == "user":
+                    self._history.append_string(entry.text)
+        finally:
+            self._history_ready.set()
 
     def _spawn(self, coroutine: Any) -> asyncio.Task[Any]:
         task = asyncio.create_task(coroutine)
@@ -456,25 +495,44 @@ class MyCodeApp(TurnFlowMixin):
             resolved.set()
 
     async def _submit_buffer(self) -> None:
+        if self._submission_pending:
+            return
         line = self.buffer.text
         if not line.strip():
             return
-        self.buffer.reset()
-        self._history.append_string(line)
-        outcome = self.commands.dispatch(line, status=self.runtime.status())
-        if outcome is not None:
-            try:
-                await self._handle_command(outcome)
-            except Exception as error:
-                await self._write(
-                    system_message(f"Command failed: {error}", error=True)
+        self._submission_pending = True
+        try:
+            if not self._startup_ready.is_set() or not self._history_ready.is_set():
+                self._busy = True
+                self._activity = "Initializing capabilities…"
+                self._invalidate()
+                await asyncio.gather(
+                    self._startup_ready.wait(), self._history_ready.wait()
                 )
-        else:
-            self._foreground_task = asyncio.current_task()
-            try:
-                await self._run_turn(line, self.runtime.stream(line), user=True)
-            finally:
-                self._foreground_task = None
+                self._busy = False
+                self._activity = ""
+                if self._startup_error is not None:
+                    return
+            self.buffer.reset()
+            self._history.append_string(line)
+            outcome = self.commands.dispatch(line, status=self.runtime.status())
+            if outcome is not None:
+                try:
+                    await self._handle_command(outcome)
+                except Exception as error:
+                    await self._write(
+                        system_message(f"Command failed: {error}", error=True)
+                    )
+            else:
+                self._foreground_task = asyncio.current_task()
+                try:
+                    await self._run_turn(line, self.runtime.stream(line), user=True)
+                finally:
+                    self._foreground_task = None
+        finally:
+            self._submission_pending = False
+            if self._startup_ready.is_set():
+                self._busy = False
 
     async def _handle_command(self, outcome: CommandOutcome) -> None:
         if outcome.clear_screen:
@@ -1033,8 +1091,10 @@ class MyCodeApp(TurnFlowMixin):
             self.buffer.start_completion(select_first=True)
 
     async def _render_history(self, history: tuple[HistoryEntry, ...]) -> None:
-        for entry in history:
-            await self._write(history_message(entry, self.theme))
+        for start in range(0, len(history), 20):
+            for entry in history[start : start + 20]:
+                await self._write(history_message(entry, self.theme))
+            await asyncio.sleep(0)
 
     def _refresh_status(self) -> None:
         warnings: list[str] = []

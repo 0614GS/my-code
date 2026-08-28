@@ -56,7 +56,11 @@ from my_code.mcp.models import McpServerScope, McpServerSpec
 from my_code.mcp.runtime import McpRuntime
 from my_code.mcp.stdio import StdioMcpTransportFactory
 from my_code.mcp.transport import McpTransportFactory
-from my_code.model.capabilities import ActiveModelEnvironment, resolve_environment
+from my_code.model.capabilities import (
+    ActiveModelEnvironment,
+    ModelDescriptor,
+    resolve_environment,
+)
 from my_code.model.client import ModelClient
 from my_code.model.primitives import ProviderBinding
 from my_code.model.tool_search import ToolSearchMode
@@ -262,12 +266,7 @@ def _assemble_agent(
     mcp_transport_factory: McpTransportFactory | None = None,
 ) -> ApplicationAssembly:
     actual_session_id = session_id or str(uuid4())
-    descriptor = settings.model_descriptor or resolve_without_network(
-        settings.protocol,
-        settings.base_url,
-        settings.model,
-        settings.model_limits,
-    )
+    descriptor = settings.model_descriptor or _resolve_local_descriptor(settings)
     model_environment = resolve_environment(
         descriptor,
         requested_output_tokens=settings.max_output_tokens,
@@ -580,14 +579,42 @@ def bootstrap_chat(
 
 async def run(options: CliOptions, resolver: SettingsResolver) -> int:
     settings = resolver.resolve(options.settings_overrides, interactive=True)
-    if settings.paths.providers_path.exists():
-        settings = await discover_active_model(settings)
     runtime = bootstrap_chat(settings, options.session_id)
     try:
         await MyCodeTui(runtime).run()
     finally:
         await runtime.close()
     return 0
+
+
+def _resolve_local_descriptor(settings: AgentSettings) -> ModelDescriptor:
+    """Resolve startup metadata from local sources only, preferring exact cache."""
+
+    if settings.model_limits.known:
+        return resolve_without_network(
+            settings.protocol,
+            settings.base_url,
+            settings.model,
+            settings.model_limits,
+        )
+    cache = ModelCatalogCache(settings.paths.model_cache_path)
+    cached = cache.load(
+        cache.binding_key(
+            settings.provider_id, settings.protocol.value, settings.base_url
+        )
+    )
+    if cached is not None:
+        descriptor = next(
+            (item for item in cached.models if item.id == settings.model), None
+        )
+        if descriptor is not None:
+            return descriptor
+    return resolve_without_network(
+        settings.protocol,
+        settings.base_url,
+        settings.model,
+        settings.model_limits,
+    )
 
 
 def _run_async(task: Coroutine[Any, Any, int]) -> int:

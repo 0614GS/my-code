@@ -4,9 +4,6 @@ import asyncio
 from dataclasses import replace
 from typing import Any
 
-from anthropic import AsyncAnthropic
-from openai import AsyncOpenAI
-
 from my_code.config.providers import ProviderProfile, ProviderProtocol
 from my_code.model.capabilities import (
     CapabilitySource,
@@ -32,7 +29,7 @@ _OPENAI_CATALOG: dict[str, ModelLimits] = {
 
 
 class AnthropicModelCatalog:
-    def __init__(self, client: AsyncAnthropic) -> None:
+    def __init__(self, client: Any) -> None:
         self.client = client
 
     async def list_models(self) -> tuple[ModelDescriptor, ...]:
@@ -53,7 +50,7 @@ class AnthropicModelCatalog:
 
 
 class OpenAIModelCatalog:
-    def __init__(self, client: AsyncOpenAI, *, official_endpoint: bool) -> None:
+    def __init__(self, client: Any, *, official_endpoint: bool) -> None:
         self.client = client
         self.official_endpoint = official_endpoint
 
@@ -104,6 +101,11 @@ class ModelDiscoveryService:
             profile.id, profile.protocol.value, profile.base_url
         )
         cached = self.cache.load(key)
+        if api_key is None and profile.base_url is None:
+            error = "No API key is configured for provider model discovery."
+            if cached is not None:
+                return cached.models, cached.fetched_at, error
+            return (), None, error
         try:
             async with asyncio.timeout(timeout_seconds):
                 catalog, close = _catalog(profile, api_key)
@@ -179,8 +181,12 @@ class ModelDiscoveryService:
 
 def _catalog(profile: ProviderProfile, api_key: str | None) -> tuple[Any, Any]:
     if profile.protocol is ProviderProtocol.ANTHROPIC_MESSAGES:
+        from anthropic import AsyncAnthropic
+
         anthropic_client = AsyncAnthropic(api_key=api_key, base_url=profile.base_url)
         return AnthropicModelCatalog(anthropic_client), anthropic_client.close
+    from openai import AsyncOpenAI
+
     openai_client = AsyncOpenAI(api_key=api_key, base_url=profile.base_url)
     official = profile.base_url is None or profile.base_url.rstrip("/") in {
         "https://api.openai.com",

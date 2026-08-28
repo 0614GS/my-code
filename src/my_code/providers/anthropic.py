@@ -12,7 +12,7 @@ from anthropic.types import (
     ToolParam,
 )
 
-from my_code.config.providers import ReasoningConfig
+from my_code.config.providers import ProviderProtocol, ReasoningConfig
 from my_code.foundation.json import to_json_object
 from my_code.model.capabilities import ProviderCapabilities
 from my_code.model.client import ModelClient
@@ -53,6 +53,7 @@ from my_code.model.request import (
     ToolOutputText,
     UserInput,
 )
+from my_code.providers.capabilities import capabilities_for
 
 
 class AnthropicProvider(ModelClient):
@@ -80,13 +81,7 @@ class AnthropicProvider(ModelClient):
     def capabilities_for(base_url: str | None) -> ProviderCapabilities:
         """官方 endpoint 支持缓存；兼容线路由各自适配器后续声明。"""
 
-        if base_url is None:
-            return ProviderCapabilities(
-                system_prompt_blocks=True,
-                prompt_caching=True,
-                max_prompt_cache_breakpoints=2,
-            )
-        return ProviderCapabilities()
+        return capabilities_for(ProviderProtocol.ANTHROPIC_MESSAGES, base_url)
 
     @property
     def capabilities(self) -> ProviderCapabilities:

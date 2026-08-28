@@ -183,8 +183,9 @@ class AppState:
     async def start(self) -> None:
         """Lazily initialize optional application capabilities before a turn."""
 
-        await self.mcp.start()
-        await self.skills.start()
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(self.mcp.start())
+            tasks.create_task(self.skills.start())
 
     async def close(self) -> None:
         async with self._operation_lock:

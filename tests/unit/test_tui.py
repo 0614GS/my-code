@@ -64,6 +64,9 @@ class FakeRuntime:
     async def initialize(self) -> SessionView:
         return SessionView(self.status(), self.history)
 
+    def current_session_view(self) -> SessionView:
+        return SessionView(self.status(), self.history)
+
     def set_permission_handler(self, handler):
         self.permission_handler = handler
 
@@ -268,6 +271,53 @@ async def test_startup_renders_safe_restored_history() -> None:
 
     assert "old prompt" in stream.getvalue()
     assert "old answer" in stream.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_startup_keeps_composer_visible_and_queues_one_submission() -> None:
+    class BlockingRuntime(FakeRuntime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.initializing = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def initialize(self) -> SessionView:
+            self.initializing.set()
+            await self.release.wait()
+            return SessionView(self.status(), self.history)
+
+    runtime = BlockingRuntime()
+    stream = StringIO()
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=stream, width=100, force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await asyncio.wait_for(runtime.initializing.wait(), 1)
+
+        assert "my-code" in stream.getvalue()
+        assert "Capabilities are initializing" in stream.getvalue()
+        assert app._composer_read_only() is False
+
+        pipe.send_text("queued prompt\r\r")
+        await asyncio.sleep(0.05)
+        assert runtime.prompts == []
+        assert app.buffer.text == "queued prompt"
+
+        runtime.release.set()
+        await asyncio.wait_for(runtime.submitted.wait(), 1)
+        assert runtime.prompts == ["queued prompt"]
+        for _ in range(20):
+            if not app._busy and app._foreground_task is None:
+                break
+            await asyncio.sleep(0.01)
+        pipe.send_bytes(b"\x04")
+        await running
+
+    assert "Ready · 5 tools · 1 skills" in stream.getvalue()
 
 
 def test_slash_opens_command_suggestions_while_typing() -> None:

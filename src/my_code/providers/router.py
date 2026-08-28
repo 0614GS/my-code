@@ -12,8 +12,7 @@ from my_code.model.client import ModelClient
 from my_code.model.events import ModelStreamEvent
 from my_code.model.primitives import ProviderBinding
 from my_code.model.request import ModelRequest
-from my_code.providers.anthropic import AnthropicProvider
-from my_code.providers.openai_responses import OpenAIResponsesProvider
+from my_code.providers.capabilities import capabilities_for
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +101,8 @@ class ProviderRouter(ModelClient):
 def _build_provider(connection: ProviderConnection) -> ModelClient:
     match connection.protocol:
         case ProviderProtocol.ANTHROPIC_MESSAGES:
+            from my_code.providers.anthropic import AnthropicProvider
+
             return AnthropicProvider(
                 model=connection.model,
                 api_key=connection.api_key,
@@ -110,6 +111,8 @@ def _build_provider(connection: ProviderConnection) -> ModelClient:
                 reasoning=connection.reasoning,
             )
         case ProviderProtocol.OPENAI_RESPONSES:
+            from my_code.providers.openai_responses import OpenAIResponsesProvider
+
             return OpenAIResponsesProvider(
                 model=connection.model,
                 api_key=connection.api_key,
@@ -120,11 +123,7 @@ def _build_provider(connection: ProviderConnection) -> ModelClient:
 
 
 def _capabilities_for(connection: ProviderConnection) -> ProviderCapabilities:
-    match connection.protocol:
-        case ProviderProtocol.ANTHROPIC_MESSAGES:
-            return AnthropicProvider.capabilities_for(connection.base_url)
-        case ProviderProtocol.OPENAI_RESPONSES:
-            return ProviderCapabilities()
+    return capabilities_for(connection.protocol, connection.base_url)
 
 
 __all__ = [

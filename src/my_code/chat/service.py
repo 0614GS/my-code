@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Protocol
 
 from my_code.agent.engine import AgentEngine
@@ -66,6 +67,7 @@ from my_code.chat.views import (
     SubagentTaskView,
     ToolCapabilityView,
 )
+from my_code.config.providers import ProviderProfile
 from my_code.config.settings import AgentSettings
 from my_code.context.engine import ContextEngine
 from my_code.conversation.attachments import AttachmentPayload
@@ -92,8 +94,9 @@ from my_code.model.capabilities import (
 )
 from my_code.model.primitives import ReasoningPresentation
 from my_code.permissions.models import PermissionMode
-from my_code.providers.discovery import resolve_without_network
+from my_code.providers.discovery import ModelDiscoveryService, resolve_without_network
 from my_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
+from my_code.providers.router import ProviderConnection
 from my_code.runtime.state import AppState
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
 from my_code.sessions.session import Session
@@ -130,6 +133,17 @@ class SubagentActivitySource(Protocol):
     def task_views(self, owner_run_id: str) -> tuple[RuntimeSubagentTaskView, ...]: ...
 
     async def wait_for_activity(self, after_revision: int) -> int: ...
+
+
+def _connection_identity(
+    connection: ProviderConnection,
+) -> tuple[str, object, str, str | None]:
+    return (
+        connection.id,
+        connection.protocol,
+        connection.model,
+        connection.base_url,
+    )
 
 
 def _project_subagent_entry(
@@ -197,12 +211,65 @@ class ChatService:
         self.background_wake_signal = background_wake_signal
         self._background_tasks = background_tasks
         self._subagents = subagents
+        self._initialization_lock = asyncio.Lock()
+        self._initialized = False
 
     async def initialize(self) -> SessionView:
-        """Start optional capabilities before publishing the initial UI snapshot."""
+        """Refresh network-backed capabilities after the local UI is visible."""
 
-        async with self.state.operation_lock():
-            await self.state.start()
+        async with self._initialization_lock:
+            if self._initialized:
+                return self.current_session_view()
+            connection = self.state.provider.router.connection
+            profile = ProviderProfile(
+                id=connection.id,
+                protocol=connection.protocol,
+                model=connection.model,
+                base_url=connection.base_url,
+                reasoning=connection.reasoning,
+                limits=connection.limits,
+                compact=connection.compact,
+            )
+            discovery = ModelDiscoveryService(self.provider_manager.model_cache)
+            async with asyncio.TaskGroup() as tasks:
+                tasks.create_task(self.state.start())
+                refresh = tasks.create_task(
+                    discovery.resolve(
+                        profile,
+                        api_key=connection.api_key,
+                        timeout_seconds=3.0,
+                    )
+                )
+            descriptor, discovered_at, error = refresh.result()
+            async with self.state.operation_lock():
+                current = self.state.provider.router.connection
+                if _connection_identity(current) == _connection_identity(connection):
+                    environment = resolve_environment(
+                        descriptor,
+                        requested_output_tokens=self.settings.max_output_tokens,
+                        configured_trigger_tokens=(
+                            connection.compact.trigger_input_tokens
+                        ),
+                        discovered_at=discovered_at,
+                        discovery_error=error,
+                    )
+                    self.state.provider.update_environment(environment)
+                    if not self.state.session.conversation:
+                        start = self.state.session.start
+                        self.state.session.configure_start(
+                            replace(
+                                start,
+                                provider_id=connection.id,
+                                model=connection.model,
+                                model_limits=descriptor.limits,
+                                model_limit_source=descriptor.source.value,
+                                compact_trigger_tokens=(
+                                    environment.compact_trigger_tokens
+                                ),
+                                provider_protocol=connection.protocol.value,
+                            )
+                        )
+            self._initialized = True
             return self.current_session_view()
 
     def current_session_view(self) -> SessionView:
