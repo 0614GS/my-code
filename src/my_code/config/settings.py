@@ -269,6 +269,8 @@ class SettingsResolver:
             reasoning=profile.reasoning,
             model_limits=profile.limits,
             compact=profile.compact,
+            model_descriptor=profile.selected_model,
+            model_discovered_at=profile.selected_model.discovered_at,
         )
 
 

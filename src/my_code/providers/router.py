@@ -7,7 +7,11 @@ from typing import Protocol, runtime_checkable
 
 from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import CompactConfig, ProviderProtocol, ReasoningConfig
-from my_code.model.capabilities import ModelLimits, ProviderCapabilities
+from my_code.model.capabilities import (
+    ModelDescriptor,
+    ModelLimits,
+    ProviderCapabilities,
+)
 from my_code.model.client import ModelClient
 from my_code.model.events import ModelStreamEvent
 from my_code.model.primitives import ProviderBinding
@@ -28,6 +32,8 @@ class ProviderConnection:
     reasoning: ReasoningConfig = ReasoningConfig()
     limits: ModelLimits = ModelLimits()
     compact: CompactConfig = CompactConfig()
+    model_descriptor: ModelDescriptor | None = None
+    warning: str | None = None
 
 
 type ProviderFactory = Callable[[ProviderConnection], ModelClient]
@@ -109,6 +115,7 @@ def _build_provider(connection: ProviderConnection) -> ModelClient:
                 base_url=connection.base_url,
                 provider_id=connection.id,
                 reasoning=connection.reasoning,
+                model_max_output_tokens=connection.limits.max_output_tokens,
             )
         case ProviderProtocol.OPENAI_RESPONSES:
             from my_code.providers.openai_responses import OpenAIResponsesProvider
@@ -119,6 +126,7 @@ def _build_provider(connection: ProviderConnection) -> ModelClient:
                 base_url=connection.base_url,
                 provider_id=connection.id,
                 reasoning=connection.reasoning,
+                model_max_output_tokens=connection.limits.max_output_tokens,
             )
 
 

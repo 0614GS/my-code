@@ -46,7 +46,7 @@ from my_code.model.primitives import validate_provider_id
 from my_code.permissions.models import (
     PermissionConfirmation,
 )
-from my_code.providers.manager import ProviderView
+from my_code.providers.manager import ModelView, ProviderView
 from my_code.sessions.catalog import SessionSummary
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.commands import CommandOutcome, SlashCommandRegistry
@@ -57,6 +57,7 @@ from my_code.tui.layout import build_terminal_layout
 from my_code.tui.panels import (
     agent_select_panel,
     full_access_panel,
+    model_picker_panel,
     permission_panel,
     provider_actions_panel,
     provider_checking_panel,
@@ -146,6 +147,7 @@ class MyCodeApp(TurnFlowMixin):
         self._provider_fields = PROVIDER_CORE_FIELDS
         self._provider_field = 0
         self._provider_models: tuple[str, ...] = ()
+        self._models: tuple[ModelView, ...] = ()
         self._permission_request: PermissionRequest | None = None
         self._permission_future: asyncio.Future[PermissionConfirmation] | None = None
         self._permission_mode = "select"
@@ -510,6 +512,12 @@ class MyCodeApp(TurnFlowMixin):
                     if self._provider_wizard is not None
                     else False
                 ),
+                model_count=(
+                    len(self._provider_wizard.probe_result.models)
+                    if self._provider_wizard is not None
+                    and self._provider_wizard.probe_result is not None
+                    else len(tuple(dict.fromkeys(self._provider_form.model.split())))
+                ),
             )
         if self._panel == "provider_probe_failure":
             result = (
@@ -524,6 +532,8 @@ class MyCodeApp(TurnFlowMixin):
             )
         if self._panel == "provider_models":
             return provider_models_panel(self._provider_models, self.buffer.text)
+        if self._panel == "model_select":
+            return model_picker_panel(self._models, self.buffer.text)
         if self._panel == "agents" and self._agent_task_id is None:
             return agent_select_panel(self._agents)
         return None
@@ -704,6 +714,8 @@ class MyCodeApp(TurnFlowMixin):
             await self._open_resume()
         if outcome.open_provider_manager:
             self._open_provider()
+        if outcome.open_model_picker:
+            self._open_model_picker()
         if outcome.should_exit:
             self.application.exit()
 
@@ -793,6 +805,13 @@ class MyCodeApp(TurnFlowMixin):
         )
         self._provider_selected_index = self._panel_index
         self._open_panel("provider_select")
+
+    def _open_model_picker(self) -> None:
+        self._models = self.runtime.models()
+        self._panel_index = next(
+            (index for index, item in enumerate(self._models) if item.current), 0
+        )
+        self._open_panel("model_select")
 
     def _open_agents(self) -> None:
         self._agents = self.runtime.subagent_tasks()
@@ -887,6 +906,19 @@ class MyCodeApp(TurnFlowMixin):
                     )
                 )
                 self._close_panel()
+        elif self._panel == "model_select" and action is not None:
+            try:
+                status = await self.runtime.select_model(action)
+            except Exception as error:
+                await self._write(
+                    system_message(f"Model selection failed: {error}", error=True)
+                )
+                return
+            self._status = status
+            self._context_status = self.runtime.context_status()
+            self._status_warning = self._context_status.warning or ""
+            self._close_panel()
+            await self._write(system_message(f"Using model {status.model!r}"))
         elif self._panel == "provider_select" and action is not None:
             if action == "add":
                 self._provider_selected_index = -1
@@ -1102,8 +1134,8 @@ class MyCodeApp(TurnFlowMixin):
         finally:
             self._provider_probe_task = None
         wizard.accept_probe(result)
-        if result.succeeded:
-            self._show_probe_models()
+        if wizard.connection_verified:
+            self._open_provider_review()
         else:
             self._panel = "provider_probe_failure"
             self._panel_index = 0
@@ -1157,6 +1189,7 @@ class MyCodeApp(TurnFlowMixin):
             return
         self._status = status
         self._context_status = self.runtime.context_status()
+        self._status_warning = self._context_status.warning or ""
         self._panel = None
         if self._provider_wizard is not None:
             self._provider_wizard.clear_sensitive()
@@ -1180,6 +1213,7 @@ class MyCodeApp(TurnFlowMixin):
             return
         self._status = status
         self._context_status = self.runtime.context_status()
+        self._status_warning = self._context_status.warning or ""
         self._close_panel()
         await self._write(
             system_message(f"Using provider {status.provider_id!r} · {status.model}")
@@ -1353,6 +1387,10 @@ class MyCodeApp(TurnFlowMixin):
             future.set_result(result)
 
     def _on_text_changed(self, _: Buffer) -> None:
+        if self._panel == "model_select":
+            self._panel_picker.reset()
+            self._invalidate()
+            return
         if self._panel == "provider_models":
             wizard = self._provider_wizard
             if wizard is not None:
@@ -1435,6 +1473,8 @@ class MyCodeApp(TurnFlowMixin):
             warnings.append(f"status: {type(error).__name__}")
         try:
             self._context_status = self.runtime.context_status()
+            if self._context_status.warning:
+                warnings.append(self._context_status.warning)
         except Exception as error:
             warnings.append(f"context: {type(error).__name__}")
         self._status_warning = ", ".join(warnings)

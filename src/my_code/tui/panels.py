@@ -10,7 +10,7 @@ from prompt_toolkit.utils import get_cwidth
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.views import SubagentTaskView
 from my_code.config.providers import ANTHROPIC_API_BASE_URL, OPENAI_API_BASE_URL
-from my_code.providers.manager import ProviderView
+from my_code.providers.manager import ModelView, ProviderView
 from my_code.sessions.catalog import SessionSummary
 from my_code.tui.picker import PickerRow, PickerState, PickerView
 from my_code.tui.provider_screen import ProviderForm
@@ -207,7 +207,7 @@ def provider_checking_panel() -> FormattedText:
 
 
 def provider_review_panel(
-    form: ProviderForm, *, connection_verified: bool = False
+    form: ProviderForm, *, connection_verified: bool = False, model_count: int = 1
 ) -> PickerView:
     actions = (
         PickerRow("save", "Save & use"),
@@ -221,6 +221,8 @@ def provider_review_panel(
         f"{form.protocol} · {form.model or '<model>'}\n"
         f"{form.base_url or _official_url(form.protocol)} · "
         f"{'new key entered' if form.api_key else 'keep saved key / no key'}\n"
+        f"{model_count} model{'s' if model_count != 1 else ''} · "
+        f"default {form.model.split()[0] if form.model.split() else '<none>'}\n"
         f"{'Connection verified' if connection_verified else 'Connection not verified'}"
     )
     return PickerView(detail, actions, "↑↓ navigate · Enter select · Esc cancel")
@@ -232,6 +234,45 @@ def provider_models_panel(models: tuple[str, ...], filter_text: str = "") -> Pic
         tuple(PickerRow(model, model) for model in models),
         "↑↓ navigate · Enter select · Esc back",
     )
+
+
+def model_picker_panel(
+    models: tuple[ModelView, ...], filter_text: str = ""
+) -> PickerView:
+    needle = filter_text.casefold()
+    filtered = tuple(
+        model
+        for model in models
+        if needle in model.id.casefold()
+        or (model.display_name is not None and needle in model.display_name.casefold())
+    )
+    rows: list[PickerRow] = []
+    for model in filtered:
+        limits: list[str] = []
+        if model.limits.context_window_tokens is not None:
+            limits.append(f"ctx {_short_tokens(model.limits.context_window_tokens)}")
+        if model.limits.max_output_tokens is not None:
+            limits.append(f"out {_short_tokens(model.limits.max_output_tokens)}")
+        if model.reasoning_supported is True:
+            efforts = "/".join(model.reasoning_efforts or ())
+            limits.append("reasoning" + (f" {efforts}" if efforts else ""))
+        elif model.reasoning_supported is False:
+            limits.append("no reasoning")
+        if model.compatibility.value == "unknown":
+            limits.append("compatibility unverified")
+        label = f"{'● ' if model.current else ''}{model.id}"
+        if model.display_name and model.display_name != model.id:
+            label += f" · {model.display_name}"
+        rows.append(PickerRow(model.id, label, " · ".join(limits) or None))
+    return PickerView(
+        f"Choose a model (local catalog)\nFilter: {filter_text}",
+        tuple(rows),
+        "↑↓ select · PgUp/PgDn scroll · Enter switch · Esc cancel",
+    )
+
+
+def _short_tokens(value: int) -> str:
+    return f"{value // 1_000}k" if value >= 1_000 and value % 1_000 == 0 else str(value)
 
 
 def _message(title: str, hint: str) -> FormattedText:
@@ -300,6 +341,7 @@ def _truncate(value: str, width: int) -> str:
 __all__ = [
     "agent_select_panel",
     "full_access_panel",
+    "model_picker_panel",
     "permission_panel",
     "provider_actions_panel",
     "provider_form_panel",

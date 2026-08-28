@@ -8,6 +8,8 @@ from my_code.bootstrap import initialize_user_storage
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.providers import ProviderProfileStore, ProviderProtocol
 from my_code.config.store import SettingsStore
+from my_code.model.capabilities import ModelCompatibility, ModelDescriptor, ModelLimits
+from my_code.providers.discovery import ProviderProbeResult
 from my_code.providers.manager import ProviderManager, ProviderUpdate
 
 
@@ -182,3 +184,76 @@ def test_openai_profile_ignores_protocol_specific_environment(tmp_path: Path) ->
     assert connection.api_key is None
     assert connection.model == "gpt-stored"
     assert connection.base_url is None
+
+
+def test_select_model_only_accepts_selectable_local_catalog_entries(
+    tmp_path: Path,
+) -> None:
+    manager, _paths = make_manager(tmp_path)
+    manager.configure(
+        ProviderUpdate("openai", ProviderProtocol.OPENAI_RESPONSES, "first", None),
+        probe_result=ProviderProbeResult(
+            True,
+            (
+                ModelDescriptor("first"),
+                ModelDescriptor("second", limits=ModelLimits(max_input_tokens=42)),
+                ModelDescriptor(
+                    "embedding",
+                    compatibility=ModelCompatibility.UNSUPPORTED,
+                ),
+            ),
+            "2026-08-28T00:00:00Z",
+            provider_id="openai",
+            protocol=ProviderProtocol.OPENAI_RESPONSES,
+        ),
+    )
+
+    connection = manager.select_model("openai", "second")
+
+    assert connection.model == "second"
+    assert connection.limits.max_input_tokens == 42
+    with pytest.raises(ValueError, match="local catalog"):
+        manager.select_model("openai", "outside")
+    with pytest.raises(ValueError, match="incompatible"):
+        manager.select_model("openai", "embedding")
+
+
+def test_online_refresh_replaces_discovery_and_retains_manual_models(
+    tmp_path: Path,
+) -> None:
+    manager, _paths = make_manager(tmp_path)
+    manager.configure(
+        ProviderUpdate(
+            "gateway",
+            ProviderProtocol.OPENAI_RESPONSES,
+            "manual",
+            "https://example.test/v1",
+            models=(ModelDescriptor("manual"),),
+        )
+    )
+    probe = ProviderProbeResult(
+        True,
+        (ModelDescriptor("online-a"), ModelDescriptor("online-b")),
+        "2026-08-28T00:00:00Z",
+        provider_id="gateway",
+        protocol=ProviderProtocol.OPENAI_RESPONSES,
+        base_url="https://example.test/v1",
+    )
+
+    manager.configure(
+        ProviderUpdate(
+            "gateway",
+            ProviderProtocol.OPENAI_RESPONSES,
+            "manual",
+            "https://example.test/v1",
+        ),
+        probe_result=probe,
+    )
+
+    profile = manager.profiles.load()["gateway"]
+    assert tuple(item.id for item in profile.models) == (
+        "online-a",
+        "online-b",
+        "manual",
+    )
+    assert profile.model == "manual"

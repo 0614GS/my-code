@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from my_code.config.providers import (
     ANTHROPIC_API_BASE_URL,
@@ -15,6 +15,7 @@ from my_code.config.providers import (
 from my_code.model.capabilities import (
     CapabilitySource,
     ModelCapabilities,
+    ModelCompatibility,
     ModelDescriptor,
     ModelLimits,
     fallback_descriptor,
@@ -32,6 +33,16 @@ _OPENAI_CATALOG: dict[str, ModelLimits] = {
     "gpt-5.1": ModelLimits(400_000, max_output_tokens=128_000),
     "gpt-5.2": ModelLimits(400_000, max_output_tokens=128_000),
     "gpt-5.4": ModelLimits(400_000, max_output_tokens=128_000),
+}
+_OPENAI_UNSUPPORTED = {
+    "dall-e-2",
+    "dall-e-3",
+    "text-embedding-3-large",
+    "text-embedding-3-small",
+    "text-embedding-ada-002",
+    "tts-1",
+    "tts-1-hd",
+    "whisper-1",
 }
 
 
@@ -100,7 +111,7 @@ class OpenAIModelCatalog:
         result: list[ModelDescriptor] = []
         while True:
             for model in page.data:
-                result.append(self._descriptor(str(model.id)))
+                result.append(self._descriptor(model))
                 if len(result) >= _MAX_MODELS:
                     return tuple(result)
             if not page.has_next_page():
@@ -111,22 +122,63 @@ class OpenAIModelCatalog:
         models = await self.list_models()
         return next((model for model in models if model.id == model_id), None)
 
-    def _descriptor(self, model_id: str) -> ModelDescriptor:
+    def _descriptor(self, model: object) -> ModelDescriptor:
+        typed = cast(Any, model)
+        model_id = str(typed.id)
         limits = _OPENAI_CATALOG.get(model_id) if self.official_endpoint else None
+        created = getattr(model, "created", None)
+        created_at = (
+            datetime.fromtimestamp(created, UTC).isoformat()
+            if isinstance(created, int)
+            and not isinstance(created, bool)
+            and created >= 0
+            else None
+        )
+        owned_by = getattr(model, "owned_by", None)
+        official = limits is not None
+        known_unsupported = self.official_endpoint and model_id in _OPENAI_UNSUPPORTED
         return ModelDescriptor(
             model_id,
             model_id,
             limits or ModelLimits(),
+            ModelCapabilities(
+                thinking=True if official and model_id.startswith("gpt-5") else None,
+                effort=True if official and model_id.startswith("gpt-5") else None,
+                input_modalities=("text", "image") if official else None,
+                output_modalities=("text",) if official else None,
+                streaming=True if official else None,
+                tool_calling=True if official else None,
+                structured_outputs=True if official else None,
+            ),
             source=(
                 CapabilitySource.BUNDLED_CATALOG
                 if limits is not None
                 else CapabilitySource.PROVIDER_API
             ),
+            compatibility=(
+                ModelCompatibility.SUPPORTED
+                if official
+                else (
+                    ModelCompatibility.UNSUPPORTED
+                    if known_unsupported
+                    else ModelCompatibility.UNKNOWN
+                )
+            ),
+            created_at=created_at,
+            owned_by=owned_by if isinstance(owned_by, str) and owned_by else None,
+            metadata_sources=(
+                (
+                    CapabilitySource.PROVIDER_API.value,
+                    CapabilitySource.BUNDLED_CATALOG.value,
+                )
+                if official
+                else (CapabilitySource.PROVIDER_API.value,)
+            ),
         )
 
 
 class ModelDiscoveryService:
-    """Refreshes a binding and applies the documented resolution precedence."""
+    """Compatibility facade for online probing without cache writes."""
 
     def __init__(self, cache: ModelCatalogCache) -> None:
         self.cache = cache
@@ -160,9 +212,12 @@ class ModelDiscoveryService:
                     protocol=request.protocol,
                     base_url=request.base_url,
                 )
+            discovered = tuple(
+                replace(model, discovered_at=probed_at) for model in models
+            )
             return ProviderProbeResult(
                 True,
-                models,
+                discovered,
                 probed_at,
                 provider_id=request.provider_id,
                 protocol=request.protocol,
@@ -199,15 +254,6 @@ class ModelDiscoveryService:
         api_key: str | None,
         timeout_seconds: float,
     ) -> tuple[tuple[ModelDescriptor, ...], str | None, str | None]:
-        key = self.cache.binding_key(
-            profile.id, profile.protocol.value, profile.base_url
-        )
-        cached = self.cache.load(key)
-        if api_key is None and profile.base_url is None:
-            error = "No stored API key is configured for startup model discovery."
-            if cached is not None:
-                return cached.models, cached.fetched_at, error
-            return (), None, error
         result = await self.probe(
             ProviderProbeRequest(
                 profile.id, profile.protocol, profile.base_url, api_key
@@ -215,11 +261,7 @@ class ModelDiscoveryService:
             timeout_seconds=timeout_seconds,
         )
         if result.succeeded:
-            models = result.models
-            fetched_at = self.cache.save(key, models)
-            return models, fetched_at, None
-        if cached is not None:
-            return cached.models, cached.fetched_at, result.error_message
+            return result.models, result.probed_at, None
         return (), None, result.error_message
 
     async def resolve(
@@ -233,28 +275,10 @@ class ModelDiscoveryService:
             profile, api_key=api_key, timeout_seconds=timeout_seconds
         )
         descriptor = next((item for item in models if item.id == profile.model), None)
-        if (
-            descriptor is None
-            and error is None
-            and profile.protocol is ProviderProtocol.ANTHROPIC_MESSAGES
-        ):
-            try:
-                async with asyncio.timeout(timeout_seconds):
-                    catalog, close = _catalog(profile, api_key)
-                    try:
-                        descriptor = await catalog.resolve_model(profile.model)
-                    finally:
-                        await close()
-                if descriptor is not None:
-                    models += (descriptor,)
-                    fetched_at = self.cache.save(
-                        self.cache.binding_key(
-                            profile.id, profile.protocol.value, profile.base_url
-                        ),
-                        models,
-                    )
-            except Exception as retrieve_error:
-                error = str(retrieve_error)
+        if descriptor is None:
+            descriptor = next(
+                (item for item in profile.models if item.id == profile.model), None
+            )
         if descriptor is None and profile.protocol is ProviderProtocol.OPENAI_RESPONSES:
             limits = _OPENAI_CATALOG.get(profile.model)
             if limits is not None and profile.base_url is None:
@@ -353,6 +377,16 @@ def _classify_probe_error(error: Exception) -> tuple[ProviderProbeError, str]:
 def _anthropic_descriptor(model: object) -> ModelDescriptor:
     raw = model.model_dump(mode="python")  # type: ignore[attr-defined]
     capabilities = raw.get("capabilities") or {}
+    thinking = capabilities.get("thinking") or {}
+    effort = capabilities.get("effort") or {}
+    context_management = capabilities.get("context_management") or {}
+    created_at = raw.get("created_at")
+    fallback_ids = raw.get("fallback_model_ids")
+    efforts = _strings_or_none(
+        effort.get("levels") if isinstance(effort, dict) else None
+    ) or _strings_or_none(capabilities.get("reasoning_efforts"))
+    if efforts is None and _supported(effort) is False:
+        efforts = ()
     return ModelDescriptor(
         str(raw["id"]),
         str(raw.get("display_name") or raw["id"]),
@@ -361,11 +395,32 @@ def _anthropic_descriptor(model: object) -> ModelDescriptor:
             max_output_tokens=_positive_or_none(raw.get("max_tokens")),
         ),
         ModelCapabilities(
-            _supported(capabilities.get("thinking")),
-            _supported(capabilities.get("effort")),
-            _supported(capabilities.get("context_management")),
+            _supported(thinking),
+            _supported(effort),
+            _supported(context_management),
+            input_modalities=_strings_or_none(capabilities.get("input_modalities")),
+            output_modalities=_strings_or_none(capabilities.get("output_modalities")),
+            streaming=_supported(capabilities.get("streaming")),
+            tool_calling=_supported(capabilities.get("tool_use")),
+            structured_outputs=_supported(capabilities.get("structured_outputs")),
+            citations=_supported(capabilities.get("citations")),
+            batch=_supported(capabilities.get("batch")),
+            code_execution=_supported(capabilities.get("code_execution")),
+            request_parameters=_strings_or_none(capabilities.get("request_parameters")),
+            reasoning_efforts=efforts,
+            reasoning_adaptive=_dict_bool(thinking, "adaptive"),
+            reasoning_budgeted=_dict_bool(thinking, "budgeted"),
+            reasoning_context_modes=_strings_or_none(
+                capabilities.get("reasoning_context_modes")
+            ),
+            reasoning_pro_mode=_dict_bool(thinking, "pro_mode"),
         ),
         CapabilitySource.PROVIDER_API,
+        compatibility=ModelCompatibility.SUPPORTED,
+        created_at=_iso_or_none(created_at),
+        shutdown_at=_iso_or_none(raw.get("shutdown_at")),
+        fallback_model_ids=_strings_or_none(fallback_ids),
+        metadata_sources=(CapabilitySource.PROVIDER_API.value,),
     )
 
 
@@ -385,6 +440,26 @@ def _supported(value: object) -> bool | None:
         return supported if isinstance(supported, bool) else None
     supported = getattr(value, "supported", None)
     return supported if isinstance(supported, bool) else None
+
+
+def _dict_bool(value: object, key: str) -> bool | None:
+    if not isinstance(value, dict):
+        return None
+    result = value.get(key)
+    return result if isinstance(result, bool) else None
+
+
+def _strings_or_none(value: object) -> tuple[str, ...] | None:
+    if not isinstance(value, (list, tuple)):
+        return None
+    result = tuple(item for item in value if isinstance(item, str) and item)
+    return tuple(dict.fromkeys(result)) or None
+
+
+def _iso_or_none(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value if isinstance(value, str) and value else None
 
 
 __all__ = [

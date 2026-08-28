@@ -51,11 +51,7 @@ from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.state import CompactBoundary
 from my_code.features.background_tasks.registry import BackgroundTask
 from my_code.features.subagents.wake import BackgroundTaskWakeSignal
-from my_code.model.capabilities import (
-    CapabilitySource,
-    ModelDescriptor,
-    ModelLimits,
-)
+from my_code.model.capabilities import ModelDescriptor, ModelLimits
 from my_code.model.primitives import ReasoningPresentation, TokenUsage
 from my_code.permissions.models import PermissionMode
 from my_code.providers.discovery import ModelDiscoveryService
@@ -369,66 +365,51 @@ async def test_initialize_and_usage_return_safe_frontend_snapshots(
 
 
 @pytest.mark.asyncio
-async def test_initialize_refreshes_unpersisted_session_model_metadata(
+async def test_initialize_uses_persisted_model_metadata_without_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    descriptor = ModelDescriptor(
-        "test-model",
-        "Test model",
-        ModelLimits(321_000, max_output_tokens=12_000),
-        source=CapabilitySource.PROVIDER_API,
-    )
 
     async def resolve(*args: object, **kwargs: object):
         del args, kwargs
-        return descriptor, "2026-08-28T00:00:00+00:00", None
+        raise AssertionError("startup must not perform model discovery")
 
     monkeypatch.setattr(ModelDiscoveryService, "resolve", resolve)
 
     await runtime.initialize()
 
-    assert runtime.state.provider.environment().descriptor == descriptor
+    descriptor = runtime.state.provider.environment().descriptor
+    assert descriptor.id == "test-model"
     assert runtime.state.session.start.model_limits == descriptor.limits
-    assert runtime.state.session.start.model_limit_source == "provider_api"
+    assert runtime.state.session.start.model_limit_source == descriptor.source.value
     await runtime.close()
 
 
 @pytest.mark.asyncio
-async def test_startup_refresh_drops_result_after_provider_switch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_local_model_switch_persists_and_updates_runtime(
+    tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    started = asyncio.Event()
-    release = asyncio.Event()
-    stale = ModelDescriptor(
-        "test-model",
-        "Stale model",
-        ModelLimits(max_input_tokens=999),
-        source=CapabilitySource.PROVIDER_API,
-    )
-
-    async def resolve(*args: object, **kwargs: object):
-        del args, kwargs
-        started.set()
-        await release.wait()
-        return stale, "2026-08-28T00:00:00+00:00", None
-
-    monkeypatch.setattr(ModelDiscoveryService, "resolve", resolve)
-    initializing = asyncio.create_task(runtime.initialize())
-    await asyncio.wait_for(started.wait(), 1)
-
     await runtime.configure_provider(
         ProviderUpdate(
-            "other", ProviderProtocol.ANTHROPIC_MESSAGES, "other-model", None
+            "other",
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            "first-model",
+            None,
+            models=(
+                ModelDescriptor("first-model"),
+                ModelDescriptor(
+                    "second-model", limits=ModelLimits(max_input_tokens=999)
+                ),
+            ),
         )
     )
-    release.set()
-    await initializing
+    await runtime.select_model("second-model")
 
     assert runtime.status().provider_id == "other"
-    assert runtime.state.provider.environment().descriptor.id == "other-model"
-    assert runtime.state.provider.environment().descriptor != stale
+    assert runtime.status().model == "second-model"
+    assert runtime.state.provider.environment().descriptor.id == "second-model"
+    assert runtime.provider_manager.resolve("other").model == "second-model"
     await runtime.close()
 
 

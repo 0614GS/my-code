@@ -78,7 +78,6 @@ from my_code.chat.views import (
     TranscriptValue,
     TranscriptView,
 )
-from my_code.config.providers import ProviderProfile
 from my_code.config.settings import AgentSettings
 from my_code.context.engine import ContextEngine
 from my_code.conversation.attachments import AttachmentPayload, is_durable_attachment
@@ -107,8 +106,9 @@ from my_code.model.capabilities import (
 )
 from my_code.model.primitives import ReasoningPresentation
 from my_code.permissions.models import PermissionMode
-from my_code.providers.discovery import ModelDiscoveryService, resolve_without_network
+from my_code.providers.discovery import resolve_without_network
 from my_code.providers.manager import (
+    ModelView,
     ProviderManager,
     ProviderProbeRequest,
     ProviderProbeResult,
@@ -243,26 +243,13 @@ class ChatService:
             if self._initialized:
                 return self.current_session_view()
             connection = self.state.provider.router.connection
-            profile = ProviderProfile(
-                id=connection.id,
-                protocol=connection.protocol,
-                model=connection.model,
-                base_url=connection.base_url,
-                reasoning=connection.reasoning,
-                limits=connection.limits,
-                compact=connection.compact,
+            await self.state.start()
+            descriptor = connection.model_descriptor or resolve_without_network(
+                connection.protocol,
+                connection.base_url,
+                connection.model,
+                connection.limits,
             )
-            discovery = ModelDiscoveryService(self.provider_manager.model_cache)
-            async with asyncio.TaskGroup() as tasks:
-                tasks.create_task(self.state.start())
-                refresh = tasks.create_task(
-                    discovery.resolve(
-                        profile,
-                        api_key=connection.api_key,
-                        timeout_seconds=3.0,
-                    )
-                )
-            descriptor, discovered_at, error = refresh.result()
             async with self.state.operation_lock():
                 current = self.state.provider.router.connection
                 if _connection_identity(current) == _connection_identity(connection):
@@ -272,9 +259,10 @@ class ChatService:
                         configured_trigger_tokens=(
                             connection.compact.trigger_input_tokens
                         ),
-                        discovered_at=discovered_at,
-                        discovery_error=error,
+                        discovered_at=descriptor.discovered_at,
                     )
+                    if connection.warning is not None:
+                        environment = replace(environment, warning=connection.warning)
                     self.state.provider.update_environment(environment)
                     if not self.state.session.conversation:
                         start = self.state.session.start
@@ -807,32 +795,44 @@ class ChatService:
     def providers(self) -> tuple[ProviderView, ...]:
         return self.provider_manager.list(self.state.provider.router.connection.id)
 
+    def models(self) -> tuple[ModelView, ...]:
+        """Return the active provider's safe, local-only model catalog."""
+
+        current = self.state.provider.router.connection.id
+        view = next(
+            item for item in self.provider_manager.list(current) if item.id == current
+        )
+        return view.model_catalog
+
     async def refresh_provider_models(self, provider_id: str) -> ProviderView:
         async with self.state.operation_lock():
             view = await self.provider_manager.refresh_models(provider_id)
             connection = self.state.provider.router.connection
             if connection.id == provider_id:
-                source = (
-                    CapabilitySource(view.capability_source)
-                    if view.capability_source is not None
-                    else CapabilitySource.FALLBACK
+                refreshed = self.provider_manager.resolve(provider_id)
+                descriptor = refreshed.model_descriptor or ModelDescriptor(
+                    view.model,
+                    view.model,
+                    view.resolved_limits,
+                    source=(
+                        CapabilitySource(view.capability_source)
+                        if view.capability_source is not None
+                        else CapabilitySource.FALLBACK
+                    ),
                 )
-                self.state.provider.update_environment(
-                    resolve_environment(
-                        ModelDescriptor(
-                            view.model,
-                            view.model,
-                            view.resolved_limits,
-                            source=source,
-                        ),
-                        requested_output_tokens=self.settings.max_output_tokens,
-                        configured_trigger_tokens=(
-                            connection.compact.trigger_input_tokens
-                        ),
-                        discovered_at=view.discovered_at,
-                        discovery_error=view.discovery_error,
-                    )
+                environment = resolve_environment(
+                    descriptor,
+                    requested_output_tokens=self.settings.max_output_tokens,
+                    configured_trigger_tokens=refreshed.compact.trigger_input_tokens,
+                    discovered_at=view.discovered_at,
+                    discovery_error=view.discovery_error,
                 )
+                if refreshed.warning is not None:
+                    environment = replace(environment, warning=refreshed.warning)
+                if _connection_identity(connection) == _connection_identity(refreshed):
+                    self.state.provider.update_environment(environment)
+                else:
+                    await self.state.provider.switch(refreshed, environment)
             return view
 
     async def probe_provider(
@@ -856,7 +856,36 @@ class ChatService:
                 requested_output_tokens=self.settings.max_output_tokens,
                 configured_trigger_tokens=connection.compact.trigger_input_tokens,
             )
+            if connection.warning is not None:
+                environment = replace(environment, warning=connection.warning)
             await self.state.provider.switch(connection, environment)
+            return self.status()
+
+    async def select_model(self, model_id: str) -> RuntimeStatus:
+        """Persist and publish a local catalog selection as one operation."""
+
+        async with self.state.operation_lock():
+            current = self.state.provider.router.connection
+            old_model = current.model
+            connection = self.provider_manager.select_model(current.id, model_id)
+            descriptor = connection.model_descriptor or resolve_without_network(
+                connection.protocol,
+                connection.base_url,
+                connection.model,
+                connection.limits,
+            )
+            environment = resolve_environment(
+                descriptor,
+                requested_output_tokens=self.settings.max_output_tokens,
+                configured_trigger_tokens=connection.compact.trigger_input_tokens,
+            )
+            if connection.warning is not None:
+                environment = replace(environment, warning=connection.warning)
+            try:
+                await self.state.provider.switch(connection, environment)
+            except BaseException:
+                self.provider_manager.select_model(current.id, old_model)
+                raise
             return self.status()
 
     async def configure_provider(
@@ -879,6 +908,8 @@ class ChatService:
                 requested_output_tokens=self.settings.max_output_tokens,
                 configured_trigger_tokens=connection.compact.trigger_input_tokens,
             )
+            if connection.warning is not None:
+                environment = replace(environment, warning=connection.warning)
             await self.state.provider.switch(connection, environment)
             return self.status()
 
@@ -902,6 +933,8 @@ class ChatService:
                 requested_output_tokens=self.settings.max_output_tokens,
                 configured_trigger_tokens=connection.compact.trigger_input_tokens,
             )
+            if connection.warning is not None:
+                environment = replace(environment, warning=connection.warning)
             await self.state.provider.switch(connection, environment)
             return self.status()
 

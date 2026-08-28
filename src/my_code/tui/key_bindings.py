@@ -23,6 +23,7 @@ _NAVIGATION_PANELS = {
     "provider_models",
     "provider_protocol",
     "provider_probe_failure",
+    "model_select",
     "agents",
 }
 _PROVIDER_PANELS = {
@@ -213,7 +214,7 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
     @bindings.add("pageup")
     def agent_page_up(event: KeyPressEvent) -> None:
         del event
-        if host._panel == "provider_models":
+        if host._panel in {"provider_models", "model_select"}:
             host._move_panel(-8)
         else:
             host._scroll_agent(20)
@@ -221,7 +222,7 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
     @bindings.add("pagedown")
     def agent_page_down(event: KeyPressEvent) -> None:
         del event
-        if host._panel == "provider_models":
+        if host._panel in {"provider_models", "model_select"}:
             host._move_panel(8)
         else:
             host._scroll_agent(-20)

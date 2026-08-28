@@ -14,7 +14,7 @@
 ├── skills/<name>/SKILL.md
 ├── providers.json
 ├── .credentials.json
-├── .model-catalog.json
+├── .model-catalog.json       # 仅兼容旧版本读取，不再写入
 └── projects/<workspace-key>/
     └── <session-id>.jsonl
 
@@ -38,17 +38,20 @@
 
 `SettingsStore` 按 user、project、local 顺序叠加持久配置；入口 `SettingsOverrides` 只能临时选择一个已存在的 Provider profile，不能覆盖 profile 内容。`SettingsResolver` 结合活动 profile、私有凭据和模型能力，生成不可变 `AgentSettings` 快照。
 
-Provider protocol、Base URL、默认 model、reasoning、limits 和 compact 配置只属于 `providers.json`。API Key 只属于 `.credentials.json`，当前选择只属于用户级 `settings.json.activeProvider`。新用户的 `providers` 目录为空，`settings.json` 不写 `activeProvider`；首次启动必须先完成向导。`agent.model`、`--model` 和 `--base-url` 已删除，旧 `agent.model` 会返回迁移错误，不能由项目 settings 覆盖模型。
+Provider protocol、Base URL、默认 model、完整模型目录、reasoning 和 compact 配置只属于 `providers.json`；token limits 属于对应模型条目。API Key 只属于 `.credentials.json`，当前 Provider 选择只属于用户级 `settings.json.activeProvider`。新用户的 `providers` 目录为空，`settings.json` 不写 `activeProvider`；首次启动必须先完成向导。`agent.model`、`--model` 和 `--base-url` 已删除，旧 `agent.model` 会返回迁移错误，不能由项目 settings 覆盖模型。
 
-最小 `~/.my-code/providers.json` 如下；`reasoning`、`limits` 和 `compact` 可省略：
+最小 `~/.my-code/providers.json` 如下；模型对象只有 `id` 必填，`reasoning` 和 `compact` 可省略：
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "providers": {
     "openai": {
       "protocol": "openai-responses",
-      "defaultModel": "gpt-5.4"
+      "defaultModel": "gpt-5.4",
+      "models": [
+        {"id": "gpt-5.4"}
+      ]
     }
   }
 }
@@ -101,7 +104,9 @@ MCP 配置位于 `mcp` 域，`enabled` 默认 `false`。每个 `servers.<name>` 
 
 `auth.credentials.CredentialStore` 只处理私有凭据文件，并返回 `stored` 或 `none` 来源。`MY_CODE_PROVIDER`、`MY_CODE_API_KEY`、`ANTHROPIC_*` 和 `OPENAI_*` 不参与 Provider、模型、URL 或 Key 解析；SDK client 也总是收到显式 Key 和显式解析后的 URL，不能自行回读这些环境变量。Provider TUI 保存和删除都只操作目标 profile 的本地 Key；删除当前 Provider 的 Key 后，runtime 会立即重新解析并切换连接。任何 status、history、日志、探查结果或 Session record 都不能包含 API Key。
 
-在线 `probe()` 每次只调用对应协议的模型目录 API，不使用缓存兜底，也不发送可能计费的生成请求。成功仅表示 Endpoint、认证和目录 API 可用，不保证所选模型一定支持 Messages/Responses 生成。启动期能力解析仍可使用无凭据缓存或本地能力；探查失败时可重试、编辑连接或手工输入模型，手工模型会明确标记为“Connection not verified”。未保存的探查不写 profile、凭据或缓存。
+在线 `probe()` 每次只调用对应协议的模型目录 API，不使用缓存兜底，也不发送可能计费的生成请求。成功仅表示 Endpoint、认证和目录 API 可用，不保证所选模型一定支持 Messages/Responses 生成。Review 保存时会把去除凭据、SDK 对象和任意未知字段后的目录写入 profile；启动和 `/model` 只读该本地目录，不访问网络。探查失败时可重试、编辑连接或输入一个或多个模型 ID，手工模型会明确标记为“Connection not verified”。未保存的探查不写 profile、凭据或旧缓存。
+
+v2/v3 profile 仍可读取：旧 `defaultModel` 会合成目录条目，旧顶层 `limits` 迁入该模型；匹配 binding 的 `.model-catalog.json` 只作为兼容输入合并。首次 Provider 或模型写入会原子升级为 v4，但不会删除旧缓存文件。
 
 ## 写入语义
 

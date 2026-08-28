@@ -12,6 +12,14 @@ class CapabilitySource(StrEnum):
     FALLBACK = "fallback"
 
 
+class ModelCompatibility(StrEnum):
+    """Whether a catalog entry is known to support the profile protocol."""
+
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class ModelLimits:
     context_window_tokens: int | None = None
@@ -51,9 +59,29 @@ class ModelLimits:
 
 @dataclass(frozen=True, slots=True)
 class ModelCapabilities:
+    """Provider-neutral, allowlisted model metadata.
+
+    ``None`` means that the catalog did not say.  In particular, it must not be
+    interpreted as ``False``.
+    """
+
     thinking: bool | None = None
     effort: bool | None = None
     context_management: bool | None = None
+    input_modalities: tuple[str, ...] | None = None
+    output_modalities: tuple[str, ...] | None = None
+    streaming: bool | None = None
+    tool_calling: bool | None = None
+    structured_outputs: bool | None = None
+    citations: bool | None = None
+    batch: bool | None = None
+    code_execution: bool | None = None
+    request_parameters: tuple[str, ...] | None = None
+    reasoning_efforts: tuple[str, ...] | None = None
+    reasoning_adaptive: bool | None = None
+    reasoning_budgeted: bool | None = None
+    reasoning_context_modes: tuple[str, ...] | None = None
+    reasoning_pro_mode: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,14 +102,32 @@ class ProviderCapabilities:
 @dataclass(frozen=True, slots=True)
 class ModelDescriptor:
     id: str
-    display_name: str
+    display_name: str | None = None
     limits: ModelLimits = ModelLimits()
     capabilities: ModelCapabilities = ModelCapabilities()
     source: CapabilitySource = CapabilitySource.PROVIDER_API
+    compatibility: ModelCompatibility = ModelCompatibility.UNKNOWN
+    created_at: str | None = None
+    owned_by: str | None = None
+    shutdown_at: str | None = None
+    fallback_model_ids: tuple[str, ...] | None = None
+    metadata_sources: tuple[str, ...] = ()
+    discovered_at: str | None = None
+    user_defined: bool = False
 
     def __post_init__(self) -> None:
-        if not self.id.strip() or not self.display_name.strip():
-            raise ValueError("Model id and display name must not be empty")
+        if not self.id.strip():
+            raise ValueError("Model id must not be empty")
+        if self.display_name is not None and not self.display_name.strip():
+            raise ValueError("Model display name must not be empty")
+
+    @property
+    def label(self) -> str:
+        return self.display_name or self.id
+
+    @property
+    def selectable(self) -> bool:
+        return self.compatibility is not ModelCompatibility.UNSUPPORTED
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +151,11 @@ def resolve_environment(
     discovered_at: str | None = None,
     discovery_error: str | None = None,
 ) -> ActiveModelEnvironment:
-    limit = descriptor.limits.effective_input_limit(requested_output_tokens)
+    effective_output_tokens = min(
+        requested_output_tokens,
+        descriptor.limits.max_output_tokens or requested_output_tokens,
+    )
+    limit = descriptor.limits.effective_input_limit(effective_output_tokens)
     if limit is None:
         limit = FALLBACK_INPUT_TOKENS
     automatic = max(1, limit * 9 // 10)
@@ -143,6 +193,7 @@ __all__ = [
     "CapabilitySource",
     "FALLBACK_INPUT_TOKENS",
     "ModelCapabilities",
+    "ModelCompatibility",
     "ModelDescriptor",
     "ModelLimits",
     "ProviderCapabilities",

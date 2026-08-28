@@ -18,10 +18,7 @@ from my_code.chat.service import ChatService
 from my_code.cli.arguments import CliOptions, parse_cli
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.permission_updates import PermissionUpdateApplier
-from my_code.config.providers import (
-    ProviderProfile,
-    ProviderProfileStore,
-)
+from my_code.config.providers import ProviderProfileStore
 from my_code.config.settings import (
     AgentSettings,
     ProviderConfigurationRequired,
@@ -71,10 +68,9 @@ from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter, TerminalPrompter
 from my_code.prompts.registry import PromptRegistry
 from my_code.prompts.system import build_system_prompt_registry
-from my_code.providers.discovery import ModelDiscoveryService, resolve_without_network
+from my_code.providers.discovery import resolve_without_network
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
-from my_code.providers.manager import ProviderManager
-from my_code.providers.model_cache import ModelCatalogCache
+from my_code.providers.manager import ProviderManager, effective_reasoning
 from my_code.providers.router import ProviderConnection, ProviderRouter
 from my_code.runtime.runs import (
     AgentRunComponents,
@@ -144,30 +140,16 @@ class ApplicationAssembly:
 async def discover_active_model(
     settings: AgentSettings, *, timeout_seconds: float = 3.0
 ) -> AgentSettings:
-    """Best-effort startup discovery; failure remains observable and non-fatal."""
+    """Resolve the persisted active model without performing network I/O."""
 
-    profile = ProviderProfile(
-        id=settings.provider_id,
-        model=settings.model,
-        protocol=settings.protocol,
-        base_url=settings.base_url,
-        reasoning=settings.reasoning,
-        limits=settings.model_limits,
-        compact=settings.compact,
-    )
-    descriptor, discovered_at, error = await ModelDiscoveryService(
-        ModelCatalogCache(settings.paths.model_cache_path)
-    ).resolve(
-        profile,
-        api_key=settings.api_key,
-        timeout_seconds=timeout_seconds,
-    )
+    del timeout_seconds
+    descriptor = settings.model_descriptor or _resolve_local_descriptor(settings)
     return replace(
         settings,
         model_limits=descriptor.limits,
         model_descriptor=descriptor,
-        model_discovered_at=discovered_at,
-        model_discovery_error=error,
+        model_discovered_at=descriptor.discovered_at,
+        model_discovery_error=None,
     )
 
 
@@ -381,6 +363,8 @@ def _assemble_agent(
     )
     restore_skill_permissions(permission_policy, session.conversation)
     workspace = Workspace(settings.cwd)
+    descriptor = settings.model_descriptor or _resolve_local_descriptor(settings)
+    reasoning, reasoning_warning = effective_reasoning(settings.reasoning, descriptor)
     connection = ProviderConnection(
         id=settings.provider_id,
         protocol=settings.protocol,
@@ -388,9 +372,11 @@ def _assemble_agent(
         base_url=settings.base_url,
         api_key=settings.api_key,
         credential_source=settings.credential_source,
-        reasoning=settings.reasoning,
+        reasoning=reasoning,
         limits=settings.model_limits,
         compact=settings.compact,
+        model_descriptor=descriptor,
+        warning=reasoning_warning,
     )
     provider = ProviderRouter(connection)
     provider_leases = ProviderLeaseRegistry(connection)
@@ -597,7 +583,7 @@ async def run(options: CliOptions, resolver: SettingsResolver) -> int:
 
 
 def _resolve_local_descriptor(settings: AgentSettings) -> ModelDescriptor:
-    """Resolve startup metadata from local sources only, preferring exact cache."""
+    """Resolve startup metadata from the persisted profile only."""
 
     if settings.model_limits.known:
         return resolve_without_network(
@@ -606,18 +592,6 @@ def _resolve_local_descriptor(settings: AgentSettings) -> ModelDescriptor:
             settings.model,
             settings.model_limits,
         )
-    cache = ModelCatalogCache(settings.paths.model_cache_path)
-    cached = cache.load(
-        cache.binding_key(
-            settings.provider_id, settings.protocol.value, settings.base_url
-        )
-    )
-    if cached is not None:
-        descriptor = next(
-            (item for item in cached.models if item.id == settings.model), None
-        )
-        if descriptor is not None:
-            return descriptor
     return resolve_without_network(
         settings.protocol,
         settings.base_url,

@@ -114,9 +114,17 @@ class ProviderRuntime:
         connection: ProviderConnection,
         environment: ActiveModelEnvironment,
     ) -> None:
+        previous_connection = self.router.connection
+        previous_environment = self._environment
         await self.router.switch(connection)
-        self.leases.switch(connection)
-        self._environment = environment
+        try:
+            self.leases.switch(connection)
+            self._environment = environment
+        except BaseException:
+            await self.router.switch(previous_connection)
+            self.leases.switch(previous_connection)
+            self._environment = previous_environment
+            raise
 
     async def close(self) -> None:
         lease_error: Exception | None = None

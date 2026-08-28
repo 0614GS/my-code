@@ -13,6 +13,7 @@ class SlashCommandAction(StrEnum):
     CONTEXT = "context"
     COMPACT = "compact"
     PROVIDER = "provider"
+    MODEL = "model"
     RESUME = "resume"
     CLEAR = "clear"
     EXIT = "exit"
@@ -38,6 +39,7 @@ class CommandOutcome:
     should_exit: bool = False
     clear_screen: bool = False
     open_provider_manager: bool = False
+    open_model_picker: bool = False
     open_session_picker: bool = False
     show_context: bool = False
     compact_context: bool = False
@@ -110,6 +112,11 @@ class SlashCommandRegistry:
                     SlashCommandAction.PROVIDER,
                 ),
                 SlashCommand(
+                    "model",
+                    "Switch models from the current provider catalog",
+                    SlashCommandAction.MODEL,
+                ),
+                SlashCommand(
                     "resume",
                     "Resume a previous conversation",
                     SlashCommandAction.RESUME,
@@ -180,6 +187,8 @@ class SlashCommandRegistry:
                 return CommandOutcome(show_agents=True)
             case SlashCommandAction.PROVIDER:
                 return CommandOutcome(open_provider_manager=True)
+            case SlashCommandAction.MODEL:
+                return CommandOutcome(open_model_picker=True)
             case SlashCommandAction.RESUME:
                 return CommandOutcome(open_session_picker=True)
             case SlashCommandAction.CLEAR:

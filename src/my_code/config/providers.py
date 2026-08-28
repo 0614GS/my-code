@@ -9,10 +9,17 @@ from enum import StrEnum
 from pathlib import Path
 
 from my_code.config.validation import validate_base_url
-from my_code.model.capabilities import ModelLimits
+from my_code.model.capabilities import (
+    CapabilitySource,
+    ModelCapabilities,
+    ModelCompatibility,
+    ModelDescriptor,
+    ModelLimits,
+)
 from my_code.model.primitives import validate_provider_id
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
+_MAX_MODELS = 1_000
 ANTHROPIC_API_BASE_URL = "https://api.anthropic.com"
 OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
@@ -71,6 +78,7 @@ class ProviderProfile:
     reasoning: ReasoningConfig = ReasoningConfig()
     limits: ModelLimits = ModelLimits()
     compact: CompactConfig = CompactConfig()
+    models: tuple[ModelDescriptor, ...] = ()
 
     def __post_init__(self) -> None:
         try:
@@ -79,6 +87,35 @@ class ProviderProfile:
             raise ProviderProfileError(str(error)) from error
         if not self.model.strip():
             raise ProviderProfileError("provider model must be a non-empty string")
+        models = _deduplicate_models(self.models)
+        if not models:
+            models = (
+                ModelDescriptor(
+                    self.model,
+                    self.model,
+                    self.limits,
+                    source=(
+                        CapabilitySource.PROFILE_OVERRIDE
+                        if self.limits.known
+                        else CapabilitySource.FALLBACK
+                    ),
+                    user_defined=True,
+                ),
+            )
+        selected = next((item for item in models if item.id == self.model), None)
+        if selected is None:
+            raise ProviderProfileError(
+                "provider defaultModel must reference a model in models"
+            )
+        if not selected.selectable:
+            raise ProviderProfileError("provider defaultModel must be selectable")
+        if self.limits.known and selected.limits != self.limits:
+            selected = _with_limits(selected, self.limits)
+            models = tuple(
+                selected if item.id == selected.id else item for item in models
+            )
+        object.__setattr__(self, "models", models)
+        object.__setattr__(self, "limits", selected.limits)
         if self.base_url is not None:
             try:
                 normalized = validate_base_url(self.base_url)
@@ -100,6 +137,10 @@ class ProviderProfile:
                 "compact triggerInputTokens exceeds the profile model input limit"
             )
 
+    @property
+    def selected_model(self) -> ModelDescriptor:
+        return next(item for item in self.models if item.id == self.model)
+
 
 class ProviderProfileStore:
     """原子持久化用户所有且不含凭据的 provider profile。"""
@@ -116,10 +157,7 @@ class ProviderProfileStore:
             raise ProviderProfileError(
                 f"Cannot read provider profiles {self.path}: {error}"
             ) from error
-        if not isinstance(raw, dict) or raw.get("version") not in {
-            2,
-            _SCHEMA_VERSION,
-        }:
+        if not isinstance(raw, dict) or raw.get("version") not in {2, 3, 4}:
             raise ProviderProfileError(
                 "Provider profiles must use schema version "
                 f"{_SCHEMA_VERSION}: {self.path}. Recreate the provider profile."
@@ -139,9 +177,27 @@ class ProviderProfileStore:
                 value,
                 self.path,
                 legacy=raw.get("version") == 2,
-                token_schema=raw.get("version") == _SCHEMA_VERSION,
+                token_schema=raw.get("version") in {3, 4},
+                catalog_schema=raw.get("version") == 4,
             )
+        if raw.get("version") in {2, 3}:
+            result = self._merge_legacy_cache(result)
         return result
+
+    def _merge_legacy_cache(
+        self, profiles: dict[str, ProviderProfile]
+    ) -> dict[str, ProviderProfile]:
+        cache = _legacy_cache(self.path.parent / ".model-catalog.json")
+        if not cache:
+            return profiles
+        merged: dict[str, ProviderProfile] = {}
+        for provider_id, profile in profiles.items():
+            endpoint = (profile.base_url or "<sdk-default>").rstrip("/").lower()
+            key = f"{provider_id}|{profile.protocol.value}|{endpoint}"
+            cached = cache.get(key, ())
+            models = _merge_catalog(cached, profile.models)
+            merged[provider_id] = _replace_profile_models(profile, models)
+        return merged
 
     def ensure_empty_exists(self) -> bool:
         """Create an empty catalog without inventing a provider profile."""
@@ -168,6 +224,7 @@ class ProviderProfileStore:
         for provider_id in sorted(indexed):
             previous = existing_providers.get(provider_id)
             entry = dict(previous) if isinstance(previous, dict) else {}
+            entry.pop("limits", None)
             entry.update(_profile_document(indexed[provider_id]))
             providers[provider_id] = entry
         document = dict(existing)
@@ -182,6 +239,7 @@ def _parse_profile(
     *,
     legacy: bool = False,
     token_schema: bool = False,
+    catalog_schema: bool = False,
 ) -> ProviderProfile:
     model = raw.get("defaultModel")
     protocol = raw.get("protocol")
@@ -224,6 +282,9 @@ def _parse_profile(
     if token_schema:
         limits = _parse_limits(raw.get("limits"), path)
         compact = _parse_compact(raw.get("compact"), path)
+    models = _parse_models(raw.get("models"), path) if catalog_schema else ()
+    if catalog_schema and not models:
+        raise ProviderProfileError(f"provider models must not be empty: {path}")
     return ProviderProfile(
         id=provider_id,
         model=model,
@@ -232,6 +293,7 @@ def _parse_profile(
         reasoning=reasoning,
         limits=limits,
         compact=compact,
+        models=models,
     )
 
 
@@ -244,11 +306,7 @@ def _profile_document(profile: ProviderProfile) -> dict[str, object]:
             "effort": profile.reasoning.effort,
             "context": profile.reasoning.context,
         },
-        "limits": {
-            "contextWindowTokens": profile.limits.context_window_tokens,
-            "maxInputTokens": profile.limits.max_input_tokens,
-            "maxOutputTokens": profile.limits.max_output_tokens,
-        },
+        "models": [_model_document(model) for model in profile.models],
         "compact": {
             "triggerInputTokens": profile.compact.trigger_input_tokens,
         },
@@ -285,6 +343,304 @@ def _optional_positive(raw: dict[object, object], key: str, path: Path) -> int |
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise ProviderProfileError(f"provider {key} must be positive or null: {path}")
     return value
+
+
+def _parse_models(value: object, path: Path) -> tuple[ModelDescriptor, ...]:
+    if not isinstance(value, list) or len(value) > _MAX_MODELS:
+        raise ProviderProfileError(
+            f"provider models must be an array of at most {_MAX_MODELS} items: {path}"
+        )
+    try:
+        models = tuple(_parse_model(item, path) for item in value)
+        if len({model.id for model in models}) != len(models):
+            raise ValueError("model IDs must be unique")
+        return models
+    except ValueError as error:
+        raise ProviderProfileError(
+            f"invalid provider model catalog: {path}: {error}"
+        ) from error
+
+
+def _parse_model(value: object, path: Path) -> ModelDescriptor:
+    if not isinstance(value, dict):
+        raise ProviderProfileError(f"provider model must be an object: {path}")
+    model_id = value.get("id")
+    if not isinstance(model_id, str):
+        raise ProviderProfileError(f"provider model id must be a string: {path}")
+    display_name = _optional_string(value.get("displayName"), "displayName")
+    compatibility_raw = value.get("compatibility", ModelCompatibility.UNKNOWN.value)
+    if not isinstance(compatibility_raw, str):
+        raise ProviderProfileError(
+            f"provider model compatibility must be a string: {path}"
+        )
+    capabilities = value.get("capabilities")
+    if capabilities is not None and not isinstance(capabilities, dict):
+        raise ProviderProfileError(
+            f"provider model capabilities must be an object: {path}"
+        )
+    capability_values = capabilities or {}
+    reasoning = capability_values.get("reasoning")
+    if reasoning is not None and not isinstance(reasoning, dict):
+        raise ProviderProfileError(
+            f"provider model reasoning must be an object: {path}"
+        )
+    reasoning_values = reasoning or {}
+    sources = _optional_strings(value.get("metadataSources"), "metadataSources") or ()
+    fallbacks = _optional_strings(value.get("fallbackModelIds"), "fallbackModelIds")
+    limits = _parse_limits(value.get("limits"), path)
+    user_defined = _required_optional_bool(
+        value.get("userDefined", False), "userDefined"
+    )
+    reasoning_efforts = _optional_strings(
+        reasoning_values.get("efforts"), "reasoning.efforts"
+    )
+    return ModelDescriptor(
+        id=model_id,
+        display_name=display_name,
+        limits=limits,
+        capabilities=ModelCapabilities(
+            thinking=_optional_bool(reasoning_values.get("supported")),
+            effort=None if reasoning_efforts is None else bool(reasoning_efforts),
+            context_management=_optional_bool(
+                capability_values.get("contextManagement")
+            ),
+            input_modalities=_optional_strings(
+                capability_values.get("inputModalities"), "inputModalities"
+            ),
+            output_modalities=_optional_strings(
+                capability_values.get("outputModalities"), "outputModalities"
+            ),
+            streaming=_optional_bool(capability_values.get("streaming")),
+            tool_calling=_optional_bool(capability_values.get("toolCalling")),
+            structured_outputs=_optional_bool(
+                capability_values.get("structuredOutputs")
+            ),
+            citations=_optional_bool(capability_values.get("citations")),
+            batch=_optional_bool(capability_values.get("batch")),
+            code_execution=_optional_bool(capability_values.get("codeExecution")),
+            request_parameters=_optional_strings(
+                capability_values.get("requestParameters"), "requestParameters"
+            ),
+            reasoning_efforts=reasoning_efforts,
+            reasoning_adaptive=_optional_bool(reasoning_values.get("adaptive")),
+            reasoning_budgeted=_optional_bool(reasoning_values.get("budgeted")),
+            reasoning_context_modes=_optional_strings(
+                reasoning_values.get("contextModes"), "reasoning.contextModes"
+            ),
+            reasoning_pro_mode=_optional_bool(reasoning_values.get("proMode")),
+        ),
+        source=_source_from_metadata(sources, user_defined, limits.known),
+        compatibility=ModelCompatibility(compatibility_raw),
+        created_at=_optional_string(value.get("createdAt"), "createdAt"),
+        owned_by=_optional_string(value.get("ownedBy"), "ownedBy"),
+        shutdown_at=_optional_string(value.get("shutdownAt"), "shutdownAt"),
+        fallback_model_ids=fallbacks,
+        metadata_sources=sources,
+        discovered_at=_optional_string(value.get("discoveredAt"), "discoveredAt"),
+        user_defined=user_defined,
+    )
+
+
+def _model_document(model: ModelDescriptor) -> dict[str, object]:
+    result: dict[str, object] = {"id": model.id}
+    _put(result, "displayName", model.display_name)
+    _put(result, "createdAt", model.created_at)
+    _put(result, "ownedBy", model.owned_by)
+    _put(result, "shutdownAt", model.shutdown_at)
+    _put(result, "fallbackModelIds", model.fallback_model_ids)
+    if model.limits.known:
+        limits: dict[str, object] = {}
+        _put(limits, "contextWindowTokens", model.limits.context_window_tokens)
+        _put(limits, "maxInputTokens", model.limits.max_input_tokens)
+        _put(limits, "maxOutputTokens", model.limits.max_output_tokens)
+        result["limits"] = limits
+    capabilities = _capabilities_document(model.capabilities)
+    if capabilities:
+        result["capabilities"] = capabilities
+    if model.compatibility is not ModelCompatibility.UNKNOWN:
+        result["compatibility"] = model.compatibility.value
+    if model.metadata_sources:
+        result["metadataSources"] = list(model.metadata_sources)
+    _put(result, "discoveredAt", model.discovered_at)
+    if model.user_defined:
+        result["userDefined"] = True
+    return result
+
+
+def _capabilities_document(value: ModelCapabilities) -> dict[str, object]:
+    result: dict[str, object] = {}
+    _put(result, "inputModalities", value.input_modalities)
+    _put(result, "outputModalities", value.output_modalities)
+    _put(result, "streaming", value.streaming)
+    _put(result, "toolCalling", value.tool_calling)
+    _put(result, "structuredOutputs", value.structured_outputs)
+    _put(result, "citations", value.citations)
+    _put(result, "batch", value.batch)
+    _put(result, "codeExecution", value.code_execution)
+    _put(result, "contextManagement", value.context_management)
+    _put(result, "requestParameters", value.request_parameters)
+    reasoning: dict[str, object] = {}
+    _put(reasoning, "supported", value.thinking)
+    _put(reasoning, "efforts", value.reasoning_efforts)
+    _put(reasoning, "adaptive", value.reasoning_adaptive)
+    _put(reasoning, "budgeted", value.reasoning_budgeted)
+    _put(reasoning, "contextModes", value.reasoning_context_modes)
+    _put(reasoning, "proMode", value.reasoning_pro_mode)
+    if reasoning:
+        result["reasoning"] = reasoning
+    return result
+
+
+def _put(target: dict[str, object], key: str, value: object | None) -> None:
+    if value is not None:
+        target[key] = list(value) if isinstance(value, tuple) else value
+
+
+def _optional_string(value: object, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a non-empty string")
+    return value
+
+
+def _optional_strings(value: object, label: str) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item for item in value
+    ):
+        raise ValueError(f"{label} must be an array of non-empty strings")
+    return tuple(dict.fromkeys(value))
+
+
+def _optional_bool(value: object) -> bool | None:
+    if value is None or isinstance(value, bool):
+        return value
+    raise ValueError("capability value must be boolean or null")
+
+
+def _required_optional_bool(value: object, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{label} must be boolean")
+    return value
+
+
+def _source_from_metadata(
+    sources: tuple[str, ...], user_defined: bool, has_limits: bool
+) -> CapabilitySource:
+    if user_defined and not sources:
+        return (
+            CapabilitySource.PROFILE_OVERRIDE
+            if has_limits
+            else CapabilitySource.FALLBACK
+        )
+    if CapabilitySource.BUNDLED_CATALOG.value in sources:
+        return CapabilitySource.BUNDLED_CATALOG
+    if CapabilitySource.CACHE.value in sources:
+        return CapabilitySource.CACHE
+    return CapabilitySource.PROVIDER_API
+
+
+def _deduplicate_models(
+    models: tuple[ModelDescriptor, ...],
+) -> tuple[ModelDescriptor, ...]:
+    result: list[ModelDescriptor] = []
+    seen: set[str] = set()
+    for model in models:
+        if model.id in seen:
+            continue
+        seen.add(model.id)
+        result.append(model)
+        if len(result) == _MAX_MODELS:
+            break
+    return tuple(result)
+
+
+def _with_limits(model: ModelDescriptor, limits: ModelLimits) -> ModelDescriptor:
+    from dataclasses import replace
+
+    return replace(model, limits=limits, source=CapabilitySource.PROFILE_OVERRIDE)
+
+
+def _replace_profile_models(
+    profile: ProviderProfile, models: tuple[ModelDescriptor, ...]
+) -> ProviderProfile:
+    from dataclasses import replace
+
+    selected = next((model for model in models if model.id == profile.model), None)
+    return replace(
+        profile, limits=selected.limits if selected else profile.limits, models=models
+    )
+
+
+def _merge_catalog(
+    preferred: tuple[ModelDescriptor, ...], retained: tuple[ModelDescriptor, ...]
+) -> tuple[ModelDescriptor, ...]:
+    result = list(_deduplicate_models(preferred))
+    positions = {model.id: index for index, model in enumerate(result)}
+    for model in retained:
+        index = positions.get(model.id)
+        if index is None:
+            if len(result) == _MAX_MODELS:
+                break
+            positions[model.id] = len(result)
+            result.append(model)
+            continue
+        current = result[index]
+        if model.user_defined or model.limits.known:
+            from dataclasses import replace
+
+            result[index] = replace(
+                current,
+                limits=model.limits if model.limits.known else current.limits,
+                source=(
+                    CapabilitySource.PROFILE_OVERRIDE
+                    if model.limits.known
+                    else current.source
+                ),
+                user_defined=current.user_defined or model.user_defined,
+            )
+    return tuple(result)
+
+
+def _legacy_cache(path: Path) -> dict[str, tuple[ModelDescriptor, ...]]:
+    if not path.exists():
+        return {}
+    try:
+        root = json.loads(path.read_text(encoding="utf-8"))
+        bindings = root.get("bindings") if isinstance(root, dict) else None
+        if not isinstance(bindings, dict):
+            return {}
+        result: dict[str, tuple[ModelDescriptor, ...]] = {}
+        for key, entry in bindings.items():
+            if not isinstance(key, str) or not isinstance(entry, dict):
+                continue
+            values = entry.get("models")
+            if not isinstance(values, list):
+                continue
+            fetched_at = entry.get("fetchedAt")
+            models: list[ModelDescriptor] = []
+            for value in values[:_MAX_MODELS]:
+                try:
+                    model = _parse_model(value, path)
+                except (ProviderProfileError, ValueError):
+                    continue
+                from dataclasses import replace
+
+                models.append(
+                    replace(
+                        model,
+                        discovered_at=fetched_at
+                        if isinstance(fetched_at, str)
+                        else None,
+                        source=CapabilitySource.CACHE,
+                    )
+                )
+            result[key] = tuple(models)
+        return result
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
 
 
 def atomic_private_json_write(path: Path, document: object) -> None:

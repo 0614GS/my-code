@@ -188,6 +188,7 @@ class OpenAIResponsesProvider(ModelClient):
         base_url: str | None = None,
         provider_id: str = "openai",
         reasoning: ReasoningConfig | None = None,
+        model_max_output_tokens: int | None = None,
     ) -> None:
         self.model = model
         self.client = AsyncOpenAI(
@@ -196,6 +197,7 @@ class OpenAIResponsesProvider(ModelClient):
         )
         self.binding = ProviderBinding("openai-responses", provider_id, model, base_url)
         self.reasoning = reasoning or ReasoningConfig()
+        self.model_max_output_tokens = model_max_output_tokens
 
     @property
     def capabilities(self) -> ProviderCapabilities:
@@ -265,7 +267,11 @@ class OpenAIResponsesProvider(ModelClient):
                 }
                 for tool in request.tools
             ],
-            "max_output_tokens": request.max_output_tokens,
+            "max_output_tokens": min(
+                request.max_output_tokens,
+                getattr(self, "model_max_output_tokens", None)
+                or request.max_output_tokens,
+            ),
         }
         if request.reasoning_mode != "disabled":
             params["include"] = ["reasoning.encrypted_content"]

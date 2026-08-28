@@ -71,12 +71,14 @@ class AnthropicProvider(ModelClient):
         base_url: str | None = None,
         provider_id: str = "anthropic",
         reasoning: ReasoningConfig | None = None,
+        model_max_output_tokens: int | None = None,
     ) -> None:
         self.model = model
         self.binding = ProviderBinding(
             "anthropic-messages", provider_id, model, base_url
         )
         self.reasoning = reasoning or ReasoningConfig(enabled=False)
+        self.model_max_output_tokens = model_max_output_tokens
         self.client = AsyncAnthropic(
             api_key=api_key if api_key is not None else "",
             auth_token="",
@@ -112,7 +114,11 @@ class AnthropicProvider(ModelClient):
         try:
             async with self.client.messages.stream(
                 model=self.model,
-                max_tokens=request.max_output_tokens,
+                max_tokens=min(
+                    request.max_output_tokens,
+                    getattr(self, "model_max_output_tokens", None)
+                    or request.max_output_tokens,
+                ),
                 system=self._system(request.system_prompt),
                 messages=self._messages(request.input, binding=self.binding),
                 tools=self._tools(request),

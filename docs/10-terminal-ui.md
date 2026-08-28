@@ -81,6 +81,8 @@ TUI 不发送光标形状控制序列，并覆盖 prompt_toolkit 默认的“显
 
 resume、provider、permission、Full Access 和 Agent 选择都投影为 composer 下方的临时交互。Resume 和 provider/model 列表不在数据层截断，只由公共可视窗口限制当前绘制行数；resume 标题过长时按显示宽度截断，相对更新时间作为独立尾部字段右对齐。
 
-首次启动缺少有效 Provider 时先运行配置向导，成功保存或选择 profile 后才组装聊天运行时；取消会安全退出且不写半成品。`/provider` 复用同一个 `ProviderWizard` 状态机。新增流程为协议 picker → Provider ID → Base URL → 密码 Key → 自动在线探查 → 可过滤模型 picker → Review；模型目录失败后可以 Retry、编辑 URL/Key 或手工输入模型。模型过滤大小写不敏感，方向键及 PageUp/PageDown 导航；探查中的 Esc 取消网络任务。编辑时 ID 固定，空 Key 保留原值；Save/Cancel 都清除临时 Key、过滤和探查结果并恢复原 composer 草稿。Use 只切换已有 profile，不重复保存。面板仅显示 `stored` 或 `not configured`，本地 Key 存在时提供带二次确认的删除操作。`/auth` 不再存在。
+首次启动缺少有效 Provider 时先运行配置向导，成功保存或选择 profile 后才组装聊天运行时；取消会安全退出且不写半成品。`/provider` 复用同一个 `ProviderWizard` 状态机。新增流程为协议 picker → Provider ID → Base URL → 密码 Key → 自动在线探查 → 自动选择首个可用模型 → Review；Review 可选打开过滤模型 picker 更改默认值。模型目录失败后可以 Retry、编辑 URL/Key 或输入由任意空白分隔的多个模型 ID。编辑时 ID 固定，空 Key 保留原值；Save/Cancel 都清除临时 Key、过滤和探查结果并恢复原 composer 草稿。Use 只切换已有 profile，不重复保存。面板仅显示 `stored` 或 `not configured`，本地 Key 存在时提供带二次确认的删除操作。`/auth` 不再存在。
+
+无参数 `/model` 只读取当前 Provider 已持久化的本地目录，按 ID 与 display name 大小写不敏感过滤，不接受目录外 ID，也不触发网络请求。它复用公共 picker 的 ↑/↓、PageUp/PageDown、Enter、Esc、视窗和草稿恢复行为；已知不兼容项不显示，兼容性未知项标记为未验证。切换在 application operation lock 内持久化 `defaultModel` 并更新 runtime、status、context limit 与 compact 阈值；旧后台 lease 继续使用捕获的旧 binding。
 
 通过 `--session` 启动时，带 `›_  my-code` 紧凑字标的 Welcome 面板后立即绘制完整安全历史；`/clear` 只清理当前可见终端并重绘 Welcome，不修改 canonical conversation。

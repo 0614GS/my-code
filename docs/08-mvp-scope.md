@@ -50,6 +50,8 @@
 
 Provider 配置有意不继承参考实现围绕 Anthropic 的隐式默认值或环境变量认证。my-code 首次启动必须显式选择协议、Endpoint、Key 和模型；profile、私有凭据与当前选择各有唯一持久化来源。连接检查只调用 Anthropic/OpenAI 都支持的模型目录 API，不用生成请求验证模型，以保持 provider-neutral 且避免探查产生推理费用。
 
+模型目录是 Provider profile 的持久事实。目录能力缺失保持 unknown，不从模型名或自定义网关猜测；`/model` 只在当前 profile 的本地可选目录内切换并持久化 `defaultModel`。Provider 级 reasoning/compact 保持用户偏好，运行时按选中模型临时降级不支持的 reasoning effort/context，并收窄已知输出上限，切回其他模型时重新计算而不覆盖偏好。
+
 本项目采用参考实现风格的 fresh child 与只读 Explore，但有意保留 Codex 风格的显式 role definition、独立 run/Session 和能力收窄。角色不可由用户扩展；Explore 是不能派生 child 的只读叶子，General 继承 spawn step 的普通/动态/Skill/MCP/Task 工具，并在深度允许时继续派生两种角色。
 
 并行工具、foreground/background Subagent、MCP 与 Skill 已分别按路线图 M2、M4a/M4b、M5、M6 实现。Skill 首版有意使用严格平面 frontmatter、只把 Markdown 作为数据加载，并不复刻参考实现中动态命令、脚本执行或完整 YAML 语义；MCP resources/prompts transport 也仍延后。参考实现将 Skill 正文表示为 meta UserMessage；本项目有意统一表示为 `AttachmentMessage`，但投影后的模型输入语义相同。边界与验收证据见 [13-extensibility-roadmap.md](13-extensibility-roadmap.md)。

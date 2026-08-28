@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from my_code.config.providers import CompactConfig, ProviderProtocol, ReasoningConfig
-from my_code.model.capabilities import ModelLimits
+from my_code.model.capabilities import ModelDescriptor, ModelLimits
 from my_code.providers.manager import (
+    ProviderProbeError,
     ProviderProbeRequest,
     ProviderProbeResult,
     ProviderUpdate,
@@ -56,11 +57,14 @@ class ProviderForm:
             "anthropic": ProviderProtocol.ANTHROPIC_MESSAGES.value,
             "openai": ProviderProtocol.OPENAI_RESPONSES.value,
         }.get(protocol_name, protocol_name)
+        model_ids = tuple(dict.fromkeys(self.model.split()))
+        if not model_ids:
+            raise ValueError("At least one model ID is required")
         return ProviderUpdate(
             id=self.provider_id.strip(),
             protocol=ProviderProtocol(protocol_name),
             base_url=self.base_url.strip() or None,
-            model=self.model.strip(),
+            model=model_ids[0],
             limits=ModelLimits(
                 _positive(self.context_window, "context window"),
                 _positive(self.max_input, "max input"),
@@ -73,6 +77,9 @@ class ProviderForm:
                 self.reasoning_context.strip() or "auto",
             ),
             api_key=key,
+            models=tuple(
+                ModelDescriptor(item, user_defined=True) for item in model_ids
+            ),
         )
 
     def build_update_for_probe(self) -> ProviderUpdate:
@@ -145,9 +152,35 @@ class ProviderWizard:
         self.probe_result = result
         self.connection_verified = result.succeeded
         self.model_filter = ""
+        if result.succeeded:
+            selected = next((item for item in result.models if item.selectable), None)
+            if selected is None:
+                self.probe_result = replace(
+                    result,
+                    succeeded=False,
+                    error_kind=ProviderProbeError.NO_MODELS,
+                    error_message=(
+                        "The provider catalog has no models compatible with "
+                        "this protocol."
+                    ),
+                )
+                self.connection_verified = False
+                return
+            current = next(
+                (
+                    item
+                    for item in result.models
+                    if item.id == self.form.model and item.selectable
+                ),
+                None,
+            )
+            self.form.model = (current or selected).id
 
     def use_manual_model(self, model: str) -> None:
-        self.form.model = model.strip()
+        ids = tuple(dict.fromkeys(model.split()))
+        if not ids:
+            raise ValueError("At least one model ID is required")
+        self.form.model = " ".join(ids)
         self.probe_result = None
         self.connection_verified = False
 
@@ -156,13 +189,25 @@ class ProviderWizard:
             return ()
         needle = self.model_filter.casefold()
         return tuple(
-            item.id for item in self.probe_result.models if needle in item.id.casefold()
+            item.id
+            for item in self.probe_result.models
+            if item.selectable
+            and (
+                needle in item.id.casefold()
+                or (
+                    item.display_name is not None
+                    and needle in item.display_name.casefold()
+                )
+            )
         )
 
     def build_update(self) -> ProviderUpdate:
         if self.editing and self.original_id != self.form.provider_id.strip():
             raise ValueError("Provider ID cannot be changed while editing")
-        return self.form.build_update()
+        update = self.form.build_update()
+        if self.probe_result is not None and self.probe_result.succeeded:
+            return replace(update, models=())
+        return update
 
     def clear_sensitive(self) -> None:
         self.form.api_key = ""

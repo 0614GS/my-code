@@ -103,18 +103,20 @@ class ProviderSetupTui:
             while True:
                 result = await self.manager.probe(wizard.probe_request())
                 wizard.accept_probe(result)
-                if result.succeeded:
-                    ids = [item.id for item in result.models]
-                    form.model = (
+                if wizard.connection_verified:
+                    ids = [item.id for item in result.models if item.selectable]
+                    selected = (
                         await self._prompt(
-                            "Model: ",
+                            f"Choose default model [auto: {form.model}]: ",
                             completer=WordCompleter(ids, ignore_case=True),
                             complete_while_typing=True,
                         )
                     ).strip()
-                    if form.model not in ids:
+                    if selected and selected not in ids:
                         print("Choose a model returned by the provider catalog.")
                         continue
+                    if selected:
+                        form.model = selected
                     break
                 print(result.error_message or "Connection check failed.")
                 choice = (
@@ -133,7 +135,7 @@ class ProviderSetupTui:
                         await self._prompt("API key (optional): ", is_password=True)
                     ).strip()
                 elif choice == "manual":
-                    wizard.use_manual_model(await self._prompt("Model: "))
+                    wizard.use_manual_model(await self._prompt("Enter model IDs: "))
                     break
                 elif choice == "cancel":
                     return False

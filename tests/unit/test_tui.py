@@ -1350,8 +1350,6 @@ async def test_provider_configuration_has_core_review_and_optional_advanced_step
         app.buffer.text = value
         await app._panel_enter()
 
-    assert app._panel == "provider_models"
-    await app._panel_enter()
     assert app._panel == "provider_review"
     assert "Advanced settings" in fragment_list_to_text(
         to_formatted_text(app._panel_text())
@@ -1368,6 +1366,10 @@ def test_new_slash_commands_have_strict_subcommands() -> None:
 
     assert registry.dispatch("/usage", status=status).show_usage  # type: ignore[union-attr]
     assert registry.dispatch("/tools", status=status).show_tools  # type: ignore[union-attr]
+    assert registry.dispatch("/model", status=status).open_model_picker  # type: ignore[union-attr]
+    assert registry.dispatch("/model anything", status=status).message == (  # type: ignore[union-attr]
+        "/model does not accept arguments."
+    )
     skills = registry.dispatch("/skills reload", status=status)
     mcp = registry.dispatch("/mcp refresh local", status=status)
     assert skills is not None and skills.skill_operation == "reload"
