@@ -28,6 +28,7 @@ from my_code.chat.views import (
     TranscriptToolResult,
 )
 from my_code.config.paths import MyCodePaths
+from my_code.config.providers import ProviderProtocol
 from my_code.config.settings import AgentSettings
 from my_code.context.models import CompactionOutcome
 from my_code.context.session import ContextRuntime
@@ -417,7 +418,11 @@ async def test_startup_refresh_drops_result_after_provider_switch(
     initializing = asyncio.create_task(runtime.initialize())
     await asyncio.wait_for(started.wait(), 1)
 
-    await runtime.configure_provider(ProviderUpdate("other", "other-model", None))
+    await runtime.configure_provider(
+        ProviderUpdate(
+            "other", ProviderProtocol.ANTHROPIC_MESSAGES, "other-model", None
+        )
+    )
     release.set()
     await initializing
 
@@ -537,7 +542,9 @@ async def test_provider_switch_does_not_modify_session_facts(tmp_path: Path) -> 
     before = session.conversation
 
     status = await runtime.configure_provider(
-        ProviderUpdate("other", "other-model", None)
+        ProviderUpdate(
+            "other", ProviderProtocol.ANTHROPIC_MESSAGES, "other-model", None
+        )
     )
 
     assert runtime.state.session is session
@@ -551,7 +558,13 @@ async def test_provider_switch_does_not_modify_session_facts(tmp_path: Path) -> 
 async def test_removing_current_provider_key_rebinds_runtime(tmp_path: Path) -> None:
     runtime = _bootstrap_runtime(tmp_path)
     runtime.provider_manager.configure(
-        ProviderUpdate("anthropic", "test-model", None, "stored-key")
+        ProviderUpdate(
+            "anthropic",
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            "test-model",
+            None,
+            "stored-key",
+        )
     )
     await runtime.state.provider.switch(
         runtime.provider_manager.resolve("anthropic"),
@@ -563,7 +576,10 @@ async def test_removing_current_provider_key_rebinds_runtime(tmp_path: Path) -> 
     assert status.credential_source == "none"
     assert runtime.state.provider.router.connection.api_key is None
     assert (
-        CredentialStore(runtime.settings.paths.credentials_path).load_api_key() is None
+        CredentialStore(runtime.settings.paths.credentials_path).load_api_key(
+            "anthropic"
+        )
+        is None
     )
 
 
@@ -573,9 +589,22 @@ async def test_removing_non_current_provider_key_does_not_switch_runtime(
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
     runtime.provider_manager.configure(
-        ProviderUpdate("other", "other-model", None, "other-key")
+        ProviderUpdate(
+            "other",
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            "other-model",
+            None,
+            "other-key",
+        )
     )
-    await runtime.configure_provider(ProviderUpdate("anthropic", "test-model", None))
+    await runtime.configure_provider(
+        ProviderUpdate(
+            "anthropic",
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            "test-model",
+            None,
+        )
+    )
     connection = runtime.state.provider.router.connection
 
     await runtime.remove_provider_credential("other")
@@ -588,7 +617,7 @@ async def test_removing_non_current_provider_key_does_not_switch_runtime(
 
 
 @pytest.mark.asyncio
-async def test_removing_current_stored_key_keeps_environment_key_active(
+async def test_removing_current_stored_key_ignores_environment_key(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
@@ -597,7 +626,13 @@ async def test_removing_current_stored_key_keeps_environment_key_active(
         environ={"ANTHROPIC_API_KEY": "environment-key"},
     )
     connection = runtime.provider_manager.configure(
-        ProviderUpdate("anthropic", "test-model", None, "stored-key")
+        ProviderUpdate(
+            "anthropic",
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            "test-model",
+            None,
+            "stored-key",
+        )
     )
     await runtime.state.provider.switch(
         connection,
@@ -606,8 +641,8 @@ async def test_removing_current_stored_key_keeps_environment_key_active(
 
     status = await runtime.remove_provider_credential("anthropic")
 
-    assert status.credential_source == "environment"
-    assert runtime.state.provider.router.connection.api_key == "environment-key"
+    assert status.credential_source == "none"
+    assert runtime.state.provider.router.connection.api_key is None
     assert "environment-key" not in repr(runtime.providers()[0])
 
 
@@ -617,7 +652,13 @@ async def test_credential_delete_failure_preserves_connection_and_key(
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
     connection = runtime.provider_manager.configure(
-        ProviderUpdate("anthropic", "test-model", None, "stored-key")
+        ProviderUpdate(
+            "anthropic",
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            "test-model",
+            None,
+            "stored-key",
+        )
     )
     await runtime.state.provider.switch(
         connection,

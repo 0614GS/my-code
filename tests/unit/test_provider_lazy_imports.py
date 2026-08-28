@@ -46,7 +46,7 @@ from my_code.config.providers import ProviderProtocol
 from my_code.providers.router import ProviderConnection, _build_provider
 connection = ProviderConnection(
     sys.argv[1], getattr(ProviderProtocol, sys.argv[2]), sys.argv[3], None, 'test-key',
-    CredentialSource.ENVIRONMENT,
+    CredentialSource.STORED,
 )
 provider = _build_provider(connection)
 assert sys.argv[4] in sys.modules

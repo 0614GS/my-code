@@ -19,12 +19,14 @@ from my_code.cli.arguments import CliOptions, parse_cli
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.permission_updates import PermissionUpdateApplier
 from my_code.config.providers import (
-    DEFAULT_MODEL,
-    DEFAULT_PROVIDER_ID,
     ProviderProfile,
     ProviderProfileStore,
 )
-from my_code.config.settings import AgentSettings, SettingsResolver
+from my_code.config.settings import (
+    AgentSettings,
+    ProviderConfigurationRequired,
+    SettingsResolver,
+)
 from my_code.config.store import SettingsLayer, SettingsStore
 from my_code.context.attachments.sources import (
     DerivedAttachmentResolver,
@@ -179,18 +181,12 @@ def initialize_user_storage(paths: MyCodePaths) -> StorageInitialization:
     settings_store = SettingsStore(paths)
     created_settings = not paths.user_settings_path.exists()
     if created_settings:
-        user_settings = SettingsLayer(active_provider=DEFAULT_PROVIDER_ID)
+        user_settings = SettingsLayer()
         settings_store.write(SettingsScope.USER, user_settings)
     else:
-        user_settings = settings_store.load_scope(SettingsScope.USER)
+        settings_store.load_scope(SettingsScope.USER)
 
-    default_profile = ProviderProfile(
-        id=user_settings.active_provider or DEFAULT_PROVIDER_ID,
-        model=DEFAULT_MODEL,
-    )
-    created_providers = ProviderProfileStore(paths.providers_path).ensure_exists(
-        default_profile
-    )
+    created_providers = ProviderProfileStore(paths.providers_path).ensure_empty_exists()
     created_credentials = CredentialStore(paths.credentials_path).ensure_exists()
     return StorageInitialization(
         created_settings=created_settings,
@@ -581,7 +577,17 @@ def bootstrap_chat(
 
 
 async def run(options: CliOptions, resolver: SettingsResolver) -> int:
-    settings = resolver.resolve(options.settings_overrides, interactive=True)
+    try:
+        settings = resolver.resolve(options.settings_overrides, interactive=True)
+    except ProviderConfigurationRequired:
+        from my_code.tui.provider_setup import ProviderSetupTui
+
+        configured = await ProviderSetupTui(ProviderManager(resolver.paths)).run(
+            options.settings_overrides.provider_id
+        )
+        if not configured:
+            return 0
+        settings = resolver.resolve(options.settings_overrides, interactive=True)
     runtime = bootstrap_chat(settings, options.session_id)
     try:
         await MyCodeTui(runtime).run()

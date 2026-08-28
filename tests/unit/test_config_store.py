@@ -7,6 +7,11 @@ from pathlib import Path
 import pytest
 
 from my_code.config.paths import MyCodePaths, SettingsScope
+from my_code.config.providers import (
+    ProviderProfile,
+    ProviderProfileStore,
+    ProviderProtocol,
+)
 from my_code.config.settings import SettingsResolver
 from my_code.config.store import (
     McpServerSettingsLayer,
@@ -28,13 +33,19 @@ def make_paths(tmp_path: Path) -> MyCodePaths:
     return MyCodePaths(cwd=workspace.resolve(), config_home=tmp_path / "state")
 
 
+def configure_provider(paths: MyCodePaths) -> None:
+    ProviderProfileStore(paths.providers_path).write(
+        (ProviderProfile("test", ProviderProtocol.ANTHROPIC_MESSAGES, "test-model"),)
+    )
+    SettingsStore(paths).set_user_active_provider("test")
+
+
 def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
     store = SettingsStore(paths)
     store.write(
         SettingsScope.USER,
         SettingsLayer(
-            model="user-model",
             permission_mode=PermissionMode.PLAN,
             max_steps=10,
             max_parallel_tool_calls=2,
@@ -43,7 +54,6 @@ def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
     store.write(
         SettingsScope.PROJECT,
         SettingsLayer(
-            model="project-model",
             max_output_tokens=4000,
             max_parallel_tool_calls=3,
         ),
@@ -58,7 +68,6 @@ def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
     )
 
     assert store.load() == SettingsLayer(
-        model="project-model",
         permission_mode=PermissionMode.ACCEPT_EDITS,
         max_steps=20,
         max_output_tokens=4000,
@@ -87,7 +96,7 @@ def test_project_layers_are_skipped_when_started_from_user_home(
     store = SettingsStore(paths)
     store.write(
         SettingsScope.USER,
-        SettingsLayer(active_provider="gateway", model="user-model"),
+        SettingsLayer(active_provider="gateway"),
     )
     paths.local_settings_path.write_text(
         json.dumps({"version": 3, "agent": {"model": "misclassified-local-model"}}),
@@ -96,7 +105,7 @@ def test_project_layers_are_skipped_when_started_from_user_home(
 
     assert store.load_scope(SettingsScope.PROJECT) == SettingsLayer()
     assert store.load_scope(SettingsScope.LOCAL) == SettingsLayer()
-    assert store.load() == SettingsLayer(active_provider="gateway", model="user-model")
+    assert store.load() == SettingsLayer(active_provider="gateway")
 
 
 @pytest.mark.parametrize("scope", [SettingsScope.PROJECT, SettingsScope.LOCAL])
@@ -108,7 +117,7 @@ def test_project_writes_cannot_overwrite_colliding_user_storage(
     paths = MyCodePaths(cwd=home, config_home=home / ".my-code")
 
     with pytest.raises(SettingsFileError, match="project config directory"):
-        SettingsStore(paths).write(scope, SettingsLayer(model="project-model"))
+        SettingsStore(paths).write(scope, SettingsLayer(context_chars=1234))
 
 
 def test_unknown_keys_are_ignored_for_forward_compatibility(tmp_path: Path) -> None:
@@ -118,14 +127,14 @@ def test_unknown_keys_are_ignored_for_forward_compatibility(tmp_path: Path) -> N
         json.dumps(
             {
                 "version": 3,
-                "agent": {"model": "known"},
+                "agent": {"futureAgent": "known"},
                 "futureSetting": {"enabled": True},
             }
         ),
         encoding="utf-8",
     )
 
-    assert SettingsStore(paths).load().model == "known"
+    assert SettingsStore(paths).load() == SettingsLayer()
 
 
 def test_subagent_settings_layer_and_runtime_defaults(tmp_path: Path) -> None:
@@ -154,6 +163,7 @@ def test_subagent_settings_layer_and_runtime_defaults(tmp_path: Path) -> None:
         "timeoutSeconds": 12.5,
     }
     assert document["backgroundTasks"] == {"enabled": True}
+    configure_provider(paths)
     settings = SettingsResolver(paths).resolve(interactive=False)
     assert settings.subagents_enabled is True
     assert settings.subagent_max_depth == 2
@@ -165,7 +175,9 @@ def test_subagent_settings_layer_and_runtime_defaults(tmp_path: Path) -> None:
 
 
 def test_subagents_and_background_tasks_are_enabled_by_default(tmp_path: Path) -> None:
-    settings = SettingsResolver(make_paths(tmp_path)).resolve(interactive=False)
+    paths = make_paths(tmp_path)
+    configure_provider(paths)
+    settings = SettingsResolver(paths).resolve(interactive=False)
 
     assert settings.subagents_enabled is True
     assert settings.subagent_max_depth == 3
@@ -191,6 +203,7 @@ def test_subagents_and_background_tasks_can_be_explicitly_disabled(
             background_tasks_enabled=False,
         ),
     )
+    configure_provider(paths)
 
     settings = SettingsResolver(paths).resolve(interactive=True)
 
@@ -206,6 +219,7 @@ def test_skill_feature_gate_is_layered_and_serialized(tmp_path: Path) -> None:
     document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
 
     assert document["skills"] == {"enabled": True}
+    configure_provider(paths)
     assert SettingsResolver(paths).resolve(interactive=False).skills_enabled is True
 
 
@@ -229,6 +243,7 @@ def test_mcp_settings_replace_servers_by_scope_and_store_only_env_references(
             ),
         ),
     )
+    configure_provider(paths)
     store.write(
         SettingsScope.PROJECT,
         SettingsLayer(
@@ -529,7 +544,7 @@ def test_write_merges_known_fields_and_preserves_unknown_keys(
     store.write(
         SettingsScope.USER,
         SettingsLayer(
-            model="first-model",
+            context_chars=1000,
             permission_allow_rules=("Bash(git status)",),
         ),
     )
@@ -540,14 +555,14 @@ def test_write_merges_known_fields_and_preserves_unknown_keys(
     store.write(
         SettingsScope.USER,
         SettingsLayer(
-            model="second-model",
+            context_chars=2000,
             permission_deny_rules=("Bash(rm:*)",),
         ),
     )
 
     document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
     assert document["futureSetting"] == {"enabled": True}
-    assert document["agent"]["model"] == "second-model"
+    assert document["agent"]["contextChars"] == 2000
     assert document["permissions"] == {
         "allow": ["Bash(git status)"],
         "deny": ["Bash(rm:*)"],
@@ -563,6 +578,7 @@ def test_resolver_records_highest_priority_source_for_duplicate_rules(
         SettingsScope.USER,
         SettingsLayer(permission_allow_rules=("Bash(git status)",)),
     )
+    configure_provider(paths)
     store.write(
         SettingsScope.PROJECT,
         SettingsLayer(permission_allow_rules=("Bash(git status)",)),
@@ -625,11 +641,9 @@ def test_write_is_atomic_and_private(tmp_path: Path) -> None:
 
     store.write(
         SettingsScope.USER,
-        SettingsLayer(model="model", context_chars=1234),
+        SettingsLayer(context_chars=1234),
     )
 
-    assert store.load_scope(SettingsScope.USER) == SettingsLayer(
-        model="model", context_chars=1234
-    )
+    assert store.load_scope(SettingsScope.USER) == SettingsLayer(context_chars=1234)
     assert stat.S_IMODE(paths.user_settings_path.stat().st_mode) == 0o600
     assert list(paths.user_settings_path.parent.glob("*.tmp")) == []

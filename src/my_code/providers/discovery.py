@@ -1,10 +1,17 @@
 """Provider SDK adapters for bounded model discovery and capability resolution."""
 
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
-from my_code.config.providers import ProviderProfile, ProviderProtocol
+from my_code.config.providers import (
+    ANTHROPIC_API_BASE_URL,
+    OPENAI_API_BASE_URL,
+    ProviderProfile,
+    ProviderProtocol,
+)
 from my_code.model.capabilities import (
     CapabilitySource,
     ModelCapabilities,
@@ -26,6 +33,40 @@ _OPENAI_CATALOG: dict[str, ModelLimits] = {
     "gpt-5.2": ModelLimits(400_000, max_output_tokens=128_000),
     "gpt-5.4": ModelLimits(400_000, max_output_tokens=128_000),
 }
+
+
+class ProviderProbeError(StrEnum):
+    AUTHENTICATION = "authentication"
+    ENDPOINT = "endpoint"
+    TIMEOUT = "timeout"
+    CONNECTION = "connection"
+    NO_MODELS = "no-models"
+    SERVICE = "service"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderProbeRequest:
+    """Temporary connection details. The key is never persisted by probing."""
+
+    provider_id: str
+    protocol: ProviderProtocol
+    base_url: str | None
+    api_key: str | None = field(default=None, repr=False)
+    use_stored_key: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderProbeResult:
+    """A credential-free snapshot of one online model-catalog attempt."""
+
+    succeeded: bool
+    models: tuple[ModelDescriptor, ...]
+    probed_at: str
+    error_kind: ProviderProbeError | None = None
+    error_message: str | None = None
+    provider_id: str = ""
+    protocol: ProviderProtocol | None = None
+    base_url: str | None = None
 
 
 class AnthropicModelCatalog:
@@ -90,6 +131,67 @@ class ModelDiscoveryService:
     def __init__(self, cache: ModelCatalogCache) -> None:
         self.cache = cache
 
+    async def probe(
+        self,
+        request: ProviderProbeRequest,
+        *,
+        timeout_seconds: float,
+    ) -> ProviderProbeResult:
+        """Always perform one online catalog request and never touch the cache."""
+
+        probed_at = datetime.now(UTC).isoformat()
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                catalog, close = _catalog_for(
+                    request.protocol, request.base_url, request.api_key
+                )
+                try:
+                    models = await catalog.list_models()
+                finally:
+                    await close()
+            if not models:
+                return ProviderProbeResult(
+                    False,
+                    (),
+                    probed_at,
+                    ProviderProbeError.NO_MODELS,
+                    "The endpoint returned an empty model catalog.",
+                    provider_id=request.provider_id,
+                    protocol=request.protocol,
+                    base_url=request.base_url,
+                )
+            return ProviderProbeResult(
+                True,
+                models,
+                probed_at,
+                provider_id=request.provider_id,
+                protocol=request.protocol,
+                base_url=request.base_url,
+            )
+        except TimeoutError:
+            return ProviderProbeResult(
+                False,
+                (),
+                probed_at,
+                ProviderProbeError.TIMEOUT,
+                "The model catalog request timed out. Check the Base URL and retry.",
+                provider_id=request.provider_id,
+                protocol=request.protocol,
+                base_url=request.base_url,
+            )
+        except Exception as error:
+            kind, message = _classify_probe_error(error)
+            return ProviderProbeResult(
+                False,
+                (),
+                probed_at,
+                kind,
+                message,
+                request.provider_id,
+                request.protocol,
+                request.base_url,
+            )
+
     async def discover(
         self,
         profile: ProviderProfile,
@@ -102,23 +204,23 @@ class ModelDiscoveryService:
         )
         cached = self.cache.load(key)
         if api_key is None and profile.base_url is None:
-            error = "No API key is configured for provider model discovery."
+            error = "No stored API key is configured for startup model discovery."
             if cached is not None:
                 return cached.models, cached.fetched_at, error
             return (), None, error
-        try:
-            async with asyncio.timeout(timeout_seconds):
-                catalog, close = _catalog(profile, api_key)
-                try:
-                    models = await catalog.list_models()
-                finally:
-                    await close()
+        result = await self.probe(
+            ProviderProbeRequest(
+                profile.id, profile.protocol, profile.base_url, api_key
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+        if result.succeeded:
+            models = result.models
             fetched_at = self.cache.save(key, models)
             return models, fetched_at, None
-        except Exception as error:
-            if cached is not None:
-                return cached.models, cached.fetched_at, str(error)
-            return (), None, str(error)
+        if cached is not None:
+            return cached.models, cached.fetched_at, result.error_message
+        return (), None, result.error_message
 
     async def resolve(
         self,
@@ -180,21 +282,71 @@ class ModelDiscoveryService:
 
 
 def _catalog(profile: ProviderProfile, api_key: str | None) -> tuple[Any, Any]:
-    if profile.protocol is ProviderProtocol.ANTHROPIC_MESSAGES:
+    return _catalog_for(profile.protocol, profile.base_url, api_key)
+
+
+def _catalog_for(
+    protocol: ProviderProtocol, base_url: str | None, api_key: str | None
+) -> tuple[Any, Any]:
+    if protocol is ProviderProtocol.ANTHROPIC_MESSAGES:
         from anthropic import AsyncAnthropic
 
-        anthropic_client = AsyncAnthropic(api_key=api_key, base_url=profile.base_url)
+        anthropic_client = AsyncAnthropic(
+            api_key=api_key if api_key is not None else "",
+            auth_token="",
+            base_url=base_url or ANTHROPIC_API_BASE_URL,
+        )
         return AnthropicModelCatalog(anthropic_client), anthropic_client.close
     from openai import AsyncOpenAI
 
-    openai_client = AsyncOpenAI(api_key=api_key, base_url=profile.base_url)
-    official = profile.base_url is None or profile.base_url.rstrip("/") in {
+    openai_client = AsyncOpenAI(
+        api_key=api_key if api_key is not None else "",
+        base_url=base_url or OPENAI_API_BASE_URL,
+    )
+    official = base_url is None or base_url.rstrip("/") in {
         "https://api.openai.com",
         "https://api.openai.com/v1",
     }
     return (
         OpenAIModelCatalog(openai_client, official_endpoint=official),
         openai_client.close,
+    )
+
+
+def _classify_probe_error(error: Exception) -> tuple[ProviderProbeError, str]:
+    status = getattr(error, "status_code", None)
+    if status in {401, 403}:
+        return (
+            ProviderProbeError.AUTHENTICATION,
+            "Authentication failed. Check the API key and endpoint permissions.",
+        )
+    if status == 404:
+        return (
+            ProviderProbeError.ENDPOINT,
+            "The model catalog endpoint was not found. "
+            "Check the Base URL and protocol.",
+        )
+    name = type(error).__name__.casefold()
+    if "timeout" in name:
+        return (
+            ProviderProbeError.TIMEOUT,
+            "The model catalog request timed out. Check the Base URL and retry.",
+        )
+    if any(token in name for token in ("connection", "connect", "network")):
+        return (
+            ProviderProbeError.CONNECTION,
+            "Could not connect to the endpoint. Check the Base URL and network.",
+        )
+    if isinstance(status, int) and 400 <= status < 500:
+        return (
+            ProviderProbeError.ENDPOINT,
+            "The endpoint rejected the model catalog request. "
+            "Check the protocol and Base URL.",
+        )
+    return (
+        ProviderProbeError.SERVICE,
+        "The provider could not return its model catalog. "
+        "Retry or configure a model manually.",
     )
 
 
@@ -239,6 +391,9 @@ __all__ = [
     "AnthropicModelCatalog",
     "ModelDiscoveryService",
     "OpenAIModelCatalog",
+    "ProviderProbeError",
+    "ProviderProbeRequest",
+    "ProviderProbeResult",
     "resolve_without_network",
 ]
 

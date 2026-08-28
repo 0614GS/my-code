@@ -27,7 +27,6 @@ class SettingsFileError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class AgentSettingsLayer:
-    model: str | None = None
     max_steps: int | None = None
     max_output_tokens: int | None = None
     context_chars: int | None = None
@@ -110,7 +109,6 @@ class SettingsLayer:
         skills: SkillSettingsLayer | None = None,
         mcp: McpSettingsLayer | None = None,
         # Convenience aliases for callers while the disk schema remains nested.
-        model: str | None = None,
         permission_mode: PermissionMode | None = None,
         permission_allow_rules: tuple[str, ...] = (),
         permission_deny_rules: tuple[str, ...] = (),
@@ -132,8 +130,7 @@ class SettingsLayer:
         mcp_servers: tuple[McpServerSettingsLayer, ...] = (),
     ) -> None:
         if agent is not None and any(
-            value is not None
-            for value in (model, max_steps, max_output_tokens, context_chars)
+            value is not None for value in (max_steps, max_output_tokens, context_chars)
         ):
             raise TypeError("agent and flattened agent values cannot be combined")
         if permissions is not None and (
@@ -176,8 +173,7 @@ class SettingsLayer:
         object.__setattr__(
             self,
             "agent",
-            agent
-            or AgentSettingsLayer(model, max_steps, max_output_tokens, context_chars),
+            agent or AgentSettingsLayer(max_steps, max_output_tokens, context_chars),
         )
         object.__setattr__(
             self,
@@ -227,10 +223,6 @@ class SettingsLayer:
                 mcp_servers,
             ),
         )
-
-    @property
-    def model(self) -> str | None:
-        return self.agent.model
 
     @property
     def max_steps(self) -> int | None:
@@ -312,7 +304,6 @@ class SettingsLayer:
         return SettingsLayer(
             active_provider=higher.active_provider or self.active_provider,
             agent=AgentSettingsLayer(
-                higher.model if higher.model is not None else self.model,
                 higher.max_steps if higher.max_steps is not None else self.max_steps,
                 higher.max_output_tokens
                 if higher.max_output_tokens is not None
@@ -502,6 +493,11 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
                 f"{', '.join(forbidden)} is only allowed in user storage: {path}"
             )
     agent = _nested_mapping(raw, "agent", path)
+    if "model" in agent:
+        raise SettingsFileError(
+            "agent.model is no longer supported; move it to the selected "
+            f"provider profile's defaultModel in providers.json: {path}"
+        )
     if "maxTurns" in agent:
         raise SettingsFileError(
             f"agent.maxTurns is no longer supported; use agent.maxSteps: {path}"
@@ -518,7 +514,6 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
     layer = SettingsLayer(
         active_provider=_optional_string(raw, "activeProvider", path),
         agent=AgentSettingsLayer(
-            _optional_string(agent, "model", path, "agent.model"),
             _optional_positive_int(agent, "maxSteps", path, "agent.maxSteps"),
             _optional_positive_int(
                 agent, "maxOutputTokens", path, "agent.maxOutputTokens"
@@ -632,7 +627,6 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
     agent = {
         key: value
         for key, value in (
-            ("model", settings.model),
             ("maxSteps", settings.max_steps),
             ("maxOutputTokens", settings.max_output_tokens),
             ("contextChars", settings.context_chars),

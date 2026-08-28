@@ -1,6 +1,5 @@
 """跨入口共享的 Agent settings 解析与完整运行时快照。"""
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,10 +11,7 @@ from my_code.auth.credentials import (
 )
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.providers import (
-    DEFAULT_MODEL,
-    DEFAULT_PROVIDER_ID,
     CompactConfig,
-    ProviderProfile,
     ProviderProfileStore,
     ProviderProtocol,
     ReasoningConfig,
@@ -53,8 +49,6 @@ class SettingsOverrides:
     """一个 driving adapter 可显式覆盖的 settings。"""
 
     provider_id: str | None = None
-    model: str | None = None
-    base_url: str | None = None
     permission_mode: PermissionMode | None = None
     max_steps: int | None = None
     max_output_tokens: int | None = None
@@ -142,7 +136,7 @@ class SettingsResolver:
         environ: Mapping[str, str] | None = None,
     ) -> None:
         self.paths = paths
-        self.environ = os.environ if environ is None else environ
+        self.environ = {} if environ is None else environ
         self.store = SettingsStore(paths)
 
     @classmethod
@@ -163,12 +157,11 @@ class SettingsResolver:
 
     def active_provider_id(self, override: str | None = None) -> str:
         user = self.store.load_scope(SettingsScope.USER)
-        provider_id = (
-            override
-            or self.environ.get("MY_CODE_PROVIDER")
-            or user.active_provider
-            or DEFAULT_PROVIDER_ID
-        )
+        provider_id = override or user.active_provider
+        if provider_id is None:
+            raise ProviderConfigurationRequired(
+                "No active provider is configured. Run the provider setup wizard."
+            )
         validate_provider_id(provider_id)
         return provider_id
 
@@ -186,46 +179,34 @@ class SettingsResolver:
         provider_id = self.active_provider_id(actual_overrides.provider_id)
         profiles = ProviderProfileStore(self.paths.providers_path).load()
         if not profiles:
-            profiles = {
-                DEFAULT_PROVIDER_ID: ProviderProfile(
-                    id=DEFAULT_PROVIDER_ID,
-                    model=DEFAULT_MODEL,
+            if actual_overrides.provider_id is not None:
+                raise ValueError(
+                    f"Unknown provider {provider_id!r}; configured providers: <none>"
                 )
-            }
+            raise ProviderConfigurationRequired(
+                "No provider profiles are configured. Run the provider setup wizard."
+            )
         try:
             profile = profiles[provider_id]
         except KeyError as error:
             choices = ", ".join(sorted(profiles)) or "<none>"
-            raise ValueError(
-                f"Unknown provider {provider_id!r}; configured providers: {choices}"
+            if actual_overrides.provider_id is not None:
+                raise ValueError(
+                    f"Unknown provider {provider_id!r}; configured providers: {choices}"
+                ) from error
+            raise ProviderConfigurationRequired(
+                f"Active provider {provider_id!r} no longer exists. "
+                "Run the provider setup wizard."
             ) from error
 
         credential = resolve_api_key(
             CredentialStore(self.paths.credentials_path),
-            self.environ,
             provider_id=provider_id,
-            protocol=profile.protocol.value,
-        )
-        prefix = (
-            "OPENAI"
-            if profile.protocol is ProviderProtocol.OPENAI_RESPONSES
-            else "ANTHROPIC"
-        )
-        model = (
-            actual_overrides.model
-            or self.environ.get(f"{prefix}_MODEL")
-            or stored.model
-            or profile.model
-        )
-        base_url = (
-            actual_overrides.base_url
-            or self.environ.get(f"{prefix}_BASE_URL")
-            or profile.base_url
         )
         return AgentSettings(
             paths=self.paths,
             provider_id=provider_id,
-            model=model,
+            model=profile.model,
             permission_mode=(
                 actual_overrides.permission_mode
                 if actual_overrides.permission_mode is not None
@@ -283,12 +264,16 @@ class SettingsResolver:
             permission_rules=_resolve_permission_rules(user, project, local),
             api_key=credential.api_key,
             credential_source=credential.source,
-            base_url=base_url,
+            base_url=profile.base_url,
             protocol=profile.protocol,
             reasoning=profile.reasoning,
             model_limits=profile.limits,
             compact=profile.compact,
         )
+
+
+class ProviderConfigurationRequired(ValueError):
+    """The runtime cannot be assembled until a provider is selected."""
 
 
 def _resolve_permission_rules(
@@ -341,4 +326,5 @@ __all__ = [
     "McpServerSettingsLayer",
     "SettingsOverrides",
     "SettingsResolver",
+    "ProviderConfigurationRequired",
 ]

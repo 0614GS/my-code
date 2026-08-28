@@ -48,6 +48,8 @@
 
 终端交互借鉴 Codex/参考实现的即时 slash 建议、默认首项、Enter 执行和分层选择器语法，但继续使用 `prompt_toolkit + Rich` 与普通终端 scrollback。视觉层使用终端语义色、自适应低对比度用户表面和原生光标，不复制 ratatui/Ink renderer。Provider 配置以 Enter 驱动的核心流程和按需 Advanced 代替 Ink 表单或快捷键密集型编辑器；Welcome 使用 my-code 自有 ASCII 标识。
 
+Provider 配置有意不继承参考实现围绕 Anthropic 的隐式默认值或环境变量认证。my-code 首次启动必须显式选择协议、Endpoint、Key 和模型；profile、私有凭据与当前选择各有唯一持久化来源。连接检查只调用 Anthropic/OpenAI 都支持的模型目录 API，不用生成请求验证模型，以保持 provider-neutral 且避免探查产生推理费用。
+
 本项目采用参考实现风格的 fresh child 与只读 Explore，但有意保留 Codex 风格的显式 role definition、独立 run/Session 和能力收窄。角色不可由用户扩展；Explore 是不能派生 child 的只读叶子，General 继承 spawn step 的普通/动态/Skill/MCP/Task 工具，并在深度允许时继续派生两种角色。
 
 并行工具、foreground/background Subagent、MCP 与 Skill 已分别按路线图 M2、M4a/M4b、M5、M6 实现。Skill 首版有意使用严格平面 frontmatter、只把 Markdown 作为数据加载，并不复刻参考实现中动态命令、脚本执行或完整 YAML 语义；MCP resources/prompts transport 也仍延后。参考实现将 Skill 正文表示为 meta UserMessage；本项目有意统一表示为 `AttachmentMessage`，但投影后的模型输入语义相同。边界与验收证据见 [13-extensibility-roadmap.md](13-extensibility-roadmap.md)。

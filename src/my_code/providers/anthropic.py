@@ -12,7 +12,11 @@ from anthropic.types import (
     ToolParam,
 )
 
-from my_code.config.providers import ProviderProtocol, ReasoningConfig
+from my_code.config.providers import (
+    ANTHROPIC_API_BASE_URL,
+    ProviderProtocol,
+    ReasoningConfig,
+)
 from my_code.foundation.json import to_json_object
 from my_code.model.capabilities import ProviderCapabilities
 from my_code.model.client import ModelClient
@@ -73,7 +77,11 @@ class AnthropicProvider(ModelClient):
             "anthropic-messages", provider_id, model, base_url
         )
         self.reasoning = reasoning or ReasoningConfig(enabled=False)
-        self.client = AsyncAnthropic(api_key=api_key, base_url=base_url)
+        self.client = AsyncAnthropic(
+            api_key=api_key if api_key is not None else "",
+            auth_token="",
+            base_url=base_url or ANTHROPIC_API_BASE_URL,
+        )
         # 自定义 endpoint 对 Anthropic 扩展字段的实现程度未知，默认保持兼容。
         self._capabilities = self.capabilities_for(base_url)
 

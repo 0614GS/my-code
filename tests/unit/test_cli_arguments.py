@@ -33,6 +33,29 @@ def resolve_options(options: CliOptions) -> AgentSettings:
     )
 
 
+def write_provider_config(
+    config_home: Path,
+    *,
+    model: str = "profile-model",
+    base_url: str | None = "https://profile.example/api",
+) -> None:
+    config_home.mkdir(parents=True, exist_ok=True)
+    (config_home / "settings.json").write_text(
+        json.dumps({"version": 3, "activeProvider": "anthropic"}),
+        encoding="utf-8",
+    )
+    profile: dict[str, object] = {
+        "protocol": "anthropic-messages",
+        "defaultModel": model,
+    }
+    if base_url is not None:
+        profile["baseUrl"] = base_url
+    (config_home / "providers.json").write_text(
+        json.dumps({"version": 3, "providers": {"anthropic": profile}}),
+        encoding="utf-8",
+    )
+
+
 def test_parser_uses_installed_command_name() -> None:
     assert build_parser().prog == "mycode"
 
@@ -55,19 +78,20 @@ def test_parser_rejects_non_interactive_chat_forms(
     assert exit_info.value.code == 2
 
 
-def test_cli_resolves_file_environment_and_flag_precedence(
+def test_cli_resolves_profile_and_non_provider_flag_precedence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clear_provider_environment(monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config_home = tmp_path / "config"
-    config_home.mkdir()
+    write_provider_config(config_home)
     (config_home / "settings.json").write_text(
         json.dumps(
             {
                 "version": 3,
-                "agent": {"model": "file-model", "maxSteps": 3},
+                "activeProvider": "anthropic",
+                "agent": {"maxSteps": 3},
                 "permissions": {"defaultMode": "plan"},
             }
         ),
@@ -81,24 +105,20 @@ def test_cli_resolves_file_environment_and_flag_precedence(
         [
             "--cwd",
             str(workspace),
-            "--model",
-            "cli-model",
-            "--base-url",
-            "https://cli.example/api",
             "--max-steps",
             "7",
         ]
     )
 
     settings = resolve_options(options)
-    assert settings.model == "cli-model"
-    assert settings.base_url == "https://cli.example/api"
+    assert settings.model == "profile-model"
+    assert settings.base_url == "https://profile.example/api"
     assert settings.permission_mode is PermissionMode.PLAN
     assert settings.max_steps == 7
     assert settings.paths.config_home == config_home
 
 
-def test_environment_model_overrides_settings(
+def test_agent_model_returns_migration_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clear_provider_environment(monkeypatch)
@@ -111,30 +131,43 @@ def test_environment_model_overrides_settings(
         encoding="utf-8",
     )
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
-    monkeypatch.setenv("ANTHROPIC_MODEL", "env-model")
+    write_provider_config(config_home)
+    (config_home / "settings.json").write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "activeProvider": "anthropic",
+                "agent": {"model": "file-model"},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     options = parse_args(["--cwd", str(workspace)])
 
-    assert resolve_options(options).model == "env-model"
+    with pytest.raises(ValueError, match="defaultModel"):
+        resolve_options(options)
 
 
-def test_environment_base_url_overrides_user_settings(
+def test_provider_environment_cannot_override_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clear_provider_environment(monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config_home = tmp_path / "config"
-    config_home.mkdir()
-    (config_home / "settings.json").write_text(
-        json.dumps({"version": 3}), encoding="utf-8"
-    )
+    write_provider_config(config_home)
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://env.example/api")
 
     options = parse_args(["--cwd", str(workspace)])
 
-    assert resolve_options(options).base_url == "https://env.example/api"
+    monkeypatch.setenv("ANTHROPIC_MODEL", "env-model")
+    monkeypatch.setenv("MY_CODE_PROVIDER", "missing")
+    settings = resolve_options(options)
+    assert settings.base_url == "https://profile.example/api"
+    assert settings.model == "profile-model"
+    assert settings.provider_id == "anthropic"
 
 
 def test_named_provider_resolves_profile_and_scoped_credential(
@@ -212,22 +245,25 @@ def test_cli_provider_override_selects_named_profile(
     assert settings.model == "gateway-model"
 
 
-def test_environment_api_key_overrides_stored_credential(
+def test_environment_api_key_cannot_override_stored_credential(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clear_provider_environment(monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config_home = tmp_path / "config"
+    write_provider_config(config_home)
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
-    CredentialStore(config_home / ".credentials.json").save_api_key("stored-key")
+    CredentialStore(config_home / ".credentials.json").save_api_key(
+        "stored-key", "anthropic"
+    )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "environment-key")
 
     options = parse_args(["--cwd", str(workspace)])
 
     settings = resolve_options(options)
-    assert settings.api_key == "environment-key"
-    assert settings.credential_source is CredentialSource.ENVIRONMENT
+    assert settings.api_key == "stored-key"
+    assert settings.credential_source is CredentialSource.STORED
 
 
 def test_cli_uses_stored_credential_without_environment_override(
@@ -237,8 +273,11 @@ def test_cli_uses_stored_credential_without_environment_override(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config_home = tmp_path / "config"
+    write_provider_config(config_home)
     monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
-    CredentialStore(config_home / ".credentials.json").save_api_key("stored-key")
+    CredentialStore(config_home / ".credentials.json").save_api_key(
+        "stored-key", "anthropic"
+    )
 
     options = parse_args(["--cwd", str(workspace)])
 
@@ -256,15 +295,18 @@ def test_session_and_launch_overrides_are_preserved(tmp_path: Path) -> None:
             "11111111-1111-1111-1111-111111111111",
             "--provider",
             "gateway",
-            "--model",
-            "model-x",
         ]
     )
 
     assert options.cwd == tmp_path
     assert options.session_id == "11111111-1111-1111-1111-111111111111"
     assert options.settings_overrides.provider_id == "gateway"
-    assert options.settings_overrides.model == "model-x"
+
+
+@pytest.mark.parametrize("flag", ("--model", "--base-url"))
+def test_parser_rejects_removed_provider_overrides(flag: str) -> None:
+    with pytest.raises(SystemExit):
+        parse_cli([flag, "removed"])
 
 
 def test_parsing_does_not_materialize_storage(
@@ -289,7 +331,9 @@ def test_non_positive_cli_limit_is_rejected(
     clear_provider_environment(monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(tmp_path / "config"))
+    config_home = tmp_path / "config"
+    write_provider_config(config_home)
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
 
     options = parse_args(["--cwd", str(workspace), "--max-steps", "0"])
     with pytest.raises(ValueError, match="max_steps must be a positive integer"):
@@ -302,7 +346,9 @@ def test_max_steps_is_unlimited_by_default(
     clear_provider_environment(monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(tmp_path / "config"))
+    config_home = tmp_path / "config"
+    write_provider_config(config_home)
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
 
     options = parse_args(["--cwd", str(workspace)])
 

@@ -108,7 +108,13 @@ from my_code.model.capabilities import (
 from my_code.model.primitives import ReasoningPresentation
 from my_code.permissions.models import PermissionMode
 from my_code.providers.discovery import ModelDiscoveryService, resolve_without_network
-from my_code.providers.manager import ProviderManager, ProviderUpdate, ProviderView
+from my_code.providers.manager import (
+    ProviderManager,
+    ProviderProbeRequest,
+    ProviderProbeResult,
+    ProviderUpdate,
+    ProviderView,
+)
 from my_code.providers.router import ProviderConnection
 from my_code.runtime.state import AppState
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
@@ -829,9 +835,39 @@ class ChatService:
                 )
             return view
 
-    async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
+    async def probe_provider(
+        self, request: ProviderProbeRequest
+    ) -> ProviderProbeResult:
+        """Probe temporary connection details without mutating runtime or storage."""
+
+        return await self.provider_manager.probe(request)
+
+    async def select_provider(self, provider_id: str) -> RuntimeStatus:
         async with self.state.operation_lock():
-            connection = self.provider_manager.configure(update)
+            connection = self.provider_manager.select_provider(provider_id)
+            descriptor = resolve_without_network(
+                connection.protocol,
+                connection.base_url,
+                connection.model,
+                connection.limits,
+            )
+            environment = resolve_environment(
+                descriptor,
+                requested_output_tokens=self.settings.max_output_tokens,
+                configured_trigger_tokens=connection.compact.trigger_input_tokens,
+            )
+            await self.state.provider.switch(connection, environment)
+            return self.status()
+
+    async def configure_provider(
+        self,
+        update: ProviderUpdate,
+        probe_result: ProviderProbeResult | None = None,
+    ) -> RuntimeStatus:
+        async with self.state.operation_lock():
+            connection = self.provider_manager.configure(
+                update, probe_result=probe_result
+            )
             descriptor = resolve_without_network(
                 connection.protocol,
                 connection.base_url,

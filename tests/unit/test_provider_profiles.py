@@ -53,7 +53,11 @@ def test_provider_catalog_requires_supported_protocol(tmp_path: Path) -> None:
 
 def test_provider_id_is_safe_for_configuration_keys() -> None:
     with pytest.raises(ProviderProfileError, match="provider ID"):
-        ProviderProfile(id="../escape", model="model")
+        ProviderProfile(
+            id="../escape",
+            protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
+            model="model",
+        )
 
 
 def test_v2_profile_loads_reasoning_disabled_and_writes_v3(tmp_path: Path) -> None:
@@ -102,6 +106,7 @@ def test_profile_rejects_compact_threshold_above_known_input_limit() -> None:
     with pytest.raises(ProviderProfileError, match="exceeds"):
         ProviderProfile(
             id="openai",
+            protocol=ProviderProtocol.OPENAI_RESPONSES,
             model="custom",
             limits=ModelLimits(max_input_tokens=10_000),
             compact=CompactConfig(10_001),

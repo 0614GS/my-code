@@ -40,7 +40,9 @@ from my_code.chat.permissions import PermissionRequest
 from my_code.chat.service import ChatService
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import SubagentTaskView
+from my_code.config.validation import validate_base_url
 from my_code.features.file_mentions.models import PathSuggestion
+from my_code.model.primitives import validate_provider_id
 from my_code.permissions.models import (
     PermissionConfirmation,
 )
@@ -57,8 +59,11 @@ from my_code.tui.panels import (
     full_access_panel,
     permission_panel,
     provider_actions_panel,
+    provider_checking_panel,
     provider_form_panel,
     provider_models_panel,
+    provider_probe_failure_panel,
+    provider_protocol_panel,
     provider_remove_credential_panel,
     provider_review_panel,
     provider_select_panel,
@@ -80,6 +85,7 @@ from my_code.tui.provider_screen import (
     PROVIDER_ADVANCED_FIELDS,
     PROVIDER_CORE_FIELDS,
     ProviderForm,
+    ProviderWizard,
 )
 from my_code.tui.terminal import terminal_supports_true_color
 from my_code.tui.theme import TuiTheme
@@ -134,6 +140,8 @@ class MyCodeApp(TurnFlowMixin):
         self._sessions: tuple[SessionSummary, ...] = ()
         self._providers: tuple[ProviderView, ...] = ()
         self._provider_form: ProviderForm | None = None
+        self._provider_wizard: ProviderWizard | None = None
+        self._provider_probe_task: asyncio.Task[object] | None = None
         self._provider_selected_index = 0
         self._provider_fields = PROVIDER_CORE_FIELDS
         self._provider_field = 0
@@ -326,7 +334,9 @@ class MyCodeApp(TurnFlowMixin):
             "provider_actions",
             "provider_remove_credential",
             "provider_review",
-            "provider_models",
+            "provider_protocol",
+            "provider_probe_failure",
+            "provider_checking",
             "agents",
         }:
             return True
@@ -482,6 +492,8 @@ class MyCodeApp(TurnFlowMixin):
             return content if isinstance(content, PickerView) else None
         if self._panel == "provider_select":
             return provider_select_panel(self._providers)
+        if self._panel == "provider_protocol":
+            return provider_protocol_panel()
         if self._panel == "provider_actions" and self._providers:
             return provider_actions_panel(
                 self._providers[self._provider_selected_index]
@@ -491,9 +503,27 @@ class MyCodeApp(TurnFlowMixin):
                 self._providers[self._provider_selected_index]
             )
         if self._panel == "provider_review" and self._provider_form is not None:
-            return provider_review_panel(self._provider_form)
+            return provider_review_panel(
+                self._provider_form,
+                connection_verified=(
+                    self._provider_wizard.connection_verified
+                    if self._provider_wizard is not None
+                    else False
+                ),
+            )
+        if self._panel == "provider_probe_failure":
+            result = (
+                self._provider_wizard.probe_result
+                if self._provider_wizard is not None
+                else None
+            )
+            return provider_probe_failure_panel(
+                result.error_message
+                if result and result.error_message
+                else "Unknown error"
+            )
         if self._panel == "provider_models":
-            return provider_models_panel(self._provider_models)
+            return provider_models_panel(self._provider_models, self.buffer.text)
         if self._panel == "agents" and self._agent_task_id is None:
             return agent_select_panel(self._agents)
         return None
@@ -517,6 +547,8 @@ class MyCodeApp(TurnFlowMixin):
                 self.buffer.text,
                 self._provider_models,
             )
+        if self._panel == "provider_checking":
+            return provider_checking_panel()
         if self._panel == "agents":
             return self._agent_panel_text()
         return ""
@@ -811,6 +843,9 @@ class MyCodeApp(TurnFlowMixin):
         if self._panel == "agents":
             self._agent_task_id = None
         self._panel = None
+        if self._provider_wizard is not None:
+            self._provider_wizard.clear_sensitive()
+        self._provider_wizard = None
         self._provider_form = None
         self.buffer.set_document(
             Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
@@ -855,7 +890,11 @@ class MyCodeApp(TurnFlowMixin):
         elif self._panel == "provider_select" and action is not None:
             if action == "add":
                 self._provider_selected_index = -1
-                self._start_provider_form(ProviderForm())
+                self._provider_wizard = ProviderWizard.new()
+                self._provider_form = self._provider_wizard.form
+                self._panel = "provider_protocol"
+                self._panel_index = 0
+                self._invalidate()
             else:
                 provider_id = action.removeprefix("provider:")
                 self._provider_selected_index = next(
@@ -870,10 +909,15 @@ class MyCodeApp(TurnFlowMixin):
         elif self._panel == "provider_actions" and action is not None:
             provider = self._providers[self._provider_selected_index]
             if action == "use":
-                self._provider_form = ProviderForm.from_view(provider)
-                await self._save_provider()
+                await self._select_provider(provider.id)
             elif action == "configure":
-                self._start_provider_form(ProviderForm.from_view(provider))
+                self._provider_wizard = ProviderWizard.edit(provider)
+                self._provider_form = self._provider_wizard.form
+                self._panel = "provider_protocol"
+                self._panel_index = (
+                    0 if provider.protocol.value == "anthropic-messages" else 1
+                )
+                self._invalidate()
             elif action == "remove":
                 self._panel = "provider_remove_credential"
                 self._panel_index = 1
@@ -885,24 +929,53 @@ class MyCodeApp(TurnFlowMixin):
                 await self._remove_provider_credential()
             else:
                 self._provider_back()
+        elif self._panel == "provider_protocol" and action is not None:
+            assert self._provider_form is not None
+            self._provider_form.protocol = action
+            self._start_provider_connection_form()
         elif self._panel == "provider_form":
             await self._advance_provider(1)
         elif self._panel == "provider_review" and action is not None:
             if action == "save":
                 await self._save_provider()
-            elif action == "discover":
-                await self._refresh_provider()
+            elif action == "models":
+                if (
+                    self._provider_wizard is not None
+                    and self._provider_wizard.probe_result is not None
+                ):
+                    self._show_probe_models()
+                else:
+                    self._start_provider_form(
+                        self._provider_form, fields=(("model", "Model"),)
+                    )
             elif action == "advanced":
                 self._start_provider_form(
                     self._provider_form, fields=PROVIDER_ADVANCED_FIELDS
                 )
             else:
-                self._panel = "provider_select"
-                self._panel_index = max(self._provider_selected_index, 0)
-                self._invalidate()
+                self._cancel_provider_wizard()
+        elif self._panel == "provider_probe_failure" and action is not None:
+            if action == "retry":
+                await self._probe_provider()
+            elif action in {"base_url", "api_key"}:
+                self._start_provider_connection_form()
+                self._provider_field = next(
+                    i
+                    for i, (name, _label) in enumerate(self._provider_fields)
+                    if name == action
+                )
+                self._load_provider_field()
+            elif action == "manual":
+                self._start_provider_form(
+                    self._provider_form, fields=(("model", "Model"),)
+                )
+            else:
+                self._cancel_provider_wizard()
         elif self._panel == "provider_models" and action is not None:
             assert self._provider_form is not None
             self._provider_form.model = action
+            if self._provider_wizard is not None:
+                self._provider_wizard.model_filter = ""
             self._panel = "provider_review"
             self._panel_index = 0
             self.buffer.set_document(Document(""), bypass_readonly=True)
@@ -929,6 +1002,13 @@ class MyCodeApp(TurnFlowMixin):
         self._panel = "provider_form"
         self._load_provider_field()
 
+    def _start_provider_connection_form(self) -> None:
+        wizard = self._provider_wizard
+        if wizard is None:
+            return
+        fields = PROVIDER_CORE_FIELDS[1:] if wizard.editing else PROVIDER_CORE_FIELDS
+        self._start_provider_form(wizard.form, fields=fields)
+
     def _load_provider_field(self) -> None:
         assert self._provider_form is not None
         name = self._provider_fields[self._provider_field][0]
@@ -942,12 +1022,31 @@ class MyCodeApp(TurnFlowMixin):
             return
         name = self._provider_fields[self._provider_field][0]
         setattr(form, name, self.buffer.text)
+        try:
+            if name == "provider_id":
+                validate_provider_id(form.provider_id.strip())
+            elif name == "base_url" and form.base_url.strip():
+                validate_base_url(form.base_url.strip())
+            elif name == "api_key" and any(
+                character.isspace() for character in form.api_key.strip()
+            ):
+                raise ValueError("API key must not contain whitespace")
+        except ValueError as error:
+            await self._write(system_message(f"Invalid provider: {error}", error=True))
+            return
         target = self._provider_field + offset
         if target >= len(self._provider_fields):
-            self._panel = "provider_review"
-            self._panel_index = 0
-            self.buffer.set_document(Document(""), bypass_readonly=True)
-            self._invalidate()
+            if self._provider_fields in {
+                PROVIDER_CORE_FIELDS,
+                PROVIDER_CORE_FIELDS[1:],
+            }:
+                await self._probe_provider()
+            elif self._provider_fields == (("model", "Model"),):
+                if self._provider_wizard is not None:
+                    self._provider_wizard.use_manual_model(form.model)
+                self._open_provider_review()
+            else:
+                self._open_provider_review()
             return
         self._provider_field = max(0, target)
         self._load_provider_field()
@@ -980,12 +1079,77 @@ class MyCodeApp(TurnFlowMixin):
         self.buffer.set_document(Document(""), bypass_readonly=True)
         self._invalidate()
 
+    async def _probe_provider(self) -> None:
+        wizard = self._provider_wizard
+        if wizard is None:
+            return
+        try:
+            request = wizard.probe_request()
+        except Exception as error:
+            await self._write(system_message(f"Invalid provider: {error}", error=True))
+            return
+        self._panel = "provider_checking"
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._provider_probe_task = cast(asyncio.Task[object], asyncio.current_task())
+        self._invalidate()
+        try:
+            result = await self.runtime.probe_provider(request)
+        except asyncio.CancelledError:
+            self._start_provider_connection_form()
+            self._provider_field = len(self._provider_fields) - 1
+            self._load_provider_field()
+            return
+        finally:
+            self._provider_probe_task = None
+        wizard.accept_probe(result)
+        if result.succeeded:
+            self._show_probe_models()
+        else:
+            self._panel = "provider_probe_failure"
+            self._panel_index = 0
+            self._invalidate()
+
+    def _show_probe_models(self) -> None:
+        wizard = self._provider_wizard
+        if wizard is None or wizard.probe_result is None:
+            return
+        wizard.model_filter = ""
+        self._provider_models = wizard.filtered_models()
+        self._panel = "provider_models"
+        self._panel_index = next(
+            (
+                i
+                for i, model in enumerate(self._provider_models)
+                if model == wizard.form.model
+            ),
+            0,
+        )
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._invalidate()
+
+    def _open_provider_review(self) -> None:
+        self._panel = "provider_review"
+        self._panel_index = 0
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._invalidate()
+
     async def _save_provider(self) -> None:
         form = self._provider_form
         if form is None:
             return
         try:
-            status = await self.runtime.configure_provider(form.build_update())
+            update = (
+                self._provider_wizard.build_update()
+                if self._provider_wizard is not None
+                else form.build_update()
+            )
+            probe_result = (
+                self._provider_wizard.probe_result
+                if self._provider_wizard is not None
+                and self._provider_wizard.connection_verified
+                else None
+            )
+            status = await self.runtime.configure_provider(update, probe_result)
         except Exception as error:
             await self._write(
                 system_message(f"Provider configuration failed: {error}", error=True)
@@ -994,6 +1158,9 @@ class MyCodeApp(TurnFlowMixin):
         self._status = status
         self._context_status = self.runtime.context_status()
         self._panel = None
+        if self._provider_wizard is not None:
+            self._provider_wizard.clear_sensitive()
+        self._provider_wizard = None
         self._provider_form = None
         self.buffer.set_document(
             Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
@@ -1002,6 +1169,21 @@ class MyCodeApp(TurnFlowMixin):
             system_message(f"Using provider {status.provider_id!r} · {status.model}")
         )
         self._invalidate()
+
+    async def _select_provider(self, provider_id: str) -> None:
+        try:
+            status = await self.runtime.select_provider(provider_id)
+        except Exception as error:
+            await self._write(
+                system_message(f"Provider selection failed: {error}", error=True)
+            )
+            return
+        self._status = status
+        self._context_status = self.runtime.context_status()
+        self._close_panel()
+        await self._write(
+            system_message(f"Using provider {status.provider_id!r} · {status.model}")
+        )
 
     async def _remove_provider_credential(self) -> None:
         provider = self._providers[self._provider_selected_index]
@@ -1013,7 +1195,6 @@ class MyCodeApp(TurnFlowMixin):
                 system_message(f"Failed to remove saved API key: {error}", error=True)
             )
             return
-        refreshed = next(item for item in providers if item.id == provider.id)
         self._status = status
         self._context_status = self.runtime.context_status()
         self._providers = providers
@@ -1021,16 +1202,10 @@ class MyCodeApp(TurnFlowMixin):
         self.buffer.set_document(
             Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
         )
-        if refreshed.credential_source.value == "environment":
-            message = (
-                f"Saved API key for {provider.id!r} removed. "
-                "An environment API key remains active."
-            )
-        else:
-            message = (
-                f"Saved API key for {provider.id!r} removed. "
-                "The provider is now not configured."
-            )
+        message = (
+            f"Saved API key for {provider.id!r} removed. "
+            "The provider is now not configured."
+        )
         await self._write(system_message(message))
         self._invalidate()
 
@@ -1044,13 +1219,58 @@ class MyCodeApp(TurnFlowMixin):
         elif self._panel == "provider_models":
             self._panel = "provider_review"
             self._panel_index = 1
-        elif self._panel in {"provider_form", "provider_review"}:
-            if self._provider_selected_index >= 0:
-                self._panel = "provider_actions"
-                self._panel_index = 1
+        elif self._panel == "provider_checking":
+            if self._provider_probe_task is not None:
+                self._provider_probe_task.cancel()
+            return
+        elif self._panel == "provider_probe_failure":
+            self._start_provider_connection_form()
+            self._provider_field = len(self._provider_fields) - 1
+            self._load_provider_field()
+            return
+        elif self._panel == "provider_form":
+            if self._provider_fields in {
+                PROVIDER_CORE_FIELDS,
+                PROVIDER_CORE_FIELDS[1:],
+            }:
+                self._panel = "provider_protocol"
+                self._panel_index = (
+                    0
+                    if self._provider_form is not None
+                    and self._provider_form.protocol == "anthropic-messages"
+                    else 1
+                )
             else:
-                self._panel = "provider_select"
-                self._panel_index = len(self._providers)
+                self._open_provider_review()
+                return
+        elif self._panel == "provider_review":
+            if (
+                self._provider_wizard is not None
+                and self._provider_wizard.probe_result is not None
+            ):
+                self._show_probe_models()
+            else:
+                self._start_provider_form(
+                    self._provider_form, fields=(("model", "Model"),)
+                )
+            return
+        elif self._panel == "provider_protocol":
+            self._cancel_provider_wizard()
+            return
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._invalidate()
+
+    def _cancel_provider_wizard(self) -> None:
+        if self._provider_wizard is not None:
+            self._provider_wizard.clear_sensitive()
+        self._provider_wizard = None
+        self._provider_form = None
+        if self._provider_selected_index >= 0:
+            self._panel = "provider_actions"
+            self._panel_index = 1
+        else:
+            self._panel = "provider_select"
+            self._panel_index = len(self._providers)
         self.buffer.set_document(Document(""), bypass_readonly=True)
         self._invalidate()
 
@@ -1133,6 +1353,14 @@ class MyCodeApp(TurnFlowMixin):
             future.set_result(result)
 
     def _on_text_changed(self, _: Buffer) -> None:
+        if self._panel == "provider_models":
+            wizard = self._provider_wizard
+            if wizard is not None:
+                wizard.model_filter = self.buffer.text
+                self._provider_models = wizard.filtered_models()
+                self._panel_index = 0
+                self._invalidate()
+            return
         if self._panel is not None or self._busy:
             return
         self._slash_menu.update(self.buffer.text, self.commands)

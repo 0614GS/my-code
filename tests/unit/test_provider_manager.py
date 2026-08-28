@@ -29,6 +29,7 @@ def test_configure_persists_profile_key_and_active_selection(tmp_path: Path) -> 
     connection = manager.configure(
         ProviderUpdate(
             id="company-gateway",
+            protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
             model="compatible-model",
             base_url="https://gateway.example/anthropic",
             api_key="secret-key",
@@ -58,6 +59,7 @@ def test_blank_key_update_preserves_existing_provider_key(tmp_path: Path) -> Non
     manager.configure(
         ProviderUpdate(
             id="anthropic",
+            protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
             model="first-model",
             base_url=None,
             api_key="secret-key",
@@ -67,6 +69,7 @@ def test_blank_key_update_preserves_existing_provider_key(tmp_path: Path) -> Non
     manager.configure(
         ProviderUpdate(
             id="anthropic",
+            protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
             model="second-model",
             base_url=None,
             api_key=None,
@@ -86,6 +89,7 @@ def test_provider_views_never_expose_key_value(tmp_path: Path) -> None:
     manager.configure(
         ProviderUpdate(
             id="anthropic",
+            protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
             model="model",
             base_url=None,
             api_key="secret-key",
@@ -99,23 +103,47 @@ def test_provider_views_never_expose_key_value(tmp_path: Path) -> None:
     assert "secret-key" not in repr(view)
 
 
-def test_provider_view_reports_environment_without_exposing_value(
+def test_provider_view_ignores_environment_credentials(
     tmp_path: Path,
 ) -> None:
-    _manager, paths = make_manager(tmp_path)
+    original_manager, paths = make_manager(tmp_path)
+    original_manager.configure(
+        ProviderUpdate(
+            id="anthropic",
+            protocol=ProviderProtocol.ANTHROPIC_MESSAGES,
+            model="model",
+            base_url=None,
+        )
+    )
     manager = ProviderManager(paths, environ={"ANTHROPIC_API_KEY": "environment-key"})
 
     view = manager.list("anthropic")[0]
 
-    assert view.credential_source is CredentialSource.ENVIRONMENT
+    assert view.credential_source is CredentialSource.NONE
     assert view.has_stored_key is False
     assert "environment-key" not in repr(view)
 
 
 def test_delete_credential_only_removes_the_target_profile(tmp_path: Path) -> None:
     manager, paths = make_manager(tmp_path)
-    manager.configure(ProviderUpdate("anthropic", "model-a", None, "key-a"))
-    manager.configure(ProviderUpdate("other", "model-b", None, "key-b"))
+    manager.configure(
+        ProviderUpdate(
+            "anthropic",
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            "model-a",
+            None,
+            "key-a",
+        )
+    )
+    manager.configure(
+        ProviderUpdate(
+            "other",
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            "model-b",
+            None,
+            "key-b",
+        )
+    )
 
     assert manager.delete_credential("anthropic") is True
     assert manager.delete_credential("anthropic") is False
@@ -130,7 +158,7 @@ def test_delete_credential_rejects_unknown_provider(tmp_path: Path) -> None:
         manager.delete_credential("missing")
 
 
-def test_openai_profile_uses_protocol_specific_environment(tmp_path: Path) -> None:
+def test_openai_profile_ignores_protocol_specific_environment(tmp_path: Path) -> None:
     manager, paths = make_manager(tmp_path)
     manager = ProviderManager(
         paths,
@@ -151,6 +179,6 @@ def test_openai_profile_uses_protocol_specific_environment(tmp_path: Path) -> No
     )
 
     assert connection.protocol is ProviderProtocol.OPENAI_RESPONSES
-    assert connection.api_key == "openai-key"
-    assert connection.model == "gpt-env"
-    assert connection.base_url == "https://openai.example/v1"
+    assert connection.api_key is None
+    assert connection.model == "gpt-stored"
+    assert connection.base_url is None

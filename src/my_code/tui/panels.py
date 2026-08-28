@@ -9,6 +9,7 @@ from prompt_toolkit.utils import get_cwidth
 
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.views import SubagentTaskView
+from my_code.config.providers import ANTHROPIC_API_BASE_URL, OPENAI_API_BASE_URL
 from my_code.providers.manager import ProviderView
 from my_code.sessions.catalog import SessionSummary
 from my_code.tui.picker import PickerRow, PickerState, PickerView
@@ -128,7 +129,7 @@ def provider_actions_panel(provider: ProviderView) -> PickerView:
     actions.append(PickerRow("back", "Back"))
     detail = (
         f"{provider.id} · {provider.protocol.value} · {provider.model}\n"
-        f"{provider.base_url or 'SDK default URL'} · "
+        f"{provider.base_url or _official_url(provider.protocol.value)} · "
         f"{_credential_label(provider)}"
     )
     return PickerView(detail, tuple(actions), "↑↓ navigate · Enter select · Esc back")
@@ -138,8 +139,7 @@ def provider_remove_credential_panel(
     provider: ProviderView,
 ) -> PickerView:
     return PickerView(
-        f"Remove saved API key for {provider.id!r}?\n"
-        "Environment credentials are not affected.",
+        f"Remove saved API key for {provider.id!r}?",
         (
             PickerRow("remove", "Remove saved API key"),
             PickerRow("cancel", "Cancel"),
@@ -172,10 +172,46 @@ def provider_form_panel(
     )
 
 
-def provider_review_panel(form: ProviderForm) -> PickerView:
+def provider_protocol_panel() -> PickerView:
+    return PickerView(
+        "Choose a provider protocol",
+        (
+            PickerRow("anthropic-messages", "Anthropic Messages"),
+            PickerRow("openai-responses", "OpenAI Responses"),
+        ),
+        "↑↓ navigate · Enter confirm · Esc cancel",
+    )
+
+
+def provider_probe_failure_panel(message: str) -> PickerView:
+    return PickerView(
+        f"Connection check failed\n{message}",
+        (
+            PickerRow("retry", "Retry"),
+            PickerRow("base_url", "Edit Base URL"),
+            PickerRow("api_key", "Edit API Key"),
+            PickerRow("manual", "Enter model manually"),
+            PickerRow("cancel", "Cancel"),
+        ),
+        "↑↓ navigate · Enter select · Esc back",
+    )
+
+
+def provider_checking_panel() -> FormattedText:
+    return FormattedText(
+        [
+            ("class:heading", "Checking connection / Discovering models…"),
+            ("class:secondary", " · Esc cancel"),
+        ]
+    )
+
+
+def provider_review_panel(
+    form: ProviderForm, *, connection_verified: bool = False
+) -> PickerView:
     actions = (
         PickerRow("save", "Save & use"),
-        PickerRow("discover", "Discover models"),
+        PickerRow("models", "Back to models"),
         PickerRow("advanced", "Advanced settings"),
         PickerRow("back", "Back to profiles"),
     )
@@ -183,15 +219,16 @@ def provider_review_panel(form: ProviderForm) -> PickerView:
         "Review provider\n"
         f"{form.provider_id or '<provider id>'} · "
         f"{form.protocol} · {form.model or '<model>'}\n"
-        f"{form.base_url or 'SDK default URL'} · "
-        f"{'new key entered' if form.api_key else 'keep saved key'}"
+        f"{form.base_url or _official_url(form.protocol)} · "
+        f"{'new key entered' if form.api_key else 'keep saved key / no key'}\n"
+        f"{'Connection verified' if connection_verified else 'Connection not verified'}"
     )
     return PickerView(detail, actions, "↑↓ navigate · Enter select · Esc cancel")
 
 
-def provider_models_panel(models: tuple[str, ...]) -> PickerView:
+def provider_models_panel(models: tuple[str, ...], filter_text: str = "") -> PickerView:
     return PickerView(
-        "Choose a model",
+        f"Choose a model\nFilter: {filter_text}",
         tuple(PickerRow(model, model) for model in models),
         "↑↓ navigate · Enter select · Esc back",
     )
@@ -202,11 +239,17 @@ def _message(title: str, hint: str) -> FormattedText:
 
 
 def _credential_label(provider: ProviderView) -> str:
-    if provider.credential_source.value == "environment":
-        return "environment"
     if provider.credential_source.value == "stored":
         return "stored"
     return "not configured"
+
+
+def _official_url(protocol: str) -> str:
+    return (
+        OPENAI_API_BASE_URL
+        if protocol == "openai-responses"
+        else ANTHROPIC_API_BASE_URL
+    )
 
 
 def render_picker(
@@ -261,6 +304,9 @@ __all__ = [
     "provider_actions_panel",
     "provider_form_panel",
     "provider_models_panel",
+    "provider_protocol_panel",
+    "provider_probe_failure_panel",
+    "provider_checking_panel",
     "provider_remove_credential_panel",
     "provider_review_panel",
     "provider_select_panel",

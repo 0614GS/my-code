@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from openai import AsyncOpenAI, BadRequestError
 
-from my_code.config.providers import ReasoningConfig
+from my_code.config.providers import OPENAI_API_BASE_URL, ReasoningConfig
 from my_code.foundation.json import JsonObject, to_json_object
 from my_code.model.capabilities import ProviderCapabilities
 from my_code.model.client import ModelClient
@@ -190,7 +190,10 @@ class OpenAIResponsesProvider(ModelClient):
         reasoning: ReasoningConfig | None = None,
     ) -> None:
         self.model = model
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.client = AsyncOpenAI(
+            api_key=api_key if api_key is not None else "",
+            base_url=base_url or OPENAI_API_BASE_URL,
+        )
         self.binding = ProviderBinding("openai-responses", provider_id, model, base_url)
         self.reasoning = reasoning or ReasoningConfig()
 

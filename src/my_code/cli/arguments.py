@@ -24,12 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--cwd", type=Path, default=Path.cwd(), help="workspace root")
-    parser.add_argument("--model", help="model override")
     parser.add_argument("--provider", help="named provider profile override")
-    parser.add_argument(
-        "--base-url",
-        help="provider API base URL override",
-    )
     parser.add_argument(
         "--permission-mode",
         choices=[mode.value for mode in PermissionMode],
@@ -54,8 +49,6 @@ def parse_cli(argv: list[str] | None = None) -> CliOptions:
         session_id=namespace.session_id,
         settings_overrides=SettingsOverrides(
             provider_id=namespace.provider,
-            model=namespace.model,
-            base_url=namespace.base_url,
             permission_mode=(
                 PermissionMode(namespace.permission_mode)
                 if namespace.permission_mode is not None

@@ -45,7 +45,7 @@ my-code 不追求逐项追平 Claude Code，也不会机械翻译其实现。参
 
 ## 快速开始
 
-需要 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和一个受支持 Provider 的 API Key。
+需要 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和一个受支持的 Provider。
 
 ```bash
 git clone https://github.com/0614GS/my-code.git
@@ -54,11 +54,9 @@ uv tool install .
 mycode
 ```
 
-首次启动后输入 `/provider` 配置 Provider、模型和 API Key。也可以临时使用环境变量：
+首次启动会先打开 Provider 向导；完成或选择一个 profile 后才会创建聊天运行时。向导支持 Anthropic Messages 与 OpenAI Responses，使用模型目录接口检查连接，不发送推理请求。进入聊天后可用 `/provider` 再次打开同一配置流程。
 
-```bash
-ANTHROPIC_API_KEY=your-key mycode
-```
+Provider 的协议、Base URL 和默认模型只来自 `~/.my-code/providers.json`，API Key 只保存在私有的 `~/.my-code/.credentials.json`，当前选择只保存在 `settings.json.activeProvider`。Provider 环境变量以及旧的 `--model`、`--base-url` 和 `agent.model` 均不再支持；迁移旧配置时请把模型移动到对应 profile 的 `defaultModel`。
 
 键入 `/` 查看可用命令；使用 `@path` 将文件或目录加入对话。
 

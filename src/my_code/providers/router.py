@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from my_code.auth.credentials import CredentialSource
@@ -23,7 +23,7 @@ class ProviderConnection:
     protocol: ProviderProtocol
     model: str
     base_url: str | None
-    api_key: str | None
+    api_key: str | None = field(repr=False)
     credential_source: CredentialSource
     reasoning: ReasoningConfig = ReasoningConfig()
     limits: ModelLimits = ModelLimits()

@@ -5,9 +5,13 @@ from pathlib import Path
 import pytest
 
 from my_code.auth.credentials import CredentialStore, CredentialStoreError
-from my_code.config.paths import MyCodePaths, SettingsScope
-from my_code.config.providers import ProviderProfile, ProviderProfileStore
-from my_code.config.store import SettingsFileError, SettingsLayer, SettingsStore
+from my_code.config.paths import MyCodePaths
+from my_code.config.providers import (
+    ProviderProfile,
+    ProviderProfileStore,
+    ProviderProtocol,
+)
+from my_code.config.store import SettingsFileError, SettingsStore
 from my_code.conversation.models import HumanMessage
 from my_code.sessions._store import SessionStore
 from my_code.sessions.catalog import SessionCatalog
@@ -21,7 +25,7 @@ def _paths(tmp_path: Path) -> MyCodePaths:
     return MyCodePaths(workspace.resolve(), tmp_path / "config")
 
 
-def test_settings_v3_preserves_unknown_nested_fields_and_rejects_v2(
+def test_settings_v3_rejects_removed_agent_model_and_v2(
     tmp_path: Path,
 ) -> None:
     paths = _paths(tmp_path)
@@ -37,14 +41,8 @@ def test_settings_v3_preserves_unknown_nested_fields_and_rejects_v2(
         encoding="utf-8",
     )
 
-    SettingsStore(paths).write(
-        SettingsScope.USER,
-        SettingsLayer(model="new"),
-    )
-
-    document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
-    assert document["agent"] == {"model": "new", "futureAgent": True}
-    assert document["futureRoot"] == {"enabled": True}
+    with pytest.raises(SettingsFileError, match="defaultModel"):
+        SettingsStore(paths).load()
 
     paths.user_settings_path.write_text(
         json.dumps({"version": 2, "agent": {"model": "legacy"}}), encoding="utf-8"
@@ -71,7 +69,9 @@ def test_provider_and_credentials_preserve_unknown_fields(tmp_path: Path) -> Non
         ),
         encoding="utf-8",
     )
-    ProviderProfileStore(profile_path).write((ProviderProfile("anthropic", "new"),))
+    ProviderProfileStore(profile_path).write(
+        (ProviderProfile("anthropic", ProviderProtocol.ANTHROPIC_MESSAGES, "new"),)
+    )
     profile_document = json.loads(profile_path.read_text(encoding="utf-8"))
     assert profile_document["futureRoot"] == 1
     assert profile_document["providers"]["anthropic"]["futureProfile"] is True
@@ -93,7 +93,7 @@ def test_provider_and_credentials_preserve_unknown_fields(tmp_path: Path) -> Non
         ),
         encoding="utf-8",
     )
-    CredentialStore(credential_path).save_api_key("new")
+    CredentialStore(credential_path).save_api_key("new", "anthropic")
     credential_document = json.loads(credential_path.read_text(encoding="utf-8"))
     assert credential_document["futureRoot"] == 2
     assert credential_document["providers"]["anthropic"]["futureCredential"] is True

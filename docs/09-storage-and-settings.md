@@ -14,7 +14,7 @@
 ├── skills/<name>/SKILL.md
 ├── providers.json
 ├── .credentials.json
-├── model-cache/
+├── .model-catalog.json
 └── projects/<workspace-key>/
     └── <session-id>.jsonl
 
@@ -36,9 +36,31 @@
 
 ## Settings 合并
 
-`SettingsStore` 按 user、project、local 顺序叠加持久配置；入口 `SettingsOverrides` 再覆盖允许的运行参数。`SettingsResolver` 结合活动 provider profile、环境变量、凭据和模型能力，生成不可变 `AgentSettings` 快照。
+`SettingsStore` 按 user、project、local 顺序叠加持久配置；入口 `SettingsOverrides` 只能临时选择一个已存在的 Provider profile，不能覆盖 profile 内容。`SettingsResolver` 结合活动 profile、私有凭据和模型能力，生成不可变 `AgentSettings` 快照。
 
-Provider endpoint、protocol、默认 model、reasoning、limits 和 compact 配置属于 `providers.json`。项目 settings 可以覆盖 Agent model 等运行参数，但不保存 API key。
+Provider protocol、Base URL、默认 model、reasoning、limits 和 compact 配置只属于 `providers.json`。API Key 只属于 `.credentials.json`，当前选择只属于用户级 `settings.json.activeProvider`。新用户的 `providers` 目录为空，`settings.json` 不写 `activeProvider`；首次启动必须先完成向导。`agent.model`、`--model` 和 `--base-url` 已删除，旧 `agent.model` 会返回迁移错误，不能由项目 settings 覆盖模型。
+
+最小 `~/.my-code/providers.json` 如下；`reasoning`、`limits` 和 `compact` 可省略：
+
+```json
+{
+  "version": 3,
+  "providers": {
+    "openai": {
+      "protocol": "openai-responses",
+      "defaultModel": "gpt-5.4"
+    }
+  }
+}
+```
+
+对应的 `~/.my-code/settings.json`：
+
+```json
+{"version": 3, "activeProvider": "openai"}
+```
+
+空 `baseUrl` 分别使用 `https://api.anthropic.com` 和 `https://api.openai.com/v1`。自定义网关可以不保存 Key；官方 Endpoint 缺少 Key 会在在线探查时报告认证失败。
 
 工具调度配置位于 settings 的 `tools` 域：`tools.maxParallelCalls` 必须是正整数，默认值为 4；设为 1 会关闭 ToolRound 内的实际重叠执行。它只限制并发上限，不会把默认不安全的 Tool 改为安全。
 
@@ -77,7 +99,9 @@ MCP 配置位于 `mcp` 域，`enabled` 默认 `false`。每个 `servers.<name>` 
 
 ## 凭据
 
-`auth.credentials.CredentialStore` 只处理私有凭据文件。解析顺序由 provider/protocol 和环境变量决定，并返回 `ResolvedCredential` 说明来源。Provider TUI 显示 `environment`、`stored` 或 `not configured`，保存和删除都只操作目标 profile 的本地 Key；环境变量始终优先且不会被删除。删除当前 Provider 的本地 Key 后，runtime 会立即重新解析并切换连接。任何 status、history、日志或 Session record 都不能包含 API key。
+`auth.credentials.CredentialStore` 只处理私有凭据文件，并返回 `stored` 或 `none` 来源。`MY_CODE_PROVIDER`、`MY_CODE_API_KEY`、`ANTHROPIC_*` 和 `OPENAI_*` 不参与 Provider、模型、URL 或 Key 解析；SDK client 也总是收到显式 Key 和显式解析后的 URL，不能自行回读这些环境变量。Provider TUI 保存和删除都只操作目标 profile 的本地 Key；删除当前 Provider 的 Key 后，runtime 会立即重新解析并切换连接。任何 status、history、日志、探查结果或 Session record 都不能包含 API Key。
+
+在线 `probe()` 每次只调用对应协议的模型目录 API，不使用缓存兜底，也不发送可能计费的生成请求。成功仅表示 Endpoint、认证和目录 API 可用，不保证所选模型一定支持 Messages/Responses 生成。启动期能力解析仍可使用无凭据缓存或本地能力；探查失败时可重试、编辑连接或手工输入模型，手工模型会明确标记为“Connection not verified”。未保存的探查不写 profile、凭据或缓存。
 
 ## 写入语义
 

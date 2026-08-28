@@ -12,9 +12,9 @@ from my_code.config.validation import validate_base_url
 from my_code.model.capabilities import ModelLimits
 from my_code.model.primitives import validate_provider_id
 
-DEFAULT_PROVIDER_ID = "anthropic"
-DEFAULT_MODEL = "claude-sonnet-4-6"
 _SCHEMA_VERSION = 3
+ANTHROPIC_API_BASE_URL = "https://api.anthropic.com"
+OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
 
 class ProviderProfileError(ValueError):
@@ -65,8 +65,8 @@ class ProviderProfile:
     """构造模型 provider 适配器所需的非敏感设置。"""
 
     id: str
+    protocol: ProviderProtocol
     model: str
-    protocol: ProviderProtocol = ProviderProtocol.ANTHROPIC_MESSAGES
     base_url: str | None = None
     reasoning: ReasoningConfig = ReasoningConfig()
     limits: ModelLimits = ModelLimits()
@@ -143,13 +143,13 @@ class ProviderProfileStore:
             )
         return result
 
-    def ensure_exists(self, default: ProviderProfile) -> bool:
-        """创建包含 ``default`` 的目录，并返回它是否为新建。"""
+    def ensure_empty_exists(self) -> bool:
+        """Create an empty catalog without inventing a provider profile."""
 
         if self.path.exists():
             self.load()
             return False
-        self.write((default,))
+        self.write(())
         return True
 
     def write(self, profiles: Iterable[ProviderProfile]) -> None:
@@ -202,18 +202,23 @@ def _parse_profile(
     if legacy:
         reasoning = ReasoningConfig(enabled=False)
     else:
-        if not isinstance(reasoning_raw, dict):
-            raise ProviderProfileError(f"provider reasoning must be an object: {path}")
-        enabled = reasoning_raw.get("enabled")
-        effort = reasoning_raw.get("effort")
-        context = reasoning_raw.get("context", "auto")
-        if (
-            not isinstance(enabled, bool)
-            or not isinstance(effort, str)
-            or not isinstance(context, str)
-        ):
-            raise ProviderProfileError(f"invalid provider reasoning config: {path}")
-        reasoning = ReasoningConfig(enabled, effort, context)
+        if reasoning_raw is None:
+            reasoning = ReasoningConfig()
+        else:
+            if not isinstance(reasoning_raw, dict):
+                raise ProviderProfileError(
+                    f"provider reasoning must be an object: {path}"
+                )
+            enabled = reasoning_raw.get("enabled", True)
+            effort = reasoning_raw.get("effort", "auto")
+            context = reasoning_raw.get("context", "auto")
+            if (
+                not isinstance(enabled, bool)
+                or not isinstance(effort, str)
+                or not isinstance(context, str)
+            ):
+                raise ProviderProfileError(f"invalid provider reasoning config: {path}")
+            reasoning = ReasoningConfig(enabled, effort, context)
     limits = ModelLimits()
     compact = CompactConfig()
     if token_schema:
@@ -313,13 +318,13 @@ def atomic_private_json_write(path: Path, document: object) -> None:
 
 
 __all__ = [
+    "ANTHROPIC_API_BASE_URL",
     "CompactConfig",
-    "DEFAULT_MODEL",
-    "DEFAULT_PROVIDER_ID",
     "ProviderProfile",
     "ProviderProfileError",
     "ProviderProfileStore",
     "ProviderProtocol",
+    "OPENAI_API_BASE_URL",
     "ReasoningConfig",
     "atomic_private_json_write",
 ]

@@ -18,7 +18,11 @@ from my_code.bootstrap import (
     main,
 )
 from my_code.config.paths import MyCodePaths
-from my_code.config.providers import ProviderProfileStore
+from my_code.config.providers import (
+    ProviderProfile,
+    ProviderProfileStore,
+    ProviderProtocol,
+)
 from my_code.config.settings import AgentSettings
 from my_code.config.store import McpServerSettingsLayer
 from my_code.foundation.json import JsonObject
@@ -273,10 +277,9 @@ def test_bootstrap_creates_required_user_layout_only(tmp_path: Path) -> None:
     assert result.created_credentials is True
     assert json.loads(paths.user_settings_path.read_text(encoding="utf-8")) == {
         "version": 3,
-        "activeProvider": "anthropic",
     }
-    assert set(ProviderProfileStore(paths.providers_path).load()) == {"anthropic"}
-    assert CredentialStore(paths.credentials_path).load_api_key() is None
+    assert ProviderProfileStore(paths.providers_path).load() == {}
+    assert CredentialStore(paths.credentials_path).load_api_key("anthropic") is None
     assert paths.projects_dir.is_dir()
     assert not paths.project_settings_path.exists()
     assert stat.S_IMODE(paths.config_home.stat().st_mode) == 0o700
@@ -296,6 +299,22 @@ def test_bootstrap_is_idempotent_and_preserves_existing_profiles(
     assert result.created_providers is False
     assert result.created_credentials is False
     assert paths.providers_path.read_text(encoding="utf-8") == original
+
+
+def test_bootstrap_preserves_existing_historical_anthropic_profile(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    profile = ProviderProfile(
+        "anthropic",
+        ProviderProtocol.ANTHROPIC_MESSAGES,
+        "user-customized-model",
+    )
+    ProviderProfileStore(paths.providers_path).write((profile,))
+
+    initialize_user_storage(paths)
+
+    assert ProviderProfileStore(paths.providers_path).load() == {"anthropic": profile}
 
 
 def test_bootstrap_rejects_legacy_storage_without_modifying_it(

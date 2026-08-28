@@ -42,9 +42,14 @@ from my_code.chat.views import CapabilitiesView, SessionView, SubagentTaskView
 from my_code.config.providers import ProviderProtocol
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
+from my_code.model.capabilities import ModelDescriptor
 from my_code.model.primitives import ReasoningPresentation
 from my_code.permissions.models import PermissionConfirmation
-from my_code.providers.manager import ProviderUpdate, ProviderView
+from my_code.providers.manager import (
+    ProviderProbeResult,
+    ProviderUpdate,
+    ProviderView,
+)
 from my_code.sessions.catalog import SessionSummary
 from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.app import MyCodeApp
@@ -69,6 +74,7 @@ class FakeRuntime:
         self.permission_handler = None
         self.submitted = asyncio.Event()
         self.provider_updates: list[ProviderUpdate] = []
+        self.provider_selections: list[str] = []
         self.removed_credentials: list[str] = []
         self.has_stored_key = True
         self.credential_source = credential_source
@@ -164,9 +170,26 @@ class FakeRuntime:
             ),
         )
 
-    async def configure_provider(self, update: ProviderUpdate) -> RuntimeStatus:
+    async def configure_provider(
+        self, update: ProviderUpdate, probe_result=None
+    ) -> RuntimeStatus:
+        del probe_result
         self.provider_updates.append(update)
         return self.status()
+
+    async def select_provider(self, provider_id: str) -> RuntimeStatus:
+        self.provider_selections.append(provider_id)
+        return self.status()
+
+    async def probe_provider(self, request) -> ProviderProbeResult:
+        return ProviderProbeResult(
+            True,
+            (ModelDescriptor("model-x", "model-x"),),
+            "2026-08-28T00:00:00+00:00",
+            provider_id=request.provider_id,
+            protocol=request.protocol,
+            base_url=request.base_url,
+        )
 
     async def remove_provider_credential(self, provider_id: str) -> RuntimeStatus:
         self.removed_credentials.append(provider_id)
@@ -1228,7 +1251,8 @@ async def test_provider_picker_uses_enter_for_primary_actions() -> None:
     )
 
     await app._panel_enter()
-    assert [update.id for update in runtime.provider_updates] == ["anthropic"]
+    assert runtime.provider_selections == ["anthropic"]
+    assert runtime.provider_updates == []
     assert app._panel is None
     assert app.buffer.text == "draft"
 
@@ -1258,8 +1282,8 @@ async def test_provider_credential_removal_requires_confirmation_and_can_cancel(
 
 
 @pytest.mark.asyncio
-async def test_provider_credential_removal_reports_environment_override() -> None:
-    runtime = FakeRuntime(credential_source=CredentialSource.ENVIRONMENT)
+async def test_provider_credential_removal_reports_unconfigured_provider() -> None:
+    runtime = FakeRuntime(credential_source=CredentialSource.STORED)
     output = StringIO()
     app = MyCodeApp(
         runtime,  # type: ignore[arg-type]
@@ -1270,7 +1294,7 @@ async def test_provider_credential_removal_reports_environment_override() -> Non
     app._open_provider()
     await app._panel_enter()
     actions = fragment_list_to_text(to_formatted_text(app._panel_text()))
-    assert "environment" in actions
+    assert "stored" in actions
     assert "Remove saved API key" in actions
     app._panel_index = 2
     await app._panel_enter()
@@ -1280,7 +1304,7 @@ async def test_provider_credential_removal_reports_environment_override() -> Non
     assert runtime.removed_credentials == ["anthropic"]
     assert app._panel is None
     assert app.buffer.text == "draft"
-    assert "environment API key remains active" in output.getvalue()
+    assert "now not configured" in output.getvalue()
 
 
 def test_provider_panel_reports_not_configured_without_remove_action() -> None:
@@ -1305,24 +1329,29 @@ def test_provider_panel_reports_not_configured_without_remove_action() -> None:
 async def test_provider_configuration_has_core_review_and_optional_advanced_steps() -> (
     None
 ):
+    runtime = FakeRuntime()
     app = MyCodeApp(
-        FakeRuntime(),  # type: ignore[arg-type]
+        runtime,  # type: ignore[arg-type]
         output=DummyOutput(),
         console=Console(file=StringIO(), force_terminal=False),
     )
-    app._provider_selected_index = -1
-    app._start_provider_form(ProviderForm())
+    app._open_provider()
+    app._panel_index = 1
+    await app._panel_enter()
+    assert app._panel == "provider_protocol"
+    app._panel_index = 1
+    await app._panel_enter()
     core_values = (
         "gateway",
-        "openai-responses",
         "https://example.test/v1",
-        "model-x",
         "secret",
     )
     for value in core_values:
         app.buffer.text = value
         await app._panel_enter()
 
+    assert app._panel == "provider_models"
+    await app._panel_enter()
     assert app._panel == "provider_review"
     assert "Advanced settings" in fragment_list_to_text(
         to_formatted_text(app._panel_text())

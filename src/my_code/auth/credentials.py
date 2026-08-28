@@ -4,13 +4,12 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
 from my_code.model.primitives import validate_provider_id
 
-_DEFAULT_PROVIDER_ID = "anthropic"
 _SCHEMA_VERSION = 2
 
 
@@ -21,14 +20,13 @@ class CredentialStoreError(ValueError):
 class CredentialSource(StrEnum):
     """不暴露凭据本身的可观察凭据来源。"""
 
-    ENVIRONMENT = "environment"
     STORED = "stored"
     NONE = "none"
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedCredential:
-    api_key: str | None
+    api_key: str | None = field(repr=False)
     source: CredentialSource
 
 
@@ -38,16 +36,14 @@ class CredentialStore:
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def load_api_key(self, provider_id: str = _DEFAULT_PROVIDER_ID) -> str | None:
+    def load_api_key(self, provider_id: str) -> str | None:
         _validate_id(provider_id)
         if not self.path.exists():
             return None
         keys, _legacy = self._load_keys()
         return keys.get(provider_id)
 
-    def save_api_key(
-        self, api_key: str, provider_id: str = _DEFAULT_PROVIDER_ID
-    ) -> None:
+    def save_api_key(self, api_key: str, provider_id: str) -> None:
         _validate_id(provider_id)
         value = api_key.strip()
         if not value:
@@ -59,7 +55,7 @@ class CredentialStore:
         keys[provider_id] = value
         self._write_keys(keys)
 
-    def delete(self, provider_id: str = _DEFAULT_PROVIDER_ID) -> bool:
+    def delete(self, provider_id: str) -> bool:
         """删除一个 provider 的 key，同时保留凭据目录。"""
 
         _validate_id(provider_id)
@@ -189,22 +185,11 @@ def _validate_id(provider_id: str) -> None:
 
 def resolve_api_key(
     store: CredentialStore,
-    environ: Mapping[str, str] | None = None,
     *,
-    provider_id: str = _DEFAULT_PROVIDER_ID,
-    protocol: str = "anthropic-messages",
+    provider_id: str,
 ) -> ResolvedCredential:
-    """优先解析临时环境变量覆盖，其次使用持久化登录 key。"""
+    """Resolve a provider credential exclusively from private user storage."""
 
-    environment = os.environ if environ is None else environ
-    protocol_variable = (
-        "OPENAI_API_KEY" if protocol == "openai-responses" else "ANTHROPIC_API_KEY"
-    )
-    environment_key = environment.get("MY_CODE_API_KEY") or environment.get(
-        protocol_variable
-    )
-    if environment_key and environment_key.strip():
-        return ResolvedCredential(environment_key, CredentialSource.ENVIRONMENT)
     stored_key = store.load_api_key(provider_id)
     if stored_key is not None:
         return ResolvedCredential(stored_key, CredentialSource.STORED)

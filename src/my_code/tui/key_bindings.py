@@ -21,6 +21,8 @@ _NAVIGATION_PANELS = {
     "provider_remove_credential",
     "provider_review",
     "provider_models",
+    "provider_protocol",
+    "provider_probe_failure",
     "agents",
 }
 _PROVIDER_PANELS = {
@@ -29,6 +31,9 @@ _PROVIDER_PANELS = {
     "provider_form",
     "provider_review",
     "provider_models",
+    "provider_protocol",
+    "provider_probe_failure",
+    "provider_checking",
 }
 
 
@@ -208,12 +213,18 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
     @bindings.add("pageup")
     def agent_page_up(event: KeyPressEvent) -> None:
         del event
-        host._scroll_agent(20)
+        if host._panel == "provider_models":
+            host._move_panel(-8)
+        else:
+            host._scroll_agent(20)
 
     @bindings.add("pagedown")
     def agent_page_down(event: KeyPressEvent) -> None:
         del event
-        host._scroll_agent(-20)
+        if host._panel == "provider_models":
+            host._move_panel(8)
+        else:
+            host._scroll_agent(-20)
 
     @bindings.add("end")
     def agent_live_tail(event: KeyPressEvent) -> None:

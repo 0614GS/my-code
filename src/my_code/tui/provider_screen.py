@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from my_code.config.providers import CompactConfig, ProviderProtocol, ReasoningConfig
 from my_code.model.capabilities import ModelLimits
-from my_code.providers.manager import ProviderUpdate, ProviderView
+from my_code.providers.manager import (
+    ProviderProbeRequest,
+    ProviderProbeResult,
+    ProviderUpdate,
+    ProviderView,
+)
 
 
 @dataclass(slots=True)
@@ -24,7 +29,7 @@ class ProviderForm:
     reasoning_enabled: str = "yes"
     reasoning_effort: str = "auto"
     reasoning_context: str = "auto"
-    api_key: str = ""
+    api_key: str = field(default="", repr=False)
 
     @classmethod
     def from_view(cls, view: ProviderView) -> ProviderForm:
@@ -70,6 +75,16 @@ class ProviderForm:
             api_key=key,
         )
 
+    def build_update_for_probe(self) -> ProviderUpdate:
+        """Validate connection fields before a model has been selected."""
+
+        model = self.model
+        try:
+            self.model = "__probe__"
+            return self.build_update()
+        finally:
+            self.model = model
+
 
 PROVIDER_FIELDS: tuple[tuple[str, str], ...] = (
     ("provider_id", "Provider ID"),
@@ -91,12 +106,68 @@ PROVIDER_FIELDS: tuple[tuple[str, str], ...] = (
 # through twelve fields.
 PROVIDER_CORE_FIELDS: tuple[tuple[str, str], ...] = (
     PROVIDER_FIELDS[0],
-    PROVIDER_FIELDS[1],
     PROVIDER_FIELDS[2],
-    PROVIDER_FIELDS[3],
     PROVIDER_FIELDS[11],
 )
 PROVIDER_ADVANCED_FIELDS: tuple[tuple[str, str], ...] = PROVIDER_FIELDS[4:11]
+
+
+@dataclass(slots=True)
+class ProviderWizard:
+    """Reusable, storage-free state shared by setup and the in-chat panel."""
+
+    form: ProviderForm
+    editing: bool = False
+    original_id: str | None = None
+    probe_result: ProviderProbeResult | None = None
+    connection_verified: bool = False
+    model_filter: str = ""
+
+    @classmethod
+    def new(cls) -> ProviderWizard:
+        return cls(ProviderForm())
+
+    @classmethod
+    def edit(cls, view: ProviderView) -> ProviderWizard:
+        return cls(ProviderForm.from_view(view), True, view.id)
+
+    def probe_request(self) -> ProviderProbeRequest:
+        update = self.form.build_update_for_probe()
+        return ProviderProbeRequest(
+            provider_id=update.id,
+            protocol=update.protocol,
+            base_url=update.base_url,
+            api_key=update.api_key,
+            use_stored_key=self.editing and update.api_key is None,
+        )
+
+    def accept_probe(self, result: ProviderProbeResult) -> None:
+        self.probe_result = result
+        self.connection_verified = result.succeeded
+        self.model_filter = ""
+
+    def use_manual_model(self, model: str) -> None:
+        self.form.model = model.strip()
+        self.probe_result = None
+        self.connection_verified = False
+
+    def filtered_models(self) -> tuple[str, ...]:
+        if self.probe_result is None:
+            return ()
+        needle = self.model_filter.casefold()
+        return tuple(
+            item.id for item in self.probe_result.models if needle in item.id.casefold()
+        )
+
+    def build_update(self) -> ProviderUpdate:
+        if self.editing and self.original_id != self.form.provider_id.strip():
+            raise ValueError("Provider ID cannot be changed while editing")
+        return self.form.build_update()
+
+    def clear_sensitive(self) -> None:
+        self.form.api_key = ""
+        self.model_filter = ""
+        self.probe_result = None
 
 
 def _positive(value: str, label: str) -> int | None:
@@ -121,4 +192,5 @@ __all__ = [
     "PROVIDER_CORE_FIELDS",
     "PROVIDER_FIELDS",
     "ProviderForm",
+    "ProviderWizard",
 ]
