@@ -16,10 +16,17 @@ TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义�
 
 - delta 只存在于动态区；completed 到达后先清除预览，再把最终 Rich renderable 固化到 scrollback。
 - 连续 ToolCall 组成一个稳定有序块，并行完成只按 call ID 更新原位置，不重排。
+- `Edit`/`Write` 在底部动态区只显示紧凑状态和结果摘要；成功块固化到 scrollback
+  或从 Session 恢复时，展开持久化的内联 diff。权限确认、失败和取消路径不展开 diff。
 - 异常、取消、max-steps 和后台 continuation 使用同样的“移除动态副本后固化终态”边界。
 - 状态栏只在启动、turn 结束、Session 恢复或配置变化等安全边界刷新 context snapshot；重绘 callback 不重新执行 context 规划。
 
 恢复历史和实时事件使用相同的安全投影。工具展示优先使用执行时持久化的 presentation；TUI 不重新解释原始 Conversation 或读取外置结果文件。
+
+内联 diff 使用固定旧/新行号 gutter、增删整行背景、按扩展名选择的语法着色，并对
+相邻的小范围增删做保留空白的词级加深。长行按终端宽度折行且续行不重复行号；Tab
+按 4 列展开，控制字符转为可见文本。分离 hunk 和被裁剪区显示省略标记，最多消费
+presentation 中的 200 条代码行记录。
 
 ## Transcript 与 Agent 视图
 

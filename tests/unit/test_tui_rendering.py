@@ -17,13 +17,19 @@ from my_code.chat.views import (
     TranscriptValue,
     TranscriptView,
 )
-from my_code.conversation.presentation import ToolResultPresentation
+from my_code.conversation.presentation import (
+    FileDiffHunk,
+    FileDiffLine,
+    FileDiffPresentation,
+    ToolResultPresentation,
+)
 from my_code.features.todos.models import TodoItem
 from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.transcript import TranscriptPager, transcript_renderable
 from my_code.tui.widgets import (
     assistant_message,
+    file_diff_message,
     streaming_assistant_message,
     streaming_renderable,
     todo_snapshot,
@@ -37,6 +43,19 @@ def _plain(renderable: object, *, width: int = 80) -> str:
     console = Console(file=stream, width=width, force_terminal=False)
     console.print(renderable)
     return "\n".join(line.rstrip() for line in stream.getvalue().splitlines())
+
+
+def _ansi(renderable: object, *, width: int = 80) -> str:
+    stream = StringIO()
+    console = Console(
+        file=stream,
+        width=width,
+        force_terminal=True,
+        color_system="truecolor",
+        no_color=False,
+    )
+    console.print(renderable)
+    return stream.getvalue()
 
 
 def test_welcome_uses_a_compact_terminal_wordmark() -> None:
@@ -146,6 +165,93 @@ def test_tool_activity_keeps_launch_order_and_consecutive_category_runs() -> Non
     assert rendered.count("• Explored") == 2
     assert "• Ran commands" in rendered
     assert "× Bash" in rendered
+
+
+def test_file_diff_expands_only_in_final_tool_activity_and_sanitizes_text() -> None:
+    diff = FileDiffPresentation(
+        "src/example.py",
+        "updated",
+        1,
+        1,
+        (
+            FileDiffHunk(
+                9,
+                1,
+                9,
+                1,
+                (
+                    FileDiffLine("deletion", "value\t= 1\x1b", old_line=9),
+                    FileDiffLine("addition", "value\t= 2界", new_line=9),
+                ),
+            ),
+        ),
+    )
+    result = ToolResultPresentation("updated", file_diff=diff)
+    group = ToolActivityGroup()
+    group.start("edit", ToolUsePresentation("Edit", "example.py", "Editing", "change"))
+    group.finish("edit", result, is_error=False)
+
+    compact = _plain(tool_activity_message(group, expand_diffs=False), width=32)
+    expanded = _plain(tool_activity_message(group), width=32)
+    direct = _plain(file_diff_message(diff), width=32)
+
+    assert "value" not in compact
+    assert "Edited src/example.py (+1" in expanded
+    assert "-1)" in expanded
+    assert "value   = 2界" in expanded
+    assert "\\x1b" in expanded
+    assert direct == _plain(file_diff_message(diff), width=32)
+
+
+def test_diff_rendering_wraps_long_lines_without_repeating_line_number() -> None:
+    diff = FileDiffPresentation(
+        "x.txt",
+        "created",
+        1,
+        0,
+        (
+            FileDiffHunk(
+                0,
+                0,
+                12,
+                1,
+                (FileDiffLine("addition", "a very long line that wraps", new_line=12),),
+            ),
+        ),
+    )
+
+    rendered = _plain(file_diff_message(diff), width=20)
+
+    assert rendered.count("12 +") == 1
+    assert "Created x.txt (+1" in rendered
+
+
+def test_diff_rendering_uses_line_and_word_backgrounds() -> None:
+    diff = FileDiffPresentation(
+        "x.py",
+        "updated",
+        1,
+        1,
+        (
+            FileDiffHunk(
+                1,
+                1,
+                1,
+                1,
+                (
+                    FileDiffLine("deletion", "value = 1", old_line=1),
+                    FileDiffLine("addition", "value = 2", new_line=1),
+                ),
+            ),
+        ),
+    )
+
+    rendered = _ansi(file_diff_message(diff))
+
+    assert "48;2;74;31;36" in rendered
+    assert "48;2;118;45;56" in rendered
+    assert "48;2;18;61;39" in rendered
+    assert "48;2;31;99;61" in rendered
 
 
 def test_todo_snapshot_is_ephemeral_complete_and_supports_empty_state() -> None:

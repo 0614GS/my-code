@@ -10,6 +10,11 @@ from my_code.tools.base import (
     ToolExecutionError,
     ToolOutput,
 )
+from my_code.tools.builtin.file_diff import (
+    build_file_diff,
+    file_diff_from_json,
+    file_diff_to_json,
+)
 from my_code.tools.builtin.file_permissions import check_write_permission
 from my_code.tools.paths import relative_display_path, resolve_workspace_path
 from my_code.tools.validation import optional_bool, required_string
@@ -59,7 +64,8 @@ class EditFileTool(Tool):
         replacements = output.metadata.get("replacements")
         if isinstance(path, str) and isinstance(replacements, int):
             return ToolResultPresentation(
-                summary=f"Replaced {replacements} occurrence(s) in {path}"
+                summary=f"Replaced {replacements} occurrence(s) in {path}",
+                file_diff=file_diff_from_json(output.metadata.get("file_diff")),
             )
         return super().present_result({}, output)
 
@@ -91,10 +97,17 @@ class EditFileTool(Tool):
                 "or provide more context"
             )
         limit = -1 if replace_all else 1
-        context.workspace.write_text(path, content.replace(old, new, limit))
+        updated = content.replace(old, new, limit)
+        context.workspace.write_text(path, updated)
         replacements = count if replace_all else 1
         display_path = relative_display_path(context.cwd, path)
         return ToolOutput(
             content=f"Replaced {replacements} occurrence(s) in {display_path}",
-            metadata={"path": display_path, "replacements": replacements},
+            metadata={
+                "path": display_path,
+                "replacements": replacements,
+                "file_diff": file_diff_to_json(
+                    build_file_diff(display_path, content, updated, created=False)
+                ),
+            },
         )

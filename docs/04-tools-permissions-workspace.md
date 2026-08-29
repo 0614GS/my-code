@@ -33,6 +33,12 @@ ToolCall
 
 校验后的输入分别以隔离副本传给 permission、audit、hook、presentation 和执行逻辑，观察型扩展不能原地修改持久化 ToolCall 或获准输入。`ToolExecutor` 返回完整领域结果，不绑定活动 Session 或结果目录；大结果外置和 durable presentation 由 Session 提交事务处理。
 
+`Edit` 和 `Write` 在文件写入成功后，根据本次写入前后的 UTF-8 内容生成结构化
+`FileDiffPresentation`。它只描述该次工具调用，不读取 Git 状态；完整增删统计与最多
+200 条的展示记录分离。比较采用 3 行上下文，展示超限时优先裁剪上下文并保留变更首尾；
+任一侧超过 2 MiB 或 50,000 行时跳过高成本比较，记录明确的省略原因。失败、权限拒绝
+和取消结果不携带 diff。
+
 拒绝、验证失败、执行异常和取消都必须形成与原 call ID 配对的错误结果。权限更新先持久化目标配置，再替换 runtime policy；写入失败时当前权限不改变。
 
 ## ToolRound 与并行

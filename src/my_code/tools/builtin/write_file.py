@@ -5,6 +5,11 @@ from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.builtin.file_diff import (
+    build_file_diff,
+    file_diff_from_json,
+    file_diff_to_json,
+)
 from my_code.tools.builtin.file_permissions import check_write_permission
 from my_code.tools.paths import relative_display_path, resolve_workspace_path
 from my_code.tools.validation import required_string
@@ -51,7 +56,10 @@ class WriteFileTool(Tool):
         path = output.metadata.get("path")
         byte_count = output.metadata.get("byte_count")
         if isinstance(path, str) and isinstance(byte_count, int):
-            return ToolResultPresentation(summary=f"Wrote {byte_count} bytes to {path}")
+            return ToolResultPresentation(
+                summary=f"Wrote {byte_count} bytes to {path}",
+                file_diff=file_diff_from_json(output.metadata.get("file_diff")),
+            )
         return super().present_result({}, output)
 
     def validate_input(self, tool_input: JsonObject) -> None:
@@ -65,10 +73,18 @@ class WriteFileTool(Tool):
         content = required_string(tool_input, "content", allow_empty=True)
         if path.exists() and not path.is_file():
             raise IsADirectoryError(path)
+        created = not path.exists()
+        before = "" if created else context.workspace.read_text(path)
         context.workspace.write_text(path, content, create_parents=True)
         display_path = relative_display_path(context.cwd, path)
         byte_count = len(content.encode("utf-8"))
         return ToolOutput(
             content=f"Wrote {byte_count} bytes to {display_path}",
-            metadata={"path": display_path, "byte_count": byte_count},
+            metadata={
+                "path": display_path,
+                "byte_count": byte_count,
+                "file_diff": file_diff_to_json(
+                    build_file_diff(display_path, before, content, created=created)
+                ),
+            },
         )

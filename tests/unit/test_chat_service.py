@@ -47,7 +47,12 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
-from my_code.conversation.presentation import ToolResultPresentation
+from my_code.conversation.presentation import (
+    FileDiffHunk,
+    FileDiffLine,
+    FileDiffPresentation,
+    ToolResultPresentation,
+)
 from my_code.conversation.state import CompactBoundary
 from my_code.features.background_tasks.registry import BackgroundTask
 from my_code.features.subagents.wake import BackgroundTaskWakeSignal
@@ -757,18 +762,46 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
     )
     user = HumanMessage(content="read it")
     assistant = AssistantMessage(
-        content=(ToolCall("read-1", "Read", {"path": "old.py"}),),
+        content=(
+            ToolCall(
+                "edit-1",
+                "Edit",
+                {
+                    "path": "old.py",
+                    "old_string": "old",
+                    "new_string": "new",
+                },
+            ),
+        ),
         usage=TokenUsage(),
         parent_uuid=user.uuid,
     )
     snapshot = ToolResultPresentation(
-        summary="Historical read summary",
+        summary="Historical edit summary",
         detail="Stored at execution time",
+        file_diff=FileDiffPresentation(
+            "old.py",
+            "updated",
+            1,
+            1,
+            (
+                FileDiffHunk(
+                    1,
+                    1,
+                    1,
+                    1,
+                    (
+                        FileDiffLine("deletion", "old", old_line=1),
+                        FileDiffLine("addition", "new", new_line=1),
+                    ),
+                ),
+            ),
+        ),
     )
     result = ToolResultBatch(
         content=(
             ToolResult(
-                "read-1",
+                "edit-1",
                 "model-visible historical content",
                 snapshot,
             ),
@@ -785,12 +818,12 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
     assert resumed.history == (
         HistoryText("user", "read it"),
         HistoryToolCall(
-            tool_use_id="read-1",
+            tool_use_id="edit-1",
             use=ToolUsePresentation(
-                display_name="Read",
+                display_name="Edit",
                 summary="old.py",
-                activity="Reading old.py",
-                category="explore",
+                activity="Editing old.py",
+                category="change",
             ),
             result=snapshot,
             is_error=False,

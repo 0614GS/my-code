@@ -14,7 +14,12 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
-from my_code.conversation.presentation import ToolResultPresentation
+from my_code.conversation.presentation import (
+    FileDiffHunk,
+    FileDiffLine,
+    FileDiffPresentation,
+    ToolResultPresentation,
+)
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.primitives import (
     ProviderBinding,
@@ -447,6 +452,59 @@ def test_tool_presentation_is_embedded_in_the_conversation_result(
     )
     assert not any(entry["type"] == "tool_presentation" for entry in document)
     assert result_record["content"][0]["presentation"]["summary"] == "Read x"
+
+
+def test_file_diff_presentation_round_trips_in_v5_and_is_strict(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    human, assistant, results, _ = _chain()
+    diff = FileDiffPresentation(
+        "x.py",
+        "updated",
+        1,
+        1,
+        (
+            FileDiffHunk(
+                1,
+                1,
+                1,
+                1,
+                (
+                    FileDiffLine("deletion", "old", old_line=1),
+                    FileDiffLine("addition", "new", new_line=1),
+                ),
+            ),
+        ),
+        True,
+        False,
+    )
+    presentation = ToolResultPresentation("Edited x.py", file_diff=diff)
+    store.append(human)
+    store.append(assistant)
+    store.append_message(
+        ToolResultBatch(
+            (ToolResult("call", "value", presentation),),
+            assistant.uuid,
+            uuid=results.uuid,
+            parent_uuid=assistant.uuid,
+            timestamp=results.timestamp,
+        )
+    )
+
+    restored = store.load().conversation[-1]
+    assert isinstance(restored, ToolResultBatch)
+    assert restored.content[0].presentation == presentation
+    documents = [json.loads(line) for line in store.path.read_text().splitlines()]
+    record = next(item for item in documents if item["type"] == "tool_result_batch")
+    assert record["schema_version"] == 5
+    record["content"][0]["presentation"]["file_diff"]["unexpected"] = True
+    store.path.write_text(
+        "".join(json.dumps(item) + "\n" for item in documents), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="Invalid fields"):
+        store.load()
 
 
 def test_legacy_tool_presentation_sidecar_is_hydrated_into_result(

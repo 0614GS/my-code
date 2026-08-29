@@ -32,6 +32,9 @@ from my_code.conversation.models import (
     ToolResultBatch,
 )
 from my_code.conversation.presentation import (
+    FileDiffHunk,
+    FileDiffLine,
+    FileDiffPresentation,
     ToolResultPresentation,
     generic_tool_result_presentation,
 )
@@ -528,11 +531,7 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
     else:
         base.update(
             tool_use_id=entry.tool_use_id,
-            presentation={
-                "summary": entry.presentation.summary,
-                "detail": entry.presentation.detail,
-                "truncated": entry.presentation.truncated,
-            },
+            presentation=_tool_presentation_json(entry.presentation),
         )
     return base
 
@@ -809,11 +808,7 @@ def _result_json(block: ToolResultRecord) -> JsonObject:
         "is_error": block.is_error,
     }
     if block.presentation is not None:
-        result["presentation"] = {
-            "summary": block.presentation.summary,
-            "detail": block.presentation.detail,
-            "truncated": block.presentation.truncated,
-        }
+        result["presentation"] = _tool_presentation_json(block.presentation)
     return result
 
 
@@ -1122,6 +1117,22 @@ def _positive_int(data: Mapping[str, object], key: str) -> int:
     return value
 
 
+def _non_negative_int(data: Mapping[str, object], key: str) -> int:
+    value = data.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise TranscriptDecodeError(f"{key!r} must be a non-negative integer")
+    return value
+
+
+def _nullable_positive_int(data: Mapping[str, object], key: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise TranscriptDecodeError(f"{key!r} must be positive or null")
+    return value
+
+
 def _optional_positive_int(data: Mapping[str, object], key: str) -> int | None:
     value = data.get(key)
     if value is None:
@@ -1259,17 +1270,7 @@ def _result(value: object) -> ToolResultRecord:
     presentation = None
     raw = data.get("presentation")
     if raw is not None:
-        item = _object(raw)
-        _require_exact_fields(item, frozenset({"summary", "detail", "truncated"}))
-        detail = item.get("detail")
-        truncated = item.get("truncated", False)
-        if detail is not None and not isinstance(detail, str):
-            raise TranscriptDecodeError("presentation detail must be string or null")
-        if not isinstance(truncated, bool):
-            raise TranscriptDecodeError("presentation truncated must be boolean")
-        presentation = ToolResultPresentation(
-            _string(item, "summary"), detail, truncated
-        )
+        presentation = _tool_presentation(raw)
     return ToolResultRecord(
         _string(data, "tool_use_id"), _string(data, "content"), error, presentation
     )
@@ -1277,14 +1278,149 @@ def _result(value: object) -> ToolResultRecord:
 
 def _tool_presentation(value: object) -> ToolResultPresentation:
     item = _object(value)
-    _require_exact_fields(item, frozenset({"summary", "detail", "truncated"}))
+    expected = {"summary", "detail", "truncated"}
+    if "file_diff" in item:
+        expected.add("file_diff")
+    _require_exact_fields(item, frozenset(expected))
     detail = item.get("detail")
     truncated = item.get("truncated")
     if detail is not None and not isinstance(detail, str):
         raise TranscriptDecodeError("presentation detail must be string or null")
     if not isinstance(truncated, bool):
         raise TranscriptDecodeError("presentation truncated must be boolean")
-    return ToolResultPresentation(_string(item, "summary"), detail, truncated)
+    diff = _file_diff(item["file_diff"]) if "file_diff" in item else None
+    try:
+        return ToolResultPresentation(_string(item, "summary"), detail, truncated, diff)
+    except (TypeError, ValueError) as error:
+        raise TranscriptDecodeError(str(error)) from error
+
+
+def _tool_presentation_json(presentation: ToolResultPresentation) -> JsonObject:
+    result: JsonObject = {
+        "summary": presentation.summary,
+        "detail": presentation.detail,
+        "truncated": presentation.truncated,
+    }
+    if presentation.file_diff is not None:
+        result["file_diff"] = _file_diff_json(presentation.file_diff)
+    return result
+
+
+def _file_diff_json(diff: FileDiffPresentation) -> JsonObject:
+    return {
+        "path": diff.path,
+        "operation": diff.operation,
+        "additions": diff.additions,
+        "deletions": diff.deletions,
+        "hunks": [
+            {
+                "old_start": hunk.old_start,
+                "old_count": hunk.old_count,
+                "new_start": hunk.new_start,
+                "new_count": hunk.new_count,
+                "lines": [
+                    {
+                        "kind": line.kind,
+                        "text": line.text,
+                        "old_line": line.old_line,
+                        "new_line": line.new_line,
+                        "omitted_lines": line.omitted_lines,
+                    }
+                    for line in hunk.lines
+                ],
+            }
+            for hunk in diff.hunks
+        ],
+        "old_ends_with_newline": diff.old_ends_with_newline,
+        "new_ends_with_newline": diff.new_ends_with_newline,
+        "omitted_lines": diff.omitted_lines,
+        "omitted_reason": diff.omitted_reason,
+    }
+
+
+def _file_diff(value: object) -> FileDiffPresentation:
+    item = _object(value)
+    _require_exact_fields(
+        item,
+        frozenset(
+            {
+                "path",
+                "operation",
+                "additions",
+                "deletions",
+                "hunks",
+                "old_ends_with_newline",
+                "new_ends_with_newline",
+                "omitted_lines",
+                "omitted_reason",
+            }
+        ),
+    )
+    operation = _string(item, "operation")
+    if operation not in {"created", "updated"}:
+        raise TranscriptDecodeError("Unsupported file diff operation")
+    hunks: list[FileDiffHunk] = []
+    for raw_hunk in _list(item, "hunks"):
+        hunk = _object(raw_hunk)
+        _require_exact_fields(
+            hunk,
+            frozenset({"old_start", "old_count", "new_start", "new_count", "lines"}),
+        )
+        lines: list[FileDiffLine] = []
+        for raw_line in _list(hunk, "lines"):
+            line = _object(raw_line)
+            _require_exact_fields(
+                line,
+                frozenset({"kind", "text", "old_line", "new_line", "omitted_lines"}),
+            )
+            kind = _string(line, "kind")
+            if kind not in {"context", "addition", "deletion", "omitted"}:
+                raise TranscriptDecodeError("Unsupported file diff line kind")
+            text = line.get("text")
+            if not isinstance(text, str):
+                raise TranscriptDecodeError("file diff line text must be a string")
+            try:
+                lines.append(
+                    FileDiffLine(
+                        kind,  # type: ignore[arg-type]
+                        text,
+                        _nullable_positive_int(line, "old_line"),
+                        _nullable_positive_int(line, "new_line"),
+                        _non_negative_int(line, "omitted_lines"),
+                    )
+                )
+            except (TypeError, ValueError) as error:
+                raise TranscriptDecodeError(str(error)) from error
+        try:
+            hunks.append(
+                FileDiffHunk(
+                    _non_negative_int(hunk, "old_start"),
+                    _non_negative_int(hunk, "old_count"),
+                    _non_negative_int(hunk, "new_start"),
+                    _non_negative_int(hunk, "new_count"),
+                    tuple(lines),
+                )
+            )
+        except (TypeError, ValueError) as error:
+            raise TranscriptDecodeError(str(error)) from error
+    old_newline = item.get("old_ends_with_newline")
+    new_newline = item.get("new_ends_with_newline")
+    if not isinstance(old_newline, bool) or not isinstance(new_newline, bool):
+        raise TranscriptDecodeError("file diff newline flags must be booleans")
+    try:
+        return FileDiffPresentation(
+            _string(item, "path"),
+            operation,  # type: ignore[arg-type]
+            _non_negative_int(item, "additions"),
+            _non_negative_int(item, "deletions"),
+            tuple(hunks),
+            old_newline,
+            new_newline,
+            _non_negative_int(item, "omitted_lines"),
+            _optional_non_empty_string(item, "omitted_reason"),
+        )
+    except (TypeError, ValueError) as error:
+        raise TranscriptDecodeError(str(error)) from error
 
 
 def _usage(value: object) -> TokenUsage:

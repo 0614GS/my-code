@@ -424,7 +424,9 @@ class MyCodeApp(TurnFlowMixin):
             fragments.extend(
                 to_formatted_text(
                     streaming_renderable(
-                        tool_activity_message(self._tool_activity, tail=6),
+                        tool_activity_message(
+                            self._tool_activity, tail=6, expand_diffs=False
+                        ),
                         self.console.width,
                     )
                 )

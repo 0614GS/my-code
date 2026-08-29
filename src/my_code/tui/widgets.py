@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+from difflib import SequenceMatcher
 from functools import lru_cache
 from io import StringIO
-from typing import Protocol
+from typing import Literal, Protocol
 
 from prompt_toolkit.formatted_text import ANSI
 from rich import box
@@ -42,12 +44,78 @@ from my_code.tui.dimensions import SURFACE_VERTICAL_PADDING
 from my_code.tui.theme import TuiTheme
 
 
+class FileDiffLineView(Protocol):
+    @property
+    def kind(self) -> Literal["context", "addition", "deletion", "omitted"]: ...
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def old_line(self) -> int | None: ...
+
+    @property
+    def new_line(self) -> int | None: ...
+
+    @property
+    def omitted_lines(self) -> int: ...
+
+
+class FileDiffHunkView(Protocol):
+    @property
+    def old_start(self) -> int: ...
+
+    @property
+    def old_count(self) -> int: ...
+
+    @property
+    def new_start(self) -> int: ...
+
+    @property
+    def new_count(self) -> int: ...
+
+    @property
+    def lines(self) -> tuple[FileDiffLineView, ...]: ...
+
+
+class FileDiffPresentationView(Protocol):
+    @property
+    def path(self) -> str: ...
+
+    @property
+    def operation(self) -> Literal["created", "updated"]: ...
+
+    @property
+    def additions(self) -> int: ...
+
+    @property
+    def deletions(self) -> int: ...
+
+    @property
+    def hunks(self) -> tuple[FileDiffHunkView, ...]: ...
+
+    @property
+    def old_ends_with_newline(self) -> bool: ...
+
+    @property
+    def new_ends_with_newline(self) -> bool: ...
+
+    @property
+    def omitted_lines(self) -> int: ...
+
+    @property
+    def omitted_reason(self) -> str | None: ...
+
+
 class ToolResultPresentationView(Protocol):
     @property
     def summary(self) -> str: ...
 
     @property
     def detail(self) -> str | None: ...
+
+    @property
+    def file_diff(self) -> FileDiffPresentationView | None: ...
 
 
 def welcome(status: RuntimeStatus, theme: TuiTheme | None = None) -> RenderableType:
@@ -226,7 +294,7 @@ def tool_message(
     result: ToolResultPresentationView,
     *,
     is_error: bool,
-) -> Text:
+) -> RenderableType:
     marker = "×" if is_error else "✓"
     line = Text.assemble(
         (f"{marker} ", "bold red" if is_error else "bold green"),
@@ -236,11 +304,16 @@ def tool_message(
     )
     if is_error and result.detail:
         line.append(f"\n     {result.detail}", style="red")
+    if not is_error and result.file_diff is not None:
+        return Group(line, file_diff_message(result.file_diff))
     return line
 
 
 def tool_activity_message(
-    activity: ToolActivityGroup, *, tail: int | None = None
+    activity: ToolActivityGroup,
+    *,
+    tail: int | None = None,
+    expand_diffs: bool = True,
 ) -> RenderableType:
     items = activity.items[-tail:] if tail is not None else activity.items
     renderables: list[RenderableType] = []
@@ -255,11 +328,11 @@ def tool_activity_message(
         if item.use.category != previous_category:
             renderables.append(Text(f"• {labels[item.use.category]}", style="bold"))
             previous_category = item.use.category
-        renderables.append(_tool_activity_item(item))
+        renderables.append(_tool_activity_item(item, expand_diff=expand_diffs))
     return Group(*renderables)
 
 
-def _tool_activity_item(item: ToolActivityItem) -> Text:
+def _tool_activity_item(item: ToolActivityItem, *, expand_diff: bool) -> RenderableType:
     if item.running:
         marker, marker_style = "·", "bright_black"
     elif item.is_error:
@@ -275,7 +348,183 @@ def _tool_activity_item(item: ToolActivityItem) -> Text:
         text.append(f"\n    {item.result.summary}", "red" if item.is_error else "dim")
         if item.is_error and item.result.detail:
             text.append(f"\n    {item.result.detail}", "red")
+    diff = getattr(item.result, "file_diff", None)
+    if expand_diff and not item.is_error and diff is not None:
+        return Group(text, Padding(file_diff_message(diff), (0, 0, 0, 4)))
     return text
+
+
+def file_diff_message(
+    diff: FileDiffPresentationView, theme: TuiTheme | None = None
+) -> RenderableType:
+    """Render a persisted file diff without consulting the filesystem."""
+
+    theme = theme or TuiTheme.detect()
+    verb = "Created" if diff.operation == "created" else "Edited"
+    title = (
+        Text(f"{verb} {diff.path} (diff omitted)", style="bold")
+        if diff.omitted_reason is not None
+        else Text.assemble(
+            (f"{verb} {diff.path} ", "bold"),
+            (f"(+{diff.additions}", "green"),
+            (f" -{diff.deletions})", "red"),
+        )
+    )
+    if diff.omitted_reason is not None:
+        return Group(title, Text(f"  … {diff.omitted_reason}", style="dim italic"))
+    if not diff.hunks:
+        detail = "No content changes"
+        if diff.old_ends_with_newline != diff.new_ends_with_newline:
+            detail = "End-of-file newline changed"
+        return Group(title, Text(f"  {detail}", style="dim"))
+
+    dark = theme.palette.background is None or (sum(theme.palette.background) < 3 * 160)
+    colors = (
+        ("#123d27", "#1f633d", "#4a1f24", "#762d38")
+        if dark
+        else ("#d9f2df", "#a8dfb5", "#f6dadd", "#ebb0b7")
+    )
+    max_line = max(
+        (
+            number
+            for hunk in diff.hunks
+            for line in hunk.lines
+            for number in (line.old_line, line.new_line)
+            if number is not None
+        ),
+        default=1,
+    )
+    width = len(str(max_line))
+    language = _diff_language(diff.path)
+    blocks: list[RenderableType] = [title]
+    for index, hunk in enumerate(diff.hunks):
+        if index:
+            blocks.append(Text("  …", style="dim"))
+        table = Table.grid(expand=True, padding=0)
+        table.add_column(width=width * 2 + 4, no_wrap=True)
+        table.add_column(ratio=1, overflow="fold")
+        word_ranges = _word_diff_ranges(hunk.lines)
+        for line_index, line in enumerate(hunk.lines):
+            if line.kind == "omitted":
+                table.add_row(
+                    Text("…".rjust(width * 2 + 3), style="dim"),
+                    Text(
+                        f"{line.omitted_lines} unchanged/change line(s) omitted", "dim"
+                    ),
+                )
+                continue
+            safe = _safe_diff_text(line.text)
+            marker = {"addition": "+", "deletion": "-", "context": " "}[line.kind]
+            old = "" if line.old_line is None else str(line.old_line)
+            new = "" if line.new_line is None else str(line.new_line)
+            gutter = Text(
+                f"{old:>{width}} {new:>{width}} {marker} ",
+                style=(
+                    "green"
+                    if line.kind == "addition"
+                    else "red"
+                    if line.kind == "deletion"
+                    else "dim"
+                ),
+            )
+            code = Syntax(
+                safe,
+                language,
+                theme="ansi_dark" if dark else "ansi_light",
+                background_color="default",
+            ).highlight(safe)
+            code.rstrip()
+            if line.kind == "context":
+                code.stylize("dim")
+                row_style = None
+            else:
+                background, deep = colors[:2] if line.kind == "addition" else colors[2:]
+                row_style = f"on {background}"
+                code.stylize(row_style)
+                for start, end in word_ranges.get(line_index, ()):
+                    code.stylize(f"on {deep}", start, end)
+            table.add_row(gutter, code, style=row_style)
+        blocks.append(table)
+    if diff.old_ends_with_newline != diff.new_ends_with_newline:
+        state = (
+            "Added newline at end of file"
+            if diff.new_ends_with_newline
+            else "No newline at end of file"
+        )
+        blocks.append(Text(f"  {state}", style="dim italic"))
+    if diff.omitted_lines:
+        blocks.append(
+            Text(f"  … {diff.omitted_lines} diff line(s) omitted", style="dim italic")
+        )
+    return Group(*blocks)
+
+
+def _diff_language(path: str) -> str:
+    try:
+        return Syntax.guess_lexer(path, "")
+    except Exception:
+        return "text"
+
+
+def _safe_diff_text(value: str) -> str:
+    expanded = value.expandtabs(4)
+    return "".join(
+        char
+        if char == " " or not unicodedata.category(char).startswith("C")
+        else f"\\x{ord(char):02x}"
+        for char in expanded
+    )
+
+
+def _word_diff_ranges(
+    lines: tuple[FileDiffLineView, ...],
+) -> dict[int, tuple[tuple[int, int], ...]]:
+    ranges: dict[int, tuple[tuple[int, int], ...]] = {}
+    index = 0
+    while index < len(lines):
+        if lines[index].kind != "deletion":
+            index += 1
+            continue
+        deleted_start = index
+        while index < len(lines) and lines[index].kind == "deletion":
+            index += 1
+        added_start = index
+        while index < len(lines) and lines[index].kind == "addition":
+            index += 1
+        for offset in range(min(added_start - deleted_start, index - added_start)):
+            old_index = deleted_start + offset
+            new_index = added_start + offset
+            old = _safe_diff_text(lines[old_index].text)
+            new = _safe_diff_text(lines[new_index].text)
+            old_tokens = _word_tokens(old)
+            new_tokens = _word_tokens(new)
+            matcher = SequenceMatcher(
+                None,
+                [token for token, _, _ in old_tokens],
+                [token for token, _, _ in new_tokens],
+                autojunk=False,
+            )
+            if 1.0 - matcher.ratio() > 0.4:
+                continue
+            old_ranges: list[tuple[int, int]] = []
+            new_ranges: list[tuple[int, int]] = []
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                if tag == "equal":
+                    continue
+                if i1 < i2:
+                    old_ranges.append((old_tokens[i1][1], old_tokens[i2 - 1][2]))
+                if j1 < j2:
+                    new_ranges.append((new_tokens[j1][1], new_tokens[j2 - 1][2]))
+            ranges[old_index] = tuple(old_ranges)
+            ranges[new_index] = tuple(new_ranges)
+    return ranges
+
+
+def _word_tokens(value: str) -> list[tuple[str, int, int]]:
+    return [
+        (match.group(), match.start(), match.end())
+        for match in re.finditer(r"\s+|\w+|[^\w\s]+", value)
+    ]
 
 
 def history_message(
@@ -337,6 +586,7 @@ __all__ = [
     "assistant_message",
     "CodexMarkdown",
     "capability_table",
+    "file_diff_message",
     "history_message",
     "reasoning_message",
     "status_line",

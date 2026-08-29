@@ -40,6 +40,11 @@ AssistantMessage(final text)
 
 Assistant tool calls 与对应 batch 之间不能插入 Attachment。每个 `ToolResult` 保存模型可见内容、错误标志和安全 presentation；调用者不维护另一份展示索引。
 
+文件写入结果可以在同一 presentation 中嵌入前端中立的结构化 diff，包括路径、
+created/updated、完整增删统计、hunk、旧新行号、文件末尾换行状态和省略计数。它随
+`ToolResult` 一同写入现有 v5 record；codec 兼容旧的三字段 presentation，并对带 diff
+的新嵌套结构逐层执行精确字段和类型校验。恢复只重放该持久化快照，不重新读取文件。
+
 Attachment 是否持久化由 Session 根据 payload 类型统一决定。显式文件、Skill 激活、invoked skills 和后台完成结果是 durable；Skill listing 和 Todo reminder 只存在于活动内存。非持久化 Attachment 不会成为 durable entry 的父节点，因此恢复后的因果链仍连续。
 
 ## Session 提交事务
