@@ -10,29 +10,33 @@
 
 首次交互前，AppState 并行启动可选的 MCP 与 Skill runtime。成功发现的能力只更新 application-lifetime `ToolCatalog`，不会把连接或扫描状态放进 Agent loop。
 
-## 一次 Turn
+## 一次 Invocation 与 step-boundary steering
 
 ```text
-ChatService.stream(prompt)
+ChatService.stream_interactive()
   -> 获取 AppState operation lock
-  -> 加载显式 attachment
-  -> AgentEngine.stream(Session, ContextRuntime, input)
-     -> Session 提交 HumanMessage
+  -> PendingInputController 并行准备 attachment
+  -> AgentEngine.stream_continuation(..., pending_source)
+     -> 首次请求前 drain 全部 ready input
+     -> Session.commit_user_inputs() 原子提交相邻 HumanMessage + durable attachment
      -> Step 1 捕获 ToolCatalogSnapshot / ToolExposureSnapshot
      -> 派生动态 Attachment 并由 Session 接受
      -> ContextEngine.plan(...) 生成 ModelRequest
      -> ModelClient.stream()
      -> 完整响应提交为 AssistantMessage
-     -> 无工具：结束 turn
+     -> 无工具：形成完整 step boundary；有 pending input 时提交并继续下一 step
      -> 有工具：使用同一 step 工具快照执行 ToolRound
         -> Session 原子提交 ToolResultBatch
         -> 提交成功调用产生的 Attachment
         -> 应用已验证的 session permission updates
-     -> Step 2..N 重新从最新 Session 状态规划
+     -> ToolResultBatch 与工具 attachment 原子闭合后形成 step boundary
+     -> 未耗尽 max_steps 时 drain pending input，再从最新 Session 状态规划
   -> ChatEvent 投影给 host
 ```
 
-模型的 text、reasoning 和 tool call 只有形成完整最终响应后才成为对话事实。流式 delta 可以先展示，但不会写入 Session。一个 turn 可以包含多个 step；`max_steps` 限制本 turn 的模型调用次数。
+模型的 text、reasoning 和 tool call 只有形成完整最终响应后才成为对话事实。流式 delta 可以先展示，但不会写入 Session。一次 invocation 可在多个完整 step 边界接收多条独立用户 steering message；这些消息保持 FIFO，不会插入 ToolCall 与 ToolResultBatch 之间。`max_steps` 限制单次 invocation 的模型调用次数；预算耗尽后未接受的输入由 host 在新 invocation 中继续处理。
+
+Headless `submit/stream` 不提供 pending source，保留单输入行为。前台与后台 continuation 共用活动 Session 的 pending source，因此用户输入会优先进入任一当前运行 invocation 的下一个安全边界。
 
 ## 工具与扩展运行
 
@@ -67,6 +71,7 @@ TaskSupervisor -> AgentRunFactory -> SkillRuntime -> McpRuntime -> ProviderRunti
 - Agent 不拥有活动 Session、AppState 或第二份 conversation。
 - `AssistantMessage` 必须在工具执行前提交。
 - 同一 step 的请求和 ToolRound 使用同一 `ToolExposureSnapshot`。
+- 用户 steering 只能在首次 plan 前、无工具响应提交后或完整 ToolRound 提交后进入 canonical Conversation。
 - 每个 ToolCall 最终都有一个 ToolResult，完成顺序不改变结果顺序。
 - 同一 AppState 同时只运行一个会改变活动状态的 application operation。
 - runtime 关闭先停止任务和 child run，再关闭扩展 transport 与 provider client。

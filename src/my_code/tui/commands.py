@@ -25,12 +25,18 @@ class SlashCommandAction(StrEnum):
     AGENTS = "agents"
 
 
+class CommandConcurrency(StrEnum):
+    CONCURRENT_READ = "concurrent_read"
+    EXCLUSIVE = "exclusive"
+
+
 @dataclass(frozen=True, slots=True)
 class SlashCommand:
     name: str
     description: str
     action: SlashCommandAction
     aliases: tuple[str, ...] = ()
+    concurrency: CommandConcurrency = CommandConcurrency.CONCURRENT_READ
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +91,7 @@ class SlashCommandRegistry:
                     "compact",
                     "Compact the current conversation",
                     SlashCommandAction.COMPACT,
+                    concurrency=CommandConcurrency.EXCLUSIVE,
                 ),
                 SlashCommand(
                     "usage", "Show session token usage", SlashCommandAction.USAGE
@@ -110,17 +117,20 @@ class SlashCommandRegistry:
                     "provider",
                     "Configure API provider, URL, model, and key",
                     SlashCommandAction.PROVIDER,
+                    concurrency=CommandConcurrency.EXCLUSIVE,
                 ),
                 SlashCommand(
                     "model",
                     "Switch models from the current provider catalog",
                     SlashCommandAction.MODEL,
+                    concurrency=CommandConcurrency.EXCLUSIVE,
                 ),
                 SlashCommand(
                     "resume",
                     "Resume a previous conversation",
                     SlashCommandAction.RESUME,
                     aliases=("continue",),
+                    concurrency=CommandConcurrency.EXCLUSIVE,
                 ),
                 SlashCommand(
                     "clear", "Clear the terminal screen", SlashCommandAction.CLEAR
@@ -130,6 +140,7 @@ class SlashCommandRegistry:
                     "Exit my-code",
                     SlashCommandAction.EXIT,
                     aliases=("quit",),
+                    concurrency=CommandConcurrency.EXCLUSIVE,
                 ),
             )
         )
@@ -196,6 +207,29 @@ class SlashCommandRegistry:
             case SlashCommandAction.EXIT:
                 return CommandOutcome("Goodbye.", should_exit=True)
 
+    def concurrency(self, line: str) -> CommandConcurrency | None:
+        """Return the declaration for a syntactically recognizable command."""
+
+        stripped = line.strip()
+        if not stripped.startswith("/"):
+            return None
+        try:
+            parts = shell_split(stripped[1:])
+        except ValueError:
+            return CommandConcurrency.CONCURRENT_READ
+        if not parts:
+            return CommandConcurrency.CONCURRENT_READ
+        command = self._lookup.get(parts[0].casefold())
+        if command is None:
+            return CommandConcurrency.CONCURRENT_READ
+        if command.action is SlashCommandAction.SKILLS and any(
+            item.casefold() == "reload" for item in parts[1:]
+        ):
+            return CommandConcurrency.EXCLUSIVE
+        if command.action is SlashCommandAction.MCP and len(parts) > 1:
+            return CommandConcurrency.EXCLUSIVE
+        return command.concurrency
+
     def render_help(self) -> str:
         width = max(len(command.name) for command in self.commands)
         lines = ["Available commands:"]
@@ -243,5 +277,6 @@ def _render_status(status: RuntimeStatus) -> str:
 
 
 __all__ = [
+    "CommandConcurrency",
     "SlashCommandRegistry",
 ]

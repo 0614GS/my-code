@@ -15,6 +15,7 @@
 | ToolCatalog、task tree、MCP/Skill runtime | 对应 AppState 状态胶囊 | runtime | 只持久化配置或对话产物 |
 | turn 身份与终态 journal | `Session` | session | 是（不复制正文） |
 | step、stream、tool progress | 调用栈 | 单次操作 | 否 |
+| pending user input、附件准备状态 | host/runtime 内存 | 当前进程与活动 Session | 否 |
 
 `AppState` 是运行时状态图的唯一入口，不是进程全局 singleton。只有 application service、host 和 bootstrap 可以持有完整 AppState；Agent、Context、Tool 和 Provider adapter 只接收完成任务所需的最小对象或快照。
 
@@ -68,7 +69,7 @@ Attachment 是否持久化由 Session 根据 payload 类型统一决定。显式
 
 ## 恢复与切换
 
-`ChatService.resume_session()` 在 AppState operation lock 中：
+`ChatService.resume_session()` 完整验证候选后，在 AppState operation lock 中原子发布；存在未接受 pending input 时拒绝切换，避免把临时输入错误绑定到另一 Session：
 
 1. 完整加载、校验并按需修复候选 Session。
 2. 校验父链、tool pairing、compact boundary、presentation 和 replay 关联。
@@ -92,6 +93,8 @@ Provider replay 与 canonical assistant content 分离，通过 entry/content ID
 
 - 新的长生命周期状态必须说明所有者、创建、更新、失效、销毁和持久化策略。
 - request、turn、step、tool round、stream delta 和 pending approval 不得提升到 AppState 或 Session。
+- pending input queue 不是 canonical Session；只有 `commit_user_inputs()` 成功后，独立的 HumanMessage 与 durable attachment 才进入 JSONL 和内存 Conversation。
+- 同一边界的多条用户输入先在候选 aggregate 中完整验证，再通过一次 message batch append 持久化；成功后才发布内存状态和 accepted 事件。
 - 派生状态优先从 canonical facts 和不可变 snapshot 重算，不建立第二份可写权威来源。
 - 跨状态胶囊的变更由明确 application use case 协调，不让 AppState 退化为任意服务查询容器。
 

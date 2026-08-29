@@ -7,6 +7,7 @@ import pytest
 from my_code.agent.engine import AgentEngine
 from my_code.agent.events import (
     AgentConversationUpdated,
+    AgentInputAccepted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
@@ -18,6 +19,7 @@ from my_code.agent.models import (
     AgentMaxStepsReached,
     AgentTurnInput,
     AgentTurnSucceeded,
+    UserTurnInput,
 )
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
@@ -129,6 +131,18 @@ class NativeLifecycleModel(FakeModel):
         )
         for payload in payloads:
             yield sequencer.emit(payload)
+
+
+class QueuedSource:
+    def __init__(self, batches: list[tuple[UserTurnInput, ...]]) -> None:
+        self.batches = batches
+        self.accepted: list[str] = []
+
+    async def drain_pending(self) -> tuple[UserTurnInput, ...]:
+        return self.batches.pop(0) if self.batches else ()
+
+    def accept_pending(self, input_ids) -> None:
+        self.accepted.extend(input_ids)
 
 
 class BoundEngine:
@@ -328,6 +342,113 @@ async def test_continuation_does_not_append_a_human_message(tmp_path: Path) -> N
     assert isinstance(events[-1], AgentTurnSucceeded)
     assert sum(isinstance(item, HumanMessage) for item in session.conversation) == 1
     assert isinstance(session.conversation[-1], AssistantMessage)
+
+
+@pytest.mark.asyncio
+async def test_no_tool_step_accepts_fifo_steering_before_ending(tmp_path: Path) -> None:
+    engine, model, session, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput((ModelTextBlock("first"),), "end_turn"),
+            ModelOutput((ModelTextBlock("second"),), "end_turn"),
+        ],
+    )
+    source = QueuedSource(
+        [
+            (UserTurnInput("initial", input_id="one"),),
+            (UserTurnInput("steer", input_id="two"),),
+            (),
+        ]
+    )
+
+    events = [
+        event
+        async for event in engine.engine.stream_continuation(
+            session, engine.runtime, pending_source=source
+        )
+    ]
+
+    assert source.accepted == ["one", "two"]
+    assert [
+        event.prompt for event in events if isinstance(event, AgentInputAccepted)
+    ] == ["initial", "steer"]
+    assert [type(item) for item in session.conversation] == [
+        HumanMessage,
+        AssistantMessage,
+        HumanMessage,
+        AssistantMessage,
+    ]
+    assert len(model.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_steering_never_splits_tool_use_and_result_batch(tmp_path: Path) -> None:
+    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
+    engine, _, session, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput(
+                (ModelToolUseBlock("read", "Read", {"path": "hello.txt"}),),
+                "tool_use",
+            ),
+            ModelOutput((ModelTextBlock("done"),), "end_turn"),
+        ],
+    )
+    source = QueuedSource(
+        [
+            (UserTurnInput("initial", input_id="one"),),
+            (UserTurnInput("after tool", input_id="two"),),
+            (),
+        ]
+    )
+
+    _ = [
+        event
+        async for event in engine.engine.stream_continuation(
+            session, engine.runtime, pending_source=source
+        )
+    ]
+
+    assert [type(item) for item in session.conversation] == [
+        HumanMessage,
+        AssistantMessage,
+        ToolResultBatch,
+        HumanMessage,
+        AssistantMessage,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_max_steps_leaves_boundary_input_for_next_invocation(
+    tmp_path: Path,
+) -> None:
+    engine, _, session, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput(
+                (ModelToolUseBlock("read", "Read", {"path": "missing.txt"}),),
+                "tool_use",
+            )
+        ],
+        max_steps=1,
+    )
+    source = QueuedSource(
+        [
+            (UserTurnInput("initial", input_id="one"),),
+            (UserTurnInput("later", input_id="two"),),
+        ]
+    )
+
+    events = [
+        event
+        async for event in engine.engine.stream_continuation(
+            session, engine.runtime, pending_source=source
+        )
+    ]
+
+    assert isinstance(events[-1], AgentMaxStepsReached)
+    assert source.accepted == ["one"]
+    assert source.batches == [(UserTurnInput("later", input_id="two"),)]
 
 
 @pytest.mark.asyncio

@@ -189,6 +189,40 @@ class Session:
             raise TypeError("append_human_message requires HumanMessage")
         self._commit_entry(message)
 
+    def commit_user_inputs(
+        self,
+        inputs: Iterable[tuple[str, tuple[AttachmentPayload, ...]]],
+    ) -> tuple[HumanMessage, ...]:
+        """Atomically commit adjacent user messages and durable attachments.
+
+        The complete candidate is validated before one JSONL batch append.  The
+        in-memory aggregate is published only after persistence succeeds.
+        """
+
+        values = tuple(inputs)
+        if not values:
+            return ()
+        candidate = self._conversation.clone()
+        durable: list[ConversationEntry] = []
+        humans: list[HumanMessage] = []
+        for prompt, attachments in values:
+            human = HumanMessage(
+                prompt, parent_uuid=_causal_head(candidate.conversation)
+            )
+            candidate.append(human)
+            durable.append(human)
+            humans.append(human)
+            for payload in attachments:
+                attachment = AttachmentMessage(
+                    payload, parent_uuid=_causal_head(candidate.conversation)
+                )
+                candidate.append(attachment)
+                if is_durable_attachment(payload):
+                    durable.append(attachment)
+        self._store.append_message_batch(tuple(durable))
+        self._conversation = candidate
+        return tuple(humans)
+
     def append_assistant_message(
         self,
         message: AssistantMessage,

@@ -52,6 +52,7 @@ def build_terminal_layout(
     input_control: BufferControl,
     key_bindings: KeyBindings,
     dynamic_text: Callable[[], AnyFormattedText],
+    queue_text: Callable[[], AnyFormattedText],
     status_text: Callable[[], AnyFormattedText],
     interaction_text: Callable[[], AnyFormattedText],
     has_interaction: Callable[[], bool],
@@ -89,6 +90,15 @@ def build_terminal_layout(
                 style="class:surface",
             ),
             Window(height=SURFACE_VERTICAL_PADDING, style="class:surface"),
+            ConditionalContainer(
+                Window(
+                    content=_formatted_control(queue_text),
+                    height=Dimension(min=1, max=3),
+                    dont_extend_height=True,
+                    style="class:surface class:secondary",
+                ),
+                Condition(lambda: bool(to_formatted_text(queue_text()))),
+            ),
             interaction_menu,
             completions_menu,
             Window(

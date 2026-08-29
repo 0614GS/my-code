@@ -68,6 +68,19 @@ class AttachmentLoaded:
 
 
 @dataclass(frozen=True, slots=True)
+class TurnInputAccepted:
+    input_id: str | None
+    prompt: str
+
+
+@dataclass(frozen=True, slots=True)
+class TurnInputFailed:
+    input_id: str
+    prompt: str
+    error: str
+
+
+@dataclass(frozen=True, slots=True)
 class ToolStarted:
     tool_use_id: str
     presentation: ToolUsePresentation
@@ -108,6 +121,8 @@ type TurnEvent = (
     BackgroundInvocationStarted
     | BackgroundInvocationFinished
     | AttachmentLoaded
+    | TurnInputAccepted
+    | TurnInputFailed
     | TextStarted
     | TextDelta
     | TextCompleted
@@ -140,5 +155,7 @@ __all__ = [
     "ToolStarted",
     "TurnEvent",
     "TurnOutcome",
+    "TurnInputAccepted",
+    "TurnInputFailed",
     "TurnSucceeded",
 ]

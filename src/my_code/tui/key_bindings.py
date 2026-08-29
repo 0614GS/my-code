@@ -42,6 +42,7 @@ class KeyBindingHost(Protocol):
     buffer: Buffer
     _panel: str | None
     _busy: bool
+    _agent_active: bool
     _mention_span: tuple[int, int] | None
     _path_suggestions: tuple[Any, ...]
     _foreground_task: Any
@@ -86,6 +87,8 @@ class KeyBindingHost(Protocol):
 
     async def _open_transcript(self) -> None: ...
 
+    def _recall_pending_input(self) -> bool: ...
+
 
 def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
     bindings = KeyBindings()
@@ -99,13 +102,13 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
         if host._slash_active():
             host._accept_slash(execute=True)
             return
-        if not host._busy:
+        if not host._busy or host._agent_active:
             host._spawn(host._submit_buffer())
 
     @bindings.add("c-j")
     def newline(event: KeyPressEvent) -> None:
         del event
-        if host._panel is None and not host._busy:
+        if host._panel is None and (not host._busy or host._agent_active):
             host.buffer.insert_text("\n")
 
     @bindings.add("escape")
@@ -148,7 +151,7 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
                 )
             else:
                 host.buffer.apply_completion(completion)
-        elif host._panel is None and not host._busy:
+        elif host._panel is None and (not host._busy or host._agent_active):
             host.buffer.start_completion(select_first=True)
 
     @bindings.add("s-tab")
@@ -156,7 +159,7 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
         del event
         if host._panel == "provider_form":
             host._spawn(host._advance_provider(-1))
-        elif host._panel is None:
+        elif host._panel is None and not host._agent_active:
             host._cycle_permission_mode()
 
     @bindings.add("up")
@@ -170,6 +173,8 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
             host._move_slash(-1)
         elif host.buffer.complete_state is not None:
             host.buffer.complete_previous()
+        elif not host.buffer.text and host._recall_pending_input():
+            return
         else:
             host.buffer.auto_up()
 
@@ -190,12 +195,17 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
     @bindings.add("c-c")
     def ctrl_c(event: KeyPressEvent) -> None:
         del event
-        if not host._busy and host._panel is None:
+        if (not host._busy or host._agent_active) and host._panel is None:
             host.buffer.reset()
 
     @bindings.add("c-d")
     def ctrl_d(event: KeyPressEvent) -> None:
-        if not host.buffer.text and not host._busy and host._panel is None:
+        if (
+            not host.buffer.text
+            and not host._busy
+            and not host._agent_active
+            and host._panel is None
+        ):
             event.app.exit()
         elif host.buffer.cursor_position < len(host.buffer.text):
             host.buffer.delete()

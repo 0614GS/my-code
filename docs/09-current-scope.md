@@ -1,3 +1,4 @@
+-- Active: 1782987758255@@115.190.199.119@3306@resume_match
 # 当前能力范围
 
 本文只记录当前实现、明确延后的能力和有意保留的产品差异。具体机制由相应专题解释。
@@ -17,6 +18,8 @@
 - Skill 分层发现、严格 frontmatter、lazy load、reload、durable activation 和 additive session rules。
 - Provider profile、私有凭据、模型发现目录和运行期 `/provider`、`/model` 切换。
 - 基于 `prompt_toolkit + Rich` 的非全屏 TUI、原生 scrollback 和只读 transcript/agent pager。
+- Agent active 时可编辑 composer、session-bound 临时输入队列、FIFO step-boundary steering 与 Up 召回。
+- 单 UI owner、单 worker 离屏 scrollback render，以及有界/latest-wins live Markdown projection。
 - Ruff、Pyright standard、pytest 和 AST 架构守卫。
 
 Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入口不启用后台执行。
@@ -49,6 +52,7 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 
 - 核心模型同时支持 Anthropic/OpenAI 协议，以 provider-neutral items 表达输入和工具结果。
 - TUI 使用 Python 原生非全屏 host 与 terminal scrollback，不复刻 Ink/Textual renderer。
+- pending queue 属于 host/runtime 临时状态，不迁移到 canonical Session；进程退出时未接受输入允许丢失。
 - Provider、凭据和模型目录都有显式持久化来源，不从模型名或环境变量猜测能力与连接。
 - Skill Markdown 是数据，不导入目录代码；激活正文使用 Attachment，而不是修改 system prompt。
 - Subagent 使用固定角色、fresh child Session 和独立 lease；默认不设置 step/token/timeout 上限，但保留显式可选限制。

@@ -8,7 +8,11 @@ from uuid import uuid4
 
 import pytest
 
-from my_code.agent.events import AgentConversationUpdated, AgentEvent
+from my_code.agent.events import (
+    AgentConversationUpdated,
+    AgentEvent,
+    AgentInputAccepted,
+)
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
 from my_code.auth.credentials import CredentialSource, CredentialStore
 from my_code.bootstrap import bootstrap_chat
@@ -16,6 +20,7 @@ from my_code.chat.events import (
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
     ContextUpdated,
+    TurnInputAccepted,
     TurnSucceeded,
 )
 from my_code.chat.history import HistoryText, HistoryToolCall
@@ -85,6 +90,24 @@ class CapturingAgent:
         return AgentTurnSucceeded("done", 1, TokenUsage())
 
 
+class InteractiveCapturingAgent:
+    async def stream_continuation(
+        self,
+        session: Session,
+        runtime: ContextRuntime,
+        pending_source=None,
+    ) -> AsyncIterator[AgentEvent]:
+        del runtime
+        assert pending_source is not None
+        inputs = await pending_source.drain_pending()
+        session.commit_user_inputs((item.prompt, item.attachments) for item in inputs)
+        ids = tuple(item.input_id for item in inputs if item.input_id is not None)
+        pending_source.accept_pending(ids)
+        for item in inputs:
+            yield AgentInputAccepted(item.input_id, item.prompt)
+        yield AgentTurnSucceeded("done", 1, TokenUsage())
+
+
 def _bootstrap_runtime(
     tmp_path: Path, permission_mode: PermissionMode = PermissionMode.DEFAULT
 ) -> ChatService:
@@ -119,6 +142,30 @@ def test_app_state_is_the_single_runtime_owner(tmp_path: Path) -> None:
     assert runtime.state.permissions.policy is runtime.tool_executor.policy
     assert runtime.state.tools.catalog.snapshot() == runtime.tool_executor.tools
     assert runtime.state.session.session_id == _CURRENT_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_interactive_stream_accepts_queued_inputs_before_scrollback(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.agent = InteractiveCapturingAgent()  # type: ignore[assignment]
+    first = runtime.queue_input("first")
+    second = runtime.queue_input("second")
+
+    events = [event async for event in runtime.stream_interactive()]
+
+    accepted = [event for event in events if isinstance(event, TurnInputAccepted)]
+    assert [(event.input_id, event.prompt) for event in accepted] == [
+        (first.input_id, "first"),
+        (second.input_id, "second"),
+    ]
+    assert runtime.queued_inputs() == ()
+    assert [
+        item.content
+        for item in runtime.state.session.conversation
+        if isinstance(item, HumanMessage)
+    ] == ["first", "second"]
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
 from prompt_toolkit.application import Application
@@ -53,6 +55,12 @@ class TranscriptPager:
         self._top = 0
         self._follow_tail = True
         self._closed = False
+        self._width = -1
+        self._watch_task: asyncio.Task[None] | None = None
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="my-code-transcript-render"
+        )
+        self._executor_closed = False
         bindings = self._bindings()
         resolved_output = terminal_output(output)
         self.application: Application[None] = Application(
@@ -74,13 +82,33 @@ class TranscriptPager:
         configure_key_timeouts(self.application)
 
     async def run_async(self) -> None:
-        self._refresh()
-        await self.application.run_async()
+        await self._refresh_async()
+        self._watch_task = asyncio.create_task(self._watch())
+        try:
+            await self.application.run_async()
+        finally:
+            self._closed = True
+            self._watch_task.cancel()
+            await asyncio.gather(self._watch_task, return_exceptions=True)
+            self._shutdown_executor()
 
     def close(self) -> None:
         self._closed = True
         if self.application.is_running:
             self.application.exit()
+        elif self._watch_task is None:
+            self._shutdown_executor()
+
+    def _shutdown_executor(self) -> None:
+        if self._executor_closed:
+            return
+        self._executor_closed = True
+        self._executor.shutdown(wait=True, cancel_futures=True)
+
+    async def _watch(self) -> None:
+        while not self._closed:
+            await asyncio.sleep(0.1)
+            await self._refresh_async()
 
     def _bindings(self) -> KeyBindings:
         bindings = KeyBindings()
@@ -128,24 +156,57 @@ class TranscriptPager:
         return bindings
 
     def scroll(self, offset: int) -> None:
-        self._refresh()
         self._top = min(self._max_top(), max(0, self._top + offset))
         self._follow_tail = self._top == self._max_top()
         self.application.invalidate()
 
     def _refresh(self) -> None:
+        """Synchronous compatibility hook; the live pager uses `_refresh_async`."""
+
         if self._closed:
             return
         view = self.source.current_transcript_view()
-        if view.revision == self._revision:
+        width = max(20, self.application.output.get_size().columns)
+        if view.revision == self._revision and width == self._width:
             return
         self._revision = view.revision
-        width = max(20, self.application.output.get_size().columns)
+        self._width = width
         self._lines = _render_lines(view, width)
         if self._follow_tail:
             self._top = self._max_top()
         else:
             self._top = min(self._top, self._max_top())
+
+    async def _refresh_async(self) -> None:
+        if self._closed:
+            return
+        width = max(20, self.application.output.get_size().columns)
+        snapshots: list[tuple[TranscriptView, list[str]]] = []
+        errors: list[BaseException] = []
+
+        def prepare() -> None:
+            try:
+                view = self.source.current_transcript_view()
+                if view.revision == self._revision and width == self._width:
+                    return
+                snapshots.append((view, _render_lines(view, width)))
+            except BaseException as error:
+                errors.append(error)
+
+        await asyncio.get_running_loop().run_in_executor(self._executor, prepare)
+        if errors:
+            raise errors[0]
+        if not snapshots or self._closed:
+            return
+        view, lines = snapshots[0]
+        self._revision = view.revision
+        self._width = width
+        self._lines = lines
+        if self._follow_tail:
+            self._top = self._max_top()
+        else:
+            self._top = min(self._top, self._max_top())
+        self.application.invalidate()
 
     def _page_height(self) -> int:
         return max(1, self.application.output.get_size().rows - 1)
@@ -154,7 +215,6 @@ class TranscriptPager:
         return max(0, len(self._lines) - self._page_height())
 
     def _visible_text(self) -> ANSI | FormattedText:
-        self._refresh()
         page_height = self._page_height()
         body = self._lines[self._top : self._top + page_height]
         footer = "Transcript · ↑↓ PgUp/PgDn Home/End · Ctrl+T/Esc/q close"

@@ -1,13 +1,14 @@
 """单个持久化用户 Turn 中的模型 → 工具 → 模型状态机。"""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 from my_code.agent.events import (
     AgentConversationUpdated,
     AgentEvent,
+    AgentInputAccepted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
@@ -22,6 +23,8 @@ from my_code.agent.models import (
     AgentTurnInput,
     AgentTurnOutcome,
     AgentTurnSucceeded,
+    PendingInputSource,
+    UserTurnInput,
 )
 from my_code.context.engine import ContextEngine
 from my_code.context.models import ContextOverflow, ContextPlan
@@ -33,7 +36,6 @@ from my_code.conversation.attachments import (
 )
 from my_code.conversation.models import (
     AssistantMessage,
-    HumanMessage,
     ReasoningContent,
     TextContent,
     ToolCall,
@@ -171,12 +173,15 @@ class AgentEngine:
         self,
         session: Session,
         runtime: ContextRuntime,
-        turn_input: AgentTurnInput,
+        turn_input: AgentTurnInput | Sequence[UserTurnInput],
+        pending_source: PendingInputSource | None = None,
     ) -> AgentTurnOutcome:
         """消费可观察循环并返回终态值。"""
 
         completed: AgentTurnOutcome | None = None
-        async for event in self.stream(session, runtime, turn_input):
+        async for event in self.stream(
+            session, runtime, turn_input, pending_source=pending_source
+        ):
             if isinstance(event, (AgentTurnSucceeded, AgentMaxStepsReached)):
                 completed = event
         if completed is None:
@@ -187,36 +192,40 @@ class AgentEngine:
         self,
         session: Session,
         runtime: ContextRuntime,
-        turn_input: AgentTurnInput,
+        turn_input: AgentTurnInput | Sequence[UserTurnInput],
+        pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """运行一个用户回合，同时暴露文本和工具生命周期事件。"""
 
-        return self._stream(session, runtime, turn_input)
+        inputs = (
+            (turn_input,)
+            if isinstance(turn_input, UserTurnInput)
+            else tuple(turn_input)
+        )
+        return self._stream(session, runtime, inputs, pending_source)
 
     def stream_continuation(
         self,
         session: Session,
         runtime: ContextRuntime,
+        pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Continue from canonical conversation facts without a human message."""
 
-        return self._stream(session, runtime, None)
+        return self._stream(session, runtime, (), pending_source)
 
     async def _stream(
         self,
         session: Session,
         runtime: ContextRuntime,
-        turn_input: AgentTurnInput | None,
+        initial_inputs: tuple[UserTurnInput, ...],
+        pending_source: PendingInputSource | None,
     ) -> AsyncIterator[AgentEvent]:
-        if turn_input is not None:
-            user_message = HumanMessage(
-                content=turn_input.prompt,
-                parent_uuid=_last_uuid(session),
-            )
-            # 首次请求前先写入 Transcript，保证崩溃或网络失败后仍可恢复输入。
-            session.append_human_message(user_message)
-            for attachment in turn_input.attachments:
-                session.append_attachment(attachment)
+        # The first request is itself a safe boundary.  Direct headless inputs
+        # and all host-queued inputs visible at this point form one durable batch.
+        accepted = await self._accept_boundary(session, initial_inputs, pending_source)
+        for event in accepted:
+            yield event
 
         input_tokens = 0
         output_tokens = 0
@@ -284,6 +293,20 @@ class AgentEngine:
                 if isinstance(block, ToolCall)
             )
             if not tool_calls:
+                if self.max_steps is not None and step_count >= self.max_steps:
+                    yield AgentTurnSucceeded(
+                        text=final_text,
+                        completed_steps=step_count,
+                        usage=TokenUsage(input_tokens, output_tokens),
+                    )
+                    return
+                accepted = await self._accept_boundary(session, (), pending_source)
+                if accepted:
+                    for event in accepted:
+                        yield event
+                    # A no-tool response is a complete step, not necessarily the
+                    # end of an interactive invocation when steering is waiting.
+                    continue
                 yield AgentTurnSucceeded(
                     text=final_text,
                     completed_steps=step_count,
@@ -305,6 +328,30 @@ class AgentEngine:
                     usage=TokenUsage(input_tokens, output_tokens),
                 )
                 return
+            accepted = await self._accept_boundary(session, (), pending_source)
+            for event in accepted:
+                yield event
+
+    async def _accept_boundary(
+        self,
+        session: Session,
+        initial: tuple[UserTurnInput, ...],
+        pending_source: PendingInputSource | None,
+    ) -> tuple[AgentInputAccepted, ...]:
+        pending = (
+            await pending_source.drain_pending() if pending_source is not None else ()
+        )
+        inputs = (*initial, *pending)
+        if not inputs:
+            return ()
+        session.commit_user_inputs((item.prompt, item.attachments) for item in inputs)
+        pending_ids = tuple(
+            item.input_id for item in pending if item.input_id is not None
+        )
+        if pending_source is not None and pending_ids:
+            # Queue state changes only after the persistence-first commit.
+            pending_source.accept_pending(pending_ids)
+        return tuple(AgentInputAccepted(item.input_id, item.prompt) for item in inputs)
 
     def _snapshot_tools(
         self,

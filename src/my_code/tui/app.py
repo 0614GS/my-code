@@ -6,7 +6,7 @@ import asyncio
 from time import monotonic
 from typing import Any, cast
 
-from prompt_toolkit.application import Application, in_terminal, run_in_terminal
+from prompt_toolkit.application import Application, in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
@@ -41,20 +41,23 @@ from my_code.chat.permissions import PermissionRequest
 from my_code.chat.service import ChatService
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import SubagentTaskView
-from my_code.config.validation import validate_base_url
 from my_code.features.file_mentions.models import PathSuggestion
-from my_code.model.primitives import validate_provider_id
 from my_code.permissions.models import (
     PermissionConfirmation,
 )
 from my_code.providers.manager import ModelView, ProviderView
 from my_code.sessions.catalog import SessionSummary
 from my_code.tui.activity import ToolActivityGroup
-from my_code.tui.commands import CommandOutcome, SlashCommandRegistry
+from my_code.tui.commands import (
+    CommandConcurrency,
+    CommandOutcome,
+    SlashCommandRegistry,
+)
 from my_code.tui.completion import mention_at_cursor
 from my_code.tui.composer import ComposerCompleter, ContinuationIndent, SlashMenuState
 from my_code.tui.key_bindings import build_key_bindings
 from my_code.tui.layout import build_terminal_layout
+from my_code.tui.panel_flow import PanelFlowMixin
 from my_code.tui.panels import (
     agent_select_panel,
     full_access_panel,
@@ -84,10 +87,14 @@ from my_code.tui.presentation import (
     render_usage,
 )
 from my_code.tui.provider_screen import (
-    PROVIDER_ADVANCED_FIELDS,
     PROVIDER_CORE_FIELDS,
     ProviderForm,
     ProviderWizard,
+)
+from my_code.tui.rendering import (
+    RenderCoordinator,
+    ScrollbackWriter,
+    StreamingMarkdownProjector,
 )
 from my_code.tui.terminal import terminal_supports_true_color
 from my_code.tui.theme import TuiTheme
@@ -97,7 +104,6 @@ from my_code.tui.widgets import (
     assistant_message,
     history_message,
     status_line,
-    streaming_assistant_message,
     streaming_renderable,
     system_message,
     todo_snapshot,
@@ -111,7 +117,7 @@ from my_code.tui.widgets import (
 _STREAM_INVALIDATE_INTERVAL = 0.04
 
 
-class MyCodeApp(TurnFlowMixin):
+class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
     """Inline terminal application; canonical state stays in ChatService."""
 
     def __init__(
@@ -130,11 +136,19 @@ class MyCodeApp(TurnFlowMixin):
             color_system="truecolor" if terminal_supports_true_color() else "auto"
         )
         self._busy = False
+        self._agent_active = False
         self._running = False
         self._stream_invalidate_pending = False
         self._last_stream_invalidate = 0.0
         self._activity = ""
         self._stream_text = ""
+        self._stream_frame = FormattedText()
+        self._stream_frame_revision = 0
+        self._stream_projector = StreamingMarkdownProjector()
+        self._render_coordinator = RenderCoordinator(
+            self._stream_projector, frame_interval=_STREAM_INVALIDATE_INTERVAL
+        )
+        self._scrollback_writer = ScrollbackWriter(self.console)
         self._reasoning_parts: list[str] = []
         self._todos = ()
         self._tool_activity: ToolActivityGroup | None = None
@@ -197,6 +211,7 @@ class MyCodeApp(TurnFlowMixin):
             input_control=self.input_control,
             key_bindings=self.key_bindings,
             dynamic_text=self._dynamic_text,
+            queue_text=self._queue_text,
             status_text=self._status_display,
             interaction_text=self._interaction_text,
             has_interaction=self._interaction_active,
@@ -231,6 +246,9 @@ class MyCodeApp(TurnFlowMixin):
         current_mode = getattr(self.runtime, "current_permission_mode", None)
         if current_mode is not None and current_mode().requires_confirmation:
             self._open_full_access_confirmation()
+        self._scrollback_writer.seed(
+            self._has_scrollback_output, self._last_scrollback_was_user
+        )
         self._running = True
 
         def start_background() -> None:
@@ -247,6 +265,8 @@ class MyCodeApp(TurnFlowMixin):
                 task.cancel()
             if self._tasks:
                 await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+            await self._render_coordinator.close()
+            await self._scrollback_writer.close()
 
     async def _initialize_capabilities(self) -> None:
         try:
@@ -310,9 +330,22 @@ class MyCodeApp(TurnFlowMixin):
             self._last_scrollback_was_user = is_user
 
         if self._running:
-            await run_in_terminal(render)
+            await self._scrollback_writer.write(renderable, clear=clear)
+            self._has_scrollback_output = True
+            self._last_scrollback_was_user = isinstance(renderable, Padding)
         else:
             render()
+
+    async def _write_many(self, renderables: tuple[RenderableType, ...]) -> None:
+        if not renderables:
+            return
+        if self._running:
+            await self._scrollback_writer.write_many(renderables)
+            self._has_scrollback_output = True
+            self._last_scrollback_was_user = isinstance(renderables[-1], Padding)
+            return
+        for renderable in renderables:
+            await self._write(renderable)
 
     def _invalidate(self) -> None:
         self.application.invalidate()
@@ -325,6 +358,7 @@ class MyCodeApp(TurnFlowMixin):
         after the interval elapses redraws immediately; the rest are merged
         into a single deferred redraw scheduled for the next interval window.
         """
+        self._prepare_stream_frame()
         if self._stream_invalidate_pending:
             return
         elapsed = monotonic() - self._last_stream_invalidate
@@ -341,6 +375,28 @@ class MyCodeApp(TurnFlowMixin):
         if not self._running:
             return
         self._last_stream_invalidate = monotonic()
+        self._invalidate()
+
+    def _prepare_stream_frame(self, *, structural: bool = False) -> None:
+        if not self._running:
+            return
+        if not self._stream_text:
+            self._stream_frame = FormattedText()
+            if structural:
+                self._render_coordinator.clear()
+            return
+        self._render_coordinator.request(
+            self._stream_text,
+            self.console.width,
+            self._accept_stream_frame,
+            structural=structural,
+        )
+
+    def _accept_stream_frame(self, revision: int, frame: FormattedText) -> None:
+        if revision < self._stream_frame_revision:
+            return
+        self._stream_frame_revision = revision
+        self._stream_frame = frame
         self._invalidate()
 
     async def _open_transcript(self) -> None:
@@ -376,13 +432,17 @@ class MyCodeApp(TurnFlowMixin):
             "agents",
         }:
             return True
-        return self._busy
+        return self._busy and not self._agent_active
 
     def _complete_while_typing(self) -> bool:
         return False
 
     def _slash_active(self) -> bool:
-        return self._panel is None and not self._busy and bool(self._slash_menu.matches)
+        return (
+            self._panel is None
+            and (not self._busy or self._agent_active)
+            and bool(self._slash_menu.matches)
+        )
 
     def _interaction_active(self) -> bool:
         if self._panel == "agents" and self._agent_task_id is not None:
@@ -422,6 +482,17 @@ class MyCodeApp(TurnFlowMixin):
     def _dismiss_slash(self) -> None:
         self._slash_menu.dismiss(self.buffer.text)
         self._invalidate()
+
+    def _recall_pending_input(self) -> bool:
+        recall = getattr(self.runtime, "recall_latest_input", None)
+        if recall is None:
+            return False
+        prompt = recall()
+        if prompt is None:
+            return False
+        self.buffer.set_document(Document(prompt, len(prompt)), bypass_readonly=True)
+        self._invalidate()
+        return True
 
     def _accept_slash(self, *, execute: bool) -> None:
         command = self._slash_menu.current
@@ -468,10 +539,34 @@ class MyCodeApp(TurnFlowMixin):
         if self._stream_text:
             if fragments:
                 fragments.append(("", "\n"))
-            fragments.extend(
-                to_formatted_text(
-                    streaming_assistant_message(self._stream_text, self.console.width)
+            frame = (
+                self._stream_frame
+                if self._running
+                else self._stream_projector.project(
+                    self._stream_text, self.console.width
                 )
+            )
+            fragments.extend(to_formatted_text(frame))
+        return FormattedText(fragments)
+
+    def _queue_text(self) -> FormattedText:
+        queued = getattr(self.runtime, "queued_inputs", lambda: ())()
+        if not queued:
+            return FormattedText()
+        fragments: list[tuple[str, str]] = []
+        for index, item in enumerate(queued[:3]):
+            state = str(item.state)
+            marker = {"preparing": "…", "queued": "↳", "failed": "!"}.get(state, "·")
+            summary = " ".join(item.prompt.split())
+            if len(summary) > 72:
+                summary = summary[:71] + "…"
+            suffix = f" · {item.error}" if item.error else ""
+            fragments.append(("class:secondary", f"{marker} {summary}{suffix}"))
+            if index + 1 < min(3, len(queued)):
+                fragments.append(("", "\n"))
+        if len(queued) > 3:
+            fragments.extend(
+                [("", "\n"), ("class:secondary", f"+{len(queued) - 3} queued")]
             )
         return FormattedText(fragments)
 
@@ -517,7 +612,11 @@ class MyCodeApp(TurnFlowMixin):
     def _reasoning_summary(self) -> str:
         if not self._reasoning_parts:
             return ""
-        return "Thinking · " + " ".join("".join(self._reasoning_parts).split())[-300:]
+        content = "\n\n".join(self._reasoning_parts)
+        lines = content.splitlines()[-10:]
+        if not lines:
+            return "Thinking…"
+        return "Thinking · " + "\n".join(lines)
 
     def _panel_view(self) -> PickerView | None:
         if self._panel == "full_access":
@@ -673,10 +772,20 @@ class MyCodeApp(TurnFlowMixin):
                 self._activity = ""
                 if self._startup_error is not None:
                     return
-            self.buffer.reset()
-            self._history.append_string(line)
             outcome = self.commands.dispatch(line, status=self.runtime.status())
+            concurrency = self.commands.concurrency(line)
+            if (
+                outcome is not None
+                and self._agent_active
+                and concurrency is CommandConcurrency.EXCLUSIVE
+            ):
+                await self._write(
+                    system_message("Wait for the active Agent turn to finish.")
+                )
+                return
+            self.buffer.reset()
             if outcome is not None:
+                self._history.append_string(line)
                 try:
                     await self._handle_command(outcome)
                 except Exception as error:
@@ -684,15 +793,37 @@ class MyCodeApp(TurnFlowMixin):
                         system_message(f"Command failed: {error}", error=True)
                     )
             else:
-                self._foreground_task = asyncio.current_task()
-                try:
-                    await self._run_turn(line, self.runtime.stream(line), user=True)
-                finally:
-                    self._foreground_task = None
+                queue = getattr(self.runtime, "queue_input", None)
+                interactive = getattr(self.runtime, "stream_interactive", None)
+                if queue is None or interactive is None:
+                    self._history.append_string(line)
+                    self._foreground_task = asyncio.current_task()
+                    try:
+                        await self._run_turn(line, self.runtime.stream(line), user=True)
+                    finally:
+                        self._foreground_task = None
+                else:
+                    queue(line)
+                    if self._foreground_task is None or self._foreground_task.done():
+                        self._foreground_task = self._spawn(
+                            self._run_interactive_inputs()
+                        )
+                    self._invalidate()
         finally:
             self._submission_pending = False
             if self._startup_ready.is_set():
-                self._busy = False
+                if not self._agent_active:
+                    self._busy = False
+
+    async def _run_interactive_inputs(self) -> None:
+        try:
+            await self._run_turn("", self.runtime.stream_interactive(), user=False)
+        finally:
+            self._foreground_task = None
+            queued = getattr(self.runtime, "queued_inputs", lambda: ())()
+            if queued and any(str(item.state) != "failed" for item in queued):
+                self._foreground_task = self._spawn(self._run_interactive_inputs())
+            self._invalidate()
 
     async def _handle_command(self, outcome: CommandOutcome) -> None:
         if outcome.clear_screen:
@@ -765,6 +896,7 @@ class MyCodeApp(TurnFlowMixin):
                 if isinstance(event, BackgroundInvocationStarted):
                     invocation = []
                     self._saved_draft = self.buffer.text
+                    self._agent_active = True
                     self._busy = True
                     self._activity = "Handling background task…"
                     self._stream_text = ""
@@ -772,6 +904,7 @@ class MyCodeApp(TurnFlowMixin):
                     self._tool_activity = None
                 elif isinstance(event, BackgroundInvocationFinished):
                     partial_text = self._retire_transient_content()
+                    self._agent_active = False
                     self._busy = False
                     self._activity = ""
                     await self._interrupt_and_flush_tools()
@@ -795,6 +928,7 @@ class MyCodeApp(TurnFlowMixin):
             await self._write(
                 system_message(f"Background watcher failed: {error}", error=True)
             )
+            self._agent_active = False
             self._busy = False
 
     async def _watch_subagent_activity(self) -> None:
@@ -828,521 +962,6 @@ class MyCodeApp(TurnFlowMixin):
             self._busy = False
             self._activity = ""
             self._refresh_status()
-
-    async def _open_resume(self) -> None:
-        self._sessions = await self.runtime.list_sessions()
-        self._panel_index = 0
-        self._open_panel("resume")
-
-    def _open_provider(self) -> None:
-        self._providers = self.runtime.providers()
-        self._panel_index = next(
-            (i for i, item in enumerate(self._providers) if item.active), 0
-        )
-        self._provider_selected_index = self._panel_index
-        self._open_panel("provider_select")
-
-    def _open_model_picker(self) -> None:
-        self._models = self.runtime.models()
-        self._panel_index = next(
-            (index for index, item in enumerate(self._models) if item.current), 0
-        )
-        self._open_panel("model_select")
-
-    def _open_agents(self) -> None:
-        self._agents = self.runtime.subagent_tasks()
-        self._panel_index = 0
-        self._agent_scroll = 0
-        self._agent_task_id = None
-        self._open_panel("agents")
-
-    def _cycle_agent_view(self) -> None:
-        if self._panel == "permission":
-            return
-        self._agents = self.runtime.subagent_tasks()
-        if self._panel != "agents":
-            self._saved_draft = self.buffer.text
-            self._panel = "agents"
-            self._agent_task_id = self._agents[0].task_id if self._agents else None
-            self._panel_index = 0
-        else:
-            ids = [item.task_id for item in self._agents]
-            if self._agent_task_id is None:
-                self._agent_task_id = ids[0] if ids else None
-            elif self._agent_task_id in ids and ids.index(
-                self._agent_task_id
-            ) + 1 < len(ids):
-                self._agent_task_id = ids[ids.index(self._agent_task_id) + 1]
-            else:
-                self._close_panel()
-                return
-        self._agent_scroll = 0
-        self._invalidate()
-
-    def _scroll_agent(self, offset: int | None) -> None:
-        if self._panel != "agents" or self._agent_task_id is None:
-            return
-        if offset is None:
-            self._agent_scroll = 0
-        else:
-            self._agent_scroll = max(0, self._agent_scroll + offset)
-        self._invalidate()
-
-    def _open_panel(self, name: str) -> None:
-        self._saved_draft = self.buffer.text
-        self.buffer.set_document(Document(""), bypass_readonly=True)
-        self._panel = name
-        self._invalidate()
-
-    def _close_panel(self) -> None:
-        if self._panel == "agents":
-            self._agent_task_id = None
-        self._panel = None
-        if self._provider_wizard is not None:
-            self._provider_wizard.clear_sensitive()
-        self._provider_wizard = None
-        self._provider_form = None
-        self.buffer.set_document(
-            Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
-        )
-        self._invalidate()
-
-    def _move_panel(self, offset: int) -> None:
-        view = self._panel_view()
-        if view is not None:
-            self._panel_picker.move(view.rows, offset)
-            self._invalidate()
-
-    async def _panel_enter(self) -> None:
-        view = self._panel_view()
-        row = self._panel_picker.current(view.rows) if view is not None else None
-        action = row.key if row is not None else None
-        if self._panel == "full_access":
-            self._resolve_full_access(action == "allow")
-        elif self._panel == "permission":
-            value = self.buffer.text.strip()
-            if self._permission_mode == "select" and action is not None:
-                self._choose_permission(action)
-            elif self._permission_mode == "feedback" and value:
-                self._resolve_permission(PermissionConfirmation(False, value))
-        elif self._panel == "resume" and action is not None:
-            try:
-                resumed = await self.runtime.resume_session(action)
-                self._status = resumed.status
-                self._context_status = self.runtime.context_status()
-                self._todos = resumed.status.todos
-                self._panel = None
-                self.buffer.set_document(Document(""), bypass_readonly=True)
-                await self._write(welcome(resumed.status, self.theme), clear=True)
-                await self._render_history(resumed.history)
-            except Exception as error:
-                await self._write(
-                    system_message(
-                        f"Failed to resume conversation: {error}", error=True
-                    )
-                )
-                self._close_panel()
-        elif self._panel == "model_select" and action is not None:
-            try:
-                status = await self.runtime.select_model(action)
-            except Exception as error:
-                await self._write(
-                    system_message(f"Model selection failed: {error}", error=True)
-                )
-                return
-            self._status = status
-            self._context_status = self.runtime.context_status()
-            self._status_warning = self._context_status.warning or ""
-            self._close_panel()
-            await self._write(system_message(f"Using model {status.model!r}"))
-        elif self._panel == "provider_select" and action is not None:
-            if action == "add":
-                self._provider_selected_index = -1
-                self._provider_wizard = ProviderWizard.new()
-                self._provider_form = self._provider_wizard.form
-                self._panel = "provider_protocol"
-                self._panel_index = 0
-                self._invalidate()
-            else:
-                provider_id = action.removeprefix("provider:")
-                self._provider_selected_index = next(
-                    i
-                    for i, provider in enumerate(self._providers)
-                    if provider.id == provider_id
-                )
-                self._panel = "provider_actions"
-                self._panel_index = 0
-                self.buffer.set_document(Document(""), bypass_readonly=True)
-                self._invalidate()
-        elif self._panel == "provider_actions" and action is not None:
-            provider = self._providers[self._provider_selected_index]
-            if action == "use":
-                await self._select_provider(provider.id)
-            elif action == "configure":
-                self._provider_wizard = ProviderWizard.edit(provider)
-                self._provider_form = self._provider_wizard.form
-                self._panel = "provider_protocol"
-                self._panel_index = (
-                    0 if provider.protocol.value == "anthropic-messages" else 1
-                )
-                self._invalidate()
-            elif action == "remove":
-                self._panel = "provider_remove_credential"
-                self._panel_index = 1
-                self._invalidate()
-            else:
-                self._provider_back()
-        elif self._panel == "provider_remove_credential" and action is not None:
-            if action == "remove":
-                await self._remove_provider_credential()
-            else:
-                self._provider_back()
-        elif self._panel == "provider_protocol" and action is not None:
-            assert self._provider_form is not None
-            self._provider_form.protocol = action
-            self._start_provider_connection_form()
-        elif self._panel == "provider_form":
-            await self._advance_provider(1)
-        elif self._panel == "provider_review" and action is not None:
-            if action == "save":
-                await self._save_provider()
-            elif action == "models":
-                if (
-                    self._provider_wizard is not None
-                    and self._provider_wizard.probe_result is not None
-                ):
-                    self._show_probe_models()
-                else:
-                    self._start_provider_form(
-                        self._provider_form, fields=(("model", "Model"),)
-                    )
-            elif action == "advanced":
-                self._start_provider_form(
-                    self._provider_form, fields=PROVIDER_ADVANCED_FIELDS
-                )
-            else:
-                self._cancel_provider_wizard()
-        elif self._panel == "provider_probe_failure" and action is not None:
-            if action == "retry":
-                await self._probe_provider()
-            elif action in {"base_url", "api_key"}:
-                self._start_provider_connection_form()
-                self._provider_field = next(
-                    i
-                    for i, (name, _label) in enumerate(self._provider_fields)
-                    if name == action
-                )
-                self._load_provider_field()
-            elif action == "manual":
-                self._start_provider_form(
-                    self._provider_form, fields=(("model", "Model"),)
-                )
-            else:
-                self._cancel_provider_wizard()
-        elif self._panel == "provider_models" and action is not None:
-            assert self._provider_form is not None
-            self._provider_form.model = action
-            if self._provider_wizard is not None:
-                self._provider_wizard.model_filter = ""
-            self._panel = "provider_review"
-            self._panel_index = 0
-            self.buffer.set_document(Document(""), bypass_readonly=True)
-            self._invalidate()
-        elif self._panel == "agents" and action is not None:
-            if action == "main":
-                self._close_panel()
-            else:
-                self._agent_task_id = action
-                self._agent_scroll = 0
-                self._invalidate()
-
-    def _start_provider_form(
-        self,
-        form: ProviderForm | None,
-        *,
-        fields: tuple[tuple[str, str], ...] = PROVIDER_CORE_FIELDS,
-    ) -> None:
-        if form is None:
-            return
-        self._provider_form = form
-        self._provider_fields = fields
-        self._provider_field = 0
-        self._panel = "provider_form"
-        self._load_provider_field()
-
-    def _start_provider_connection_form(self) -> None:
-        wizard = self._provider_wizard
-        if wizard is None:
-            return
-        fields = PROVIDER_CORE_FIELDS[1:] if wizard.editing else PROVIDER_CORE_FIELDS
-        self._start_provider_form(wizard.form, fields=fields)
-
-    def _load_provider_field(self) -> None:
-        assert self._provider_form is not None
-        name = self._provider_fields[self._provider_field][0]
-        value = cast(str, getattr(self._provider_form, name))
-        self.buffer.set_document(Document(value, len(value)), bypass_readonly=True)
-        self._invalidate()
-
-    async def _advance_provider(self, offset: int) -> None:
-        form = self._provider_form
-        if form is None:
-            return
-        name = self._provider_fields[self._provider_field][0]
-        setattr(form, name, self.buffer.text)
-        try:
-            if name == "provider_id":
-                validate_provider_id(form.provider_id.strip())
-            elif name == "base_url" and form.base_url.strip():
-                validate_base_url(form.base_url.strip())
-            elif name == "api_key" and any(
-                character.isspace() for character in form.api_key.strip()
-            ):
-                raise ValueError("API key must not contain whitespace")
-        except ValueError as error:
-            await self._write(system_message(f"Invalid provider: {error}", error=True))
-            return
-        target = self._provider_field + offset
-        if target >= len(self._provider_fields):
-            if self._provider_fields in {
-                PROVIDER_CORE_FIELDS,
-                PROVIDER_CORE_FIELDS[1:],
-            }:
-                await self._probe_provider()
-            elif self._provider_fields == (("model", "Model"),):
-                if self._provider_wizard is not None:
-                    self._provider_wizard.use_manual_model(form.model)
-                self._open_provider_review()
-            else:
-                self._open_provider_review()
-            return
-        self._provider_field = max(0, target)
-        self._load_provider_field()
-
-    async def _refresh_provider(self) -> None:
-        form = self._provider_form
-        if form is None:
-            return
-        if self._provider_selected_index < 0:
-            await self._write(
-                system_message("Save this provider before discovering models.")
-            )
-            return
-        try:
-            view = await self.runtime.refresh_provider_models(form.provider_id.strip())
-            self._provider_models = view.models
-        except Exception as error:
-            await self._write(
-                system_message(f"Model discovery failed: {error}", error=True)
-            )
-            return
-        if not self._provider_models:
-            await self._write(system_message("No models were discovered."))
-            return
-        self._panel = "provider_models"
-        self._panel_index = next(
-            (i for i, model in enumerate(self._provider_models) if model == form.model),
-            0,
-        )
-        self.buffer.set_document(Document(""), bypass_readonly=True)
-        self._invalidate()
-
-    async def _probe_provider(self) -> None:
-        wizard = self._provider_wizard
-        if wizard is None:
-            return
-        try:
-            request = wizard.probe_request()
-        except Exception as error:
-            await self._write(system_message(f"Invalid provider: {error}", error=True))
-            return
-        self._panel = "provider_checking"
-        self.buffer.set_document(Document(""), bypass_readonly=True)
-        self._provider_probe_task = cast(asyncio.Task[object], asyncio.current_task())
-        self._invalidate()
-        try:
-            result = await self.runtime.probe_provider(request)
-        except asyncio.CancelledError:
-            self._start_provider_connection_form()
-            self._provider_field = len(self._provider_fields) - 1
-            self._load_provider_field()
-            return
-        finally:
-            self._provider_probe_task = None
-        wizard.accept_probe(result)
-        if wizard.connection_verified:
-            self._open_provider_review()
-        else:
-            self._panel = "provider_probe_failure"
-            self._panel_index = 0
-            self._invalidate()
-
-    def _show_probe_models(self) -> None:
-        wizard = self._provider_wizard
-        if wizard is None or wizard.probe_result is None:
-            return
-        wizard.model_filter = ""
-        self._provider_models = wizard.filtered_models()
-        self._panel = "provider_models"
-        self._panel_index = next(
-            (
-                i
-                for i, model in enumerate(self._provider_models)
-                if model == wizard.form.model
-            ),
-            0,
-        )
-        self.buffer.set_document(Document(""), bypass_readonly=True)
-        self._invalidate()
-
-    def _open_provider_review(self) -> None:
-        self._panel = "provider_review"
-        self._panel_index = 0
-        self.buffer.set_document(Document(""), bypass_readonly=True)
-        self._invalidate()
-
-    async def _save_provider(self) -> None:
-        form = self._provider_form
-        if form is None:
-            return
-        try:
-            update = (
-                self._provider_wizard.build_update()
-                if self._provider_wizard is not None
-                else form.build_update()
-            )
-            probe_result = (
-                self._provider_wizard.probe_result
-                if self._provider_wizard is not None
-                and self._provider_wizard.connection_verified
-                else None
-            )
-            status = await self.runtime.configure_provider(update, probe_result)
-        except Exception as error:
-            await self._write(
-                system_message(f"Provider configuration failed: {error}", error=True)
-            )
-            return
-        self._status = status
-        self._context_status = self.runtime.context_status()
-        self._status_warning = self._context_status.warning or ""
-        self._panel = None
-        if self._provider_wizard is not None:
-            self._provider_wizard.clear_sensitive()
-        self._provider_wizard = None
-        self._provider_form = None
-        self.buffer.set_document(
-            Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
-        )
-        await self._write(
-            system_message(f"Using provider {status.provider_id!r} · {status.model}")
-        )
-        self._invalidate()
-
-    async def _select_provider(self, provider_id: str) -> None:
-        try:
-            status = await self.runtime.select_provider(provider_id)
-        except Exception as error:
-            await self._write(
-                system_message(f"Provider selection failed: {error}", error=True)
-            )
-            return
-        self._status = status
-        self._context_status = self.runtime.context_status()
-        self._status_warning = self._context_status.warning or ""
-        self._close_panel()
-        await self._write(
-            system_message(f"Using provider {status.provider_id!r} · {status.model}")
-        )
-
-    async def _remove_provider_credential(self) -> None:
-        provider = self._providers[self._provider_selected_index]
-        try:
-            status = await self.runtime.remove_provider_credential(provider.id)
-            providers = self.runtime.providers()
-        except Exception as error:
-            await self._write(
-                system_message(f"Failed to remove saved API key: {error}", error=True)
-            )
-            return
-        self._status = status
-        self._context_status = self.runtime.context_status()
-        self._providers = providers
-        self._panel = None
-        self.buffer.set_document(
-            Document(self._saved_draft, len(self._saved_draft)), bypass_readonly=True
-        )
-        message = (
-            f"Saved API key for {provider.id!r} removed. "
-            "The provider is now not configured."
-        )
-        await self._write(system_message(message))
-        self._invalidate()
-
-    def _provider_back(self) -> None:
-        if self._panel == "provider_actions":
-            self._panel = "provider_select"
-            self._panel_index = max(self._provider_selected_index, 0)
-        elif self._panel == "provider_remove_credential":
-            self._panel = "provider_actions"
-            self._panel_index = 2
-        elif self._panel == "provider_models":
-            self._panel = "provider_review"
-            self._panel_index = 1
-        elif self._panel == "provider_checking":
-            if self._provider_probe_task is not None:
-                self._provider_probe_task.cancel()
-            return
-        elif self._panel == "provider_probe_failure":
-            self._start_provider_connection_form()
-            self._provider_field = len(self._provider_fields) - 1
-            self._load_provider_field()
-            return
-        elif self._panel == "provider_form":
-            if self._provider_fields in {
-                PROVIDER_CORE_FIELDS,
-                PROVIDER_CORE_FIELDS[1:],
-            }:
-                self._panel = "provider_protocol"
-                self._panel_index = (
-                    0
-                    if self._provider_form is not None
-                    and self._provider_form.protocol == "anthropic-messages"
-                    else 1
-                )
-            else:
-                self._open_provider_review()
-                return
-        elif self._panel == "provider_review":
-            if (
-                self._provider_wizard is not None
-                and self._provider_wizard.probe_result is not None
-            ):
-                self._show_probe_models()
-            else:
-                self._start_provider_form(
-                    self._provider_form, fields=(("model", "Model"),)
-                )
-            return
-        elif self._panel == "provider_protocol":
-            self._cancel_provider_wizard()
-            return
-        self.buffer.set_document(Document(""), bypass_readonly=True)
-        self._invalidate()
-
-    def _cancel_provider_wizard(self) -> None:
-        if self._provider_wizard is not None:
-            self._provider_wizard.clear_sensitive()
-        self._provider_wizard = None
-        self._provider_form = None
-        if self._provider_selected_index >= 0:
-            self._panel = "provider_actions"
-            self._panel_index = 1
-        else:
-            self._panel = "provider_select"
-            self._panel_index = len(self._providers)
-        self.buffer.set_document(Document(""), bypass_readonly=True)
-        self._invalidate()
 
     async def _ask_permission(
         self, request: PermissionRequest
@@ -1435,7 +1054,7 @@ class MyCodeApp(TurnFlowMixin):
                 self._panel_index = 0
                 self._invalidate()
             return
-        if self._panel is not None or self._busy:
+        if self._panel is not None or (self._busy and not self._agent_active):
             return
         self._slash_menu.update(self.buffer.text, self.commands)
         self._invalidate()
@@ -1464,7 +1083,8 @@ class MyCodeApp(TurnFlowMixin):
         previous_todos = ()
         group: ToolActivityGroup | None = None
         pending_todos: tuple[Any, ...] | None = None
-        for index, entry in enumerate(history):
+        renderables: list[RenderableType] = []
+        for entry in history:
             if isinstance(entry, HistoryToolCall):
                 if entry.todos is not None and not entry.is_error:
                     pending_todos = entry.todos
@@ -1477,28 +1097,27 @@ class MyCodeApp(TurnFlowMixin):
                     )
                 if entry.ends_tool_batch and pending_todos is not None:
                     if group:
-                        await self._write(tool_activity_message(group))
+                        renderables.append(tool_activity_message(group))
                         group = None
                     if pending_todos != previous_todos:
-                        await self._write(todo_snapshot(pending_todos))
+                        renderables.append(todo_snapshot(pending_todos))
                         previous_todos = pending_todos
                     pending_todos = None
             else:
                 if group:
-                    await self._write(tool_activity_message(group))
+                    renderables.append(tool_activity_message(group))
                     group = None
                 if pending_todos is not None:
                     if pending_todos != previous_todos:
-                        await self._write(todo_snapshot(pending_todos))
+                        renderables.append(todo_snapshot(pending_todos))
                         previous_todos = pending_todos
                     pending_todos = None
-                await self._write(history_message(entry, self.theme))
-            if index and index % 20 == 0:
-                await asyncio.sleep(0)
+                renderables.append(history_message(entry, self.theme))
         if group:
-            await self._write(tool_activity_message(group))
+            renderables.append(tool_activity_message(group))
         if pending_todos is not None and pending_todos != previous_todos:
-            await self._write(todo_snapshot(pending_todos))
+            renderables.append(todo_snapshot(pending_todos))
+        await self._write_many(tuple(renderables))
 
     def _refresh_status(self) -> None:
         warnings: list[str] = []

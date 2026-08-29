@@ -4,11 +4,16 @@ import asyncio
 import hashlib
 from collections.abc import AsyncIterator, Callable
 from dataclasses import fields, is_dataclass, replace
-from typing import Protocol
+from inspect import signature
+from threading import Event as ThreadEvent
+from threading import Thread
+from typing import Protocol, cast
 
 from my_code.agent.events import (
     AgentConversationUpdated,
     AgentEvent,
+    AgentInputAccepted,
+    AgentInputFailed,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
@@ -23,7 +28,7 @@ from my_code.agent.models import (
     AgentTurnInput,
     AgentTurnSucceeded,
 )
-from my_code.agent.runner import AgentRunner
+from my_code.agent.runner import AgentRunner, InteractiveAgentRunner
 from my_code.chat.events import (
     AttachmentLoaded,
     BackgroundInvocationFinished,
@@ -40,6 +45,8 @@ from my_code.chat.events import (
     ToolFinished,
     ToolStarted,
     TurnEvent,
+    TurnInputAccepted,
+    TurnInputFailed,
     TurnOutcome,
     TurnSucceeded,
 )
@@ -50,6 +57,7 @@ from my_code.chat.history import (
     HistoryToolCall,
     ResumedSession,
 )
+from my_code.chat.pending_inputs import PendingInputController, QueuedInputView
 from my_code.chat.permissions import (
     DeferredPermissionPrompter,
     PermissionHandler,
@@ -167,6 +175,40 @@ def _connection_identity(
     )
 
 
+def _accepts_pending_source(agent: object) -> bool:
+    method = getattr(agent, "stream_continuation", None)
+    return method is not None and "pending_source" in signature(method).parameters
+
+
+async def _offload_session_io[T](operation: Callable[[], T]) -> T:
+    """Run filesystem-heavy hydration without blocking the UI event loop.
+
+    A small explicit worker is used instead of the process-global asyncio
+    executor so Session restore cannot contend with provider or renderer work.
+    """
+
+    done = ThreadEvent()
+    result: list[T] = []
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result.append(operation())
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            done.set()
+
+    worker = Thread(target=run, name="my-code-session-io", daemon=True)
+    worker.start()
+    while not done.is_set():  # noqa: ASYNC110 - threading.Event is cross-thread
+        await asyncio.sleep(0.001)
+    worker.join()
+    if errors:
+        raise errors[0]
+    return result[0]
+
+
 def _project_subagent_entry(
     entry: SubagentTranscriptText
     | SubagentTranscriptReasoning
@@ -239,6 +281,10 @@ class ChatService:
         self._initialization_lock = asyncio.Lock()
         self._initialized = False
         self._shutdown_observability = shutdown_observability or (lambda: None)
+        self._pending_inputs = PendingInputController(
+            state.session.session_id, attachment_loader
+        )
+        self._interactive_task: asyncio.Task[object] | None = None
 
     async def initialize(self) -> SessionView:
         """Refresh network-backed capabilities after the local UI is visible."""
@@ -595,6 +641,68 @@ class ChatService:
                 )
                 raise
 
+    def queue_input(self, prompt: str) -> QueuedInputView:
+        """Start preparing a transient input without persisting it."""
+
+        if self._pending_inputs.session_id != self.state.session.session_id:
+            raise RuntimeError("Pending input controller is bound to another session")
+        return self._pending_inputs.queue_input(prompt)
+
+    def recall_latest_input(self) -> str | None:
+        return self._pending_inputs.recall_latest_input()
+
+    def queued_inputs(self) -> tuple[QueuedInputView, ...]:
+        return self._pending_inputs.queued_inputs()
+
+    async def stream_interactive(self) -> AsyncIterator[TurnEvent]:
+        """Consume queued inputs across fresh step budgets until the queue is idle."""
+
+        async with self.state.operation_lock():
+            if not _accepts_pending_source(self.agent):
+                raise RuntimeError("Agent runner does not support interactive steering")
+            await self.state.start()
+            self._interactive_task = asyncio.current_task()
+            try:
+                while self._pending_inputs.has_actionable():
+                    await self._pending_inputs.prepare_pending()
+                    for failure in self._pending_inputs.drain_failures():
+                        yield TurnInputFailed(
+                            failure.input_id,
+                            failure.prompt,
+                            failure.error or "Attachment preparation failed",
+                        )
+                    if not self._pending_inputs.has_actionable():
+                        break
+                    session = self.state.session
+                    events = cast(
+                        InteractiveAgentRunner, self.agent
+                    ).stream_continuation(
+                        session,
+                        self.state.context_runtime,
+                        pending_source=self._pending_inputs,
+                    )
+                    try:
+                        async for event in self._project_agent_events(session, events):
+                            yield event
+                        for failure in self._pending_inputs.drain_failures():
+                            yield TurnInputFailed(
+                                failure.input_id,
+                                failure.prompt,
+                                failure.error or "Attachment preparation failed",
+                            )
+                    except asyncio.CancelledError:
+                        session.close_unresolved_tool_calls(
+                            "Tool execution was aborted by the user."
+                        )
+                        raise
+            finally:
+                self._interactive_task = None
+
+    def cancel_active_turn(self) -> None:
+        task = self._interactive_task
+        if task is not None and not task.done():
+            task.cancel()
+
     async def stream_background_notifications(self) -> AsyncIterator[TurnEvent]:
         """Watch terminal background tasks and run idle continuations."""
 
@@ -611,9 +719,18 @@ class ChatService:
                     yield BackgroundInvocationStarted()
                     failed = False
                     try:
-                        events = self.agent.stream_continuation(
-                            session,
-                            self.state.context_runtime,
+                        events = (
+                            cast(
+                                InteractiveAgentRunner, self.agent
+                            ).stream_continuation(
+                                session,
+                                self.state.context_runtime,
+                                pending_source=self._pending_inputs,
+                            )
+                            if _accepts_pending_source(self.agent)
+                            else self.agent.stream_continuation(
+                                session, self.state.context_runtime
+                            )
                         )
                         async for event in self._project_agent_events(session, events):
                             yield event
@@ -636,7 +753,11 @@ class ChatService:
     ) -> AsyncIterator[TurnEvent]:
         previous_todos = project_todos(session.conversation).todos
         async for event in events:
-            if isinstance(event, AgentTextStarted):
+            if isinstance(event, AgentInputAccepted):
+                yield TurnInputAccepted(event.input_id, event.prompt)
+            elif isinstance(event, AgentInputFailed):
+                yield TurnInputFailed(event.input_id, event.prompt, event.error)
+            elif isinstance(event, AgentTextStarted):
                 yield TextStarted()
             elif isinstance(event, AgentTextDelta):
                 yield TextDelta(event.text)
@@ -948,27 +1069,36 @@ class ChatService:
             return self.status()
 
     async def list_sessions(self) -> tuple[SessionSummary, ...]:
-        return SessionCatalog(self._project_state_dir).list(
-            exclude_session_id=self.state.session.session_id
+        catalog = SessionCatalog(self._project_state_dir)
+        current_id = self.state.session.session_id
+        return await _offload_session_io(
+            lambda: catalog.list(exclude_session_id=current_id)
         )
 
     async def resume_session(self, session_id: str) -> ResumedSession:
         async with self.state.operation_lock():
             if session_id == self.state.session.session_id:
                 raise ValueError("Session is already active")
-            # Fully hydrate and repair every candidate component before publishing it.
-            session = Session.restore(
-                self._project_state_dir,
-                session_id,
-                tool_results_dir=self.settings.paths.tool_results_dir(session_id),
+            if self._pending_inputs.queued_inputs():
+                raise RuntimeError("Recall or clear queued inputs before resuming")
+            # Fully hydrate, validate, and project before publishing the candidate.
+            session = await _offload_session_io(
+                lambda: Session.restore(
+                    self._project_state_dir,
+                    session_id,
+                    tool_results_dir=self.settings.paths.tool_results_dir(session_id),
+                )
             )
-            history = self._project_history(session)
+            history = await _offload_session_io(lambda: self._project_history(session))
             permission_mode = PermissionMode(session.permission_mode)
             permission_policy = PermissionPolicy(
                 permission_mode, self.state.permissions.policy.rules
             )
             restore_skill_permissions(permission_policy, session.conversation)
             self.state.replace_session(session, permission_policy=permission_policy)
+            self._pending_inputs = PendingInputController(
+                session.session_id, self.attachment_loader
+            )
             if self.background_wake_signal is not None:
                 self.background_wake_signal.pulse()
             return ResumedSession(status=self.status(), history=history)
@@ -977,6 +1107,7 @@ class ChatService:
         return self.state.session.set_permission_mode(mode.value)
 
     async def close(self) -> None:
+        self._pending_inputs.clear()
         try:
             await self.permission_prompter.close()
             await self.state.close()

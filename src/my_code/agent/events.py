@@ -10,6 +10,23 @@ from my_code.tools.presentation import ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)
+class AgentInputAccepted:
+    """A host input became a canonical HumanMessage at a safe boundary."""
+
+    input_id: str | None
+    prompt: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentInputFailed:
+    """A host input could not be prepared and remains non-canonical."""
+
+    input_id: str
+    prompt: str
+    error: str
+
+
+@dataclass(frozen=True, slots=True)
 class AgentTextStarted:
     pass
 
@@ -65,7 +82,9 @@ class AgentConversationUpdated:
 
 
 type AgentEvent = (
-    AgentTextStarted
+    AgentInputAccepted
+    | AgentInputFailed
+    | AgentTextStarted
     | AgentTextDelta
     | AgentTextCompleted
     | AgentReasoningStarted
@@ -81,6 +100,8 @@ type AgentEvent = (
 
 __all__ = [
     "AgentConversationUpdated",
+    "AgentInputAccepted",
+    "AgentInputFailed",
     "AgentEvent",
     "AgentReasoningCompleted",
     "AgentReasoningDelta",

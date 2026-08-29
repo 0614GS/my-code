@@ -4,7 +4,7 @@
 
 ## Host 边界
 
-主应用使用普通 terminal scrollback，而不是全屏 alternate buffer。已完成内容通过串行的 terminal 输出固化；composer、状态栏和临时交互保留在底部动态区。只有 `Ctrl+T` transcript pager 临时使用 alternate buffer。
+主应用使用普通 terminal scrollback，而不是全屏 alternate buffer。已完成内容先在单 worker renderer 中离屏生成，再由唯一 UI owner 串行、短暂地写入 terminal；composer、队列预览、状态栏和临时交互保留在底部动态区。只有 `Ctrl+T` transcript pager 临时使用 alternate buffer。
 
 TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义模块读取安全 DTO。它不会直接访问 Session、Conversation、Context、ToolExecutor、ToolCatalog、TaskSupervisor、MCP/Skill runtime 或 Provider SDK。
 
@@ -15,6 +15,8 @@ TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义�
 一次 prompt 调用 `ChatService.stream()`，TUI 消费 text/reasoning started、delta、completed，attachment、tool started/finished、Todo/context 更新和 turn 终态。
 
 - delta 只存在于动态区；completed 到达后先清除预览，再把最终 Rich renderable 固化到 scrollback。
+- Markdown live projection 缓存稳定块，只重画不稳定尾块；Rich 输入上限 16 KiB、动态区最多 12 个视觉行，超长未闭合块退化为 8 KiB plain-text tail。最终 completed 内容仍完整渲染。
+- reasoning live view 保留原始换行并跟随尾部多行；终态只固化 Provider disclosure 允许显示的完整段落。
 - 连续 ToolCall 组成一个稳定有序块，并行完成只按 call ID 更新原位置，不重排。
 - `Edit`/`Write` 在底部动态区只显示紧凑状态和结果摘要；成功块固化到 scrollback
   或从 Session 恢复时，展开持久化的内联 diff。权限确认、失败和取消路径不展开 diff。
@@ -36,7 +38,9 @@ presentation 中的 200 条代码行记录。
 
 ## 输入、命令与临时面板
 
-Enter 提交，Shift+Enter 或 Ctrl+J 换行；Esc 按候选菜单、临时面板、当前 turn 的优先级处理。Turn 和后台 continuation 期间 composer 只读但保留草稿。
+Enter 提交，Shift+Enter 或 Ctrl+J 换行；Esc 按候选菜单、临时面板、当前 invocation 的优先级处理。Agent 与后台 continuation 运行时 composer 仍可编辑，普通 Enter 加入仅内存的 steering queue；accepted 事件到达后才写入 scrollback。空 composer 按 Up 可取消准备任务并召回最近的 pending/failed 输入。Esc 只取消当前 invocation，不清除队列。
+
+composer 下方最多显示三行 queue preview。Slash command 显式分为 `concurrent_read` 与 `exclusive`：只读命令可在 Agent active 时运行；compact、能力 reload/reconnect、provider/model、resume 和 exit 等独占操作保留原草稿并等待 Agent 空闲。Agent active 时 Shift+Tab 不修改 permission mode。
 
 Slash commands 在进入模型前本地解析。`/resume`、`/provider`、`/model`、`/usage`、`/tools`、`/skills`、`/mcp`、`/tasks` 和 `/agents` 都只调用 ChatService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
 

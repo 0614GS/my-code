@@ -23,6 +23,8 @@ from my_code.chat.events import (
     ToolFinished,
     ToolStarted,
     TurnEvent,
+    TurnInputAccepted,
+    TurnInputFailed,
     TurnSucceeded,
 )
 from my_code.chat.service import ChatService
@@ -47,6 +49,7 @@ class TurnFlowMixin:
     buffer: Buffer
     theme: TuiTheme
     _busy: bool
+    _agent_active: bool
     _activity: str
     _stream_text: str
     _reasoning_parts: list[str]
@@ -64,12 +67,16 @@ class TurnFlowMixin:
     def _invalidate_streaming(self) -> None:
         raise NotImplementedError
 
+    def _prepare_stream_frame(self, *, structural: bool = False) -> None:
+        raise NotImplementedError
+
     def _invalidate_for_event(self, event: TurnEvent) -> None:
         """Redraw immediately for structural events, throttle streaming deltas."""
 
         if isinstance(event, (TextDelta, ReasoningDelta)):
             self._invalidate_streaming()
         else:
+            self._prepare_stream_frame(structural=True)
             self._invalidate()
 
     def _refresh_status(self) -> None:
@@ -82,6 +89,7 @@ class TurnFlowMixin:
         *,
         user: bool,
     ) -> None:
+        self._agent_active = True
         self._busy = True
         self._activity = "my-code is working…"
         self._stream_text = ""
@@ -92,7 +100,18 @@ class TurnFlowMixin:
         completed = False
         try:
             async for event in events:
-                if isinstance(event, AttachmentLoaded):
+                if isinstance(event, TurnInputAccepted):
+                    await self._write(user_message(event.prompt, self.theme))
+                    history = getattr(self, "_history", None)
+                    if history is not None:
+                        history.append_string(event.prompt)
+                elif isinstance(event, TurnInputFailed):
+                    await self._write(
+                        system_message(
+                            f"Queued input failed: {event.error}", error=True
+                        )
+                    )
+                elif isinstance(event, AttachmentLoaded):
                     await self._flush_tool_activity()
                     await self._write(system_message(event.display))
                 elif isinstance(event, TextStarted):
@@ -197,11 +216,21 @@ class TurnFlowMixin:
             await self._interrupt_and_flush_tools()
             if not completed and partial_text:
                 await self._write(assistant_message(partial_text))
+            self._agent_active = False
             self._busy = False
             self._refresh_status()
 
     async def _consume_background_event(self, event: TurnEvent) -> None:
-        if isinstance(event, TextDelta):
+        if isinstance(event, TurnInputAccepted):
+            await self._write(user_message(event.prompt, self.theme))
+            history = getattr(self, "_history", None)
+            if history is not None:
+                history.append_string(event.prompt)
+        elif isinstance(event, TurnInputFailed):
+            await self._write(
+                system_message(f"Queued input failed: {event.error}", error=True)
+            )
+        elif isinstance(event, TextDelta):
             await self._flush_tool_activity()
             self._stream_text += event.text
         elif isinstance(event, TextCompleted):

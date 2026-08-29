@@ -570,7 +570,14 @@ class SessionStore:
             created_at=previous.created_at if previous else self._start.created_at,
             updated_at=self._clock().isoformat(),
             title=previous.title if previous else None,
-            last_prompt=previous.last_prompt if previous else None,
+            last_prompt=next(
+                (
+                    message.content
+                    for message in reversed(messages)
+                    if isinstance(message, HumanMessage)
+                ),
+                previous.last_prompt if previous else None,
+            ),
         )
         records.append(encode_metadata(metadata))
         self._append_records(records)

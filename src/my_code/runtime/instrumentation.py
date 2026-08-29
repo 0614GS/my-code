@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import TypeVar
+from typing import TypeVar, cast
 from uuid import uuid4
 
 from my_code.agent.events import AgentEvent
@@ -16,8 +16,10 @@ from my_code.agent.models import (
     AgentTurnInput,
     AgentTurnOutcome,
     AgentTurnSucceeded,
+    PendingInputSource,
+    UserTurnInput,
 )
-from my_code.agent.runner import AgentRunner
+from my_code.agent.runner import AgentRunner, InteractiveAgentRunner
 from my_code.context.session import ContextRuntime
 from my_code.conversation.models import ToolCall, ToolResult
 from my_code.conversation.presentation import ToolResultPresentation
@@ -57,7 +59,7 @@ _JournalRecord = TypeVar("_JournalRecord", TurnStarted, TurnFinished)
 class InstrumentedAgentRunner:
     def __init__(
         self,
-        runner: AgentRunner,
+        runner: AgentRunner | InteractiveAgentRunner,
         observer: Observer,
         *,
         run_id: str | None = None,
@@ -75,10 +77,16 @@ class InstrumentedAgentRunner:
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def submit(
-        self, session: Session, runtime: ContextRuntime, turn_input: AgentTurnInput
+        self,
+        session: Session,
+        runtime: ContextRuntime,
+        turn_input: AgentTurnInput | Sequence[UserTurnInput],
+        pending_source: PendingInputSource | None = None,
     ) -> AgentTurnOutcome:
         outcome: AgentTurnOutcome | None = None
-        async for event in self.stream(session, runtime, turn_input):
+        async for event in self.stream(
+            session, runtime, turn_input, pending_source=pending_source
+        ):
             if isinstance(event, (AgentTurnSucceeded, AgentMaxStepsReached)):
                 outcome = event
         if outcome is None:
@@ -86,22 +94,42 @@ class InstrumentedAgentRunner:
         return outcome
 
     def stream(
-        self, session: Session, runtime: ContextRuntime, turn_input: AgentTurnInput
+        self,
+        session: Session,
+        runtime: ContextRuntime,
+        turn_input: AgentTurnInput | Sequence[UserTurnInput],
+        pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        return self._stream(session, runtime, turn_input, continuation=False)
+        return self._stream(
+            session,
+            runtime,
+            turn_input,
+            continuation=False,
+            pending_source=pending_source,
+        )
 
     def stream_continuation(
-        self, session: Session, runtime: ContextRuntime
+        self,
+        session: Session,
+        runtime: ContextRuntime,
+        pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        return self._stream(session, runtime, None, continuation=True)
+        return self._stream(
+            session,
+            runtime,
+            None,
+            continuation=True,
+            pending_source=pending_source,
+        )
 
     async def _stream(
         self,
         session: Session,
         runtime: ContextRuntime,
-        turn_input: AgentTurnInput | None,
+        turn_input: AgentTurnInput | Sequence[UserTurnInput] | None,
         *,
         continuation: bool,
+        pending_source: PendingInputSource | None,
     ) -> AsyncIterator[AgentEvent]:
         turn_id = str(uuid4())
         run_id = self._run_id or session.session_id
@@ -145,11 +173,30 @@ class InstrumentedAgentRunner:
                 _safe_record(
                     self._observer, "turn.started", {"continuation": continuation}
                 )
-                source = (
-                    self._runner.stream_continuation(session, runtime)
-                    if continuation
-                    else self._runner.stream(session, runtime, turn_input)  # type: ignore[arg-type]
-                )
+                if pending_source is not None:
+                    interactive = cast(InteractiveAgentRunner, self._runner)
+                    source = (
+                        interactive.stream_continuation(
+                            session, runtime, pending_source=pending_source
+                        )
+                        if continuation
+                        else interactive.stream(
+                            session,
+                            runtime,
+                            turn_input,  # type: ignore[arg-type]
+                            pending_source=pending_source,
+                        )
+                    )
+                else:
+                    source = (
+                        self._runner.stream_continuation(session, runtime)
+                        if continuation
+                        else self._runner.stream(
+                            session,
+                            runtime,
+                            turn_input,  # type: ignore[arg-type]
+                        )
+                    )
                 try:
                     async for event in source:
                         if isinstance(event, AgentTurnSucceeded):
