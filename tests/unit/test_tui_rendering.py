@@ -9,9 +9,10 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
-from my_code.chat.status import RuntimeStatus
+from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import (
     TranscriptField,
+    TranscriptReasoning,
     TranscriptText,
     TranscriptToolResult,
     TranscriptValue,
@@ -24,8 +25,11 @@ from my_code.conversation.presentation import (
     ToolResultPresentation,
 )
 from my_code.features.todos.models import TodoItem
+from my_code.model.primitives import ReasoningPresentation
 from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.activity import ToolActivityGroup
+from my_code.tui.block_flow import TurnBlockCoordinator
+from my_code.tui.presentation import render_status_card
 from my_code.tui.transcript import TranscriptPager, transcript_renderable
 from my_code.tui.widgets import (
     assistant_message,
@@ -86,6 +90,71 @@ def test_welcome_uses_a_compact_terminal_wordmark() -> None:
     assert wordmark.plain.startswith("›_  my-code v")
     assert wordmark.spans[0].style == "bold cyan"
     assert wordmark.spans[1].style == "bold italic"
+
+
+def test_status_card_uses_aligned_fields_and_full_width_rounded_border() -> None:
+    status = RuntimeStatus(
+        session_id="session-id",
+        cwd="/workspace/a-project-with-a-long-name",
+        provider_id="openai",
+        base_url="http://127.0.0.1:8317/v1",
+        model="gpt-test",
+        permission_mode="default",
+        credential_source="stored",
+        context_entry_count=7,
+        conversation_entry_count=9,
+        todos=(),
+        tool_count=4,
+        skill_count=2,
+        mcp_connected_count=1,
+        mcp_server_count=2,
+    )
+    context = ContextStatus(
+        estimated_input_tokens=50_000,
+        reserved_output_tokens=0,
+        estimated_total_tokens=50_000,
+        message_chars=0,
+        system_chars=0,
+        tool_schema_chars=0,
+        message_limit_chars=0,
+        context_entry_count=7,
+        conversation_entry_count=9,
+        replacement_count=0,
+        compact_count=0,
+        input_limit_tokens=200_000,
+    )
+
+    rendered = _plain(render_status_card(status, context), width=72)
+
+    assert rendered.splitlines()[0].startswith("╭")
+    assert rendered.splitlines()[0].endswith("╮")
+    assert rendered.splitlines()[-1].startswith("╰")
+    assert ">_ my-code v" in rendered
+    assert "Model:" in rendered and "gpt-test" in rendered
+    assert "Provider:" in rendered and "127.0.0.1:8317/v1" in rendered
+    assert "75% left" in rendered
+
+
+def test_work_group_adds_one_separator_only_before_a_final_answer() -> None:
+    blocks = TurnBlockCoordinator()
+    blocks.add_reasoning(ReasoningPresentation("summary", ("Checked the code.",)))
+    blocks.add_text("I am checking another file.")
+    tool_step = blocks.complete_step(has_tools=True)
+    blocks.mark_work()
+    blocks.add_text("Final answer.")
+    final_step = blocks.complete_step(has_tools=False)
+
+    rendered = _plain(Group(*tool_step, *final_step), width=50)
+    divider_lines = [line for line in rendered.splitlines() if set(line) == {"─"}]
+
+    assert len(divider_lines) == 1
+    assert rendered.index("Checked the code") < rendered.index(divider_lines[0])
+    assert rendered.index(divider_lines[0]) < rendered.index("Final answer")
+
+    pure = TurnBlockCoordinator()
+    pure.add_text("Just an answer.")
+    pure_rendered = _plain(Group(*pure.complete_step(has_tools=False)), width=50)
+    assert not any(set(line) == {"─"} for line in pure_rendered.splitlines())
 
 
 def test_codex_markdown_snapshot_and_streaming_renderer_match() -> None:
@@ -309,6 +378,22 @@ def test_transcript_renders_structured_values_and_literal_tool_output() -> None:
     source = _TranscriptSource(TranscriptView(2, ()))
     source.view = TranscriptView(3, ())
     assert value.fields[0].value.items[0].scalar == "one"
+
+
+def test_transcript_separates_visible_work_from_final_answer() -> None:
+    view = TranscriptView(
+        1,
+        (
+            TranscriptReasoning(
+                ReasoningPresentation("summary", ("Inspected the implementation.",))
+            ),
+            TranscriptText("assistant", "Final answer.", is_final_answer=True),
+        ),
+    )
+
+    rendered = _plain(transcript_renderable(view), width=48)
+
+    assert len([line for line in rendered.splitlines() if set(line) == {"─"}]) == 1
 
 
 def test_transcript_pager_starts_at_tail_and_preserves_position_on_refresh() -> None:

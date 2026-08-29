@@ -32,7 +32,7 @@ from my_code.tui.terminal import (
     terminal_color_depth,
     terminal_output,
 )
-from my_code.tui.widgets import CodexMarkdown, reasoning_message
+from my_code.tui.widgets import CodexMarkdown, reasoning_message, work_separator
 
 
 class TranscriptSource(Protocol):
@@ -223,14 +223,23 @@ class TranscriptPager:
 
 def transcript_renderable(view: TranscriptView) -> RenderableType:
     blocks: list[RenderableType] = []
+    work_visible = False
     for entry in view.entries:
         if isinstance(entry, TranscriptText):
+            if entry.role == "user":
+                work_visible = False
+            elif entry.is_final_answer and work_visible:
+                blocks.append(work_separator())
+                work_visible = False
+            elif entry.role == "assistant" and not entry.is_final_answer:
+                work_visible = True
             label = "› User" if entry.role == "user" else "Assistant"
             blocks.append(
                 Group(Text(label, style="bold cyan"), CodexMarkdown(entry.text))
             )
         elif isinstance(entry, TranscriptReasoning):
             blocks.append(reasoning_message(entry.presentation))
+            work_visible = True
         elif isinstance(entry, TranscriptToolCall):
             blocks.append(
                 Group(
@@ -238,6 +247,7 @@ def transcript_renderable(view: TranscriptView) -> RenderableType:
                     _value_text(entry.input),
                 )
             )
+            work_visible = True
         elif isinstance(entry, TranscriptToolResult):
             style = "bold red" if entry.is_error else "bold green"
             blocks.append(
@@ -246,6 +256,7 @@ def transcript_renderable(view: TranscriptView) -> RenderableType:
                     Text(entry.content),
                 )
             )
+            work_visible = True
         elif isinstance(entry, TranscriptSummary):
             blocks.append(
                 Group(

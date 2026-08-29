@@ -48,6 +48,7 @@ from my_code.permissions.models import (
 from my_code.providers.manager import ModelView, ProviderView
 from my_code.sessions.catalog import SessionSummary
 from my_code.tui.activity import ToolActivityGroup
+from my_code.tui.block_flow import TurnBlockCoordinator
 from my_code.tui.commands import (
     CommandConcurrency,
     CommandOutcome,
@@ -79,12 +80,14 @@ from my_code.tui.picker import PickerState, PickerView
 from my_code.tui.presentation import (
     format_context_usage,
     render_agent_view,
+    render_context_card,
     render_context_status,
     render_mcp,
     render_skills,
+    render_status_card,
     render_tasks,
     render_tools,
-    render_usage,
+    render_usage_card,
 )
 from my_code.tui.provider_screen import (
     PROVIDER_CORE_FIELDS,
@@ -102,6 +105,7 @@ from my_code.tui.transcript import TranscriptPager
 from my_code.tui.turns import TurnFlowMixin
 from my_code.tui.widgets import (
     assistant_message,
+    command_echo,
     history_message,
     status_line,
     streaming_renderable,
@@ -109,6 +113,7 @@ from my_code.tui.widgets import (
     todo_snapshot,
     tool_activity_message,
     welcome,
+    work_separator,
 )
 
 #: Minimum interval between dynamic-region redraws while streaming. Per-token
@@ -152,6 +157,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         self._reasoning_parts: list[str] = []
         self._todos = ()
         self._tool_activity: ToolActivityGroup | None = None
+        self._blocks = TurnBlockCoordinator()
         self._status: RuntimeStatus | None = None
         self._context_status: ContextStatus | None = None
         self._status_warning = ""
@@ -787,7 +793,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
             if outcome is not None:
                 self._history.append_string(line)
                 try:
-                    await self._handle_command(outcome)
+                    await self._handle_command(outcome, command_line=line)
                 except Exception as error:
                     await self._write(
                         system_message(f"Command failed: {error}", error=True)
@@ -825,23 +831,47 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
                 self._foreground_task = self._spawn(self._run_interactive_inputs())
             self._invalidate()
 
-    async def _handle_command(self, outcome: CommandOutcome) -> None:
+    async def _handle_command(
+        self, outcome: CommandOutcome, *, command_line: str = ""
+    ) -> None:
+        echo_pending = bool(command_line)
+
+        async def emit(renderable: RenderableType) -> None:
+            nonlocal echo_pending
+            renderables = (
+                (command_echo(command_line), renderable)
+                if echo_pending
+                else (renderable,)
+            )
+            echo_pending = False
+            await self._write_many(renderables)
+
         if outcome.clear_screen:
             await self._write(welcome(self.runtime.status(), self.theme), clear=True)
+            echo_pending = False
         if outcome.message:
-            await self._write(system_message(outcome.message))
-        if outcome.show_context:
-            context = self.runtime.context_status()
+            await emit(system_message(outcome.message))
+        if outcome.show_status:
+            status = self.runtime.status()
+            context = self._command_context_status()
+            self._status = status
             self._context_status = context
-            await self._write(system_message(render_context_status(context)))
+            await emit(render_status_card(status, context))
+        if outcome.show_context:
+            context = self._command_context_status()
+            self._context_status = context
+            await emit(render_context_card(context))
         if outcome.compact_context:
+            if echo_pending:
+                await self._write(command_echo(command_line))
+                echo_pending = False
             await self._run_compaction()
         if outcome.show_usage:
             usage = self.runtime.session_usage()
             self._context_status = usage.context
-            await self._write(system_message(render_usage(usage)))
+            await emit(render_usage_card(usage))
         if outcome.show_tools:
-            await self._write(render_tools(self.runtime.capabilities()))
+            await emit(render_tools(self.runtime.capabilities()))
         if outcome.skill_operation is not None:
             if outcome.skill_operation == "reload":
                 self._busy = True
@@ -854,7 +884,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
                     self._refresh_status()
             else:
                 capabilities = self.runtime.capabilities()
-            await self._write(render_skills(capabilities))
+            await emit(render_skills(capabilities))
         if outcome.mcp_operation is not None:
             operation, server = outcome.mcp_operation
             if operation == "list":
@@ -872,9 +902,17 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
                     self._busy = False
                     self._activity = ""
                     self._refresh_status()
-            await self._write(render_mcp(capabilities))
+            await emit(render_mcp(capabilities))
         if outcome.show_tasks:
-            await self._write(render_tasks(self.runtime.background_tasks()))
+            await emit(render_tasks(self.runtime.background_tasks()))
+        if echo_pending and (
+            outcome.show_agents
+            or outcome.open_session_picker
+            or outcome.open_provider_manager
+            or outcome.open_model_picker
+        ):
+            await self._write(command_echo(command_line))
+            echo_pending = False
         if outcome.show_agents:
             self._open_agents()
         if outcome.open_session_picker:
@@ -886,6 +924,16 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         if outcome.should_exit:
             self.application.exit()
 
+    def _command_context_status(self) -> ContextStatus:
+        """Prefer a fresh snapshot, but remain readable during an open tool pair."""
+
+        try:
+            return self.runtime.context_status()
+        except Exception:
+            if self._context_status is None:
+                raise
+            return self._context_status
+
     async def _watch_background_notifications(self) -> None:
         stream = getattr(self.runtime, "stream_background_notifications", None)
         if stream is None:
@@ -895,6 +943,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
             async for event in stream():
                 if isinstance(event, BackgroundInvocationStarted):
                     invocation = []
+                    self._blocks.reset_group()
                     self._saved_draft = self.buffer.text
                     self._agent_active = True
                     self._busy = True
@@ -1084,6 +1133,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         group: ToolActivityGroup | None = None
         pending_todos: tuple[Any, ...] | None = None
         renderables: list[RenderableType] = []
+        work_visible = False
         for entry in history:
             if isinstance(entry, HistoryToolCall):
                 if entry.todos is not None and not entry.is_error:
@@ -1098,23 +1148,38 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
                 if entry.ends_tool_batch and pending_todos is not None:
                     if group:
                         renderables.append(tool_activity_message(group))
+                        work_visible = True
                         group = None
                     if pending_todos != previous_todos:
                         renderables.append(todo_snapshot(pending_todos))
+                        work_visible = True
                         previous_todos = pending_todos
                     pending_todos = None
             else:
                 if group:
                     renderables.append(tool_activity_message(group))
+                    work_visible = True
                     group = None
                 if pending_todos is not None:
                     if pending_todos != previous_todos:
                         renderables.append(todo_snapshot(pending_todos))
+                        work_visible = True
                         previous_todos = pending_todos
                     pending_todos = None
+                if isinstance(entry, HistoryText):
+                    if entry.role == "user":
+                        work_visible = False
+                    elif entry.is_final_answer and work_visible:
+                        renderables.append(work_separator())
+                        work_visible = False
+                    elif entry.role == "assistant" and not entry.is_final_answer:
+                        work_visible = True
+                else:
+                    work_visible = True
                 renderables.append(history_message(entry, self.theme))
         if group:
             renderables.append(tool_activity_message(group))
+            work_visible = True
         if pending_todos is not None and pending_todos != previous_todos:
             renderables.append(todo_snapshot(pending_todos))
         await self._write_many(tuple(renderables))

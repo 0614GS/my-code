@@ -13,6 +13,7 @@ from my_code.chat.events import (
     AttachmentLoaded,
     ContextUpdated,
     MaxStepsReached,
+    ModelStepCompleted,
     ReasoningCompleted,
     ReasoningDelta,
     ReasoningStarted,
@@ -31,10 +32,10 @@ from my_code.chat.service import ChatService
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.features.todos.models import TodoItem
 from my_code.tui.activity import ToolActivityGroup
+from my_code.tui.block_flow import TurnBlockCoordinator
 from my_code.tui.theme import TuiTheme
 from my_code.tui.widgets import (
     assistant_message,
-    reasoning_message,
     system_message,
     todo_snapshot,
     tool_activity_message,
@@ -55,10 +56,14 @@ class TurnFlowMixin:
     _reasoning_parts: list[str]
     _todos: tuple[TodoItem, ...]
     _tool_activity: ToolActivityGroup | None
+    _blocks: TurnBlockCoordinator
     _context_status: ContextStatus | None
     _status: RuntimeStatus | None
 
     async def _write(self, renderable: RenderableType, *, clear: bool = False) -> None:
+        raise NotImplementedError
+
+    async def _write_many(self, renderables: tuple[RenderableType, ...]) -> None:
         raise NotImplementedError
 
     def _invalidate(self) -> None:
@@ -94,6 +99,7 @@ class TurnFlowMixin:
         self._activity = "my-code is working…"
         self._stream_text = ""
         self._reasoning_parts = []
+        self._blocks.reset_group()
         self.buffer.cancel_completion()
         if user:
             await self._write(user_message(prompt, self.theme))
@@ -101,6 +107,7 @@ class TurnFlowMixin:
         try:
             async for event in events:
                 if isinstance(event, TurnInputAccepted):
+                    self._blocks.reset_group()
                     await self._write(user_message(event.prompt, self.theme))
                     history = getattr(self, "_history", None)
                     if history is not None:
@@ -134,6 +141,8 @@ class TurnFlowMixin:
                 elif isinstance(event, ReasoningCompleted):
                     await self._flush_tool_activity()
                     await self._commit_reasoning(event)
+                elif isinstance(event, ModelStepCompleted):
+                    await self._commit_model_step(event)
                 elif isinstance(event, ToolStarted):
                     if self._tool_activity is None:
                         self._tool_activity = ToolActivityGroup()
@@ -168,6 +177,7 @@ class TurnFlowMixin:
                     partial_text = self._retire_transient_content()
                     self._activity = ""
                     await self._flush_tool_activity()
+                    await self._flush_unclassified_blocks()
                     if partial_text:
                         await self._write(assistant_message(partial_text))
                     await self._write(
@@ -182,6 +192,7 @@ class TurnFlowMixin:
                     partial_text = self._retire_transient_content()
                     self._activity = ""
                     await self._flush_tool_activity()
+                    await self._flush_unclassified_blocks()
                     if partial_text:
                         await self._write(assistant_message(partial_text))
                     await self._write(
@@ -199,6 +210,7 @@ class TurnFlowMixin:
             partial_text = self._retire_transient_content()
             self._activity = ""
             await self._interrupt_and_flush_tools()
+            await self._flush_unclassified_blocks()
             await self._write(system_message("Turn interrupted.", error=True))
             if partial_text:
                 await self._write(assistant_message(partial_text))
@@ -207,6 +219,7 @@ class TurnFlowMixin:
             partial_text = self._retire_transient_content()
             self._activity = ""
             await self._interrupt_and_flush_tools()
+            await self._flush_unclassified_blocks()
             await self._write(system_message(f"Error: {error}", error=True))
             if partial_text:
                 await self._write(assistant_message(partial_text))
@@ -214,6 +227,7 @@ class TurnFlowMixin:
             partial_text = self._retire_transient_content()
             self._activity = ""
             await self._interrupt_and_flush_tools()
+            await self._flush_unclassified_blocks()
             if not completed and partial_text:
                 await self._write(assistant_message(partial_text))
             self._agent_active = False
@@ -222,6 +236,7 @@ class TurnFlowMixin:
 
     async def _consume_background_event(self, event: TurnEvent) -> None:
         if isinstance(event, TurnInputAccepted):
+            self._blocks.reset_group()
             await self._write(user_message(event.prompt, self.theme))
             history = getattr(self, "_history", None)
             if history is not None:
@@ -244,6 +259,8 @@ class TurnFlowMixin:
         elif isinstance(event, ReasoningCompleted):
             await self._flush_tool_activity()
             await self._commit_reasoning(event)
+        elif isinstance(event, ModelStepCompleted):
+            await self._commit_model_step(event)
         elif isinstance(event, ToolStarted):
             if self._tool_activity is None:
                 self._tool_activity = ToolActivityGroup()
@@ -278,6 +295,7 @@ class TurnFlowMixin:
             partial_text = self._retire_transient_content()
             self._activity = ""
             await self._flush_tool_activity()
+            await self._flush_unclassified_blocks()
             if partial_text:
                 await self._write(assistant_message(partial_text))
             await self._write(
@@ -290,6 +308,7 @@ class TurnFlowMixin:
             partial_text = self._retire_transient_content()
             self._activity = ""
             await self._flush_tool_activity()
+            await self._flush_unclassified_blocks()
             if partial_text:
                 await self._write(assistant_message(partial_text))
             await self._write(
@@ -309,16 +328,22 @@ class TurnFlowMixin:
             )
 
     async def _commit_assistant_text(self, text: str) -> None:
-        """Move assistant text out of the live region before writing scrollback."""
+        """Hold completed text until the model step can classify it."""
 
         self._stream_text = ""
-        await self._write(assistant_message(text))
+        self._blocks.add_text(text)
 
     async def _commit_reasoning(self, event: ReasoningCompleted) -> None:
-        """Move reasoning out of the live region before writing scrollback."""
+        """Hold reasoning so its order with the step text remains stable."""
 
         self._reasoning_parts = []
-        await self._write(reasoning_message(event.presentation))
+        self._blocks.add_reasoning(event.presentation)
+
+    async def _commit_model_step(self, event: ModelStepCompleted) -> None:
+        await self._write_many(self._blocks.complete_step(has_tools=event.has_tools))
+
+    async def _flush_unclassified_blocks(self) -> None:
+        await self._write_many(self._blocks.drain_unclassified())
 
     def _retire_transient_content(self) -> str:
         """Clear unfinished multi-line projections and return partial text."""
@@ -335,6 +360,7 @@ class TurnFlowMixin:
         self._tool_activity = None
         if activity:
             await self._write(tool_activity_message(activity))
+            self._blocks.mark_work()
 
     async def _interrupt_and_flush_tools(self) -> None:
         if self._tool_activity is not None:

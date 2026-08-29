@@ -14,6 +14,7 @@ from my_code.agent.events import (
     AgentEvent,
     AgentInputAccepted,
     AgentInputFailed,
+    AgentModelStepCompleted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
@@ -35,6 +36,7 @@ from my_code.chat.events import (
     BackgroundInvocationStarted,
     ContextUpdated,
     MaxStepsReached,
+    ModelStepCompleted,
     ReasoningCompleted,
     ReasoningDelta,
     ReasoningStarted,
@@ -352,9 +354,18 @@ class ChatService:
             if isinstance(message, HumanMessage):
                 entries.append(TranscriptText("user", message.content))
             elif isinstance(message, AssistantMessage):
+                has_tools = any(
+                    isinstance(block, ToolCall) for block in message.content
+                )
                 for block in message.content:
                     if isinstance(block, TextContent):
-                        entries.append(TranscriptText("assistant", block.text))
+                        entries.append(
+                            TranscriptText(
+                                "assistant",
+                                block.text,
+                                is_final_answer=not has_tools,
+                            )
+                        )
                     elif isinstance(block, ReasoningContent):
                         presentation = block.presentation
                         if presentation.disclosure in {"hidden", "redacted"}:
@@ -769,6 +780,8 @@ class ChatService:
                 yield ReasoningDelta(event.disclosure, event.part_index, event.text)
             elif isinstance(event, AgentReasoningCompleted):
                 yield ReasoningCompleted(event.presentation)
+            elif isinstance(event, AgentModelStepCompleted):
+                yield ModelStepCompleted(event.step_index, event.has_tools)
             elif isinstance(event, AgentToolStarted):
                 yield ToolStarted(event.tool_use_id, event.presentation)
             elif isinstance(event, AgentToolFinished):
@@ -1141,7 +1154,13 @@ class ChatService:
                 ]
                 for block in message.content:
                     if isinstance(block, TextContent) and block.text:
-                        history.append(HistoryText("assistant", block.text))
+                        history.append(
+                            HistoryText(
+                                "assistant",
+                                block.text,
+                                is_final_answer=not tool_ids,
+                            )
+                        )
                     elif isinstance(block, ReasoningContent):
                         history.append(HistoryReasoning(block.presentation))
                     elif isinstance(block, ToolCall):

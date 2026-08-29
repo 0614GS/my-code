@@ -447,7 +447,7 @@ async def test_initialize_and_usage_return_safe_frontend_snapshots(
     assert view.status.session_id == _CURRENT_SESSION_ID
     assert view.history[:2] == (
         HistoryText("user", "measure this"),
-        HistoryText("assistant", "measured"),
+        HistoryText("assistant", "measured", is_final_answer=True),
     )
     assert usage.request_count == 1
     assert usage.input_tokens == 11
@@ -581,7 +581,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     assert resumed.status.permission_mode == "acceptEdits"
     assert resumed.history == (
         HistoryText("user", "historical question"),
-        HistoryText("assistant", "historical answer"),
+        HistoryText("assistant", "historical answer", is_final_answer=True),
     )
     assert runtime.status().session_id == _TARGET_SESSION_ID
     assert runtime.state.session is not previous

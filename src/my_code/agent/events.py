@@ -59,6 +59,14 @@ class AgentReasoningCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentModelStepCompleted:
+    """A complete AssistantMessage is durable and can now be classified."""
+
+    step_index: int
+    has_tools: bool
+
+
+@dataclass(frozen=True, slots=True)
 class AgentToolStarted:
     tool_use_id: str
     name: str
@@ -90,6 +98,7 @@ type AgentEvent = (
     | AgentReasoningStarted
     | AgentReasoningDelta
     | AgentReasoningCompleted
+    | AgentModelStepCompleted
     | AgentToolStarted
     | AgentToolFinished
     | AgentConversationUpdated
@@ -102,6 +111,7 @@ __all__ = [
     "AgentConversationUpdated",
     "AgentInputAccepted",
     "AgentInputFailed",
+    "AgentModelStepCompleted",
     "AgentEvent",
     "AgentReasoningCompleted",
     "AgentReasoningDelta",

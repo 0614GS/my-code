@@ -9,6 +9,7 @@ from my_code.agent.events import (
     AgentConversationUpdated,
     AgentEvent,
     AgentInputAccepted,
+    AgentModelStepCompleted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
@@ -292,6 +293,7 @@ class AgentEngine:
                 for block in assistant_message.content
                 if isinstance(block, ToolCall)
             )
+            yield AgentModelStepCompleted(step_count, bool(tool_calls))
             if not tool_calls:
                 if self.max_steps is not None and step_count >= self.max_steps:
                     yield AgentTurnSucceeded(

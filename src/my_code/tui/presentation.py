@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from io import StringIO
 
 from rich.console import Console, RenderableType
+from rich.text import Text
 
-from my_code.chat.status import ContextStatus
+from my_code import __version__
+from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import (
     BackgroundTaskView,
     CapabilitiesView,
@@ -13,7 +15,81 @@ from my_code.chat.views import (
     SubagentTaskView,
 )
 from my_code.tui.theme import TuiTheme
-from my_code.tui.widgets import capability_table, history_message
+from my_code.tui.widgets import (
+    capability_table,
+    field_table,
+    history_message,
+    information_card,
+)
+
+
+def render_status_card(status: RuntimeStatus, context: ContextStatus) -> RenderableType:
+    used = context.input_tokens or context.estimated_input_tokens
+    remaining = max(0, context.input_limit_tokens - used)
+    percent = (
+        round(remaining * 100 / context.input_limit_tokens)
+        if context.input_limit_tokens
+        else 0
+    )
+    provider = status.provider_id
+    if status.base_url:
+        provider = f"{provider} · {status.base_url}"
+    capabilities = (
+        f"{status.tool_count} tools · {status.skill_count} skills · "
+        f"{status.mcp_connected_count}/{status.mcp_server_count} MCP"
+    )
+    rows: tuple[tuple[str, RenderableType | str], ...] = (
+        ("Model", status.model),
+        ("Provider", provider),
+        ("Directory", status.cwd),
+        ("Permissions", status.permission_mode),
+        ("Authentication", status.credential_source),
+        ("Session", status.session_id),
+        ("Capabilities", capabilities),
+        (
+            "Context window",
+            Text.assemble(
+                (f"{percent}% left"),
+                (
+                    f" ({format_token_k(used)} used / "
+                    f"{format_token_k(context.input_limit_tokens)})",
+                    "dim",
+                ),
+            ),
+        ),
+        (
+            "Entries",
+            f"{status.context_entry_count} context · "
+            f"{status.conversation_entry_count} conversation",
+        ),
+    )
+    return information_card(f"my-code v{__version__} · Status", field_table(rows))
+
+
+def render_context_card(status: ContextStatus) -> RenderableType:
+    measured = (
+        "provider calibrated"
+        if status.measurement == "reported_calibrated"
+        else "local estimate"
+    )
+    trigger_source = (
+        "auto" if status.configured_compact_trigger_tokens is None else "configured"
+    )
+    rows: list[tuple[str, RenderableType | str]] = [
+        ("Context", format_context_usage(status)),
+        ("Measured by", measured),
+        (
+            "Compact at",
+            f"{format_token_k(status.compact_trigger_tokens)} ({trigger_source})",
+        ),
+        (
+            "Compactions",
+            f"{status.replacement_count} micro · {status.compact_count} full",
+        ),
+    ]
+    if status.warning:
+        rows.append(("Warning", Text(status.warning, style="yellow")))
+    return information_card("Context", field_table(tuple(rows)))
 
 
 def render_context_status(status: ContextStatus) -> str:
@@ -60,6 +136,18 @@ def render_usage(usage: SessionUsageView) -> str:
     )
 
 
+def render_usage_card(usage: SessionUsageView) -> RenderableType:
+    rows: tuple[tuple[str, str], ...] = (
+        ("Requests", str(usage.request_count)),
+        ("Input tokens", str(usage.input_tokens)),
+        ("Cache creation input", str(usage.cache_creation_input_tokens)),
+        ("Cache read input", str(usage.cache_read_input_tokens)),
+        ("Output tokens", str(usage.output_tokens)),
+        ("Current context", format_context_usage(usage.context)),
+    )
+    return information_card("Usage", field_table(rows))
+
+
 def render_tools(capabilities: CapabilitiesView) -> RenderableType:
     rows = tuple(
         (
@@ -70,9 +158,9 @@ def render_tools(capabilities: CapabilitiesView) -> RenderableType:
         )
         for tool in capabilities.tools
     )
-    return capability_table(
+    return information_card(
         f"Tools ({len(rows)}) · search={capabilities.tool_search_mode}",
-        rows or (("No active tools",),),
+        capability_table("", rows or (("No active tools",),)),
     )
 
 
@@ -84,8 +172,9 @@ def render_skills(capabilities: CapabilitiesView) -> RenderableType:
         (f"! {item.code}", item.source, item.message)
         for item in capabilities.skill_diagnostics
     )
-    return capability_table(
-        f"Skills ({len(capabilities.skills)})", tuple(rows) or (("No skills",),)
+    return information_card(
+        f"Skills ({len(capabilities.skills)})",
+        capability_table("", tuple(rows) or (("No skills",),)),
     )
 
 
@@ -99,7 +188,10 @@ def render_mcp(capabilities: CapabilitiesView) -> RenderableType:
         )
         for server in capabilities.mcp_servers
     )
-    return capability_table("MCP servers", rows or (("No MCP servers configured",),))
+    return information_card(
+        "MCP servers",
+        capability_table("", rows or (("No MCP servers configured",),)),
+    )
 
 
 def render_tasks(tasks: tuple[BackgroundTaskView, ...]) -> RenderableType:
@@ -114,7 +206,10 @@ def render_tasks(tasks: tuple[BackgroundTaskView, ...]) -> RenderableType:
         for task in tasks
     )
     title = "Background tasks · cancellation is performed by Agent TaskCancel"
-    return capability_table(title, rows or (("No background tasks for this session",),))
+    return information_card(
+        title,
+        capability_table("", rows or (("No background tasks for this session",),)),
+    )
 
 
 def render_agent_view(
@@ -167,10 +262,13 @@ def _elapsed(task: SubagentTaskView) -> str:
 __all__ = [
     "format_context_usage",
     "render_context_status",
+    "render_context_card",
     "render_mcp",
     "render_skills",
     "render_tasks",
+    "render_status_card",
     "render_agent_view",
     "render_tools",
     "render_usage",
+    "render_usage_card",
 ]

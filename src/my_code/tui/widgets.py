@@ -11,7 +11,7 @@ from typing import Literal, Protocol
 
 from prompt_toolkit.formatted_text import ANSI
 from rich import box
-from rich.console import Console, Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markdown import (
     BlockQuote,
     CodeBlock,
@@ -277,6 +277,44 @@ def streaming_renderable(renderable: RenderableType, width: int) -> ANSI:
 
 def system_message(content: str, *, error: bool = False) -> Text:
     return Text(content, style="red" if error else "dim")
+
+
+def command_echo(command: str) -> Text:
+    return Text(command, style="magenta")
+
+
+def information_card(title: str, body: RenderableType) -> Panel:
+    heading = Text.assemble((">_ ", "bold bright_black"), (title, "bold"))
+    return Panel(
+        Group(heading, Text(), body),
+        box=box.ROUNDED,
+        border_style="bright_black",
+        padding=(1, 2),
+        expand=True,
+    )
+
+
+def field_table(rows: tuple[tuple[str, RenderableType | str], ...]) -> Table:
+    table = Table.grid(padding=(0, 2), expand=False)
+    table.add_column(style="bright_black", justify="right", no_wrap=True)
+    table.add_column(ratio=1, overflow="fold")
+    for label, value in rows:
+        table.add_row(f"{label}:", value)
+    return table
+
+
+class _WorkSeparator:
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        del console
+        yield Text("─" * options.max_width, style="bright_black")
+
+
+def work_separator() -> RenderableType:
+    """Return a full-width divider between work and the final answer."""
+
+    return _WorkSeparator()
 
 
 def reasoning_message(presentation: ReasoningPresentation) -> RenderableType:
@@ -586,8 +624,11 @@ __all__ = [
     "assistant_message",
     "CodexMarkdown",
     "capability_table",
+    "command_echo",
+    "field_table",
     "file_diff_message",
     "history_message",
+    "information_card",
     "reasoning_message",
     "status_line",
     "streaming_assistant_message",
@@ -598,4 +639,5 @@ __all__ = [
     "tool_message",
     "user_message",
     "welcome",
+    "work_separator",
 ]

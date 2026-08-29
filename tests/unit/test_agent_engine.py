@@ -8,6 +8,7 @@ from my_code.agent.engine import AgentEngine
 from my_code.agent.events import (
     AgentConversationUpdated,
     AgentInputAccepted,
+    AgentModelStepCompleted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
@@ -235,6 +236,11 @@ async def test_native_stream_lifecycle_is_not_replayed_from_final_output(
     assert sum(isinstance(event, AgentTextStarted) for event in events) == 1
     assert sum(isinstance(event, AgentTextDelta) for event in events) == 1
     assert sum(isinstance(event, AgentTextCompleted) for event in events) == 1
+    assert [
+        (event.step_index, event.has_tools)
+        for event in events
+        if isinstance(event, AgentModelStepCompleted)
+    ] == [(1, False)]
     assistant = conversation.conversation[-1]
     assert isinstance(assistant, AssistantMessage)
     assert assistant.content[-1] == TextContent("draft corrected")

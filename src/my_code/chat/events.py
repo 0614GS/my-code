@@ -61,6 +61,14 @@ class ReasoningCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelStepCompleted:
+    """A persisted model step, including whether it enters a tool round."""
+
+    step_index: int
+    has_tools: bool
+
+
+@dataclass(frozen=True, slots=True)
 class AttachmentLoaded:
     path: str
     is_directory: bool
@@ -129,6 +137,7 @@ type TurnEvent = (
     | ReasoningStarted
     | ReasoningDelta
     | ReasoningCompleted
+    | ModelStepCompleted
     | ToolStarted
     | ToolFinished
     | TodoListUpdated
@@ -144,6 +153,7 @@ __all__ = [
     "BackgroundInvocationStarted",
     "ContextUpdated",
     "MaxStepsReached",
+    "ModelStepCompleted",
     "ReasoningCompleted",
     "ReasoningDelta",
     "ReasoningStarted",

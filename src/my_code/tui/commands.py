@@ -42,6 +42,7 @@ class SlashCommand:
 @dataclass(frozen=True, slots=True)
 class CommandOutcome:
     message: str = ""
+    show_status: bool = False
     should_exit: bool = False
     clear_screen: bool = False
     open_provider_manager: bool = False
@@ -183,7 +184,7 @@ class SlashCommandRegistry:
             case SlashCommandAction.HELP:
                 return CommandOutcome(self.render_help())
             case SlashCommandAction.STATUS:
-                return CommandOutcome(_render_status(status))
+                return CommandOutcome(show_status=True)
             case SlashCommandAction.CONTEXT:
                 return CommandOutcome(show_context=True)
             case SlashCommandAction.COMPACT:
@@ -254,26 +255,6 @@ class SlashCommandRegistry:
                 for name in (command.name, *command.aliases)
             )
         )
-
-
-def _render_status(status: RuntimeStatus) -> str:
-    return "\n".join(
-        (
-            f"Session: {status.session_id}",
-            f"Workspace: {status.cwd}",
-            f"Provider: {status.provider_id}",
-            f"Model: {status.model}",
-            f"Permission mode: {status.permission_mode}",
-            f"Authentication: {status.credential_source}",
-            f"Context entries: {status.context_entry_count}",
-            f"Conversation entries: {status.conversation_entry_count}",
-            (
-                f"Capabilities: {status.tool_count} tools · "
-                f"{status.skill_count} skills · "
-                f"{status.mcp_connected_count}/{status.mcp_server_count} MCP"
-            ),
-        )
-    )
 
 
 __all__ = [

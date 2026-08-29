@@ -17,6 +17,7 @@ class HistoryText:
     role: HistoryTextRole
     text: str
     streaming: bool = False
+    is_final_answer: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -21,6 +21,7 @@ from my_code.auth.credentials import CredentialSource
 from my_code.chat.events import (
     ContextUpdated,
     MaxStepsReached,
+    ModelStepCompleted,
     ReasoningCompleted,
     ReasoningDelta,
     ReasoningStarted,
@@ -594,7 +595,35 @@ async def test_enter_executes_the_default_selected_slash_command() -> None:
         await running
 
     assert runtime.prompts == []
-    assert "Session:" in stream.getvalue()
+    rendered = stream.getvalue()
+    assert "/status" in rendered
+    assert "╭" in rendered and "╰" in rendered
+    assert ">_ my-code v" in rendered
+    assert "Session:" in rendered
+
+
+@pytest.mark.asyncio
+async def test_status_command_uses_cached_context_during_an_open_tool_pair() -> None:
+    class InFlightRuntime(FakeRuntime):
+        def context_status(self) -> ContextStatus:
+            raise ValueError("Unresolved tool use in model input: call_01")
+
+    runtime = InFlightRuntime()
+    stream = StringIO()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=stream, width=80, force_terminal=False),
+    )
+    app._context_status = FakeRuntime().context_status()
+    outcome = app.commands.dispatch("/status", status=runtime.status())
+    assert outcome is not None
+
+    await app._handle_command(outcome, command_line="/status")
+
+    rendered = stream.getvalue()
+    assert rendered.count("/status") == 1
+    assert "Context window:" in rendered
 
 
 def test_status_render_uses_cached_context_during_an_in_flight_tool_call() -> None:
@@ -913,6 +942,7 @@ async def test_background_completion_retires_live_projection_before_scrollback()
     app._reasoning_parts = ["background reasoning"]
 
     await app._consume_background_event(TextCompleted("background answer"))
+    await app._consume_background_event(ModelStepCompleted(1, False))
 
     assert len(app.write_snapshots) == 1
     assert app.write_snapshots[0][:2] == ("", ("background reasoning",))

@@ -26,6 +26,7 @@ class TranscriptValue:
 class TranscriptText:
     role: Literal["user", "assistant"]
     text: str
+    is_final_answer: bool = False
     kind: Literal["text"] = field(default="text", init=False)
 
 

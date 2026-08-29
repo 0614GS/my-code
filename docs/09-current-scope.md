@@ -20,6 +20,7 @@
 - 基于 `prompt_toolkit + Rich` 的非全屏 TUI、原生 scrollback 和只读 transcript/agent pager。
 - Agent active 时可编辑 composer、session-bound 临时输入队列、FIFO step-boundary steering 与 Up 召回。
 - 单 UI owner、单 worker 离屏 scrollback render，以及有界/latest-wins live Markdown projection。
+- Codex 风格的结构化命令信息卡，以及由显式 model-step 边界驱动的工作组/最终回答分隔。
 - Ruff、Pyright standard、pytest 和 AST 架构守卫。
 
 Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入口不启用后台执行。
