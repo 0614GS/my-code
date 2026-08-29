@@ -227,6 +227,75 @@ async def test_native_stream_lifecycle_is_not_replayed_from_final_output(
     assert sum(isinstance(block, ReasoningContent) for block in assistant.content) == 1
 
 
+@pytest.mark.parametrize(
+    ("events", "message"),
+    (
+        (
+            (ModelStreamEvent(1, ModelTextStarted()),),
+            "non-contiguous sequence",
+        ),
+        (
+            (
+                ModelStreamEvent(0, ModelTextStarted()),
+                ModelStreamEvent(1, ModelReasoningStarted("summary")),
+            ),
+            "overlapping display blocks",
+        ),
+        (
+            (
+                ModelStreamEvent(0, ModelReasoningStarted("summary")),
+                ModelStreamEvent(1, ModelReasoningDelta("verbatim", 0, "detail")),
+            ),
+            "changed reasoning disclosure",
+        ),
+        (
+            (
+                ModelStreamEvent(0, ModelTextStarted()),
+                ModelStreamEvent(
+                    1,
+                    ModelOutputCompleted(
+                        ModelOutput((ModelTextBlock("done"),), "end_turn")
+                    ),
+                ),
+            ),
+            "ended with an active display block",
+        ),
+        (
+            (
+                ModelStreamEvent(0, ModelTextStarted()),
+                ModelStreamEvent(1, ModelTextCompleted("done")),
+            ),
+            "ended without a final response",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_engine_rejects_invalid_model_stream_protocol(
+    tmp_path: Path,
+    events: tuple[ModelStreamEvent, ...],
+    message: str,
+) -> None:
+    engine, model, session, _ = _engine(
+        tmp_path,
+        [ModelOutput((ModelTextBlock("unused"),), "end_turn")],
+    )
+
+    async def invalid_stream(
+        request: ModelRequest,
+    ) -> AsyncIterator[ModelStreamEvent]:
+        del request
+        for event in events:
+            yield event
+
+    model.stream = invalid_stream  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match=message):
+        _ = [event async for event in engine.stream(AgentTurnInput("hello"))]
+
+    assert len(session.conversation) == 1
+    assert isinstance(session.conversation[0], HumanMessage)
+
+
 @pytest.mark.asyncio
 async def test_engine_persists_human_and_assistant_messages(tmp_path: Path) -> None:
     engine, model, conversation, _ = _engine(
