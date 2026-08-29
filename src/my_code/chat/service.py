@@ -28,6 +28,7 @@ from my_code.chat.events import (
     AttachmentLoaded,
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
+    ContextUpdated,
     MaxStepsReached,
     ReasoningCompleted,
     ReasoningDelta,
@@ -658,6 +659,7 @@ class ChatService:
                 if current_todos != previous_todos:
                     previous_todos = current_todos
                     yield TodoListUpdated(current_todos)
+                yield ContextUpdated(self.context_status())
             elif isinstance(event, AgentTurnSucceeded):
                 yield TurnSucceeded(
                     event.text,

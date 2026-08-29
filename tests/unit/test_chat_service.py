@@ -8,13 +8,14 @@ from uuid import uuid4
 
 import pytest
 
-from my_code.agent.events import AgentEvent
+from my_code.agent.events import AgentConversationUpdated, AgentEvent
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
 from my_code.auth.credentials import CredentialSource, CredentialStore
 from my_code.bootstrap import bootstrap_chat
 from my_code.chat.events import (
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
+    ContextUpdated,
     TurnSucceeded,
 )
 from my_code.chat.history import HistoryText, HistoryToolCall
@@ -118,6 +119,27 @@ def test_app_state_is_the_single_runtime_owner(tmp_path: Path) -> None:
     assert runtime.state.permissions.policy is runtime.tool_executor.policy
     assert runtime.state.tools.catalog.snapshot() == runtime.tool_executor.tools
     assert runtime.state.session.session_id == _CURRENT_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_committed_model_step_projects_a_context_snapshot(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.state.session.append_human_message(HumanMessage("inspect context"))
+
+    async def agent_events() -> AsyncIterator[AgentEvent]:
+        yield AgentConversationUpdated()
+
+    events = [
+        event
+        async for event in runtime._project_agent_events(
+            runtime.state.session, agent_events()
+        )
+    ]
+
+    assert len(events) == 1
+    assert isinstance(events[0], ContextUpdated)
+    assert events[0].status.context_entry_count == 1
+    assert events[0].status.conversation_entry_count == 1
 
 
 def test_runtime_permission_modes_cycle_without_persisting_settings(

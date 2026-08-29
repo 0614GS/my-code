@@ -12,14 +12,14 @@ TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义�
 
 ## 事件与展示
 
-一次 prompt 调用 `ChatService.stream()`，TUI 消费 text/reasoning started、delta、completed，attachment、tool started/finished、Todo 更新和 turn 终态。
+一次 prompt 调用 `ChatService.stream()`，TUI 消费 text/reasoning started、delta、completed，attachment、tool started/finished、Todo/context 更新和 turn 终态。
 
 - delta 只存在于动态区；completed 到达后先清除预览，再把最终 Rich renderable 固化到 scrollback。
 - 连续 ToolCall 组成一个稳定有序块，并行完成只按 call ID 更新原位置，不重排。
 - `Edit`/`Write` 在底部动态区只显示紧凑状态和结果摘要；成功块固化到 scrollback
   或从 Session 恢复时，展开持久化的内联 diff。权限确认、失败和取消路径不展开 diff。
 - 异常、取消、max-steps 和后台 continuation 使用同样的“移除动态副本后固化终态”边界。
-- 状态栏只在启动、turn 结束、Session 恢复或配置变化等安全边界刷新 context snapshot；重绘 callback 不重新执行 context 规划。
+- 状态栏在启动、每个已提交的工具 step、turn 结束、Session 恢复或配置变化等安全边界刷新 context snapshot；重绘 callback 不重新执行 context 规划。工具 step 的 snapshot 在 assistant tool call 与对应 tool results 均提交后生成，避免对未闭合的 model input 做规划。
 
 恢复历史和实时事件使用相同的安全投影。工具展示优先使用执行时持久化的 presentation；TUI 不重新解释原始 Conversation 或读取外置结果文件。
 

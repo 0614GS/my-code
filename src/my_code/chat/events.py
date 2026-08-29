@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from my_code.chat.status import ContextStatus
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
 from my_code.model.primitives import ReasoningDisclosure, ReasoningPresentation
@@ -85,6 +86,13 @@ class TodoListUpdated:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextUpdated:
+    """The committed context changed at a safe model-step boundary."""
+
+    status: ContextStatus
+
+
+@dataclass(frozen=True, slots=True)
 class BackgroundInvocationStarted:
     """The host started an automatic model continuation for task completions."""
 
@@ -109,6 +117,7 @@ type TurnEvent = (
     | ToolStarted
     | ToolFinished
     | TodoListUpdated
+    | ContextUpdated
     | TurnSucceeded
     | MaxStepsReached
 )
@@ -118,6 +127,7 @@ __all__ = [
     "AttachmentLoaded",
     "BackgroundInvocationFinished",
     "BackgroundInvocationStarted",
+    "ContextUpdated",
     "MaxStepsReached",
     "ReasoningCompleted",
     "ReasoningDelta",

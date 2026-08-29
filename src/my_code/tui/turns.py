@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 
 from prompt_toolkit.buffer import Buffer
 from rich.console import RenderableType
 
 from my_code.chat.events import (
     AttachmentLoaded,
+    ContextUpdated,
     MaxStepsReached,
     ReasoningCompleted,
     ReasoningDelta,
@@ -24,6 +26,7 @@ from my_code.chat.events import (
     TurnSucceeded,
 )
 from my_code.chat.service import ChatService
+from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.features.todos.models import TodoItem
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.theme import TuiTheme
@@ -49,6 +52,8 @@ class TurnFlowMixin:
     _reasoning_parts: list[str]
     _todos: tuple[TodoItem, ...]
     _tool_activity: ToolActivityGroup | None
+    _context_status: ContextStatus | None
+    _status: RuntimeStatus | None
 
     async def _write(self, renderable: RenderableType, *, clear: bool = False) -> None:
         raise NotImplementedError
@@ -127,6 +132,8 @@ class TurnFlowMixin:
                     await self._flush_tool_activity()
                     self._todos = event.todos
                     await self._write(todo_snapshot(event.todos))
+                elif isinstance(event, ContextUpdated):
+                    self._apply_context_update(event.status)
                 elif isinstance(event, TurnSucceeded):
                     partial_text = self._retire_transient_content()
                     self._activity = ""
@@ -225,6 +232,8 @@ class TurnFlowMixin:
             await self._flush_tool_activity()
             self._todos = event.todos
             await self._write(todo_snapshot(event.todos))
+        elif isinstance(event, ContextUpdated):
+            self._apply_context_update(event.status)
         elif isinstance(event, TurnSucceeded):
             partial_text = self._retire_transient_content()
             self._activity = ""
@@ -248,6 +257,15 @@ class TurnFlowMixin:
                     f"Background continuation reached max steps ({event.max_steps}).",
                     error=True,
                 )
+            )
+
+    def _apply_context_update(self, status: ContextStatus) -> None:
+        self._context_status = status
+        if self._status is not None:
+            self._status = replace(
+                self._status,
+                context_entry_count=status.context_entry_count,
+                conversation_entry_count=status.conversation_entry_count,
             )
 
     async def _commit_assistant_text(self, text: str) -> None:

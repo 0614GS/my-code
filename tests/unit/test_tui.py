@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from time import monotonic
@@ -18,6 +19,7 @@ from rich.padding import Padding
 
 from my_code.auth.credentials import CredentialSource
 from my_code.chat.events import (
+    ContextUpdated,
     MaxStepsReached,
     ReasoningCompleted,
     ReasoningDelta,
@@ -739,6 +741,29 @@ async def test_completed_markdown_retires_live_projection_before_scrollback() ->
     assert len(app.write_snapshots) == 3
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
     assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+
+
+@pytest.mark.asyncio
+async def test_context_status_updates_between_model_steps() -> None:
+    runtime = FakeRuntime()
+    app = RecordingMyCodeApp(runtime)
+    app._status = runtime.status()
+    step_status = replace(
+        runtime.context_status(),
+        input_tokens=4_400,
+        context_entry_count=17,
+        conversation_entry_count=19,
+    )
+
+    async def events() -> AsyncIterator[TurnEvent]:
+        yield ContextUpdated(step_status)
+        assert app._context_status is step_status
+        assert app._status is not None
+        assert app._status.context_entry_count == 17
+        assert "4.4k / 200k" in app._status_text()
+        yield TurnSucceeded("done", 2, 10, 2)
+
+    await app._run_turn("", events(), user=False)
 
 
 @pytest.mark.asyncio
