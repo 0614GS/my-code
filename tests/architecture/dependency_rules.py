@@ -13,12 +13,15 @@ SOURCE_ROOT = REPOSITORY_ROOT / "src" / PACKAGE_NAME
 
 ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "foundation": frozenset(),
+    "observability": frozenset({"foundation"}),
     "runtime": frozenset(
         {
             "agent",
             "context",
+            "conversation",
             "model",
             "mcp",
+            "observability",
             "permissions",
             "prompts",
             "providers",
@@ -39,7 +42,13 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
     "conversation": frozenset({"foundation", "model"}),
     "context": frozenset({"conversation", "model", "prompts"}),
     "tools": frozenset(
-        {"conversation", "foundation", "model", "permissions", "workspace"}
+        {
+            "conversation",
+            "foundation",
+            "model",
+            "permissions",
+            "workspace",
+        }
     ),
     "sessions": frozenset(
         {"context", "conversation", "foundation", "model", "prompts", "tools"}
@@ -136,6 +145,7 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
             "foundation",
             "model",
             "mcp",
+            "observability",
             "permissions",
             "prompts",
             "providers",
@@ -363,6 +373,15 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
                             relative_path,
                             _line_number(node),
                             "tui-framework",
+                            imported_module,
+                        )
+                    )
+                if top_level == "opentelemetry" and source != "observability":
+                    leaks.append(
+                        TechnicalLeak(
+                            relative_path,
+                            _line_number(node),
+                            "observability-sdk",
                             imported_module,
                         )
                     )

@@ -59,6 +59,7 @@ from my_code.sessions._records import (
     ProviderReplaySidecarRecord,
     ReasoningContentRecord,
     SessionMetadataRecord,
+    SessionPermissionModeRecord,
     SessionStartedRecord,
     TextContentRecord,
     ToolCallRecord,
@@ -66,8 +67,16 @@ from my_code.sessions._records import (
     ToolResultBatchRecord,
     ToolResultRecord,
     TranscriptEntry,
+    TurnFinishedRecord,
+    TurnStartedRecord,
 )
-from my_code.sessions.models import SessionMetadata, SessionStart
+from my_code.sessions.models import (
+    SessionMetadata,
+    SessionStart,
+    TurnFinished,
+    TurnOutcome,
+    TurnStarted,
+)
 
 
 class TranscriptDecodeError(ValueError):
@@ -80,6 +89,9 @@ type DecodedEntry = (
     | CompactBoundary
     | SessionStart
     | SessionMetadata
+    | SessionPermissionModeRecord
+    | TurnStarted
+    | TurnFinished
     | ToolPresentationRecord
     | ProviderReplayRecord
 )
@@ -108,6 +120,30 @@ def decode_entry(value: object) -> DecodedEntry:
     if isinstance(entry, SessionMetadataRecord):
         return SessionMetadata(
             entry.created_at, entry.updated_at, entry.title, entry.last_prompt
+        )
+    if isinstance(entry, SessionPermissionModeRecord):
+        return entry
+    if isinstance(entry, TurnStartedRecord):
+        return TurnStarted(
+            entry.turn_id,
+            entry.run_id,
+            entry.parent_run_id,
+            entry.agent_name,
+            entry.started_at,
+            entry.continuation,
+            entry.evaluation_run_id,
+            entry.test_case_id,
+            entry.attempt_id,
+        )
+    if isinstance(entry, TurnFinishedRecord):
+        return TurnFinished(
+            entry.turn_id,
+            entry.finished_at,
+            entry.outcome,
+            entry.completed_steps,
+            entry.max_steps,
+            entry.usage,
+            entry.error_type,
         )
     if isinstance(entry, ContentReplacementRecord):
         return ContentReplacement(
@@ -187,6 +223,41 @@ def encode_metadata(metadata: SessionMetadata) -> JsonObject:
             metadata.updated_at,
             metadata.title,
             metadata.last_prompt,
+        )
+    )
+
+
+def encode_permission_mode(permission_mode: str) -> JsonObject:
+    _validate_permission_mode(permission_mode)
+    return entry_to_json(SessionPermissionModeRecord(permission_mode))
+
+
+def encode_turn_started(turn: TurnStarted) -> JsonObject:
+    return entry_to_json(
+        TurnStartedRecord(
+            turn.turn_id,
+            turn.run_id,
+            turn.parent_run_id,
+            turn.agent_name,
+            turn.started_at,
+            turn.continuation,
+            turn.evaluation_run_id,
+            turn.test_case_id,
+            turn.attempt_id,
+        )
+    )
+
+
+def encode_turn_finished(turn: TurnFinished) -> JsonObject:
+    return entry_to_json(
+        TurnFinishedRecord(
+            turn.turn_id,
+            turn.finished_at,
+            turn.outcome,
+            turn.completed_steps,
+            turn.max_steps,
+            turn.usage,
+            turn.error_type,
         )
     )
 
@@ -369,6 +440,33 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             last_prompt=entry.last_prompt,
         )
         return base
+    if isinstance(entry, SessionPermissionModeRecord):
+        base["permission_mode"] = entry.permission_mode
+        return base
+    if isinstance(entry, TurnStartedRecord):
+        base.update(
+            turn_id=entry.turn_id,
+            run_id=entry.run_id,
+            parent_run_id=entry.parent_run_id,
+            agent_name=entry.agent_name,
+            started_at=entry.started_at,
+            continuation=entry.continuation,
+            evaluation_run_id=entry.evaluation_run_id,
+            test_case_id=entry.test_case_id,
+            attempt_id=entry.attempt_id,
+        )
+        return base
+    if isinstance(entry, TurnFinishedRecord):
+        base.update(
+            turn_id=entry.turn_id,
+            finished_at=entry.finished_at,
+            outcome=entry.outcome,
+            completed_steps=entry.completed_steps,
+            max_steps=entry.max_steps,
+            usage=None if entry.usage is None else _usage_json(entry.usage),
+            error_type=entry.error_type,
+        )
+        return base
     if isinstance(entry, ProviderReplaySidecarRecord):
         base.update(
             entry_id=entry.entry_id,
@@ -472,15 +570,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
             validate_provider_id(provider_id)
         except ValueError as error:
             raise TranscriptDecodeError(str(error)) from error
-        permission_mode = _string(data, "permission_mode")
-        if permission_mode not in {
-            "default",
-            "acceptEdits",
-            "plan",
-            "dontAsk",
-            "bypassPermissions",
-        }:
-            raise TranscriptDecodeError("Unsupported permission_mode")
+        permission_mode = _validate_permission_mode(_string(data, "permission_mode"))
         return SessionStartedRecord(
             _string(data, "session_id"),
             _timestamp_string(data, "created_at"),
@@ -502,6 +592,58 @@ def entry_from_json(value: object) -> TranscriptEntry:
             _timestamp_string(data, "updated_at"),
             _optional_non_empty_string(data, "title"),
             _optional_non_empty_string(data, "last_prompt"),
+        )
+    if kind == "session_permission_mode":
+        return SessionPermissionModeRecord(
+            _validate_permission_mode(_string(data, "permission_mode"))
+        )
+    if kind == "turn_started":
+        continuation = data.get("continuation")
+        if not isinstance(continuation, bool):
+            raise TranscriptDecodeError("'continuation' must be a boolean")
+        return TurnStartedRecord(
+            _string(data, "turn_id"),
+            _string(data, "run_id"),
+            _optional_non_empty_string(data, "parent_run_id"),
+            _string(data, "agent_name"),
+            _timestamp_string(data, "started_at"),
+            continuation,
+            _optional_non_empty_string(data, "evaluation_run_id"),
+            _optional_non_empty_string(data, "test_case_id"),
+            _optional_non_empty_string(data, "attempt_id"),
+        )
+    if kind == "turn_finished":
+        raw_outcome = _string(data, "outcome")
+        if raw_outcome == "succeeded":
+            outcome: TurnOutcome = "succeeded"
+        elif raw_outcome == "max_steps":
+            outcome = "max_steps"
+        elif raw_outcome == "failed":
+            outcome = "failed"
+        elif raw_outcome == "cancelled":
+            outcome = "cancelled"
+        else:
+            raise TranscriptDecodeError("Unsupported turn outcome")
+        try:
+            finished = TurnFinished(
+                _string(data, "turn_id"),
+                _timestamp_string(data, "finished_at"),
+                outcome,
+                _optional_non_negative_int(data, "completed_steps"),
+                _optional_positive_int(data, "max_steps"),
+                None if data.get("usage") is None else _usage(data.get("usage")),
+                _optional_non_empty_string(data, "error_type"),
+            )
+        except ValueError as error:
+            raise TranscriptDecodeError(str(error)) from error
+        return TurnFinishedRecord(
+            finished.turn_id,
+            finished.finished_at,
+            finished.outcome,
+            finished.completed_steps,
+            finished.max_steps,
+            finished.usage,
+            finished.error_type,
         )
     if kind == "content_replacement":
         return ContentReplacementRecord(
@@ -929,6 +1071,18 @@ def _string(data: Mapping[str, object], key: str) -> str:
     return value
 
 
+def _validate_permission_mode(value: str) -> str:
+    if value not in {
+        "default",
+        "acceptEdits",
+        "plan",
+        "dontAsk",
+        "bypassPermissions",
+    }:
+        raise TranscriptDecodeError("Unsupported permission_mode")
+    return value
+
+
 def _optional_string(data: Mapping[str, object], key: str) -> str | None:
     value = data.get(key)
     if value is not None and not isinstance(value, str):
@@ -974,6 +1128,15 @@ def _optional_positive_int(data: Mapping[str, object], key: str) -> int | None:
         return None
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise TranscriptDecodeError(f"{key!r} must be positive or null")
+    return value
+
+
+def _optional_non_negative_int(data: Mapping[str, object], key: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise TranscriptDecodeError(f"'{key}' must be a non-negative integer or null")
     return value
 
 
@@ -1185,6 +1348,35 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
             "updated_at",
             "title",
             "last_prompt",
+        }
+    ),
+    "session_permission_mode": frozenset({"type", "schema_version", "permission_mode"}),
+    "turn_started": frozenset(
+        {
+            "type",
+            "schema_version",
+            "turn_id",
+            "run_id",
+            "parent_run_id",
+            "agent_name",
+            "started_at",
+            "continuation",
+            "evaluation_run_id",
+            "test_case_id",
+            "attempt_id",
+        }
+    ),
+    "turn_finished": frozenset(
+        {
+            "type",
+            "schema_version",
+            "turn_id",
+            "finished_at",
+            "outcome",
+            "completed_steps",
+            "max_steps",
+            "usage",
+            "error_type",
         }
     ),
     "human_message": _MESSAGE_COMMON,

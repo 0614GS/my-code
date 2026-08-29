@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from my_code.agent.budget import TokenBudgetModelClient
 from my_code.agent.engine import AgentEngine
+from my_code.agent.runner import AgentRunner
 from my_code.auth.credentials import CredentialStore
 from my_code.chat.permissions import DeferredPermissionPrompter
 from my_code.chat.service import ChatService
@@ -63,7 +64,9 @@ from my_code.model.capabilities import (
 from my_code.model.client import ModelClient
 from my_code.model.primitives import ProviderBinding
 from my_code.model.tool_search import ToolSearchMode
-from my_code.permissions.models import PermissionPrompter
+from my_code.observability.api import EvaluationContext, Observer
+from my_code.observability.bootstrap import build_observer
+from my_code.permissions.models import PermissionMode, PermissionPrompter
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter, TerminalPrompter
 from my_code.prompts.registry import PromptRegistry
@@ -72,6 +75,13 @@ from my_code.providers.discovery import resolve_without_network
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
 from my_code.providers.manager import ProviderManager, effective_reasoning
 from my_code.providers.router import ProviderConnection, ProviderRouter
+from my_code.runtime.instrumentation import (
+    InstrumentedAgentRunner,
+    InstrumentedModelClient,
+    InstrumentedPermissionPrompter,
+    InstrumentedToolExecutor,
+    TelemetryToolInvocationAudit,
+)
 from my_code.runtime.runs import (
     AgentRunComponents,
     AgentRunFactory,
@@ -99,7 +109,7 @@ from my_code.tools.catalog import (
     ToolCatalogSnapshot,
     ToolSourceId,
 )
-from my_code.tools.executor import ToolExecutor
+from my_code.tools.executor import LoggingToolInvocationAudit, ToolExecutor
 from my_code.tools.round_executor import ToolRoundExecutor
 from my_code.tools.search import InvokeSearchedTool, ToolSearch
 from my_code.tui.app import MyCodeTui
@@ -117,7 +127,7 @@ class StorageInitialization:
 class ApplicationAssembly:
     """Concrete components assembled once by the composition root."""
 
-    agent: AgentEngine
+    agent: AgentRunner
     context: ContextEngine
     provider: ProviderRouter
     tool_catalog: ToolCatalog
@@ -131,6 +141,8 @@ class ApplicationAssembly:
     mcp: McpRuntime
     skills: SkillRuntime
     session: Session
+    observer: Observer
+    bypass_confirmed: bool = False
     background_notifications: BackgroundTaskNotificationSource | None = None
     background_wake_signal: BackgroundTaskWakeSignal | None = None
     background_tasks: BackgroundTaskRegistry | None = None
@@ -191,20 +203,35 @@ def _build_agent_components(
     prompt_registry: PromptRegistry | None = None,
     allow_permission_updates: bool = True,
     attachment_sources: tuple[DerivedAttachmentSource, ...] = (),
+    observer: Observer,
+    run_id: str | None,
+    parent_run_id: str | None = None,
+    agent_name: str = "main",
+    evaluation: EvaluationContext | None = None,
 ) -> AgentRunComponents:
+    permission_updates = (
+        PermissionUpdateApplier(permission_policy, SettingsStore(settings.paths))
+        if allow_permission_updates
+        else None
+    )
+    instrumented_prompter = InstrumentedPermissionPrompter(
+        permission_prompter, observer
+    )
     tool_executor = ToolExecutor(
         tools=tool_catalog.snapshot(),
         policy=permission_policy,
-        prompter=permission_prompter,
+        prompter=instrumented_prompter,
         workspace=workspace,
         update_applier=(
-            PermissionUpdateApplier(
-                permission_policy, SettingsStore(settings.paths)
-            ).apply
-            if allow_permission_updates
-            else lambda _: None
+            permission_updates.apply if permission_updates else lambda _updates: None
+        ),
+        session_update_applier=(
+            permission_updates.apply
+            if permission_updates
+            else lambda _updates, _session_mode_writer: None
         ),
         internal_read_root=settings.paths.runtime_temp_root,
+        audit=TelemetryToolInvocationAudit(observer, LoggingToolInvocationAudit()),
     )
     planner = ContextPlanner(
         window=ContextWindow(settings.context_chars),
@@ -217,22 +244,35 @@ def _build_agent_components(
         binding_resolver=binding,
         model_environment=environment,
     )
+    agent_model = InstrumentedModelClient(
+        model_call, observer, binding, purpose="agent"
+    )
+    compaction_model = InstrumentedModelClient(
+        model_call, observer, binding, purpose="compaction"
+    )
     context = ContextEngine(
         planner,
-        ContextCompactor(model_call, model_environment=environment),
+        ContextCompactor(compaction_model, model_environment=environment),
     )
     tool_round = ToolRoundExecutor(
-        tool_executor,
+        InstrumentedToolExecutor(tool_executor, observer),
         max_parallel_calls=settings.max_parallel_tool_calls,
     )
     return AgentRunComponents(
-        agent=AgentEngine(
-            model_call=model_call,
-            tool_round=tool_round,
-            context=context,
-            tool_catalog=tool_catalog,
-            tool_search_mode=settings.tool_search_mode,
-            max_steps=settings.max_steps if max_steps is None else max_steps,
+        agent=InstrumentedAgentRunner(
+            AgentEngine(
+                model_call=agent_model,
+                tool_round=tool_round,
+                context=context,
+                tool_catalog=tool_catalog,
+                tool_search_mode=settings.tool_search_mode,
+                max_steps=settings.max_steps if max_steps is None else max_steps,
+            ),
+            observer,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            agent_name=agent_name,
+            evaluation=evaluation,
         ),
         context=context,
         tool_executor=tool_executor,
@@ -243,10 +283,12 @@ def _assemble_agent(
     settings: AgentSettings,
     session_id: str | None = None,
     *,
+    permission_mode_override: PermissionMode | None = None,
     permission_prompter: PermissionPrompter | None = None,
     mcp_transport_factory: McpTransportFactory | None = None,
 ) -> ApplicationAssembly:
     actual_session_id = session_id or str(uuid4())
+    observer = build_observer()
     descriptor = settings.model_descriptor or _resolve_local_descriptor(settings)
     model_environment = resolve_environment(
         descriptor,
@@ -274,6 +316,20 @@ def _assemble_agent(
             compact_trigger_tokens=model_environment.compact_trigger_tokens,
             provider_protocol=settings.protocol.value,
         ),
+    )
+    restored_session = bool(session.conversation)
+    effective_permission_mode = (
+        permission_mode_override
+        if permission_mode_override is not None
+        else PermissionMode(session.permission_mode)
+        if restored_session
+        else settings.permission_mode
+    )
+    if restored_session and permission_mode_override is not None:
+        session.set_permission_mode(permission_mode_override.value)
+    bypass_confirmed = effective_permission_mode is PermissionMode.BYPASS and (
+        restored_session
+        or (session_id is not None and permission_mode_override is not None)
     )
     effective_background_enabled = (
         settings.interactive and settings.background_tasks_enabled
@@ -358,7 +414,7 @@ def _assemble_agent(
         TerminalPrompter() if settings.interactive else HeadlessPrompter()
     )
     permission_policy = PermissionPolicy(
-        mode=settings.permission_mode,
+        mode=effective_permission_mode,
         rules=settings.permission_rules,
     )
     restore_skill_permissions(permission_policy, session.conversation)
@@ -415,6 +471,11 @@ def _assemble_agent(
                 SkillListingAttachmentSource(skills.catalog),
                 *extra_attachment_sources(),
             ),
+            observer=observer,
+            run_id=spec.run_id,
+            parent_run_id=spec.parent_run_id,
+            agent_name=spec.name,
+            evaluation=spec.evaluation,
         )
 
     run_factory = AgentRunFactory(
@@ -502,6 +563,8 @@ def _assemble_agent(
             SkillListingAttachmentSource(skills.catalog),
             *extra_attachment_sources(),
         ),
+        observer=observer,
+        run_id=None,
     )
     return ApplicationAssembly(
         agent=components.agent,
@@ -518,6 +581,8 @@ def _assemble_agent(
         mcp=mcp,
         skills=skills,
         session=session,
+        observer=observer,
+        bypass_confirmed=bypass_confirmed,
         background_notifications=background_notifications,
         background_wake_signal=background_wake_signal,
         background_tasks=background_registry,
@@ -528,11 +593,18 @@ def _assemble_agent(
 def bootstrap_chat(
     settings: AgentSettings,
     session_id: str | None = None,
+    *,
+    permission_mode_override: PermissionMode | None = None,
 ) -> ChatService:
     """Assemble the concrete Chat service used by every host."""
 
     prompter = DeferredPermissionPrompter()
-    assembled = _assemble_agent(settings, session_id, permission_prompter=prompter)
+    assembled = _assemble_agent(
+        settings,
+        session_id,
+        permission_mode_override=permission_mode_override,
+        permission_prompter=prompter,
+    )
     return ChatService(
         agent=assembled.agent,
         context=assembled.context,
@@ -543,7 +615,10 @@ def bootstrap_chat(
         state=AppState(
             workspace=WorkspaceState(assembled.tool_executor.workspace),
             session=assembled.session,
-            permissions=PermissionState(assembled.permissions),
+            permissions=PermissionState(
+                assembled.permissions,
+                full_access_confirmed=assembled.bypass_confirmed,
+            ),
             provider=assembled.provider_runtime,
             tools=ToolState(assembled.tool_catalog),
             tasks=assembled.tasks,
@@ -559,6 +634,7 @@ def bootstrap_chat(
         background_wake_signal=assembled.background_wake_signal,
         background_tasks=assembled.background_tasks,
         subagents=assembled.subagents,
+        shutdown_observability=assembled.observer.shutdown,
     )
 
 
@@ -574,7 +650,11 @@ async def run(options: CliOptions, resolver: SettingsResolver) -> int:
         if not configured:
             return 0
         settings = resolver.resolve(options.settings_overrides, interactive=True)
-    runtime = bootstrap_chat(settings, options.session_id)
+    runtime = bootstrap_chat(
+        settings,
+        options.session_id,
+        permission_mode_override=options.settings_overrides.permission_mode,
+    )
     try:
         await MyCodeTui(runtime).run()
     finally:

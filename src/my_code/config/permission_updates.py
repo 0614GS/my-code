@@ -1,8 +1,11 @@
 """Persistence coordination for permission updates."""
 
+from collections.abc import Callable
+
 from my_code.config.paths import SettingsScope
 from my_code.config.store import SettingsStore
 from my_code.permissions.models import (
+    PermissionMode,
     PermissionUpdate,
     PermissionUpdateDestination,
     PermissionUpdateType,
@@ -26,15 +29,23 @@ class PermissionUpdateApplier:
         self.policy = policy
         self.settings_store = settings_store
 
-    def apply(self, updates: tuple[PermissionUpdate, ...]) -> None:
+    def apply(
+        self,
+        updates: tuple[PermissionUpdate, ...],
+        session_mode_writer: Callable[[PermissionMode], object] | None = None,
+    ) -> None:
         for update in updates:
-            self._validate(update)
+            self._validate(update, session_mode_writer)
         for update in updates:
-            self._persist(update)
+            self._persist(update, session_mode_writer)
         for update in updates:
             self.policy.apply_update(update)
 
-    def _validate(self, update: PermissionUpdate) -> None:
+    def _validate(
+        self,
+        update: PermissionUpdate,
+        session_mode_writer: Callable[[PermissionMode], object] | None,
+    ) -> None:
         if update.type in {
             PermissionUpdateType.ADD_DIRECTORIES,
             PermissionUpdateType.REMOVE_DIRECTORIES,
@@ -48,9 +59,23 @@ class PermissionUpdateApplier:
             and self.settings_store is None
         ):
             raise ValueError("Persistent permission update requires a settings store")
+        if (
+            update.destination is PermissionUpdateDestination.SESSION
+            and update.type is PermissionUpdateType.SET_MODE
+            and session_mode_writer is None
+        ):
+            raise ValueError("Session mode update requires a session writer")
 
-    def _persist(self, update: PermissionUpdate) -> None:
+    def _persist(
+        self,
+        update: PermissionUpdate,
+        session_mode_writer: Callable[[PermissionMode], object] | None,
+    ) -> None:
         if update.destination is PermissionUpdateDestination.SESSION:
+            if update.type is PermissionUpdateType.SET_MODE:
+                assert update.mode is not None
+                assert session_mode_writer is not None
+                session_mode_writer(update.mode)
             return
         assert self.settings_store is not None
         scope = _SCOPE_BY_DESTINATION[update.destination]

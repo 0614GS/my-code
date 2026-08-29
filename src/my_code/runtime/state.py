@@ -1,6 +1,7 @@
 """Explicit ownership graph for mutable runtime state."""
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -67,22 +68,42 @@ class PermissionState:
             and not self.full_access_confirmed
         )
 
-    def request_cycle(self) -> tuple[PermissionMode, bool]:
+    def request_cycle(
+        self, persist: Callable[[PermissionMode], object]
+    ) -> tuple[PermissionMode, bool]:
         target = self.next_mode()
         if self.requires_full_access_confirmation(target):
             self.full_access_pending = True
             return target, True
+        persist(target)
         self.policy.mode = target
         return target, False
 
-    def confirm_full_access(self, allow: bool) -> PermissionMode:
+    def confirm_full_access(
+        self, allow: bool, persist: Callable[[PermissionMode], object]
+    ) -> PermissionMode:
         if not self.full_access_pending:
             return self.policy.mode
-        self.full_access_pending = False
         if allow:
+            persist(PermissionMode.BYPASS)
             self.full_access_confirmed = True
             self.policy.mode = PermissionMode.BYPASS
+        else:
+            persist(self.policy.mode)
+        self.full_access_pending = False
         return self.policy.mode
+
+    def restore_mode(self, mode: PermissionMode) -> None:
+        """Restore a trusted persisted mode without replaying UI confirmation."""
+
+        self.policy.mode = mode
+        self.full_access_pending = False
+        if mode is PermissionMode.BYPASS:
+            self.full_access_confirmed = True
+
+    def restore_policy(self, candidate: PermissionPolicy) -> None:
+        self.policy.rules = candidate.rules
+        self.restore_mode(candidate.mode)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +202,14 @@ class AppState:
     def context_runtime(self) -> ContextRuntime:
         return self._context_runtime
 
-    def replace_session(self, candidate: Session) -> None:
+    def replace_session(
+        self,
+        candidate: Session,
+        *,
+        permission_policy: PermissionPolicy | None = None,
+    ) -> None:
+        if permission_policy is not None:
+            self.permissions.restore_policy(permission_policy)
         self._session = candidate
         self._context_runtime = ContextRuntime()
 

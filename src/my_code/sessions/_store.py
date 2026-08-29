@@ -5,7 +5,7 @@ import os
 import re
 import tempfile
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,14 +27,26 @@ from my_code.sessions._codec import (
     encode_boundary,
     encode_message,
     encode_metadata,
+    encode_permission_mode,
     encode_replacement,
     encode_replay,
     encode_start,
+    encode_turn_finished,
+    encode_turn_started,
     presentations_from_json,
     replay_from_json,
 )
-from my_code.sessions._records import ToolPresentationRecord
-from my_code.sessions.models import SessionMetadata, SessionStart
+from my_code.sessions._records import (
+    SessionPermissionModeRecord,
+    ToolPresentationRecord,
+)
+from my_code.sessions.models import (
+    SessionMetadata,
+    SessionStart,
+    TurnFinished,
+    TurnHistoryEntry,
+    TurnStarted,
+)
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -50,6 +62,7 @@ class _HydratedSession:
     content_replacements: tuple[ContentReplacement, ...] = ()
     compact_boundaries: tuple[CompactBoundary, ...] = ()
     replay_records: tuple[ProviderReplayRecord, ...] = ()
+    turn_history: tuple[TurnHistoryEntry, ...] = ()
 
 
 def is_session_id(value: str) -> bool:
@@ -93,6 +106,7 @@ class SessionStore:
         if self._start.session_id != session_id:
             raise ValueError("SessionStart session_id must match the store session_id")
         self._metadata: SessionMetadata | None = None
+        self._permission_mode = self._start.permission_mode
 
         # 这些索引只在显式 load 时从磁盘 hydration，之后随追加增量维护。
         # Session 只在打开时 hydration；之后这些索引随成功追加增量维护。
@@ -101,6 +115,8 @@ class SessionStore:
         self._content_replacements: dict[str, ContentReplacement] | None = None
         self._boundaries: dict[str, CompactBoundary] | None = None
         self._replay_records: dict[tuple[str, str], ProviderReplayRecord] | None = None
+        self._turn_starts: dict[str, TurnStarted] | None = None
+        self._turn_finishes: dict[str, TurnFinished] | None = None
 
     @property
     def session_id(self) -> str:
@@ -110,6 +126,10 @@ class SessionStore:
     def start(self) -> SessionStart:
         return self._start
 
+    @property
+    def permission_mode(self) -> str:
+        return self._permission_mode
+
     def configure_start(self, start: SessionStart) -> None:
         """Replace an unpersisted placeholder before the first message is written."""
 
@@ -118,6 +138,7 @@ class SessionStore:
         if self.path.exists() or (self._known_ids is not None and self._known_ids):
             raise RuntimeError("SessionStart cannot change after persistence begins")
         self._start = start
+        self._permission_mode = start.permission_mode
 
     def load(self) -> _HydratedSession:
         """从 Transcript 完整恢复一次会话。
@@ -131,6 +152,8 @@ class SessionStore:
             self._content_replacements = {}
             self._boundaries = {}
             self._replay_records = {}
+            self._turn_starts = {}
+            self._turn_finishes = {}
             return _HydratedSession(conversation=())
 
         messages: list[ConversationEntry] = []
@@ -141,10 +164,13 @@ class SessionStore:
         embedded_presentations: dict[str, ToolResultPresentation] = {}
         legacy_presentations: dict[str, ToolResultPresentation] = {}
         replay_records: dict[tuple[str, str], ProviderReplayRecord] = {}
+        turn_starts: dict[str, TurnStarted] = {}
+        turn_finishes: dict[str, TurnFinished] = {}
         contents = self.path.read_bytes()
         lines = contents.splitlines(keepends=True)
         start: SessionStart | None = None
         metadata: SessionMetadata | None = None
+        permission_mode: str | None = None
         for line_number, encoded_line in enumerate(lines, start=1):
             terminated = encoded_line.endswith((b"\n", b"\r"))
             try:
@@ -205,6 +231,7 @@ class SessionStore:
                         )
                     start = entry
                     self._start = entry
+                    permission_mode = entry.permission_mode
                     continue
                 if isinstance(entry, SessionStart):
                     raise ValueError("session_started may only be the first entry")
@@ -220,6 +247,29 @@ class SessionStore:
                             "session_metadata updated_at cannot precede created_at"
                         )
                     metadata = entry
+                    continue
+                if isinstance(entry, SessionPermissionModeRecord):
+                    permission_mode = entry.permission_mode
+                    continue
+                if isinstance(entry, TurnStarted):
+                    previous_start = turn_starts.get(entry.turn_id)
+                    if previous_start is not None:
+                        raise ValueError(f"Duplicate turn_started: {entry.turn_id}")
+                    turn_starts[entry.turn_id] = entry
+                    continue
+                if isinstance(entry, TurnFinished):
+                    started = turn_starts.get(entry.turn_id)
+                    if started is None:
+                        raise ValueError(
+                            f"turn_finished has no matching start: {entry.turn_id}"
+                        )
+                    if entry.turn_id in turn_finishes:
+                        raise ValueError(f"Duplicate turn_finished: {entry.turn_id}")
+                    if datetime.fromisoformat(
+                        entry.finished_at
+                    ) < datetime.fromisoformat(started.started_at):
+                        raise ValueError("turn_finished cannot precede turn_started")
+                    turn_finishes[entry.turn_id] = entry
                     continue
                 if isinstance(entry, ContentReplacement):
                     replacement = entry
@@ -323,7 +373,11 @@ class SessionStore:
         self._content_replacements = replacements
         self._boundaries = boundaries
         self._replay_records = replay_records
+        self._turn_starts = turn_starts
+        self._turn_finishes = turn_finishes
         self._metadata = metadata
+        assert permission_mode is not None
+        self._permission_mode = permission_mode
         active = _active_parent_chain(messages, by_id)
         active_boundaries = _active_boundaries(boundaries, active)
         return _HydratedSession(
@@ -331,7 +385,46 @@ class SessionStore:
             content_replacements=tuple(replacements.values()),
             compact_boundaries=active_boundaries,
             replay_records=_validated_replay_records(replay_records, by_id),
+            turn_history=tuple(
+                TurnHistoryEntry(started, turn_finishes.get(started.turn_id))
+                for started in turn_starts.values()
+            ),
         )
+
+    def append_turn_started(self, turn: TurnStarted) -> bool:
+        self._ensure_loaded()
+        assert self._turn_starts is not None
+        if turn.turn_id in self._turn_starts:
+            if self._turn_starts[turn.turn_id] != turn:
+                raise ValueError(f"Conflicting turn_started: {turn.turn_id}")
+            return False
+        records: list[object] = []
+        if not self.path.exists():
+            records.append(encode_start(self._start))
+        records.append(encode_turn_started(turn))
+        self._append_records(records)
+        self._turn_starts[turn.turn_id] = turn
+        return True
+
+    def append_turn_finished(self, turn: TurnFinished) -> bool:
+        self._ensure_loaded()
+        assert self._turn_starts is not None
+        assert self._turn_finishes is not None
+        started = self._turn_starts.get(turn.turn_id)
+        if started is None:
+            raise ValueError(f"Unknown turn_id: {turn.turn_id}")
+        previous = self._turn_finishes.get(turn.turn_id)
+        if previous is not None:
+            if previous != turn:
+                raise ValueError(f"Conflicting turn_finished: {turn.turn_id}")
+            return False
+        if datetime.fromisoformat(turn.finished_at) < datetime.fromisoformat(
+            started.started_at
+        ):
+            raise ValueError("turn_finished cannot precede turn_started")
+        self._append_record(encode_turn_finished(turn))
+        self._turn_finishes[turn.turn_id] = turn
+        return True
 
     def append(self, message: ConversationEntry) -> bool:
         """校验幂等性和父节点顺序后追加一条消息。"""
@@ -506,6 +599,20 @@ class SessionStore:
             return False
         self._append_records((encode_metadata(metadata),))
         self._metadata = metadata
+        return True
+
+    def set_permission_mode(self, permission_mode: str) -> bool:
+        """Persist the current session mode before publishing it in memory."""
+
+        record = encode_permission_mode(permission_mode)
+        self._ensure_loaded()
+        if self._permission_mode == permission_mode:
+            return False
+        if not self.path.exists():
+            self._start = replace(self._start, permission_mode=permission_mode)
+        else:
+            self._append_record(record)
+        self._permission_mode = permission_mode
         return True
 
     def append_content_replacement(self, replacement: ContentReplacement) -> bool:

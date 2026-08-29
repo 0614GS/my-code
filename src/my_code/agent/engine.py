@@ -366,7 +366,10 @@ class AgentEngine:
                     round_attachments,
                 )
                 if round_permission_updates:
-                    self._tool_round.apply_permission_updates(round_permission_updates)
+                    self._tool_round.apply_permission_updates(
+                        round_permission_updates,
+                        lambda mode: session.set_permission_mode(mode.value),
+                    )
                 yield AgentConversationUpdated()
             except asyncio.CancelledError:
                 # ToolRoundExecutor 通常已经发出所有取消结果；Agent 只保留
@@ -385,7 +388,10 @@ class AgentEngine:
                     round_attachments,
                 )
                 if round_permission_updates:
-                    self._tool_round.apply_permission_updates(round_permission_updates)
+                    self._tool_round.apply_permission_updates(
+                        round_permission_updates,
+                        lambda mode: session.set_permission_mode(mode.value),
+                    )
                 yield AgentConversationUpdated()
                 raise
             if round_cancelled:

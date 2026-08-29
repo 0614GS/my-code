@@ -73,15 +73,34 @@ def test_replace_rules_only_replaces_the_selected_source() -> None:
 
 def test_session_mode_update_changes_current_policy() -> None:
     policy = PermissionPolicy()
+    persisted: list[PermissionMode] = []
     update = PermissionUpdate(
         PermissionUpdateType.SET_MODE,
         PermissionUpdateDestination.SESSION,
         mode=PermissionMode.ACCEPT_EDITS,
     )
 
-    PermissionUpdateApplier(policy).apply((update,))
+    PermissionUpdateApplier(policy).apply((update,), persisted.append)
 
     assert policy.mode is PermissionMode.ACCEPT_EDITS
+    assert persisted == [PermissionMode.ACCEPT_EDITS]
+
+
+def test_session_mode_persistence_failure_preserves_policy() -> None:
+    policy = PermissionPolicy()
+    update = PermissionUpdate(
+        PermissionUpdateType.SET_MODE,
+        PermissionUpdateDestination.SESSION,
+        mode=PermissionMode.BYPASS,
+    )
+
+    def fail(_: PermissionMode) -> None:
+        raise OSError("disk full")
+
+    with pytest.raises(OSError, match="disk full"):
+        PermissionUpdateApplier(policy).apply((update,), fail)
+
+    assert policy.mode is PermissionMode.DEFAULT
 
 
 def test_additional_directories_are_reserved_but_not_enabled() -> None:

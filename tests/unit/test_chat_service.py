@@ -119,6 +119,7 @@ def test_runtime_permission_modes_cycle_without_persisting_settings(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
+    runtime.state.session.append_human_message(HumanMessage("persist mode"))
     configured = runtime.settings.permission_mode
 
     assert [item.display_name for item in runtime.permission_modes()] == [
@@ -134,6 +135,12 @@ def test_runtime_permission_modes_cycle_without_persisting_settings(
     assert runtime.status().permission_mode == "bypassPermissions"
     assert runtime.cycle_permission_mode().mode.value == "default"
     assert runtime.settings.permission_mode is configured
+    assert (
+        Session.restore(
+            runtime.settings.paths.project_state_dir, _CURRENT_SESSION_ID
+        ).permission_mode
+        == "default"
+    )
 
 
 @pytest.mark.parametrize("mode", [PermissionMode.PLAN, PermissionMode.DONT_ASK])
@@ -178,6 +185,22 @@ def test_rejecting_bypass_startup_falls_back_to_default(tmp_path: Path) -> None:
     current = runtime.confirm_full_access(False)
 
     assert current.value == "default"
+    assert runtime.state.session.permission_mode == "default"
+
+
+def test_permission_mode_write_failure_preserves_runtime_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+
+    def fail(_: str) -> bool:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(runtime.state.session, "set_permission_mode", fail)
+    with pytest.raises(OSError, match="disk full"):
+        runtime.cycle_permission_mode()
+
+    assert runtime.status().permission_mode == "default"
 
 
 def test_full_access_confirmation_cannot_elevate_without_pending_switch(
@@ -473,6 +496,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     )
     store.append(user)
     store.append(assistant)
+    store.set_permission_mode("acceptEdits")
 
     sessions = await runtime.list_sessions()
     resumed = await runtime.resume_session(_TARGET_SESSION_ID)
@@ -480,6 +504,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     assert [session.session_id for session in sessions] == [_TARGET_SESSION_ID]
     assert resumed.status.session_id == _TARGET_SESSION_ID
     assert resumed.status.context_entry_count == 2
+    assert resumed.status.permission_mode == "acceptEdits"
     assert resumed.history == (
         HistoryText("user", "historical question"),
         HistoryText("assistant", "historical answer"),
@@ -491,6 +516,68 @@ async def test_runtime_lists_and_atomically_switches_project_session(
         for message in runtime.state.session.context_entries
     )
     assert runtime.state.session.session_id == _TARGET_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_persisted_bypass_without_confirmation(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    store = SessionStore(
+        runtime.settings.paths.project_state_dir,
+        _TARGET_SESSION_ID,
+    )
+    store.append(HumanMessage("full access session"))
+    store.set_permission_mode("bypassPermissions")
+
+    resumed = await runtime.resume_session(_TARGET_SESSION_ID)
+
+    assert resumed.status.permission_mode == "bypassPermissions"
+    assert runtime.current_permission_mode().requires_confirmation is False
+    assert runtime.state.permissions.full_access_confirmed is True
+
+
+def test_startup_session_uses_saved_mode_and_cli_override_is_persisted(
+    tmp_path: Path,
+) -> None:
+    initial = _bootstrap_runtime(tmp_path)
+    store = SessionStore(
+        initial.settings.paths.project_state_dir,
+        _TARGET_SESSION_ID,
+    )
+    store.append(HumanMessage("resume at startup"))
+    store.set_permission_mode("bypassPermissions")
+
+    restored = bootstrap_chat(initial.settings, _TARGET_SESSION_ID)
+    assert restored.status().permission_mode == "bypassPermissions"
+    assert restored.current_permission_mode().requires_confirmation is False
+
+    overridden = bootstrap_chat(
+        initial.settings,
+        _TARGET_SESSION_ID,
+        permission_mode_override=PermissionMode.PLAN,
+    )
+    assert overridden.status().permission_mode == "plan"
+    assert (
+        Session.restore(
+            initial.settings.paths.project_state_dir, _TARGET_SESSION_ID
+        ).permission_mode
+        == "plan"
+    )
+
+    bypass_override = bootstrap_chat(
+        initial.settings,
+        _TARGET_SESSION_ID,
+        permission_mode_override=PermissionMode.BYPASS,
+    )
+    assert bypass_override.status().permission_mode == "bypassPermissions"
+    assert bypass_override.current_permission_mode().requires_confirmation is False
+    assert (
+        Session.restore(
+            initial.settings.paths.project_state_dir, _TARGET_SESSION_ID
+        ).permission_mode
+        == "bypassPermissions"
+    )
 
 
 @pytest.mark.asyncio

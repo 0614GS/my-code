@@ -91,9 +91,7 @@ async def test_compaction_service_accepts_legacy_summary_shapes(response: str) -
         with pytest.raises(RuntimeError, match="empty summary"):
             await service.summarize((UserInput((InputText("Keep going"),)),))
     else:
-        summary, _ = await service.summarize(
-            (UserInput((InputText("Keep going"),)),)
-        )
+        summary, _ = await service.summarize((UserInput((InputText("Keep going"),)),))
         assert summary
         assert "summary" not in summary
 
@@ -191,9 +189,7 @@ async def test_compaction_fails_after_two_truncated_outputs() -> None:
         RuntimeError,
         match=r"truncated after 2 attempts .*max_output_tokens=20000",
     ):
-        await ContextCompactor(model).summarize(
-            (UserInput((InputText("task"),)),)
-        )
+        await ContextCompactor(model).summarize((UserInput((InputText("task"),)),))
 
 
 @pytest.mark.asyncio
@@ -274,9 +270,7 @@ async def test_compaction_overflow_fails_when_only_latest_turn_remains() -> None
 
 @pytest.mark.asyncio
 async def test_compaction_stops_after_three_input_cropping_retries() -> None:
-    model = _ScriptedModel(
-        [ModelContextOverflow("too long") for _ in range(4)]
-    )
+    model = _ScriptedModel([ModelContextOverflow("too long") for _ in range(4)])
     messages = tuple(item for index in range(10) for item in _tool_turn(index))
 
     with pytest.raises(ModelContextOverflow, match="after 3 cropping retries"):

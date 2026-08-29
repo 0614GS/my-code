@@ -32,7 +32,12 @@ from my_code.model.primitives import ProviderReplayRecord
 from my_code.sessions._aggregate import ConversationAggregate
 from my_code.sessions._store import SessionStore
 from my_code.sessions._tool_results import ToolResultStore
-from my_code.sessions.models import SessionStart
+from my_code.sessions.models import (
+    SessionStart,
+    TurnFinished,
+    TurnHistoryEntry,
+    TurnStarted,
+)
 
 
 class Session:
@@ -57,6 +62,7 @@ class Session:
             (record.entry_id, record.content_id): record
             for record in loaded.replay_records
         }
+        self._turn_history = list(loaded.turn_history)
         self._tool_results = ToolResultStore(
             tool_results_dir
             if tool_results_dir is not None
@@ -87,8 +93,38 @@ class Session:
     def start(self) -> SessionStart:
         return self._store.start
 
+    @property
+    def permission_mode(self) -> str:
+        return self._store.permission_mode
+
+    @property
+    def turn_history(self) -> tuple[TurnHistoryEntry, ...]:
+        """Return journal entries in turn start order."""
+
+        return tuple(self._turn_history)
+
+    def append_turn_started(self, turn: TurnStarted) -> bool:
+        appended = self._store.append_turn_started(turn)
+        if appended:
+            self._turn_history.append(TurnHistoryEntry(turn))
+        return appended
+
+    def append_turn_finished(self, turn: TurnFinished) -> bool:
+        appended = self._store.append_turn_finished(turn)
+        if appended:
+            for index, item in enumerate(self._turn_history):
+                if item.started.turn_id == turn.turn_id:
+                    self._turn_history[index] = TurnHistoryEntry(item.started, turn)
+                    break
+            else:
+                raise AssertionError("Persisted turn finish has no in-memory start")
+        return appended
+
     def configure_start(self, start: SessionStart) -> None:
         self._store.configure_start(start)
+
+    def set_permission_mode(self, permission_mode: str) -> bool:
+        return self._store.set_permission_mode(permission_mode)
 
     @property
     def conversation(self) -> tuple[ConversationEntry, ...]:

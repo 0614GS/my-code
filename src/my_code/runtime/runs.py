@@ -7,12 +7,13 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from my_code.agent.engine import AgentEngine
 from my_code.agent.events import AgentEvent
 from my_code.agent.models import AgentTurnInput, AgentTurnOutcome
+from my_code.agent.runner import AgentRunner
 from my_code.context.engine import ContextEngine
 from my_code.context.session import ContextRuntime
 from my_code.model.capabilities import ActiveModelEnvironment
+from my_code.observability.api import EvaluationContext
 from my_code.permissions.policy import PermissionPolicy
 from my_code.prompts.registry import PromptRegistry
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
@@ -36,6 +37,7 @@ class AgentRunSpec:
     max_steps: int | None = None
     max_tokens: int | None = None
     allow_permission_updates: bool = True
+    evaluation: EvaluationContext | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -52,7 +54,7 @@ class AgentRunSpec:
 
 @dataclass(frozen=True, slots=True)
 class AgentRunComponents:
-    agent: AgentEngine
+    agent: AgentRunner
     context: ContextEngine
     tool_executor: ToolExecutor
 
@@ -67,7 +69,7 @@ type SessionStartResolver = Callable[
 
 
 class AgentRun:
-    """One Session, AgentEngine and provider lease with explicit close ownership."""
+    """One Session, agent runner and provider lease with explicit close ownership."""
 
     def __init__(
         self,

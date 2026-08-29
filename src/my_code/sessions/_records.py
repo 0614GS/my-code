@@ -44,6 +44,41 @@ class SessionMetadataRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SessionPermissionModeRecord:
+    permission_mode: str
+    type: Literal["session_permission_mode"] = "session_permission_mode"
+    schema_version: Literal[5] = 5
+
+
+@dataclass(frozen=True, slots=True)
+class TurnStartedRecord:
+    turn_id: str
+    run_id: str
+    parent_run_id: str | None
+    agent_name: str
+    started_at: str
+    continuation: bool
+    evaluation_run_id: str | None = None
+    test_case_id: str | None = None
+    attempt_id: str | None = None
+    type: Literal["turn_started"] = "turn_started"
+    schema_version: Literal[5] = 5
+
+
+@dataclass(frozen=True, slots=True)
+class TurnFinishedRecord:
+    turn_id: str
+    finished_at: str
+    outcome: Literal["succeeded", "max_steps", "failed", "cancelled"]
+    completed_steps: int | None = None
+    max_steps: int | None = None
+    usage: TokenUsage | None = None
+    error_type: str | None = None
+    type: Literal["turn_finished"] = "turn_finished"
+    schema_version: Literal[5] = 5
+
+
+@dataclass(frozen=True, slots=True)
 class TextContentRecord:
     text: str
     continuation: ProviderContinuationState | None = None
@@ -190,6 +225,9 @@ type MessageRecord = (
 type TranscriptEntry = (
     SessionStartedRecord
     | SessionMetadataRecord
+    | SessionPermissionModeRecord
+    | TurnStartedRecord
+    | TurnFinishedRecord
     | MessageRecord
     | ContentReplacementRecord
     | CompactBoundaryRecord

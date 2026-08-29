@@ -19,6 +19,7 @@ from my_code.permissions.models import (
     PermissionDecision,
     PermissionDecisionKind,
     PermissionDecisionReason,
+    PermissionMode,
     PermissionPrompt,
     PermissionPrompter,
     PermissionRequest,
@@ -95,6 +96,10 @@ class ToolExecutor:
         prompter: PermissionPrompter,
         workspace: Workspace,
         update_applier: Callable[[tuple[PermissionUpdate, ...]], None] | None = None,
+        session_update_applier: Callable[
+            [tuple[PermissionUpdate, ...], Callable[[PermissionMode], object]], None
+        ]
+        | None = None,
         hooks: Iterable[ToolInvocationHook] = (),
         audit: ToolInvocationAudit | None = None,
         internal_read_root: Path | None = None,
@@ -105,6 +110,9 @@ class ToolExecutor:
         self.workspace = workspace
         self.context = ToolContext(workspace, internal_read_root=internal_read_root)
         self.update_applier = update_applier or _apply_updates(policy)
+        self.session_update_applier = session_update_applier or _apply_session_updates(
+            policy
+        )
         self.hooks = tuple(hooks)
         self.audit = audit or LoggingToolInvocationAudit()
         self._permission_prompt_lock = asyncio.Lock()
@@ -179,6 +187,23 @@ class ToolExecutor:
             content = "Tool execution was aborted by the user."
             presentation = generic_tool_result_presentation(content, True)
         return ToolResult(call.id, content, presentation, is_error=True)
+
+    def is_concurrency_safe(
+        self,
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+    ) -> bool:
+        """Resolve a call and conservatively classify parallel execution safety."""
+
+        active_tools = self.tools if tools is None else tools
+        resolved_call, tool, error, _ = self._resolve(call, active_tools, None)
+        if error is not None or tool is None:
+            return False
+        try:
+            return tool.is_concurrency_safe(resolved_call.input)
+        except Exception:
+            return False
 
     async def execute(
         self,
@@ -476,13 +501,17 @@ class ToolExecutor:
         )
         return ToolExecutionOutcome(result)
 
-    def apply_session_updates(self, updates: tuple[PermissionUpdate, ...]) -> None:
+    def apply_session_updates(
+        self,
+        updates: tuple[PermissionUpdate, ...],
+        session_mode_writer: Callable[[PermissionMode], object],
+    ) -> None:
         if any(
             update.destination is not PermissionUpdateDestination.SESSION
             for update in updates
         ):
             raise ValueError("Tool follow-ups may update session permissions only")
-        self.update_applier(updates)
+        self.session_update_applier(updates, session_mode_writer)
 
     @staticmethod
     def _resolve(
@@ -580,6 +609,24 @@ def _apply_updates(
     return apply
 
 
+def _apply_session_updates(
+    policy: PermissionPolicy,
+) -> Callable[[tuple[PermissionUpdate, ...], Callable[[PermissionMode], object]], None]:
+    def apply(
+        updates: tuple[PermissionUpdate, ...],
+        session_mode_writer: Callable[[PermissionMode], object],
+    ) -> None:
+        for update in updates:
+            if update.mode is not None:
+                session_mode_writer(update.mode)
+        for update in updates:
+            policy.apply_update(update)
+
+    return apply
+
+
 __all__ = [
+    "LoggingToolInvocationAudit",
+    "ToolExecutionOutcome",
     "ToolExecutor",
 ]

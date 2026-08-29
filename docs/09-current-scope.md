@@ -9,7 +9,7 @@
 - 多 step Agent loop、并行安全 ToolRound、step/token 限制和取消闭合。
 - Read、Write、Edit、Glob、Grep、Bash、TodoWrite、ToolSearch 与动态 invoker。
 - allow/ask/deny、交互确认、dontAsk、Full Access 和工作区路径复验。
-- canonical Conversation、JSONL Session、resume、自动/手动/reactive compact。
+- canonical Conversation、JSONL Session、session permission mode、resume、自动/手动/reactive compact。
 - `@path` 文件/目录 Attachment、AGENTS 用户上下文和路径补全。
 - foreground/background Subagent、独立 child run/Session/provider lease 和权限收窄。
 - Bash/Subagent 统一后台任务、查询、取消和单次完成通知。

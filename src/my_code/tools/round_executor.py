@@ -1,8 +1,9 @@
 """一次 ToolRound 的事件与串行执行。"""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from my_code.conversation.attachments import (
     AttachmentPayload,
@@ -15,10 +16,10 @@ from my_code.conversation.models import (
     ToolResultBatch,
 )
 from my_code.conversation.presentation import ToolResultPresentation
-from my_code.permissions.models import PermissionUpdate
+from my_code.permissions.models import PermissionMode, PermissionUpdate
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.discovery import ToolExposureSnapshot
-from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
+from my_code.tools.executor import ToolExecutionOutcome
 from my_code.tools.presentation import ToolUsePresentation
 
 
@@ -48,12 +49,59 @@ class ToolRoundCompleted:
 type ToolRoundEvent = ToolCallStarted | ToolCallFinished | ToolRoundCompleted
 
 
+class ToolCallExecutor(Protocol):
+    tools: ToolCatalogSnapshot
+
+    def present_use(
+        self,
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+    ) -> ToolUsePresentation: ...
+
+    def present_error(
+        self,
+        call: ToolCall,
+        message: str,
+        *,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+    ) -> ToolResultPresentation: ...
+
+    def cancelled_result(
+        self,
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+    ) -> ToolResult: ...
+
+    def is_concurrency_safe(
+        self,
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+    ) -> bool: ...
+
+    async def execute(
+        self,
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+        run_id: str | None = None,
+    ) -> ToolExecutionOutcome: ...
+
+    def apply_session_updates(
+        self,
+        updates: tuple[PermissionUpdate, ...],
+        session_mode_writer: Callable[[PermissionMode], object],
+    ) -> None: ...
+
+
 class ToolRoundExecutor:
     """Execute safe call groups concurrently and close every protocol result."""
 
     def __init__(
         self,
-        executor: ToolExecutor,
+        executor: ToolCallExecutor,
         *,
         max_parallel_calls: int = 1,
     ) -> None:
@@ -126,8 +174,12 @@ class ToolRoundExecutor:
             permission_updates=tuple(permission_updates),
         )
 
-    def apply_permission_updates(self, updates: tuple[PermissionUpdate, ...]) -> None:
-        self.executor.apply_session_updates(updates)
+    def apply_permission_updates(
+        self,
+        updates: tuple[PermissionUpdate, ...],
+        session_mode_writer: Callable[[PermissionMode], object],
+    ) -> None:
+        self.executor.apply_session_updates(updates, session_mode_writer)
 
     async def _execute_group(
         self,
@@ -179,20 +231,12 @@ class ToolRoundExecutor:
 def _execution_groups(
     calls: tuple[ToolCall, ...],
     tools: ToolCatalogSnapshot | ToolExposureSnapshot,
-    executor: ToolExecutor,
+    executor: ToolCallExecutor,
 ) -> tuple[tuple[ToolCall, ...], ...]:
     groups: list[tuple[ToolCall, ...]] = []
     safe: list[ToolCall] = []
     for call in calls:
-        resolved_call, tool, error, _ = executor._resolve(call, tools, None)
-        try:
-            concurrency_safe = (
-                error is None
-                and tool is not None
-                and tool.is_concurrency_safe(resolved_call.input)
-            )
-        except Exception:
-            concurrency_safe = False
+        concurrency_safe = executor.is_concurrency_safe(call, tools=tools)
         if concurrency_safe:
             safe.append(call)
             continue
@@ -242,6 +286,7 @@ def _merge_discovery_attachments(
 
 __all__ = [
     "ToolCallFinished",
+    "ToolCallExecutor",
     "ToolCallStarted",
     "ToolRoundCompleted",
     "ToolRoundEvent",

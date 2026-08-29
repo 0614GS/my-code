@@ -54,11 +54,14 @@ task or corrects earlier direction. Distinguish completed work from proposed wor
 Exclude tool-result bulk, redundant narration, and private reasoning. Do not
 acknowledge this instruction. Return only the continuation handoff."""
 
-_TRUNCATION_RETRY_REQUEST = _COMPACTION_REQUEST + """
+_TRUNCATION_RETRY_REQUEST = (
+    _COMPACTION_REQUEST
+    + """
 
 The previous response was cut off by the output token limit. Produce a complete
 handoff this time and keep its content at or below 16,000 tokens. Prefer concise
 coverage of every operationally important fact over detail that cannot fit."""
+)
 
 _ANALYSIS_PATTERN = re.compile(
     r"<(?:analysis|analyze)(?:\s[^>]*)?>[\s\S]*?</(?:analysis|analyze)\s*>",

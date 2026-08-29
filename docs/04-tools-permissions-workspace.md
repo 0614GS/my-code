@@ -52,7 +52,7 @@ ToolCall
 
 显式 deny 始终优先；ask 触发 host 确认；allow 只授权匹配范围。Full access/bypass 仍不能绕过工具自身不可变的安全限制，例如 Explore 的只读代理。无 permission handler 时请求默认拒绝。
 
-一次 pending approval 属于当前调用，完成、拒绝、异常或取消后必须释放。Runtime permission mode/rules 的唯一可写来源是 `AppState.permissions.policy`；UI 只能通过 Chat 用例更新。
+一次 pending approval 属于当前调用，完成、拒绝、异常或取消后必须释放。Runtime permission mode/rules 的唯一可写来源是 `AppState.permissions.policy`；UI 只能通过 Chat 用例更新。Session mode 变更先由 `Session` 原子写入 transcript，再发布到 policy；resume 恢复目标 Session 的最后模式，包括 `bypassPermissions`。
 
 ## Workspace 安全边界
 

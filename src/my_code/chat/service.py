@@ -2,11 +2,10 @@
 
 import asyncio
 import hashlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import fields, is_dataclass, replace
 from typing import Protocol
 
-from my_code.agent.engine import AgentEngine
 from my_code.agent.events import (
     AgentConversationUpdated,
     AgentEvent,
@@ -24,6 +23,7 @@ from my_code.agent.models import (
     AgentTurnInput,
     AgentTurnSucceeded,
 )
+from my_code.agent.runner import AgentRunner
 from my_code.chat.events import (
     AttachmentLoaded,
     BackgroundInvocationFinished,
@@ -106,6 +106,7 @@ from my_code.model.capabilities import (
 )
 from my_code.model.primitives import ReasoningPresentation
 from my_code.permissions.models import PermissionMode
+from my_code.permissions.policy import PermissionPolicy
 from my_code.providers.discovery import resolve_without_network
 from my_code.providers.manager import (
     ModelView,
@@ -205,7 +206,7 @@ class ChatService:
     def __init__(
         self,
         *,
-        agent: AgentEngine,
+        agent: AgentRunner,
         context: ContextEngine,
         tool_executor: ToolExecutor,
         settings: AgentSettings,
@@ -218,6 +219,7 @@ class ChatService:
         background_wake_signal: BackgroundWakeSignal | None = None,
         background_tasks: BackgroundTaskRegistry | None = None,
         subagents: SubagentActivitySource | None = None,
+        shutdown_observability: Callable[[], None] | None = None,
     ) -> None:
         self.agent = agent
         self.context = context
@@ -235,6 +237,7 @@ class ChatService:
         self._subagents = subagents
         self._initialization_lock = asyncio.Lock()
         self._initialized = False
+        self._shutdown_observability = shutdown_observability or (lambda: None)
 
     async def initialize(self) -> SessionView:
         """Refresh network-backed capabilities after the local UI is visible."""
@@ -774,7 +777,9 @@ class ChatService:
         )
 
     def cycle_permission_mode(self) -> PermissionModeSwitch:
-        target, needs_confirmation = self.state.permissions.request_cycle()
+        target, needs_confirmation = self.state.permissions.request_cycle(
+            self._persist_permission_mode
+        )
         view = permission_mode_view(
             target,
             current=not needs_confirmation,
@@ -784,7 +789,9 @@ class ChatService:
         return PermissionModeSwitch(view, not needs_confirmation, needs_confirmation)
 
     def confirm_full_access(self, allow: bool) -> PermissionModeView:
-        mode = self.state.permissions.confirm_full_access(allow)
+        mode = self.state.permissions.confirm_full_access(
+            allow, self._persist_permission_mode
+        )
         return permission_mode_view(
             mode,
             current=True,
@@ -954,17 +961,25 @@ class ChatService:
                 tool_results_dir=self.settings.paths.tool_results_dir(session_id),
             )
             history = self._project_history(session)
-            restore_skill_permissions(
-                self.state.permissions.policy, session.conversation
+            permission_mode = PermissionMode(session.permission_mode)
+            permission_policy = PermissionPolicy(
+                permission_mode, self.state.permissions.policy.rules
             )
-            self.state.replace_session(session)
+            restore_skill_permissions(permission_policy, session.conversation)
+            self.state.replace_session(session, permission_policy=permission_policy)
             if self.background_wake_signal is not None:
                 self.background_wake_signal.pulse()
             return ResumedSession(status=self.status(), history=history)
 
+    def _persist_permission_mode(self, mode: PermissionMode) -> bool:
+        return self.state.session.set_permission_mode(mode.value)
+
     async def close(self) -> None:
-        await self.permission_prompter.close()
-        await self.state.close()
+        try:
+            await self.permission_prompter.close()
+            await self.state.close()
+        finally:
+            self._shutdown_observability()
 
     async def _load_attachments(self, prompt: str) -> tuple[AttachmentPayload, ...]:
         if self.attachment_loader is None:

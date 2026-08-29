@@ -32,6 +32,7 @@ from my_code.sessions._codec import (
 )
 from my_code.sessions._store import SessionStore
 from my_code.sessions.catalog import SessionCatalog
+from my_code.sessions.models import TurnFinished, TurnStarted
 from my_code.sessions.session import Session
 
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
@@ -57,6 +58,102 @@ def _chain():
     return human, assistant, results, summary
 
 
+def _turn_started(turn_id: str = "turn") -> TurnStarted:
+    return TurnStarted(
+        turn_id,
+        "run",
+        None,
+        "main",
+        "2026-01-01T00:00:00+00:00",
+        False,
+    )
+
+
+def test_turn_journal_round_trips_and_starts_transcript(tmp_path: Path) -> None:
+    session = Session(tmp_path, SESSION_ID)
+    started = _turn_started()
+    finished = TurnFinished(
+        "turn",
+        "2026-01-01T00:00:01+00:00",
+        "succeeded",
+        completed_steps=1,
+        usage=TokenUsage(2, 3),
+    )
+
+    session.append_turn_started(started)
+    session.append_turn_finished(finished)
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / f"{SESSION_ID}.jsonl").read_text().splitlines()
+    ]
+    assert [record["type"] for record in records] == [
+        "session_started",
+        "turn_started",
+        "turn_finished",
+    ]
+    assert Session(tmp_path, SESSION_ID).turn_history == ((session.turn_history[0]),)
+
+
+def test_turn_journal_keeps_unfinished_turn_and_old_transcript_compatible(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    store.append(HumanMessage("legacy"))
+    assert Session(tmp_path, SESSION_ID).turn_history == ()
+
+    session = Session(tmp_path, SESSION_ID)
+    session.append_turn_started(_turn_started())
+    restored = Session(tmp_path, SESSION_ID)
+    assert restored.turn_history[0].finished is None
+
+
+@pytest.mark.parametrize("kind", ["duplicate", "dangling"])
+def test_turn_journal_rejects_invalid_finish_pairing(tmp_path: Path, kind: str) -> None:
+    session = Session(tmp_path, SESSION_ID)
+    session.append_turn_started(_turn_started())
+    session.append_turn_finished(
+        TurnFinished(
+            "turn",
+            "2026-01-01T00:00:01+00:00",
+            "cancelled",
+        )
+    )
+    path = tmp_path / f"{SESSION_ID}.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    finish = next(record for record in records if record["type"] == "turn_finished")
+    if kind == "dangling":
+        finish = {**finish, "turn_id": "missing"}
+    path.write_text(
+        path.read_text() + json.dumps(finish) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="turn_finished|Duplicate"):
+        Session(tmp_path, SESSION_ID)
+
+
+@pytest.mark.parametrize(
+    "kwargs,match",
+    [
+        ({"outcome": "future"}, "Unsupported"),
+        ({"outcome": "succeeded"}, "requires"),
+        ({"outcome": "max_steps", "completed_steps": 1}, "requires"),
+        ({"outcome": "failed"}, "requires"),
+        ({"outcome": "cancelled", "error_type": "Error"}, "incompatible"),
+    ],
+)
+def test_turn_finished_enforces_outcome_fields(
+    kwargs: dict[str, object], match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        TurnFinished(
+            "turn",
+            "2026-01-01T00:00:01+00:00",
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+
 def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
     store = _store(tmp_path)
     messages = _chain()
@@ -80,6 +177,69 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
     assert entries[0]["max_steps"] is None
     assert "max_turns" not in entries[0]
     assert all("role" not in entry and "origin" not in entry for entry in entries)
+
+
+def test_session_permission_mode_is_last_wins_and_idempotent(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.append(HumanMessage("hello"))
+
+    assert store.permission_mode == "default"
+    assert store.set_permission_mode("acceptEdits") is True
+    assert store.set_permission_mode("acceptEdits") is False
+    assert store.set_permission_mode("bypassPermissions") is True
+
+    restored = _store(tmp_path)
+    restored.load()
+    assert restored.permission_mode == "bypassPermissions"
+    records = [json.loads(line) for line in store.path.read_text().splitlines()]
+    assert [
+        record["permission_mode"]
+        for record in records
+        if record["type"] == "session_permission_mode"
+    ] == ["acceptEdits", "bypassPermissions"]
+
+
+def test_permission_mode_before_first_message_updates_session_start(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+
+    assert store.set_permission_mode("plan") is True
+    store.append(HumanMessage("hello"))
+
+    first = json.loads(store.path.read_text().splitlines()[0])
+    assert first["permission_mode"] == "plan"
+    assert not any(
+        json.loads(line)["type"] == "session_permission_mode"
+        for line in store.path.read_text().splitlines()
+    )
+
+
+def test_permission_mode_write_failure_preserves_store_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    store.append(HumanMessage("hello"))
+
+    def fail(_: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "_append_records", fail)
+    with pytest.raises(OSError, match="disk full"):
+        store.set_permission_mode("acceptEdits")
+
+    assert store.permission_mode == "default"
+
+
+def test_permission_mode_record_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError, match="Unsupported permission_mode"):
+        entry_from_json(
+            {
+                "type": "session_permission_mode",
+                "schema_version": 5,
+                "permission_mode": "futureMode",
+            }
+        )
 
 
 def test_trailing_tool_repair_is_idempotent_and_keeps_resume_reason(

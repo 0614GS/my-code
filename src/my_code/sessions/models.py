@@ -3,9 +3,13 @@
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from my_code.model.capabilities import ModelLimits
+from my_code.model.primitives import TokenUsage
+
+type TurnOutcome = Literal["succeeded", "max_steps", "failed", "cancelled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +67,90 @@ class SessionMetadata:
                 raise ValueError(f"{name} must be non-empty or null")
 
 
+@dataclass(frozen=True, slots=True)
+class TurnStarted:
+    turn_id: str
+    run_id: str
+    parent_run_id: str | None
+    agent_name: str
+    started_at: str
+    continuation: bool
+    evaluation_run_id: str | None = None
+    test_case_id: str | None = None
+    attempt_id: str | None = None
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("turn_id", self.turn_id),
+            ("run_id", self.run_id),
+            ("agent_name", self.agent_name),
+        ):
+            if not value.strip():
+                raise ValueError(f"{name} must not be empty")
+        _timestamp(self.started_at, "started_at")
+        for name, value in (
+            ("parent_run_id", self.parent_run_id),
+            ("evaluation_run_id", self.evaluation_run_id),
+            ("test_case_id", self.test_case_id),
+            ("attempt_id", self.attempt_id),
+        ):
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must be non-empty or null")
+
+
+@dataclass(frozen=True, slots=True)
+class TurnFinished:
+    turn_id: str
+    finished_at: str
+    outcome: TurnOutcome
+    completed_steps: int | None = None
+    max_steps: int | None = None
+    usage: TokenUsage | None = None
+    error_type: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.turn_id.strip():
+            raise ValueError("turn_id must not be empty")
+        _timestamp(self.finished_at, "finished_at")
+        if self.outcome not in {"succeeded", "max_steps", "failed", "cancelled"}:
+            raise ValueError("Unsupported turn outcome")
+        if self.completed_steps is not None and self.completed_steps < 0:
+            raise ValueError("completed_steps must not be negative")
+        if self.max_steps is not None and self.max_steps < 1:
+            raise ValueError("max_steps must be positive or null")
+        if self.error_type is not None and not self.error_type.strip():
+            raise ValueError("error_type must be non-empty or null")
+        if self.outcome == "succeeded":
+            if self.completed_steps is None or self.usage is None:
+                raise ValueError("Succeeded turn requires completed_steps and usage")
+            if self.max_steps is not None or self.error_type is not None:
+                raise ValueError("Succeeded turn has incompatible fields")
+        elif self.outcome == "max_steps":
+            if (
+                self.completed_steps is None
+                or self.max_steps is None
+                or self.usage is None
+            ):
+                raise ValueError(
+                    "Max-steps turn requires completed_steps, max_steps, and usage"
+                )
+            if self.error_type is not None:
+                raise ValueError("Max-steps turn cannot include error_type")
+        elif self.outcome == "failed":
+            if self.error_type is None:
+                raise ValueError("Failed turn requires error_type")
+            if self.max_steps is not None or self.usage is not None:
+                raise ValueError("Failed turn has incompatible fields")
+        elif self.max_steps is not None or self.usage is not None or self.error_type:
+            raise ValueError("Cancelled turn has incompatible fields")
+
+
+@dataclass(frozen=True, slots=True)
+class TurnHistoryEntry:
+    started: TurnStarted
+    finished: TurnFinished | None = None
+
+
 def _timestamp(value: str, name: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value)
@@ -76,4 +164,8 @@ def _timestamp(value: str, name: str) -> datetime:
 __all__ = [
     "SessionMetadata",
     "SessionStart",
+    "TurnFinished",
+    "TurnHistoryEntry",
+    "TurnOutcome",
+    "TurnStarted",
 ]

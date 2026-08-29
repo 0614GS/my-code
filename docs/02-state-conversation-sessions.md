@@ -11,9 +11,10 @@
 | conversation、context entries、compact state | `Session` | session | 是 |
 | 工具结果、展示与 provider replay | `Session` 私有实现 | session | 是或受控外置 |
 | prompt/user-context cache | 配对的 `ContextRuntime` | live session/run | 否 |
-| runtime permission policy | `AppState.permissions` | runtime | 规则由配置层写入 |
+| runtime permission policy | `AppState.permissions` | runtime | mode 由 Session 写入，规则由配置或 durable facts 恢复 |
 | ToolCatalog、task tree、MCP/Skill runtime | 对应 AppState 状态胶囊 | runtime | 只持久化配置或对话产物 |
-| turn、step、stream、tool progress | 调用栈 | 单次操作 | 否 |
+| turn 身份与终态 journal | `Session` | session | 是（不复制正文） |
+| step、stream、tool progress | 调用栈 | 单次操作 | 否 |
 
 `AppState` 是运行时状态图的唯一入口，不是进程全局 singleton。只有 application service、host 和 bootstrap 可以持有完整 AppState；Agent、Context、Tool 和 Provider adapter 只接收完成任务所需的最小对象或快照。
 
@@ -56,6 +57,10 @@ Attachment 是否持久化由 Session 根据 payload 类型统一决定。显式
 
 进程运行期间，已打开 Session 的内存状态是读取权威；本地文件是跨进程恢复依据，不是 refresh API。
 
+每个 Agent turn 在处理前提交 `turn_started`，并在发布终态事件前提交
+`turn_finished`。`Session.turn_history` 按开始顺序返回只读聚合；未闭合 start 保持可见，
+供恢复和 Harness 判断 incomplete。Journal 写入故障不会覆盖 Agent 本身的执行语义。
+
 ## 恢复与切换
 
 `ChatService.resume_session()` 在 AppState operation lock 中：
@@ -63,9 +68,12 @@ Attachment 是否持久化由 Session 根据 payload 类型统一决定。显式
 1. 完整加载、校验并按需修复候选 Session。
 2. 校验父链、tool pairing、compact boundary、presentation 和 replay 关联。
 3. 从候选 facts 构造安全历史投影。
-4. 仅在全部成功后调用 `AppState.replace_session()`。
+4. 恢复候选 Session 最后持久化的 permission mode。
+5. 仅在全部成功后调用 `AppState.replace_session()`。
 
-替换 Session 会同时创建新的 `ContextRuntime`。任何一步失败都保留旧 Session 与 cache，不会出现旧 conversation 配新 context、工具结果或 replay 的混合状态。当前 provider、permission 和 workspace 不从 transcript 恢复。
+替换 Session 会同时创建新的 `ContextRuntime` 并发布恢复后的 permission mode。任何一步失败都保留旧 Session、mode 与 cache，不会出现旧 conversation 配新 context、工具结果或 replay 的混合状态。当前 provider、permission rules 和 workspace 不从 transcript 的 mode 记录恢复。
+
+Permission mode 使用 last-wins 的 session record；旧 transcript 没有该记录时回退到 `session_started.permission_mode`。运行中切换遵循 persistence-first，写入失败时 runtime policy 不改变。显式 CLI override 优先于保存值并成为该 Session 的新值。
 
 恢复可以读取受支持的旧 record 形态；兼容逻辑只存在于 `sessions` 私有 codec。未知或冲突 schema 必须失败关闭，而不是静默丢弃事实。
 
