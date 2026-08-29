@@ -54,7 +54,7 @@ from my_code.providers.manager import (
 )
 from my_code.sessions.catalog import SessionSummary
 from my_code.tools.presentation import ToolUsePresentation
-from my_code.tui.app import MyCodeApp
+from my_code.tui.app import _STREAM_INVALIDATE_INTERVAL, MyCodeApp
 from my_code.tui.commands import SlashCommandRegistry
 from my_code.tui.dimensions import SURFACE_VERTICAL_PADDING
 from my_code.tui.presentation import format_context_usage, render_context_status
@@ -273,6 +273,17 @@ class RecordingMyCodeApp(MyCodeApp):
         self.write_snapshots.append(
             (self._stream_text, tuple(self._reasoning_parts), renderable)
         )
+
+
+class InvalidateRecordingApp(RecordingMyCodeApp):
+    """Records _invalidate calls instead of forwarding to prompt_toolkit."""
+
+    def __init__(self, runtime: FakeRuntime) -> None:
+        super().__init__(runtime)
+        self.invalidate_calls = 0
+
+    def _invalidate(self) -> None:
+        self.invalidate_calls += 1
 
 
 @pytest.mark.asyncio
@@ -827,6 +838,70 @@ async def test_cancelled_turn_retires_partial_projection_before_writes() -> None
     assert len(app.write_snapshots) == 2
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
     assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+
+
+@pytest.mark.asyncio
+async def test_streaming_invalidate_coalesces_rapid_deltas() -> None:
+    """Multiple deltas within one frame window trigger at most two redraws."""
+    app = InvalidateRecordingApp(FakeRuntime())
+    app._running = True  # flush guard only fires while the host is running
+    # The first delta after construction redraws immediately: the elapsed
+    # window starts exhausted because _last_stream_invalidate is 0.0.
+    app._invalidate_for_event(TextDelta("a"))
+    assert app.invalidate_calls == 1
+    assert app._stream_invalidate_pending is False
+
+    # Deltas arriving within the frame window merge into a single deferred
+    # flush rather than each triggering their own redraw.
+    for char in "bcdefghij":
+        app._invalidate_for_event(TextDelta(char))
+    assert app.invalidate_calls == 1
+    assert app._stream_invalidate_pending is True
+
+    # The deferred flush fires once the window elapses.
+    await asyncio.sleep(_STREAM_INVALIDATE_INTERVAL + 0.02)
+    assert app.invalidate_calls == 2
+    assert app._stream_invalidate_pending is False
+
+
+@pytest.mark.asyncio
+async def test_structural_event_bypasses_streaming_throttle() -> None:
+    """TurnSucceeded (and other structural events) redraw immediately."""
+    app = InvalidateRecordingApp(FakeRuntime())
+    app._running = True
+    # Prime the throttle so a follow-up delta would be deferred.
+    app._invalidate_for_event(TextDelta("a"))
+    assert app.invalidate_calls == 1
+
+    app._invalidate_for_event(TextDelta("b"))
+    assert app._stream_invalidate_pending is True
+    assert app.invalidate_calls == 1
+
+    # A structural event must not wait for the pending streaming flush.
+    app._invalidate_for_event(TurnSucceeded("done", 1, 10, 2))
+    assert app.invalidate_calls == 2
+    assert app._stream_invalidate_pending is True
+
+    # Drain the scheduled flush so it does not leak across tests.
+    await asyncio.sleep(_STREAM_INVALIDATE_INTERVAL + 0.02)
+    assert app.invalidate_calls == 3
+    assert app._stream_invalidate_pending is False
+
+
+@pytest.mark.asyncio
+async def test_deferred_stream_flush_is_skipped_after_shutdown() -> None:
+    """A pending flush scheduled before shutdown must not redraw afterwards."""
+    app = InvalidateRecordingApp(FakeRuntime())
+    app._running = True
+    app._invalidate_for_event(TextDelta("a"))  # immediate redraw
+    app._invalidate_for_event(TextDelta("b"))  # schedules a deferred flush
+    assert app._stream_invalidate_pending is True
+    assert app.invalidate_calls == 1
+
+    app._running = False  # shutdown before the flush can fire
+    await asyncio.sleep(_STREAM_INVALIDATE_INTERVAL + 0.02)
+    assert app.invalidate_calls == 1  # flush skipped by the _running guard
+    assert app._stream_invalidate_pending is False
 
 
 @pytest.mark.asyncio

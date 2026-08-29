@@ -38,6 +38,7 @@ from my_code.tools.base import (
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.discovery import (
     INVOKE_SEARCHED_TOOL_NAME,
+    TOOL_SEARCH_NAME,
     ToolExposureSnapshot,
 )
 from my_code.tools.invocation import (
@@ -524,11 +525,25 @@ class ToolExecutor:
         if call.name != INVOKE_SEARCHED_TOOL_NAME:
             tool = tools.direct(call.name)
             if tool is None and tools.target(call.name) is not None:
+                if (
+                    tools.mode is ToolSearchMode.DISPATCHER
+                    and call.name in tools.searched
+                ):
+                    return (
+                        call,
+                        None,
+                        f"Tool {call.name!r} was already discovered but is not "
+                        "directly callable in dispatcher mode. Retry with "
+                        f"{INVOKE_SEARCHED_TOOL_NAME} using tool_name={call.name!r} "
+                        f"and put a schema-valid {call.name} input object in "
+                        f"arguments. Do not call {TOOL_SEARCH_NAME} again.",
+                        invocation,
+                    )
                 return (
                     call,
                     None,
                     f"Tool {call.name!r} is not directly exposed; "
-                    "use ToolSearch first.",
+                    f"use {TOOL_SEARCH_NAME} first.",
                     invocation,
                 )
             return call, tool, None, invocation

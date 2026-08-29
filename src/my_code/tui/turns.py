@@ -61,6 +61,17 @@ class TurnFlowMixin:
     def _invalidate(self) -> None:
         raise NotImplementedError
 
+    def _invalidate_streaming(self) -> None:
+        raise NotImplementedError
+
+    def _invalidate_for_event(self, event: TurnEvent) -> None:
+        """Redraw immediately for structural events, throttle streaming deltas."""
+
+        if isinstance(event, (TextDelta, ReasoningDelta)):
+            self._invalidate_streaming()
+        else:
+            self._invalidate()
+
     def _refresh_status(self) -> None:
         raise NotImplementedError
 
@@ -164,7 +175,7 @@ class TurnFlowMixin:
                         )
                     )
                     completed = True
-                self._invalidate()
+                self._invalidate_for_event(event)
         except asyncio.CancelledError:
             partial_text = self._retire_transient_content()
             self._activity = ""

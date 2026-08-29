@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import monotonic
 from typing import Any, cast
 
 from prompt_toolkit.application import Application, in_terminal, run_in_terminal
@@ -104,6 +105,11 @@ from my_code.tui.widgets import (
     welcome,
 )
 
+#: Minimum interval between dynamic-region redraws while streaming. Per-token
+#: deltas would otherwise trigger a full Markdown re-render of the accumulated
+#: text on every token, starving the single-threaded UI loop.
+_STREAM_INVALIDATE_INTERVAL = 0.04
+
 
 class MyCodeApp(TurnFlowMixin):
     """Inline terminal application; canonical state stays in ChatService."""
@@ -125,6 +131,8 @@ class MyCodeApp(TurnFlowMixin):
         )
         self._busy = False
         self._running = False
+        self._stream_invalidate_pending = False
+        self._last_stream_invalidate = 0.0
         self._activity = ""
         self._stream_text = ""
         self._reasoning_parts: list[str] = []
@@ -308,6 +316,32 @@ class MyCodeApp(TurnFlowMixin):
 
     def _invalidate(self) -> None:
         self.application.invalidate()
+
+    def _invalidate_streaming(self) -> None:
+        """Coalesce high-frequency streaming redraws to a bounded frame rate.
+
+        Streaming text deltas would otherwise trigger one full Markdown
+        re-render of the accumulated text per token. Instead, the first delta
+        after the interval elapses redraws immediately; the rest are merged
+        into a single deferred redraw scheduled for the next interval window.
+        """
+        if self._stream_invalidate_pending:
+            return
+        elapsed = monotonic() - self._last_stream_invalidate
+        delay = _STREAM_INVALIDATE_INTERVAL - elapsed
+        if delay <= 0:
+            self._last_stream_invalidate = monotonic()
+            self._invalidate()
+            return
+        self._stream_invalidate_pending = True
+        asyncio.get_running_loop().call_later(delay, self._flush_stream_invalidate)
+
+    def _flush_stream_invalidate(self) -> None:
+        self._stream_invalidate_pending = False
+        if not self._running:
+            return
+        self._last_stream_invalidate = monotonic()
+        self._invalidate()
 
     async def _open_transcript(self) -> None:
         if self._transcript_pager is not None:
@@ -754,7 +788,7 @@ class MyCodeApp(TurnFlowMixin):
                 else:
                     invocation.append(event)
                     await self._consume_background_event(event)
-                self._invalidate()
+                self._invalidate_for_event(event)
         except asyncio.CancelledError:
             raise
         except Exception as error:

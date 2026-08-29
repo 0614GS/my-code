@@ -113,6 +113,7 @@ async def test_search_is_available_next_step_and_dispatches_target(
     )
 
     assert direct.result.is_error and early.result.is_error
+    assert "use ToolSearch first" in direct.result.content
     assert hidden.inputs == []
     attachment = searched.new_attachments[0]
     assert isinstance(attachment, ToolDiscoveryAttachment)
@@ -122,6 +123,18 @@ async def test_search_is_available_next_step_and_dispatches_target(
         {item.name: item for item in attachment.definitions},
     )
     assert before.definitions == after.definitions
+
+    mistaken_direct = await executor.execute(
+        ToolCall("mistaken-direct", "Hidden", {"value": "not-run"}), tools=after
+    )
+
+    assert mistaken_direct.result.is_error
+    assert "already discovered" in mistaken_direct.result.content
+    assert "Retry with InvokeSearchedTool" in mistaken_direct.result.content
+    assert "Do not call ToolSearch again" in mistaken_direct.result.content
+    assert mistaken_direct.new_attachments == ()
+    assert mistaken_direct.permission_updates == ()
+    assert hidden.inputs == []
 
     invoked = await executor.execute(
         ToolCall(
