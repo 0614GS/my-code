@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from my_code.config.paths import MyCodePaths, SettingsScope
@@ -23,6 +24,23 @@ _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 class SettingsFileError(ValueError):
     """A settings file exists but cannot be interpreted safely."""
+
+
+class SandboxMode(StrEnum):
+    AUTO = "auto"
+    LOCAL = "local"
+
+
+class SandboxNetwork(StrEnum):
+    RESTRICTED = "restricted"
+    ENABLED = "enabled"
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxSettingsLayer:
+    mode: SandboxMode | None = None
+    network: SandboxNetwork | None = None
+    allow_unsandboxed_commands: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +114,7 @@ class SettingsLayer:
     background_tasks: BackgroundTaskSettingsLayer
     skills: SkillSettingsLayer
     mcp: McpSettingsLayer
+    sandbox: SandboxSettingsLayer
 
     def __init__(
         self,
@@ -108,6 +127,7 @@ class SettingsLayer:
         background_tasks: BackgroundTaskSettingsLayer | None = None,
         skills: SkillSettingsLayer | None = None,
         mcp: McpSettingsLayer | None = None,
+        sandbox: SandboxSettingsLayer | None = None,
         # Convenience aliases for callers while the disk schema remains nested.
         permission_mode: PermissionMode | None = None,
         permission_allow_rules: tuple[str, ...] = (),
@@ -223,6 +243,7 @@ class SettingsLayer:
                 mcp_servers,
             ),
         )
+        object.__setattr__(self, "sandbox", sandbox or SandboxSettingsLayer())
 
     @property
     def max_steps(self) -> int | None:
@@ -300,6 +321,18 @@ class SettingsLayer:
     def mcp_servers(self) -> tuple[McpServerSettingsLayer, ...]:
         return self.mcp.servers
 
+    @property
+    def sandbox_mode(self) -> SandboxMode | None:
+        return self.sandbox.mode
+
+    @property
+    def sandbox_network(self) -> SandboxNetwork | None:
+        return self.sandbox.network
+
+    @property
+    def sandbox_allow_unsandboxed_commands(self) -> bool | None:
+        return self.sandbox.allow_unsandboxed_commands
+
     def overlay(self, higher: "SettingsLayer") -> "SettingsLayer":
         return SettingsLayer(
             active_provider=higher.active_provider or self.active_provider,
@@ -363,6 +396,15 @@ class SettingsLayer:
                 if higher.mcp_enabled is not None
                 else self.mcp_enabled,
                 _overlay_mcp_servers(self.mcp_servers, higher.mcp_servers),
+            ),
+            sandbox=SandboxSettingsLayer(
+                higher.sandbox_mode or self.sandbox_mode,
+                higher.sandbox_network or self.sandbox_network,
+                (
+                    higher.sandbox_allow_unsandboxed_commands
+                    if higher.sandbox_allow_unsandboxed_commands is not None
+                    else self.sandbox_allow_unsandboxed_commands
+                ),
             ),
         )
 
@@ -508,6 +550,11 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
     background_tasks = _nested_mapping(raw, "backgroundTasks", path)
     skills = _nested_mapping(raw, "skills", path)
     mcp = _nested_mapping(raw, "mcp", path)
+    sandbox = _nested_mapping(raw, "sandbox", path)
+    if scope is SettingsScope.PROJECT and sandbox:
+        raise SettingsFileError(
+            f"sandbox is not allowed in shared project settings: {path}"
+        )
     if "deferredToolThreshold" in mcp:
         raise SettingsFileError(f"Unknown setting mcp.deferredToolThreshold: {path}")
     mcp_servers = _nested_mapping(mcp, "servers", path, label="mcp.servers")
@@ -583,6 +630,22 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
             _optional_bool(mcp, "enabled", path, "mcp.enabled"),
             _parse_mcp_servers(mcp_servers, path=path, scope=scope),
         ),
+        sandbox=SandboxSettingsLayer(
+            _enum_setting(sandbox, "mode", SandboxMode, path, "sandbox.mode"),
+            _enum_setting(
+                sandbox,
+                "network",
+                SandboxNetwork,
+                path,
+                "sandbox.network",
+            ),
+            _optional_bool(
+                sandbox,
+                "allowUnsandboxedCommands",
+                path,
+                "sandbox.allowUnsandboxedCommands",
+            ),
+        ),
     )
     _validate_scope(layer, scope, path)
     return layer
@@ -616,6 +679,14 @@ def _validate_scope(layer: SettingsLayer, scope: SettingsScope, path: Path) -> N
     ):
         raise SettingsFileError(
             f"Shared project MCP servers cannot be enabled directly: {path}"
+        )
+    if scope is SettingsScope.PROJECT and (
+        layer.sandbox_mode is not None
+        or layer.sandbox_network is not None
+        or layer.sandbox_allow_unsandboxed_commands is not None
+    ):
+        raise SettingsFileError(
+            f"sandbox is not allowed in shared project settings: {path}"
         )
 
 
@@ -691,6 +762,20 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
         }
     if mcp:
         document["mcp"] = mcp
+    sandbox = {
+        key: value.value if isinstance(value, StrEnum) else value
+        for key, value in (
+            ("mode", settings.sandbox_mode),
+            ("network", settings.sandbox_network),
+            (
+                "allowUnsandboxedCommands",
+                settings.sandbox_allow_unsandboxed_commands,
+            ),
+        )
+        if value is not None
+    }
+    if sandbox:
+        document["sandbox"] = sandbox
     return document
 
 
@@ -722,6 +807,7 @@ def _merge_document(
             "subagents",
             "backgroundTasks",
             "skills",
+            "sandbox",
         } and isinstance(value, dict):
             current = result.get(key)
             merged = dict(current) if isinstance(current, dict) else {}
@@ -944,6 +1030,25 @@ def _optional_bool(
     return value
 
 
+def _enum_setting[T: StrEnum](
+    raw: dict[object, object],
+    key: str,
+    enum_type: type[T],
+    path: Path,
+    label: str,
+) -> T | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SettingsFileError(f"{label} must be a string: {path}")
+    try:
+        return enum_type(value)
+    except ValueError as error:
+        choices = ", ".join(item.value for item in enum_type)
+        raise SettingsFileError(f"{label} must be one of {choices}: {path}") from error
+
+
 def _permission_mode(raw: dict[object, object], path: Path) -> PermissionMode | None:
     value = raw.get("defaultMode")
     if value is None:
@@ -1026,6 +1131,9 @@ __all__ = [
     "McpServerSettingsLayer",
     "McpSettingsLayer",
     "PermissionSettingsLayer",
+    "SandboxMode",
+    "SandboxNetwork",
+    "SandboxSettingsLayer",
     "SettingsFileError",
     "SettingsLayer",
     "SettingsStore",

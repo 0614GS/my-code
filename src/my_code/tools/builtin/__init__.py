@@ -14,6 +14,9 @@ def builtin_tools(
     *,
     bash_background: BashBackgroundExecutor | None = None,
     background_enabled: bool = False,
+    execution_environment: str = "local",
+    sandboxed: bool = False,
+    escalation_enabled: bool = False,
 ) -> tuple[Tool, ...]:
     """在注册表校验前按稳定顺序返回内置工具。"""
 
@@ -21,6 +24,9 @@ def builtin_tools(
         BashTool(
             background_executor=bash_background,
             background_enabled=background_enabled,
+            execution_environment=execution_environment,
+            sandboxed=sandboxed,
+            escalation_enabled=escalation_enabled,
         ),
         EditFileTool(),
         GlobTool(),

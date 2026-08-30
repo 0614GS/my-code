@@ -15,6 +15,9 @@ from my_code.config.providers import (
 from my_code.config.settings import SettingsResolver
 from my_code.config.store import (
     McpServerSettingsLayer,
+    SandboxMode,
+    SandboxNetwork,
+    SandboxSettingsLayer,
     SettingsFileError,
     SettingsLayer,
     SettingsStore,
@@ -77,6 +80,75 @@ def test_load_merges_user_project_and_local_precedence(tmp_path: Path) -> None:
     assert user_document["agent"]["maxSteps"] == 10
     assert user_document["tools"]["maxParallelCalls"] == 2
     assert "maxTurns" not in user_document["agent"]
+
+
+def test_sandbox_settings_merge_from_user_and_local(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(
+        SettingsScope.USER,
+        SettingsLayer(
+            sandbox=SandboxSettingsLayer(
+                SandboxMode.AUTO, SandboxNetwork.RESTRICTED, False
+            )
+        ),
+    )
+    store.write(
+        SettingsScope.LOCAL,
+        SettingsLayer(sandbox=SandboxSettingsLayer(network=SandboxNetwork.ENABLED)),
+    )
+
+    layer = store.load()
+
+    assert layer.sandbox_mode is SandboxMode.AUTO
+    assert layer.sandbox_network is SandboxNetwork.ENABLED
+    assert layer.sandbox_allow_unsandboxed_commands is False
+    document = json.loads(paths.local_settings_path.read_text(encoding="utf-8"))
+    assert document["sandbox"] == {"network": "enabled"}
+
+
+def test_shared_project_cannot_enable_unsandboxed_commands(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    paths.project_settings_path.parent.mkdir()
+    paths.project_settings_path.write_text(
+        json.dumps({"version": 3, "sandbox": {"allowUnsandboxedCommands": True}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SettingsFileError, match="not allowed"):
+        SettingsStore(paths).load_scope(SettingsScope.PROJECT)
+
+
+def test_shared_project_cannot_configure_sandbox(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    paths.project_settings_path.parent.mkdir()
+    paths.project_settings_path.write_text(
+        json.dumps({"version": 3, "sandbox": {"mode": "local"}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SettingsFileError, match="not allowed"):
+        SettingsStore(paths).load_scope(SettingsScope.PROJECT)
+
+
+@pytest.mark.parametrize(
+    ("sandbox", "message"),
+    [
+        ({"mode": "required"}, "sandbox.mode"),
+        ({"network": "open"}, "sandbox.network"),
+    ],
+)
+def test_invalid_sandbox_values_are_rejected(
+    tmp_path: Path, sandbox: object, message: str
+) -> None:
+    paths = make_paths(tmp_path)
+    paths.user_settings_path.parent.mkdir()
+    paths.user_settings_path.write_text(
+        json.dumps({"version": 3, "sandbox": sandbox}), encoding="utf-8"
+    )
+
+    with pytest.raises(SettingsFileError, match=message):
+        SettingsStore(paths).load_scope(SettingsScope.USER)
 
 
 def test_empty_and_missing_files_are_empty_layers(tmp_path: Path) -> None:

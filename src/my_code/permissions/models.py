@@ -45,6 +45,11 @@ class PermissionDecisionKind(StrEnum):
     USER = "user"
 
 
+class PermissionPromptCategory(StrEnum):
+    TOOL = "tool"
+    SANDBOX_ESCALATION = "sandbox_escalation"
+
+
 class PermissionUpdateDestination(StrEnum):
     """权限更新的生效或持久化目标。"""
 
@@ -329,6 +334,9 @@ class PermissionPrompt:
     display_name: str
     summary: str
     activity: str
+    category: PermissionPromptCategory = PermissionPromptCategory.TOOL
+    requester: str | None = None
+    run_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.tool_name.strip():
@@ -351,6 +359,7 @@ __all__ = [
     "PermissionDecisionReason",
     "PermissionMode",
     "PermissionPrompt",
+    "PermissionPromptCategory",
     "PermissionPrompter",
     "PermissionRequest",
     "PermissionRule",

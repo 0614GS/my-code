@@ -44,6 +44,7 @@ from my_code.chat.views import SubagentTaskView
 from my_code.features.file_mentions.models import PathSuggestion
 from my_code.permissions.models import (
     PermissionConfirmation,
+    PermissionPromptCategory,
 )
 from my_code.providers.manager import ModelView, ProviderView
 from my_code.sessions.catalog import SessionSummary
@@ -1052,14 +1053,24 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         if choice == "allow":
             self._resolve_permission(PermissionConfirmation(True))
         elif choice == "second":
-            if request is not None and request.tool_name == "Bash":
+            if (
+                request is not None
+                and request.tool_name == "Bash"
+                and request.category is not PermissionPromptCategory.SANDBOX_ESCALATION
+            ):
                 self._resolve_permission(
                     PermissionConfirmation(True, updates=request.suggestions)
                 )
             else:
                 self._resolve_permission(PermissionConfirmation(False))
         elif choice == "third":
-            if request is not None and request.tool_name == "Bash":
+            if (
+                request is not None
+                and request.category is PermissionPromptCategory.SANDBOX_ESCALATION
+            ):
+                self._permission_mode = "feedback"
+                self.buffer.set_document(Document(""), bypass_readonly=True)
+            elif request is not None and request.tool_name == "Bash":
                 self._resolve_permission(PermissionConfirmation(False))
             else:
                 self._permission_mode = "feedback"

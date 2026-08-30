@@ -43,6 +43,7 @@ def render_status_card(status: RuntimeStatus, context: ContextStatus) -> Rendera
         ("Provider", provider),
         ("Directory", status.cwd),
         ("Permissions", status.permission_mode),
+        ("Command environment", status.execution_environment),
         ("Authentication", status.credential_source),
         ("Session", status.session_id),
         ("Capabilities", capabilities),

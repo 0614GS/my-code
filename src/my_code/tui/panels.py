@@ -10,6 +10,7 @@ from prompt_toolkit.utils import get_cwidth
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.views import SubagentTaskView
 from my_code.config.providers import ANTHROPIC_API_BASE_URL, OPENAI_API_BASE_URL
+from my_code.permissions.models import PermissionPromptCategory
 from my_code.providers.manager import ModelView, ProviderView
 from my_code.sessions.catalog import SessionSummary
 from my_code.tui.picker import PickerRow, PickerState, PickerView
@@ -22,7 +23,21 @@ def permission_panel(
 ) -> PickerView | FormattedText:
     if mode == "feedback":
         return _message("Permission denied with feedback", "Enter to send · Esc deny")
-    if request.tool_name == "Bash":
+    if request.category is PermissionPromptCategory.SANDBOX_ESCALATION:
+        requester = request.requester or "agent"
+        run = f" · run {request.run_id}" if request.run_id else ""
+        choices = [
+            PickerRow("allow", "Allow this command only"),
+            PickerRow("second", "Deny"),
+            PickerRow("third", "Deny with feedback"),
+        ]
+        shortcut = "↑↓ select · Enter confirm · 1–3 shortcut · Esc deny"
+        warning = (
+            f"\nRequested by {requester}{run}. This command will run as the host "
+            "user and can access host files, network, processes, and write "
+            ".git/.my-code. Approval is never remembered."
+        )
+    elif request.tool_name == "Bash":
         choices = [
             PickerRow("allow", "Yes"),
             PickerRow(
@@ -32,6 +47,7 @@ def permission_panel(
             PickerRow("third", "No"),
         ]
         shortcut = "↑↓ select · Enter confirm · 1–3 shortcut · Esc deny"
+        warning = ""
     else:
         choices = [
             PickerRow("allow", "Yes"),
@@ -39,11 +55,12 @@ def permission_panel(
             PickerRow("third", "No, with feedback"),
         ]
         shortcut = "↑↓ select · Enter confirm · 1–4 shortcut · Esc deny"
+        warning = ""
     if request.tool_name != "Bash" and request.suggestions:
         choices.append(PickerRow("remember", "Yes, and remember"))
     return PickerView(
         f"Tool use · {request.presentation.display_name}"
-        f" ({request.presentation.summary})\n{request.message}",
+        f" ({request.presentation.summary})\n{request.message}{warning}",
         tuple(choices),
         shortcut,
     )

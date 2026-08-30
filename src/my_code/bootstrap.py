@@ -3,6 +3,7 @@
 import asyncio
 import os
 import sys
+import warnings
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -113,6 +114,7 @@ from my_code.tools.executor import LoggingToolInvocationAudit, ToolExecutor
 from my_code.tools.round_executor import ToolRoundExecutor
 from my_code.tools.search import InvokeSearchedTool, ToolSearch
 from my_code.tui.app import MyCodeTui
+from my_code.workspace.launcher import CommandLauncher, resolve_command_launcher
 from my_code.workspace.local import Workspace
 
 
@@ -199,6 +201,7 @@ def _build_agent_components(
     permission_policy: PermissionPolicy,
     permission_prompter: PermissionPrompter,
     workspace: Workspace,
+    command_launcher: CommandLauncher,
     max_steps: int | None = None,
     prompt_registry: PromptRegistry | None = None,
     allow_permission_updates: bool = True,
@@ -222,6 +225,7 @@ def _build_agent_components(
         policy=permission_policy,
         prompter=instrumented_prompter,
         workspace=workspace,
+        command_launcher=command_launcher,
         update_applier=(
             permission_updates.apply if permission_updates else lambda _updates: None
         ),
@@ -231,7 +235,12 @@ def _build_agent_components(
             else lambda _updates, _session_mode_writer: None
         ),
         internal_read_root=settings.paths.runtime_temp_root,
-        audit=TelemetryToolInvocationAudit(observer, LoggingToolInvocationAudit()),
+        audit=TelemetryToolInvocationAudit(
+            observer,
+            LoggingToolInvocationAudit(command_launcher.status.display),
+            command_launcher.status.display,
+        ),
+        requester_name=agent_name,
     )
     planner = ContextPlanner(
         window=ContextWindow(settings.context_chars),
@@ -335,6 +344,20 @@ def _assemble_agent(
         settings.interactive and settings.background_tasks_enabled
     )
     tasks = TaskSupervisor()
+    workspace = Workspace(settings.cwd)
+    command_launcher = resolve_command_launcher(
+        settings.cwd,
+        mode=settings.sandbox_mode.value,
+        network_enabled=settings.sandbox_network.value == "enabled",
+        runtime_root=settings.paths.runtime_temp_root / "sandbox",
+    )
+    if command_launcher.status.fallback_reason is not None:
+        warnings.warn(
+            "Command sandbox unavailable; Bash will run locally: "
+            f"{command_launcher.status.fallback_reason}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     background_wake_signal = (
         BackgroundTaskWakeSignal() if effective_background_enabled else None
     )
@@ -356,6 +379,13 @@ def _assemble_agent(
         builtin_tools(
             bash_background=(bash_background if effective_background_enabled else None),
             background_enabled=effective_background_enabled,
+            execution_environment=command_launcher.status.display,
+            sandboxed=command_launcher.status.sandboxed,
+            escalation_enabled=(
+                command_launcher.status.sandboxed
+                and settings.sandbox_allow_unsandboxed_commands
+                and settings.interactive
+            ),
         ),
     )
     tool_catalog.register_source(ToolSourceId("feature", "todos"), (TodoWriteTool(),))
@@ -418,7 +448,6 @@ def _assemble_agent(
         rules=settings.permission_rules,
     )
     restore_skill_permissions(permission_policy, session.conversation)
-    workspace = Workspace(settings.cwd)
     descriptor = settings.model_descriptor or _resolve_local_descriptor(settings)
     reasoning, reasoning_warning = effective_reasoning(settings.reasoning, descriptor)
     connection = ProviderConnection(
@@ -464,6 +493,7 @@ def _assemble_agent(
             permission_policy=spec.permission_policy or permission_policy,
             permission_prompter=prompter,
             workspace=workspace,
+            command_launcher=command_launcher,
             max_steps=spec.max_steps,
             prompt_registry=spec.prompt_registry,
             allow_permission_updates=spec.allow_permission_updates,
@@ -559,6 +589,7 @@ def _assemble_agent(
         permission_policy=permission_policy,
         permission_prompter=prompter,
         workspace=workspace,
+        command_launcher=command_launcher,
         attachment_sources=(
             SkillListingAttachmentSource(skills.catalog),
             *extra_attachment_sources(),
@@ -617,6 +648,10 @@ def bootstrap_chat(
             session=assembled.session,
             permissions=PermissionState(
                 assembled.permissions,
+                sandbox_active=assembled.tool_context.command_launcher.status.sandboxed,
+                execution_environment=(
+                    assembled.tool_context.command_launcher.status.display
+                ),
                 full_access_confirmed=assembled.bypass_confirmed,
             ),
             provider=assembled.provider_runtime,

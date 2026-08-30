@@ -21,6 +21,7 @@ class RuntimeStatus:
     skill_count: int = 0
     mcp_connected_count: int = 0
     mcp_server_count: int = 0
+    execution_environment: str = "local"
 
 
 @dataclass(frozen=True, slots=True)

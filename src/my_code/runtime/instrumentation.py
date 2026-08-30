@@ -440,10 +440,14 @@ class TelemetryToolInvocationAudit:
     """Permission audit whose telemetry failures never alter tool behavior."""
 
     def __init__(
-        self, observer: Observer, delegate: ToolInvocationAudit | None = None
+        self,
+        observer: Observer,
+        delegate: ToolInvocationAudit | None = None,
+        execution_backend: str = "unknown",
     ) -> None:
         self._observer = observer
         self._delegate = delegate
+        self._execution_backend = execution_backend
 
     async def record_permission(
         self,
@@ -453,6 +457,7 @@ class TelemetryToolInvocationAudit:
     ) -> None:
         behavior = getattr(getattr(decision, "behavior", None), "value", "unknown")
         reason = getattr(decision, "decision_reason", None)
+        authority = call.input.get("sandbox_permissions", "use_default")
         _safe_record(
             self._observer,
             "tool.permission",
@@ -465,6 +470,12 @@ class TelemetryToolInvocationAudit:
                     getattr(reason, "kind", None), "value", "unknown"
                 ),
                 "reason_detail": getattr(reason, "detail", "unknown"),
+                "authority": authority,
+                "execution_backend": (
+                    "local"
+                    if authority == "require_escalated"
+                    else self._execution_backend
+                ),
             },
         )
         if self._delegate is not None:

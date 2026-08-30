@@ -32,6 +32,8 @@
 - Project：可提交的仓库配置，但不能声明 Full Access、切换 active Provider，或直接信任并启动 MCP server。
 - Local：当前用户对该项目的私有覆盖；用于敏感的信任决定。
 
+命令隔离使用 v3 的 `sandbox` 段：`mode` 为 `auto | local`，`network` 为 `restricted | enabled`，`allowUnsandboxedCommands` 控制模型能否逐次申请宿主执行，默认分别为 `auto`、`restricted` 和 `true`。只有 User 与 Local 可以配置；共享 Project settings 包含该段时加载失败，防止仓库关闭隔离、开启网络或授权越界。运行时保存启动时的实际 backend 和 fallback 原因，不把配置意图误报为已启用 sandbox。
+
 Provider profile 和 API key 不进入普通分层 settings。运行时读取完整、不可变的 `AgentSettings` 快照；更新操作先原子写文件，再替换对应 runtime 状态。
 
 ## Provider profiles 与模型目录

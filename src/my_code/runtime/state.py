@@ -35,6 +35,7 @@ class PermissionState:
 
     policy: PermissionPolicy
     sandbox_active: bool = False
+    execution_environment: str = "local"
     full_access_confirmed: bool = False
     full_access_pending: bool = field(default=False, init=False)
 

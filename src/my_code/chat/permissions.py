@@ -9,6 +9,7 @@ from my_code.permissions.models import (
     PermissionConfirmation,
     PermissionMode,
     PermissionPrompt,
+    PermissionPromptCategory,
     PermissionUpdate,
 )
 from my_code.tools.presentation import ToolUsePresentation, tool_display_category
@@ -21,6 +22,9 @@ class PermissionRequest:
     message: str
     presentation: ToolUsePresentation
     suggestions: tuple[PermissionUpdate, ...] = ()
+    category: PermissionPromptCategory = PermissionPromptCategory.TOOL
+    requester: str | None = None
+    run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +79,7 @@ class DeferredPermissionPrompter:
     def __init__(self) -> None:
         self._handler: PermissionHandler | None = None
         self._pending: set[asyncio.Task[object]] = set()
+        self._prompt_lock = asyncio.Lock()
 
     @property
     def pending_count(self) -> int:
@@ -96,15 +101,22 @@ class DeferredPermissionPrompter:
         if task is not None:
             self._pending.add(task)
         try:
-            return await self._handler(
-                PermissionRequest(
-                    tool_name=request.tool_name,
-                    tool_input=request.tool_input,
-                    message=request.decision.message,
-                    presentation=presentation,
-                    suggestions=request.decision.suggestions,
+            async with self._prompt_lock:
+                handler = self._handler
+                if handler is None:
+                    return PermissionConfirmation(False)
+                return await handler(
+                    PermissionRequest(
+                        tool_name=request.tool_name,
+                        tool_input=request.tool_input,
+                        message=request.decision.message,
+                        presentation=presentation,
+                        suggestions=request.decision.suggestions,
+                        category=request.category,
+                        requester=request.requester,
+                        run_id=request.run_id,
+                    )
                 )
-            )
         finally:
             if task is not None:
                 self._pending.discard(task)

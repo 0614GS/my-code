@@ -35,7 +35,7 @@ from my_code.chat.views import (
 )
 from my_code.config.paths import MyCodePaths
 from my_code.config.providers import ProviderProtocol
-from my_code.config.settings import AgentSettings
+from my_code.config.settings import AgentSettings, SandboxMode
 from my_code.context.models import CompactionOutcome
 from my_code.context.session import ContextRuntime
 from my_code.conversation.attachments import (
@@ -127,6 +127,7 @@ def _bootstrap_runtime(
         max_output_tokens=1024,
         context_chars=10_000,
         interactive=True,
+        sandbox_mode=SandboxMode.LOCAL,
         credential_source=CredentialSource.NONE,
     )
     return bootstrap_chat(settings, _CURRENT_SESSION_ID)

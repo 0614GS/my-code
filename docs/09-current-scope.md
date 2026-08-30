@@ -22,6 +22,8 @@
 - 单 UI owner、单 worker 离屏 scrollback render，以及有界/latest-wins live Markdown projection。
 - Codex 风格的结构化命令信息卡，以及由显式 model-step 边界驱动的工作组/最终回答分隔。
 - Ruff、Pyright standard、pytest 和 AST 架构守卫。
+- Linux Bash 的 Bubblewrap 挂载与 namespace 隔离、启动探测/fallback 状态，以及受保护 workspace 元数据占位租约。
+- 真实 sandbox 内 Bash 默认执行与逐命令 `require_escalated` 宿主授权；跨 Agent 权限提示串行且越界批准不可记忆。
 
 Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入口不启用后台执行。
 
@@ -33,7 +35,7 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 - Session fork、远程会话和跨设备同步。
 - 图片、音频等媒体 Attachment。
 - OAuth、系统 Keychain 和团队凭据管理。
-- OS 级容器或系统调用 sandbox。
+- macOS/Windows sandbox、完整应用容器、seccomp/Landlock 与域名级网络代理。
 - Provider 断线续传和 stream 重放。
 - 后台任务跨进程恢复或远端执行。
 
@@ -59,6 +61,6 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 - Subagent 使用固定角色、fresh child Session 和独立 lease；默认不设置 step/token/timeout 上限，但保留显式可选限制。
 - ToolSearch 使用 provider-neutral dispatcher/native 模式，不发送特定 Provider 的 defer/reference wire 类型。
 - 后台完成用无 payload wake signal 触发 pull，再通过 durable attachment 交付，不建立第二份消息队列。
-- 当前 sandbox 是应用层权限和 Workspace 防护，不声称提供 OS 隔离。
+- Linux Bubblewrap 只隔离 Bash 进程树；MCP、Provider 与 my-code 主进程仍在宿主运行，应用层权限继续作为独立前置边界。
 
 调整上述差异或长期不变量时，应同时修改对应架构专题、测试和本文件。

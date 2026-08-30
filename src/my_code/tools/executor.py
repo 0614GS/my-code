@@ -21,6 +21,7 @@ from my_code.permissions.models import (
     PermissionDecisionReason,
     PermissionMode,
     PermissionPrompt,
+    PermissionPromptCategory,
     PermissionPrompter,
     PermissionRequest,
     PermissionUpdate,
@@ -51,6 +52,7 @@ from my_code.tools.presentation import (
     ToolUsePresentation,
     generic_tool_use_presentation,
 )
+from my_code.workspace.launcher import CommandLauncher
 from my_code.workspace.local import Workspace
 
 logger = logging.getLogger("my_code.permissions")
@@ -68,6 +70,9 @@ class ToolExecutionOutcome:
 class LoggingToolInvocationAudit:
     """Default structured permission audit sink."""
 
+    def __init__(self, execution_backend: str = "unknown") -> None:
+        self.execution_backend = execution_backend
+
     async def record_permission(
         self,
         invocation: ToolInvocation,
@@ -77,10 +82,17 @@ class LoggingToolInvocationAudit:
         reason = getattr(decision, "reason", "unknown")
         behavior = getattr(getattr(decision, "behavior", None), "value", "unknown")
         message = getattr(decision, "message", "")
+        authority = call.input.get("sandbox_permissions", "use_default")
+        backend = (
+            "local" if authority == "require_escalated" else self.execution_backend
+        )
         logger.info(
-            "Permission decision: tool=%s origin=%s behavior=%s message=%s reason=%s",
+            "Permission decision: tool=%s origin=%s authority=%s backend=%s "
+            "behavior=%s message=%s reason=%s",
             call.name,
             invocation.origin.value,
+            authority,
+            backend,
             behavior,
             message,
             reason,
@@ -96,6 +108,7 @@ class ToolExecutor:
         policy: PermissionPolicy,
         prompter: PermissionPrompter,
         workspace: Workspace,
+        command_launcher: CommandLauncher | None = None,
         update_applier: Callable[[tuple[PermissionUpdate, ...]], None] | None = None,
         session_update_applier: Callable[
             [tuple[PermissionUpdate, ...], Callable[[PermissionMode], object]], None
@@ -104,18 +117,26 @@ class ToolExecutor:
         hooks: Iterable[ToolInvocationHook] = (),
         audit: ToolInvocationAudit | None = None,
         internal_read_root: Path | None = None,
+        requester_name: str = "main",
     ) -> None:
         self.tools = tools
         self.policy = policy
         self.prompter = prompter
         self.workspace = workspace
-        self.context = ToolContext(workspace, internal_read_root=internal_read_root)
+        self.context = ToolContext(
+            workspace,
+            internal_read_root=internal_read_root,
+            command_launcher=command_launcher,
+        )
         self.update_applier = update_applier or _apply_updates(policy)
         self.session_update_applier = session_update_applier or _apply_session_updates(
             policy
         )
         self.hooks = tuple(hooks)
-        self.audit = audit or LoggingToolInvocationAudit()
+        self.audit = audit or LoggingToolInvocationAudit(
+            self.context.command_launcher.status.display
+        )
+        self.requester_name = requester_name
         self._permission_prompt_lock = asyncio.Lock()
 
     def present_use(
@@ -324,6 +345,14 @@ class ToolExecutor:
                             display_name=presentation.display_name,
                             summary=presentation.summary,
                             activity=presentation.activity,
+                            category=(
+                                PermissionPromptCategory.SANDBOX_ESCALATION
+                                if permission_input.get("sandbox_permissions")
+                                == "require_escalated"
+                                else PermissionPromptCategory.TOOL
+                            ),
+                            requester=self.requester_name,
+                            run_id=run_id,
                         )
                     )
             except Exception as error:
@@ -344,7 +373,13 @@ class ToolExecutor:
                     PermissionBehavior.DENY,
                     "approval was not provided.",
                     PermissionDecisionReason(
-                        PermissionDecisionKind.USER, "interactive-denial"
+                        PermissionDecisionKind.USER,
+                        (
+                            "sandbox-escalation-denied"
+                            if permission_input.get("sandbox_permissions")
+                            == "require_escalated"
+                            else "interactive-denial"
+                        ),
                     ),
                     updated_input=permission_input,
                 )
@@ -386,7 +421,13 @@ class ToolExecutor:
                 PermissionBehavior.ALLOW,
                 "Approved by the user.",
                 PermissionDecisionReason(
-                    PermissionDecisionKind.USER, "interactive-approval"
+                    PermissionDecisionKind.USER,
+                    (
+                        "sandbox-escalation-approved"
+                        if permission_input.get("sandbox_permissions")
+                        == "require_escalated"
+                        else "interactive-approval"
+                    ),
                 ),
                 updated_input=permission_input,
             )

@@ -20,6 +20,7 @@ from my_code.tools.presentation import (
     compact_text,
     tool_display_category,
 )
+from my_code.workspace.launcher import CommandLauncher, LocalCommandLauncher
 from my_code.workspace.local import Workspace
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ class ToolContext:
     """内置工具可用的运行时依赖。"""
 
     workspace: Workspace
+    command_launcher: CommandLauncher
     command_timeout_seconds: float
     max_command_output_bytes: int
     available_tools: Mapping[str, Tool]
@@ -58,11 +60,16 @@ class ToolContext:
         run_id: str | None = None,
         internal_read_root: Path | None = None,
         searched_fingerprints: Mapping[str, str] = MappingProxyType({}),
+        *,
+        command_launcher: CommandLauncher | None = None,
     ) -> None:
         object.__setattr__(
             self,
             "workspace",
             workspace if isinstance(workspace, Workspace) else Workspace(workspace),
+        )
+        object.__setattr__(
+            self, "command_launcher", command_launcher or LocalCommandLauncher()
         )
         object.__setattr__(self, "command_timeout_seconds", command_timeout_seconds)
         object.__setattr__(self, "max_command_output_bytes", max_command_output_bytes)
@@ -107,6 +114,7 @@ class ToolContext:
             run_id,
             self.internal_read_root,
             searched_fingerprints,
+            command_launcher=self.command_launcher,
         )
 
 

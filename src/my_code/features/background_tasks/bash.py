@@ -14,7 +14,10 @@ from my_code.foundation.json import JsonObject
 from my_code.tasks.models import TaskStatus
 from my_code.tasks.supervisor import TaskSupervisor
 from my_code.tools.base import ToolContext, ToolOutput
-from my_code.tools.builtin.bash.process import BashTaskFailed, execute_bash_to_file
+from my_code.tools.builtin.bash.process import (
+    BashTaskFailed,
+    execute_bash_to_file,
+)
 from my_code.tools.presentation import compact_text
 
 
@@ -38,6 +41,8 @@ class BashBackgroundController:
         foreground_budget: float,
         *,
         background: bool,
+        authority: str = "use_default",
+        escalation_available: bool = False,
     ) -> ToolOutput:
         task_id = str(uuid4())
         output_file = secure_task_output_path(self.output_dir, task_id)
@@ -45,12 +50,17 @@ class BashBackgroundController:
         details: JsonObject = {
             "command": compact_text(command),
             "output_file": str(output_file),
+            "execution_backend": context.command_launcher.status.display,
+            "authority": authority,
+            "escalation_available": escalation_available,
         }
         item = BackgroundTask(task_id, owner, "bash", compact_text(command), details)
 
         async def runner() -> object:
             try:
-                outcome = await execute_bash_to_file(command, context, output_file)
+                outcome = await execute_bash_to_file(
+                    command, context, output_file, authority=authority
+                )
             except BashTaskFailed as error:
                 if error.exit_code is not None:
                     details["exit_code"] = error.exit_code
@@ -118,8 +128,20 @@ def _foreground_output(
     if not isinstance(exit_code, int):
         exit_code = 0 if status is TaskStatus.SUCCEEDED else -1
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    failure_hint = ""
+    if status is not TaskStatus.SUCCEEDED and details.get("authority") == "use_default":
+        capability = (
+            " Explicit sandbox escalation is available when genuinely required."
+            if details.get("escalation_available") is True
+            else " Sandbox escalation is unavailable in this context."
+        )
+        failure_hint = (
+            f"\nExecution backend: {details.get('execution_backend', 'unknown')}."
+            f"{capability} The command may have partially executed; inspect side "
+            "effects before making a new explicit request."
+        )
     return ToolOutput(
-        content=f"exit_code: {exit_code}\n{text}",
+        content=f"exit_code: {exit_code}\n{text}{failure_hint}",
         is_error=status is not TaskStatus.SUCCEEDED,
         metadata={
             "exit_code": exit_code,

@@ -306,6 +306,122 @@ async def test_plan_mode_allows_read_only_bash_and_denies_mutation(
 
 
 @pytest.mark.asyncio
+async def test_active_sandbox_auto_allows_unclassified_default_command(
+    tmp_path: Path,
+) -> None:
+    decision = await decide(
+        PermissionPolicy(),
+        BashTool(sandboxed=True, escalation_enabled=True),
+        {"command": "python - <<'PY'\nopen('generated', 'w').write('x')\nPY"},
+        ToolContext(tmp_path),
+    )
+
+    assert decision.behavior is PermissionBehavior.ALLOW
+    assert decision.reason == "safety:sandbox-default-authority"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_auto_allow_does_not_override_ask_or_plan(
+    tmp_path: Path,
+) -> None:
+    tool = BashTool(sandboxed=True, escalation_enabled=True)
+    asked = await decide(
+        PermissionPolicy(
+            rules=[PermissionRule("Bash", PermissionBehavior.ASK, "git:*")]
+        ),
+        tool,
+        {"command": "git status"},
+        ToolContext(tmp_path),
+    )
+    planned = await decide(
+        PermissionPolicy(PermissionMode.PLAN),
+        tool,
+        {"command": "touch generated"},
+        ToolContext(tmp_path),
+    )
+
+    assert asked.behavior is PermissionBehavior.ASK
+    assert planned.behavior is PermissionBehavior.DENY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode",
+    [PermissionMode.DEFAULT, PermissionMode.ACCEPT_EDITS, PermissionMode.BYPASS],
+)
+async def test_escalation_always_asks_in_permissive_modes(
+    tmp_path: Path, mode: PermissionMode
+) -> None:
+    tool = BashTool(sandboxed=True, escalation_enabled=True)
+    tool_input: JsonObject = {
+        "command": "curl https://example.test",
+        "sandbox_permissions": "require_escalated",
+        "justification": "Needs the host network",
+    }
+
+    decision = await decide(
+        PermissionPolicy(
+            mode,
+            [PermissionRule("Bash", PermissionBehavior.ALLOW, "curl:*")],
+        ),
+        tool,
+        tool_input,
+        ToolContext(tmp_path),
+    )
+
+    assert decision.behavior is PermissionBehavior.ASK
+    assert decision.reason == "safety:sandbox-escalation"
+    assert decision.suggestions == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [PermissionMode.PLAN, PermissionMode.DONT_ASK])
+async def test_escalation_is_denied_when_confirmation_is_forbidden(
+    tmp_path: Path, mode: PermissionMode
+) -> None:
+    decision = await decide(
+        PermissionPolicy(mode),
+        BashTool(sandboxed=True, escalation_enabled=True),
+        {
+            "command": "true",
+            "sandbox_permissions": "require_escalated",
+            "justification": "test",
+        },
+        ToolContext(tmp_path),
+    )
+
+    assert decision.behavior is PermissionBehavior.DENY
+
+
+def test_escalation_schema_and_validation_follow_runtime_capability() -> None:
+    local = BashTool()
+    sandboxed = BashTool(sandboxed=True, escalation_enabled=True)
+    local_properties = local.definition.input_schema["properties"]
+    sandbox_properties = sandboxed.definition.input_schema["properties"]
+    assert isinstance(local_properties, dict)
+    assert isinstance(sandbox_properties, dict)
+
+    assert "sandbox_permissions" not in local_properties
+    assert "justification" not in local_properties
+    assert "sandbox_permissions" in sandbox_properties
+    assert "justification" in sandbox_properties
+    with pytest.raises(ValueError, match="justification.*required"):
+        sandboxed.validate_input(
+            {"command": "true", "sandbox_permissions": "require_escalated"}
+        )
+    with pytest.raises(ValueError, match="only valid"):
+        sandboxed.validate_input({"command": "true", "justification": "no"})
+    with pytest.raises(ValueError, match="unavailable"):
+        local.validate_input(
+            {
+                "command": "true",
+                "sandbox_permissions": "require_escalated",
+                "justification": "no sandbox",
+            }
+        )
+
+
+@pytest.mark.asyncio
 async def test_content_deny_rule_precedes_read_only_auto_allow(tmp_path: Path) -> None:
     policy = PermissionPolicy(
         rules=[

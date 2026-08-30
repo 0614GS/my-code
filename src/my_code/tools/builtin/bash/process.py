@@ -9,8 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from my_code.tools.base import ToolContext, ToolExecutionError, ToolOutput
+from my_code.workspace.launcher import (
+    BASH_EXECUTABLE,
+    CommandAuthority,
+    CommandLaunchRequest,
+    SandboxPolicyViolation,
+)
 
-BASH_EXECUTABLE = "/bin/bash"
 _REMOVED_ENVIRONMENT = frozenset(
     {
         "MY_CODE_API_KEY",
@@ -41,6 +46,8 @@ async def execute_bash_to_file(
     command: str,
     context: ToolContext,
     output_file: Path,
+    *,
+    authority: CommandAuthority | str = CommandAuthority.USE_DEFAULT,
 ) -> BashTaskOutcome:
     """Run Bash with merged output written directly to a private file."""
 
@@ -49,25 +56,33 @@ async def execute_bash_to_file(
     fd = os.open(output_file, flags, 0o600)
     try:
         try:
-            process = await asyncio.create_subprocess_exec(
-                BASH_EXECUTABLE,
-                "-c",
-                command,
-                cwd=context.cwd,
-                env=subprocess_environment(),
-                stdout=fd,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
+            process_context = context.command_launcher.launch(
+                CommandLaunchRequest(
+                    command,
+                    context.cwd,
+                    subprocess_environment(),
+                    fd,
+                    asyncio.subprocess.STDOUT,
+                    CommandAuthority(authority),
+                )
             )
-        except (FileNotFoundError, PermissionError, OSError) as error:
+            process = await process_context.__aenter__()
+        except (
+            FileNotFoundError,
+            PermissionError,
+            OSError,
+            SandboxPolicyViolation,
+        ) as error:
             raise ToolExecutionError(
-                f"Required Bash executable {BASH_EXECUTABLE!r} is unavailable "
-                "or not executable"
+                f"Required Bash executable {BASH_EXECUTABLE!r} is unavailable or "
+                f"command launcher {context.command_launcher.status.display!r} "
+                f"failed: {error}"
             ) from error
     finally:
         os.close(fd)
 
     wait_task = asyncio.create_task(process.wait())
+    pending_error: BaseException | None = None
     try:
         while not wait_task.done():
             await asyncio.wait((wait_task,), timeout=0.05)
@@ -81,12 +96,21 @@ async def execute_bash_to_file(
                     f"{context.max_command_output_bytes // (1024 * 1024)} MiB"
                 )
         exit_code = await wait_task
-    except asyncio.CancelledError:
+    except BaseException as error:
         await _terminate(process)
+        pending_error = error
         raise
-    except BaseException:
-        await _terminate(process)
-        raise
+    finally:
+        try:
+            await process_context.__aexit__(
+                type(pending_error) if pending_error is not None else None,
+                pending_error,
+                pending_error.__traceback__ if pending_error is not None else None,
+            )
+        except SandboxPolicyViolation as error:
+            if pending_error is None:
+                raise BashTaskFailed(f"Sandbox policy violation: {error}") from error
+            pending_error.add_note(f"Sandbox policy violation during cleanup: {error}")
     if os.stat(output_file).st_size > context.max_command_output_bytes:
         raise BashTaskFailed(
             "Command output exceeded "
@@ -98,49 +122,90 @@ async def execute_bash_to_file(
 
 
 async def execute_bash(
-    command: str, context: ToolContext, timeout_seconds: int
+    command: str,
+    context: ToolContext,
+    timeout_seconds: int,
+    *,
+    authority: CommandAuthority = CommandAuthority.USE_DEFAULT,
+    escalation_available: bool = False,
 ) -> ToolOutput:
     """Execute exactly ``/bin/bash -c`` after permission approval."""
 
     try:
-        process = await asyncio.create_subprocess_exec(
-            BASH_EXECUTABLE,
-            "-c",
-            command,
-            cwd=context.cwd,
-            env=subprocess_environment(),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
+        process_context = context.command_launcher.launch(
+            CommandLaunchRequest(
+                command,
+                context.cwd,
+                subprocess_environment(),
+                asyncio.subprocess.PIPE,
+                asyncio.subprocess.STDOUT,
+                authority,
+            )
         )
-    except (FileNotFoundError, PermissionError, OSError) as error:
+        process = await process_context.__aenter__()
+    except (
+        FileNotFoundError,
+        PermissionError,
+        OSError,
+        SandboxPolicyViolation,
+    ) as error:
         raise ToolExecutionError(
-            f"Required Bash executable {BASH_EXECUTABLE!r} is unavailable "
-            "or not executable"
+            f"Required Bash executable {BASH_EXECUTABLE!r} is unavailable or "
+            f"command launcher {context.command_launcher.status.display!r} "
+            f"failed: {error}"
         ) from error
 
+    pending_error: BaseException | None = None
     try:
-        output = await asyncio.wait_for(
-            _collect_output(process, context.max_command_output_bytes),
-            timeout=timeout_seconds,
-        )
-    except TimeoutError as error:
-        await _terminate(process)
-        raise ToolExecutionError(
-            f"Command timed out after {timeout_seconds}s"
-        ) from error
-    except asyncio.CancelledError:
-        await _terminate(process)
+        try:
+            output = await asyncio.wait_for(
+                _collect_output(process, context.max_command_output_bytes),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError as error:
+            await _terminate(process)
+            raise ToolExecutionError(
+                f"Command timed out after {timeout_seconds}s"
+            ) from error
+        except asyncio.CancelledError:
+            await _terminate(process)
+            raise
+        except BaseException:
+            await _terminate(process)
+            raise
+        exit_code = await process.wait()
+    except BaseException as error:
+        pending_error = error
         raise
-    except BaseException:
-        await _terminate(process)
-        raise
-
-    exit_code = await process.wait()
+    finally:
+        try:
+            await process_context.__aexit__(
+                type(pending_error) if pending_error is not None else None,
+                pending_error,
+                pending_error.__traceback__ if pending_error is not None else None,
+            )
+        except SandboxPolicyViolation as error:
+            if pending_error is None:
+                raise ToolExecutionError(
+                    f"Sandbox policy violation: {error}"
+                ) from error
+            pending_error.add_note(f"Sandbox policy violation during cleanup: {error}")
     text = output.decode("utf-8", errors="replace") or "<no output>"
     output_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    failure_hint = ""
+    if exit_code != 0 and authority is CommandAuthority.USE_DEFAULT:
+        capability = (
+            " Explicit sandbox escalation is available when genuinely required."
+            if escalation_available
+            else " Sandbox escalation is unavailable in this context."
+        )
+        failure_hint = (
+            f"\nExecution backend: {context.command_launcher.status.display}."
+            f"{capability} The command may have partially executed; inspect "
+            "side effects before making a new explicit request."
+        )
     return ToolOutput(
-        content=f"exit_code: {exit_code}\n{text}",
+        content=f"exit_code: {exit_code}\n{text}{failure_hint}",
         is_error=exit_code != 0,
         metadata={
             "exit_code": exit_code,

@@ -137,7 +137,8 @@ def welcome(status: RuntimeStatus, theme: TuiTheme | None = None) -> RenderableT
             (status.cwd, "dim"),
             (
                 f"\n{status.tool_count} tools · {status.skill_count} skills · "
-                f"{status.mcp_connected_count}/{status.mcp_server_count} MCP",
+                f"{status.mcp_connected_count}/{status.mcp_server_count} MCP · "
+                f"{status.execution_environment}",
                 "dim",
             ),
         ),

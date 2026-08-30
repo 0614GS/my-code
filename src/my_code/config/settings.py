@@ -18,6 +18,8 @@ from my_code.config.providers import (
 )
 from my_code.config.store import (
     McpServerSettingsLayer,
+    SandboxMode,
+    SandboxNetwork,
     SettingsLayer,
     SettingsStore,
 )
@@ -76,6 +78,9 @@ class AgentSettings:
     subagent_max_tokens: int | None = DEFAULT_SUBAGENT_MAX_TOKENS
     subagent_timeout_seconds: float | None = DEFAULT_SUBAGENT_TIMEOUT_SECONDS
     background_tasks_enabled: bool = DEFAULT_BACKGROUND_TASKS_ENABLED
+    sandbox_mode: SandboxMode = SandboxMode.AUTO
+    sandbox_network: SandboxNetwork = SandboxNetwork.RESTRICTED
+    sandbox_allow_unsandboxed_commands: bool = True
     skills_enabled: bool = False
     mcp_enabled: bool = False
     mcp_servers: tuple[McpServerSettingsLayer, ...] = ()
@@ -258,6 +263,13 @@ class SettingsResolver:
                 if stored.background_tasks_enabled is None
                 else stored.background_tasks_enabled
             ),
+            sandbox_mode=stored.sandbox_mode or SandboxMode.AUTO,
+            sandbox_network=(stored.sandbox_network or SandboxNetwork.RESTRICTED),
+            sandbox_allow_unsandboxed_commands=(
+                True
+                if stored.sandbox_allow_unsandboxed_commands is None
+                else stored.sandbox_allow_unsandboxed_commands
+            ),
             skills_enabled=stored.skills_enabled or False,
             mcp_enabled=stored.mcp_enabled or False,
             mcp_servers=stored.mcp_servers,
@@ -326,6 +338,8 @@ __all__ = [
     "DEFAULT_SUBAGENT_MAX_TOKENS",
     "DEFAULT_SUBAGENT_TIMEOUT_SECONDS",
     "McpServerSettingsLayer",
+    "SandboxMode",
+    "SandboxNetwork",
     "SettingsOverrides",
     "SettingsResolver",
     "ProviderConfigurationRequired",

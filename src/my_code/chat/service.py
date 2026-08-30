@@ -833,6 +833,7 @@ class ChatService:
                 server.state == "connected" for server in capabilities.mcp_servers
             ),
             mcp_server_count=len(capabilities.mcp_servers),
+            execution_environment=self.state.permissions.execution_environment,
         )
 
     def context_status(self) -> ContextStatus:

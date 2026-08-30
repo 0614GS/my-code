@@ -6,6 +6,7 @@ from collections.abc import Callable
 from my_code.permissions.models import (
     PermissionConfirmation,
     PermissionPrompt,
+    PermissionPromptCategory,
 )
 
 
@@ -18,16 +19,27 @@ class TerminalPrompter:
     async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
         rendered = json.dumps(request.tool_input, ensure_ascii=False, indent=2)
         can_remember = False
-        if request.tool_name == "Bash":
+        if request.category is PermissionPromptCategory.SANDBOX_ESCALATION:
+            requester = request.requester or "agent"
+            run = f" (run {request.run_id})" if request.run_id else ""
+            choices = "1. Allow this command only\n2. Deny\n3. Deny with feedback\n"
+            warning = (
+                f"Requested by {requester}{run}. This command will run as the "
+                "host user and can access host files, network, processes, and "
+                "write .git/.my-code. This approval is never remembered.\n"
+            )
+        elif request.tool_name == "Bash":
             scope = _suggestion_scope(request)
             choices = f'1. Yes\n2. Yes, and don\'t ask again for "{scope}"\n3. No\n'
+            warning = ""
         else:
             can_remember = bool(request.decision.suggestions)
             remember = "4. Yes, and don't ask again\n" if can_remember else ""
             choices = "1. Yes\n2. No\n3. No, and tell my-code why\n" + remember
+            warning = ""
         prompt = (
             f"\nPermission required: {request.tool_name}\n"
-            f"{rendered}\n{request.decision.message}\n"
+            f"{rendered}\n{request.decision.message}\n{warning}"
             f"{choices}Choice: "
         )
         try:
@@ -37,6 +49,15 @@ class TerminalPrompter:
         normalized = answer.strip().lower()
         if normalized in {"1", "y", "yes"}:
             return PermissionConfirmation(True)
+        if request.category is PermissionPromptCategory.SANDBOX_ESCALATION:
+            if normalized == "3":
+                try:
+                    feedback = self._input("Tell my-code what to do differently: ")
+                except (EOFError, KeyboardInterrupt):
+                    return PermissionConfirmation(False)
+                if feedback.strip():
+                    return PermissionConfirmation(False, feedback.strip())
+            return PermissionConfirmation(False)
         if normalized == "2" and request.tool_name == "Bash":
             return PermissionConfirmation(True, updates=request.decision.suggestions)
         if normalized == "4" and request.tool_name != "Bash" and can_remember:

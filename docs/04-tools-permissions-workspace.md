@@ -60,11 +60,23 @@ ToolCall
 
 一次 pending approval 属于当前调用，完成、拒绝、异常或取消后必须释放。Runtime permission mode/rules 的唯一可写来源是 `AppState.permissions.policy`；UI 只能通过 Chat 用例更新。Session mode 变更先由 `Session` 原子写入 transcript，再发布到 policy；resume 恢复目标 Session 的最后模式，包括 `bypassPermissions`。
 
-## Workspace 安全边界
+权限提示由 application-lifetime prompter 跨 Agent 串行处理；runtime 关闭会取消正在展示和排队的请求。Sandbox 越界提示属于独立类别，展示请求 Agent/run、完整命令、justification 和宿主权限风险，只允许单次批准或拒绝，不产生可记忆规则。
+
+## Workspace 与命令执行边界
 
 `workspace.Workspace` 拥有路径规范化、工作区根、相对展示和具体本地 I/O，但不解释 PermissionRule。文件工具在权限分析时解析目标，在真正 I/O 前再次解析并检查边界，防止授权后符号链接替换造成逃逸。
 
-应用层保护不是 OS sandbox。即使启用 bypass，Tool 自身的输入限制、工作区复验和 Explore read-only 约束仍生效；对不可信项目不能把它当作系统调用隔离。
+`workspace.Workspace` 与 `workspace.CommandLauncher` 职责独立。前者约束文件工具路径；后者统一承载前台 Bash、后台 Bash 以及子 Agent 的 Bash。MCP server、Provider 和 my-code 主进程仍在宿主运行。
+
+Linux 默认以 `auto` 模式在启动时探测 system Bubblewrap。探测成功后，每条 Bash 命令拥有独立的 user/PID/IPC/network namespace，宿主根文件系统只读、当前 workspace 可写，`.git` 与 `.my-code` 重新只读挂载，且只有命令私有的 `TMPDIR` 是额外可写位置。工作区使用 bind mount，不复制文件，写入会立即反映到宿主。
+
+启动探测失败会发出带原因的警告并冻结为 local backend；显式 `sandbox.mode=local` 不视为 fallback。Bubblewrap 一旦探测成功，后续单次启动失败直接形成工具错误，不以 local 重试。默认网络隔离可由可信的 User 或 Local settings 设置为 enabled；Project settings 无权修改 sandbox。
+
+真实 Bubblewrap backend 下，普通 Bash 在显式 deny/ask 和 Plan mode 检查之后由 sandbox 自动放行，AST 不再承担工作区内普通执行的安全证明；local 与 fallback backend 仍执行保守命令分析。若 `sandbox.allowUnsandboxedCommands` 开启，交互式 Bash schema 才暴露 `require_escalated` 和必填 justification。该请求在 `dontAsk`、Plan、无交互 frontend 或配置关闭时拒绝；Default、Approve edits 和 Full access 均必须逐次询问。批准后同一命令树通过宿主 launcher 执行，网络限制不再适用，且不会自动重试普通 sandbox 失败的命令。
+
+启动时不存在的 `.git`、`.my-code` 使用跨进程锁和 inode 校验的空占位挂载。最后一个命令退出后仅删除身份不变的空目录；非空、符号链接或身份变化会保留内容并报告 policy violation。
+
+Bubblewrap 是 Bash 的 OS 级挂载与 namespace 边界，但不是整个应用的系统调用 sandbox，也不包含 seccomp、域名代理或 MCP 隔离。应用层 PermissionPolicy、Workspace 复验和 Explore read-only 约束仍先于命令执行，不能被 sandbox 替代。
 
 ## 必须保持的不变量
 
@@ -74,4 +86,4 @@ ToolCall
 - 实际执行只能使用已经校验和获准的输入。
 - ToolCall 在执行前已经作为完整 AssistantMessage 持久化，每个调用最终闭合。
 
-主要源码入口：`src/my_code/tools/catalog.py`、`src/my_code/tools/executor.py`、`src/my_code/tools/round_executor.py`、`src/my_code/permissions/policy.py`、`src/my_code/workspace/local.py`。
+主要源码入口：`src/my_code/tools/catalog.py`、`src/my_code/tools/executor.py`、`src/my_code/tools/round_executor.py`、`src/my_code/permissions/policy.py`、`src/my_code/workspace/local.py`、`src/my_code/workspace/launcher.py`。
