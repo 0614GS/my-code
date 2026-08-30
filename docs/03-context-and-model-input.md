@@ -52,7 +52,9 @@ Provider adapter 只消费 `ModelRequest`，不读取 Session 或 AppState。绑
 
 ## 预算与 Compact
 
-`ContextBudget` 综合字符规模、token 估算、Provider usage 校准、输出预留和当前模型限制。超限处理依次为：
+`ContextBudget` 综合字符规模、token 估算、Provider usage 校准、输出预留和当前模型限制。当前模型的 input-token budget 是 full compact 的唯一容量权威；`agent.contextChars` 只保留为旧工具结果 content replacement 的字符启发式目标和诊断值，不再形成第二个 full compact 门槛。这样状态展示、主动压缩与 Provider overflow recovery 不会分别依据互相冲突的单位。
+
+超限处理依次为：
 
 1. 对旧的大型工具结果建立 content replacement。
 2. 仍超限时生成 full compact proposal。
@@ -73,5 +75,6 @@ Compact 请求显式关闭 reasoning，并使用受模型上限约束的独立�
 - ToolCall 与 ToolOutput 的配对不能被预算或注入拆开。
 - Provider role/wire normalization 只存在于对应 adapter。
 - compact proposal 只有经 Session 原子提交后才能成为后续请求事实。
+- 字符规模可以触发局部 content replacement，但不能越过 token budget 独立触发 full compact。
 
 主要源码入口：`src/my_code/context/engine.py`、`src/my_code/context/planner.py`、`src/my_code/context/session.py`、`src/my_code/model/request.py`、`src/my_code/prompts/registry.py`。

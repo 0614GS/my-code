@@ -1,7 +1,6 @@
-"""上下文消息预算的最终防线。"""
+"""Context working-set sizing used by microcompaction diagnostics."""
 
 from my_code.context.attachments.projection import AttachmentProjector
-from my_code.context.models import ContextOverflow as _ContextOverflow
 from my_code.conversation.models import (
     AttachmentMessage,
     ConversationEntry,
@@ -15,7 +14,13 @@ from my_code.conversation.models import (
 
 
 class ContextWindow:
-    """检测工作集溢出，但绝不静默丢弃历史。"""
+    """Measure the working set without creating a second model limit.
+
+    ``max_chars`` is a heuristic target for content replacement.  Full
+    compaction is governed only by the active model's token budget; a separate
+    character ceiling can otherwise compact a multilingual or tool-heavy
+    session while the displayed token window still has ample room.
+    """
 
     def __init__(self, max_chars: int = 160_000) -> None:
         if max_chars < 1:
@@ -31,15 +36,13 @@ class ContextWindow:
         if additional_chars < 0:
             raise ValueError("additional_chars must not be negative")
         if not messages:
-            if additional_chars > self.max_chars:
-                raise _ContextOverflow(additional_chars, self.max_chars)
             return ()
 
         if not any(message.starts_context_segment for message in messages):
             raise ValueError("Conversation has no context segment boundary")
-        current_chars = self.size(messages) + additional_chars
-        if current_chars > self.max_chars:
-            raise _ContextOverflow(current_chars, self.max_chars)
+        # ``additional_chars`` remains part of this compatibility surface for
+        # callers that size opaque continuation data. The request tokenizer
+        # accounts for that payload when it makes the capacity decision.
         return messages
 
     @staticmethod

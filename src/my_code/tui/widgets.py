@@ -597,11 +597,12 @@ def todo_snapshot(todos: tuple[TodoItem, ...]) -> RenderableType:
     return Group(*lines)
 
 
-def status_line(status: RuntimeStatus, context_usage: str) -> str:
-    return (
+def status_line(status: RuntimeStatus, context_usage: str | None) -> str:
+    line = (
         f"{status.model} · {status.permission_mode} · "
-        f"{status.context_entry_count} context entries    {context_usage}"
+        f"{status.context_entry_count} context entries"
     )
+    return line if context_usage is None else f"{line}    {context_usage}"
 
 
 def capability_table(title: str, rows: tuple[tuple[str, ...], ...]) -> Table:

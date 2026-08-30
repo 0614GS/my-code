@@ -22,6 +22,7 @@ from my_code.chat.events import (
     CompactionCompleted,
     CompactionStarted,
     ContextUpdated,
+    TodoListUpdated,
     TurnInputAccepted,
     TurnSucceeded,
 )
@@ -64,6 +65,7 @@ from my_code.conversation.presentation import (
 from my_code.conversation.state import CompactBoundary
 from my_code.features.background_tasks.registry import BackgroundTask
 from my_code.features.subagents.wake import BackgroundTaskWakeSignal
+from my_code.foundation.json import JsonObject
 from my_code.model.capabilities import ModelDescriptor, ModelLimits
 from my_code.model.primitives import ReasoningPresentation, TokenUsage
 from my_code.permissions.models import PermissionMode
@@ -190,6 +192,102 @@ async def test_committed_model_step_projects_a_context_snapshot(tmp_path: Path) 
     assert isinstance(events[0], ContextUpdated)
     assert events[0].status.context_entry_count == 1
     assert events[0].status.conversation_entry_count == 1
+
+
+@pytest.mark.asyncio
+async def test_accepted_input_creates_the_first_context_snapshot(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.state.session.append_human_message(HumanMessage("first prompt"))
+
+    async def agent_events() -> AsyncIterator[AgentEvent]:
+        yield AgentInputAccepted("input-1", "first prompt")
+
+    events = [
+        event
+        async for event in runtime._project_agent_events(
+            runtime.state.session, agent_events()
+        )
+    ]
+
+    assert isinstance(events[0], TurnInputAccepted)
+    assert isinstance(events[1], ContextUpdated)
+
+
+@pytest.mark.asyncio
+async def test_input_batch_creates_only_one_context_snapshot(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    runtime.state.session.commit_user_inputs((("first", ()), ("second", ())))
+
+    async def agent_events() -> AsyncIterator[AgentEvent]:
+        yield AgentInputAccepted("input-1", "first")
+        yield AgentInputAccepted("input-2", "second")
+
+    events = [
+        event
+        async for event in runtime._project_agent_events(
+            runtime.state.session, agent_events()
+        )
+    ]
+
+    assert sum(isinstance(event, ContextUpdated) for event in events) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_todo_write_always_projects_its_completed_snapshot(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    session = runtime.state.session
+    session.append_human_message(HumanMessage("show completed todos"))
+    todo_input: JsonObject = {
+        "todos": [
+            {
+                "content": "Run tests",
+                "status": "completed",
+                "activeForm": "Running tests",
+            }
+        ]
+    }
+
+    async def agent_events() -> AsyncIterator[AgentEvent]:
+        for index in range(2):
+            assistant = AssistantMessage(
+                (
+                    ToolCall(
+                        f"todo-{index}",
+                        "InvokeSearchedTool",
+                        {"tool_name": "TodoWrite", "arguments": todo_input},
+                    ),
+                ),
+                TokenUsage(),
+                parent_uuid=session.conversation[-1].uuid,
+            )
+            session.append_assistant_message(assistant)
+            session.commit_tool_round(
+                ToolResultBatch(
+                    (
+                        ToolResult(
+                            f"todo-{index}",
+                            "updated",
+                            ToolResultPresentation("Updated 1 todo(s)"),
+                        ),
+                    ),
+                    assistant.uuid,
+                    parent_uuid=assistant.uuid,
+                )
+            )
+            yield AgentConversationUpdated()
+
+    events = [
+        event async for event in runtime._project_agent_events(session, agent_events())
+    ]
+    updates = [event for event in events if isinstance(event, TodoListUpdated)]
+
+    assert len(updates) == 2
+    assert updates[0].todos[0].status == "completed"
+    assert updates[1].todos[0].content == "Run tests"
 
 
 def test_runtime_permission_modes_cycle_without_persisting_settings(

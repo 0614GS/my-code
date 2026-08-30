@@ -22,6 +22,7 @@
 - 单 UI owner、单 worker 离屏 scrollback render，以及有界/latest-wins live Markdown projection。
 - Codex 风格的结构化命令信息卡，以及由显式 model-step 边界驱动的工作组/最终回答分隔。
 - 带 spinner 和 invocation 计时的统一活动行，以及 manual/auto/reactive full compact 生命周期提示。
+- token budget 统一驱动的自动压缩、首条用户输入后的 context 状态展示，以及 dispatcher-aware Todo 实时/恢复投影。
 - Ruff、Pyright standard、pytest 和 AST 架构守卫。
 - Linux Bash 的 Bubblewrap 挂载与 namespace 隔离、启动探测/fallback 状态，以及受保护 workspace 元数据占位租约。
 - 真实 sandbox 内 Bash 默认执行与逐命令 `require_escalated` 宿主授权；跨 Agent 权限提示串行且越界批准不可记忆。
@@ -60,7 +61,7 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 - Provider、凭据和模型目录都有显式持久化来源，不从模型名或环境变量猜测能力与连接。
 - Skill Markdown 是数据，不导入目录代码；激活正文使用 Attachment，而不是修改 system prompt。
 - Subagent 使用固定角色、fresh child Session 和独立 lease；默认不设置 step/token/timeout 上限，但保留显式可选限制。
-- ToolSearch 使用 provider-neutral dispatcher/native 模式，不发送特定 Provider 的 defer/reference wire 类型。
+- ToolSearch 使用 provider-neutral dispatcher/native 模式，不发送特定 Provider 的 defer/reference wire 类型；canonical dispatcher call 与 feature-facing 目标语义分别保留。
 - 后台完成用无 payload wake signal 触发 pull，再通过 durable attachment 交付，不建立第二份消息队列。
 - Linux Bubblewrap 只隔离 Bash 进程树；MCP、Provider 与 my-code 主进程仍在宿主运行，应用层权限继续作为独立前置边界。
 

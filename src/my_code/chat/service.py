@@ -144,6 +144,11 @@ from my_code.tasks.models import (
     SubagentTranscriptText,
     SubagentTranscriptTool,
 )
+from my_code.tools.discovery import (
+    ToolExposureSnapshot,
+    restored_discoveries,
+    unwrap_searched_tool_call,
+)
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.presentation import ToolUsePresentation, tool_display_category
 
@@ -439,8 +444,6 @@ class ChatService:
         """Return a fresh catalog snapshot without leaking runtime objects."""
 
         tools = self.state.tools.snapshot()
-        from my_code.tools.discovery import ToolExposureSnapshot, restored_discoveries
-
         exposure = ToolExposureSnapshot.build(
             tools,
             self.settings.tool_search_mode,
@@ -766,7 +769,8 @@ class ChatService:
         session: Session,
         events: AsyncIterator[AgentEvent],
     ) -> AsyncIterator[TurnEvent]:
-        previous_todos = project_todos(session.conversation).todos
+        previous_todo_write_id = project_todos(session.conversation).latest_write_id
+        last_input_context_counts: tuple[int, int] | None = None
         async for event in events:
             if isinstance(event, AgentCompactionStarted):
                 yield CompactionStarted(event.trigger)
@@ -778,6 +782,15 @@ class ChatService:
                 )
             elif isinstance(event, AgentInputAccepted):
                 yield TurnInputAccepted(event.input_id, event.prompt)
+                # The first context snapshot is intentionally created only
+                # after a user input is canonical. Hosts can therefore avoid
+                # presenting a speculative startup estimate. One persistence
+                # batch emits multiple accepted events, so de-duplicate the
+                # identical projection by its committed entry counts.
+                counts = (session.context_entry_count, session.conversation_entry_count)
+                if counts != last_input_context_counts:
+                    last_input_context_counts = counts
+                    yield ContextUpdated(self.context_status())
             elif isinstance(event, AgentInputFailed):
                 yield TurnInputFailed(event.input_id, event.prompt, event.error)
             elif isinstance(event, AgentTextStarted):
@@ -801,10 +814,11 @@ class ChatService:
                     event.tool_use_id, event.is_error, event.presentation
                 )
             elif isinstance(event, AgentConversationUpdated):
-                current_todos = project_todos(session.conversation).todos
-                if current_todos != previous_todos:
-                    previous_todos = current_todos
-                    yield TodoListUpdated(current_todos)
+                todo_projection = project_todos(session.conversation)
+                if todo_projection.latest_write_id != previous_todo_write_id:
+                    previous_todo_write_id = todo_projection.latest_write_id
+                    if todo_projection.latest_write_todos is not None:
+                        yield TodoListUpdated(todo_projection.latest_write_todos)
                 yield ContextUpdated(self.context_status())
             elif isinstance(event, AgentTurnSucceeded):
                 yield TurnSucceeded(
@@ -1159,7 +1173,12 @@ class ChatService:
         return tuple(item.attachment for item in loaded)
 
     def _project_history(self, session: Session) -> tuple[HistoryEntry, ...]:
-        tools = self.state.tools.snapshot()
+        catalog = self.state.tools.snapshot()
+        tools = ToolExposureSnapshot.build(
+            catalog,
+            self.settings.tool_search_mode,
+            restored_discoveries(session.conversation),
+        )
         results = {
             block.tool_use_id: block
             for message in session.conversation
@@ -1191,17 +1210,14 @@ class ChatService:
                     elif isinstance(block, ToolCall):
                         result = results.get(block.id)
                         todos = None
+                        semantic_call = unwrap_searched_tool_call(block)
                         if (
-                            block.name == TODO_WRITE_TOOL_NAME
+                            semantic_call.name == TODO_WRITE_TOOL_NAME
                             and result is not None
                             and not result.is_error
                         ):
                             try:
-                                todos = parse_todo_input(block.input)
-                                if todos and all(
-                                    todo.status == "completed" for todo in todos
-                                ):
-                                    todos = ()
+                                todos = parse_todo_input(semantic_call.input)
                             except (TypeError, ValueError):
                                 pass
                         history.append(

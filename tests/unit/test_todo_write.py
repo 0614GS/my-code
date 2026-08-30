@@ -166,6 +166,33 @@ def test_todo_projection_uses_latest_call_and_clears_all_completed() -> None:
     assert active.completed_model_calls_since_write == 3
     assert completed.todos == ()
     assert completed.completed_model_calls_since_write == 3
+    assert completed.latest_write_todos is not None
+    assert completed.latest_write_todos[0].status == "completed"
+
+
+def test_todo_projection_recognizes_dispatcher_wrapped_writes() -> None:
+    assistant = _assistant(
+        ToolCall(
+            "todo-dispatched",
+            "InvokeSearchedTool",
+            {"tool_name": "TodoWrite", "arguments": _todo_input("completed")},
+        )
+    )
+    history = (
+        HumanMessage("work"),
+        assistant,
+        ToolResultBatch(
+            (ToolResult("todo-dispatched", "updated", ToolResultPresentation("ok")),),
+            assistant.uuid,
+        ),
+    )
+
+    projection = project_todos(history)
+
+    assert projection.todos == ()
+    assert projection.latest_write_id == "todo-dispatched"
+    assert projection.latest_write_todos is not None
+    assert projection.latest_write_todos[0].content == "Run tests"
 
 
 def test_failed_todo_write_does_not_replace_last_successful_state() -> None:

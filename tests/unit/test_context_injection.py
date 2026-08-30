@@ -5,7 +5,6 @@ import pytest
 
 from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.documents import ContextInstruction, UserContextDocument
-from my_code.context.models import ContextOverflow
 from my_code.context.normalization import ModelInputNormalizer
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import (
@@ -146,7 +145,7 @@ def test_budget_reports_attachment_chars_separately() -> None:
     assert plan.budget.attachment_chars > len("old")
 
 
-def test_attachment_chars_participate_in_context_window() -> None:
+def test_attachment_chars_do_not_create_a_second_full_compaction_limit() -> None:
     human = HumanMessage("p")
     attachment = AttachmentMessage(
         FileMentionAttachment("a.txt", "x" * 30), parent_uuid=human.uuid
@@ -158,7 +157,9 @@ def test_attachment_chars_participate_in_context_window() -> None:
         ),
         max_output_tokens=10,
     )
-    with pytest.raises(ContextOverflow):
-        planner.plan(
-            ContextPlanningState((human, attachment)), ContextRuntime(), tools=()
-        )
+    plan = planner.plan(
+        ContextPlanningState((human, attachment)), ContextRuntime(), tools=()
+    )
+
+    assert plan.budget is not None
+    assert plan.budget.attachment_chars > 30

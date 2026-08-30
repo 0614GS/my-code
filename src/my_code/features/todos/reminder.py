@@ -5,6 +5,7 @@ from my_code.conversation.attachments import TodoReminderAttachment
 from my_code.conversation.models import AssistantMessage, AttachmentMessage, ToolCall
 from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME
 from my_code.features.todos.projection import project_todos
+from my_code.tools.discovery import unwrap_searched_tool_call
 
 TODO_REMINDER_MODEL_CALL_INTERVAL = 10
 
@@ -51,7 +52,8 @@ def _completed_model_calls_since_todo_write(state: AttachmentDerivationState) ->
         if not isinstance(message, AssistantMessage):
             continue
         if any(
-            isinstance(block, ToolCall) and block.name == TODO_WRITE_TOOL_NAME
+            isinstance(block, ToolCall)
+            and unwrap_searched_tool_call(block).name == TODO_WRITE_TOOL_NAME
             for block in message.content
         ):
             return completed_calls

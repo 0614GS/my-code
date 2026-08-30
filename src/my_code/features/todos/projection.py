@@ -10,6 +10,7 @@ from my_code.conversation.models import (
 )
 from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
 from my_code.features.todos.models import TodoItem
+from my_code.tools.discovery import unwrap_searched_tool_call
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +19,8 @@ class TodoProjection:
 
     todos: tuple[TodoItem, ...]
     completed_model_calls_since_write: int
+    latest_write_id: str | None = None
+    latest_write_todos: tuple[TodoItem, ...] | None = None
 
 
 def project_todos(messages: tuple[ConversationEntry, ...]) -> TodoProjection:
@@ -35,19 +38,32 @@ def project_todos(messages: tuple[ConversationEntry, ...]) -> TodoProjection:
         if not isinstance(message, AssistantMessage):
             continue
         for block in reversed(message.content):
+            call = (
+                unwrap_searched_tool_call(block)
+                if isinstance(block, ToolCall)
+                else None
+            )
             if (
-                not isinstance(block, ToolCall)
-                or block.name != TODO_WRITE_TOOL_NAME
-                or block.id not in successful_ids
+                call is None
+                or call.name != TODO_WRITE_TOOL_NAME
+                or call.id not in successful_ids
             ):
                 continue
             try:
-                todos = parse_todo_input(block.input)
+                written_todos = parse_todo_input(call.input)
             except (TypeError, ValueError):
                 continue
-            if todos and all(todo.status == "completed" for todo in todos):
-                todos = ()
-            return TodoProjection(todos, completed_model_calls)
+            active_todos = written_todos
+            if written_todos and all(
+                todo.status == "completed" for todo in written_todos
+            ):
+                active_todos = ()
+            return TodoProjection(
+                active_todos,
+                completed_model_calls,
+                call.id,
+                written_todos,
+            )
     return TodoProjection((), completed_model_calls)
 
 
@@ -59,7 +75,8 @@ def _completed_model_calls_since_write(
         if not isinstance(message, AssistantMessage):
             continue
         if any(
-            isinstance(block, ToolCall) and block.name == TODO_WRITE_TOOL_NAME
+            isinstance(block, ToolCall)
+            and unwrap_searched_tool_call(block).name == TODO_WRITE_TOOL_NAME
             for block in message.content
         ):
             return completed_calls

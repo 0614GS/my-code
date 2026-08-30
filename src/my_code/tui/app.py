@@ -254,7 +254,6 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
     async def run_async(self) -> None:
         view = self.runtime.current_session_view()
         self._status = view.status
-        self._context_status = self.runtime.context_status()
         self._todos = view.status.todos
         await self._write(welcome(view.status, self.theme))
         self._startup_activity_owner = self._begin_activity(
@@ -290,7 +289,6 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         try:
             view = await self.runtime.initialize()
             self._status = view.status
-            self._context_status = self.runtime.context_status()
             self._todos = view.status.todos
             await self._history_ready.wait()
             self._end_activity(self._startup_activity_owner)
@@ -595,7 +593,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         if status is None:
             return "Starting my-code…"
         context = self._context_status
-        context_usage = format_context_usage(context) if context is not None else "…"
+        context_usage = format_context_usage(context) if context is not None else None
         rendered = status_line(status, context_usage)
         return rendered + (
             f" · ! {self._status_warning}" if self._status_warning else ""
@@ -606,10 +604,9 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         if status is None:
             return FormattedText([("class:secondary", "Starting my-code…")])
         context = self._context_status
-        usage = format_context_usage(context) if context is not None else "…"
-        left = (
-            f"{status.model} · {status.context_entry_count} context entries    {usage}"
-        )
+        left = f"{status.model} · {status.context_entry_count} context entries"
+        if context is not None:
+            left += f"    {format_context_usage(context)}"
         if self._status_warning:
             left += f" · ! {self._status_warning}"
         labels = {
@@ -946,6 +943,14 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                 raise
             return self._context_status
 
+    def _refresh_context_status_if_visible(self) -> ContextStatus | None:
+        """Recalculate only after a user action has exposed context usage."""
+
+        if self._context_status is None:
+            return None
+        self._context_status = self.runtime.context_status()
+        return self._context_status
+
     async def _watch_background_notifications(self) -> None:
         stream = getattr(self.runtime, "stream_background_notifications", None)
         if stream is None:
@@ -1219,12 +1224,13 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             self._todos = self._status.todos
         except Exception as error:
             warnings.append(f"status: {type(error).__name__}")
-        try:
-            self._context_status = self.runtime.context_status()
-            if self._context_status.warning:
-                warnings.append(self._context_status.warning)
-        except Exception as error:
-            warnings.append(f"context: {type(error).__name__}")
+        if self._context_status is not None:
+            try:
+                self._context_status = self.runtime.context_status()
+                if self._context_status.warning:
+                    warnings.append(self._context_status.warning)
+            except Exception as error:
+                warnings.append(f"context: {type(error).__name__}")
         self._status_warning = ", ".join(warnings)
         self._invalidate()
 

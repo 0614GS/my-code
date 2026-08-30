@@ -22,11 +22,11 @@ TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义�
 - `Edit`/`Write` 在底部动态区只显示紧凑状态和结果摘要；成功块固化到 scrollback
   或从 Session 恢复时，展开持久化的内联 diff。权限确认、失败和取消路径不展开 diff。
 - 异常、取消、max-steps 和后台 continuation 使用同样的“移除动态副本后固化终态”边界。
-- 状态栏在启动、每个已提交的工具 step、turn 结束、Session 恢复或配置变化等安全边界刷新 context snapshot；重绘 callback 不重新执行 context 规划。工具 step 的 snapshot 在 assistant tool call 与对应 tool results 均提交后生成，避免对未闭合的 model input 做规划。
+- 启动和 Session 恢复时状态栏只显示模型与 entry 数，不计算或展示推测性的 context usage。首条用户输入 canonical commit 后生成第一次 context snapshot；此后在每个已提交的工具 step、turn 结束和已显式展示 context 后的配置变化等安全边界刷新。`/status`、`/context`、`/usage` 仍可按用户明确请求即时测量。重绘 callback 不重新执行 context 规划，工具 step 的 snapshot 只在 assistant tool call 与对应 tool results 均提交后生成。
 - composer 上方的活动行由独立的 TUI state/controller 和独立单行 Window 管理，固定排列在 thinking、工具和流式模型内容之后。它使用单调时钟显示 spinner、阶段标题和整次 invocation 耗时；阶段切换只更新标题，不重置时钟。唯一 ticker 只触发廉价 `FormattedText` redraw，不进入 Rich/Markdown renderer，关闭时随 UI tasks 回收。
 - `/compact` 使用独立操作时钟；auto/reactive compact 保留当前 invocation 时钟。成功事件更新 context snapshot，并把触发来源与压缩后 usage 写入 scrollback；失败或取消只走既有终态错误路径。microcompact 保持静默，压缩进度不写 canonical Session。
 
-恢复历史和实时事件使用相同的安全投影。工具展示优先使用执行时持久化的 presentation；TUI 不重新解释原始 Conversation 或读取外置结果文件。
+恢复历史和实时事件使用相同的安全投影。每次成功 TodoWrite 都携带稳定 call ID 和完整写入快照进入 frontend-neutral 事件，即使清单内容相同或已经全部 completed；“当前活跃 todo 状态”仍可在全部完成后为空。工具展示优先使用执行时持久化的 presentation；dispatcher 目标由 Chat/feature 投影解包，TUI 不重新解释原始 Conversation 或读取外置结果文件。
 
 内联 diff 使用固定旧/新行号 gutter、增删整行背景、按扩展名选择的语法着色，并对
 相邻的小范围增删做保留空白的词级加深。长行按终端宽度折行且续行不重复行号；Tab

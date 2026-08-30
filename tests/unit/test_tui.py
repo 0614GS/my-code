@@ -651,6 +651,23 @@ def test_status_render_uses_cached_context_during_an_in_flight_tool_call() -> No
     assert app._status_text().endswith("0.1k / 200k")
 
 
+def test_footer_hides_context_until_a_user_action_measures_it() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._status = runtime.status()
+
+    before = fragment_list_to_text(to_formatted_text(app._status_display()))
+    app._apply_context_update(runtime.context_status())
+    after = fragment_list_to_text(to_formatted_text(app._status_display()))
+
+    assert "/ 200k" not in before
+    assert "0.1k / 200k" in after
+
+
 def test_footer_right_aligns_friendly_permission_mode_with_semantic_style() -> None:
     runtime = FakeRuntime()
     app = MyCodeApp(

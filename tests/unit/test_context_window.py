@@ -1,7 +1,6 @@
 import pytest
 
 from my_code.context.microcompact import MicrocompactPolicy
-from my_code.context.models import ContextOverflow
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextPlanningState, ContextRuntime
 from my_code.context.window import ContextWindow
@@ -52,8 +51,8 @@ def test_context_window_requires_semantic_boundary_and_never_truncates() -> None
     assistant = AssistantMessage((TextContent("answer"),), TokenUsage())
     with pytest.raises(ValueError, match="boundary"):
         ContextWindow().ensure_fits((assistant,))
-    with pytest.raises(ContextOverflow):
-        ContextWindow(2).ensure_fits((HumanMessage("long"),))
+    long = HumanMessage("long")
+    assert ContextWindow(2).ensure_fits((long,)) == (long,)
 
 
 def test_four_conversation_variants_project_exactly() -> None:

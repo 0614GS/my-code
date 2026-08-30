@@ -13,7 +13,8 @@ from my_code.conversation.attachments import (
     ToolDiscoveryDefinition,
     ToolDiscoveryInvalidationAttachment,
 )
-from my_code.conversation.models import AttachmentMessage, ConversationEntry
+from my_code.conversation.models import AttachmentMessage, ConversationEntry, ToolCall
+from my_code.foundation.json import to_json_object
 from my_code.model.request import ModelToolDefinition
 from my_code.model.tool_search import ToolSearchMode
 from my_code.tools.base import Tool, ToolExposure
@@ -21,6 +22,28 @@ from my_code.tools.catalog import ToolCatalogSnapshot
 
 TOOL_SEARCH_NAME = "ToolSearch"
 INVOKE_SEARCHED_TOOL_NAME = "InvokeSearchedTool"
+
+
+def unwrap_searched_tool_call(call: ToolCall) -> ToolCall:
+    """Return the semantic target recorded inside a dispatcher call.
+
+    The outer call must remain canonical for provider protocol replay and
+    tool-result pairing. Feature projections and history presentation instead
+    need the routed target semantics. Malformed or unrelated calls are left
+    untouched so this helper never turns transcript inspection into validation.
+    """
+
+    if call.name != INVOKE_SEARCHED_TOOL_NAME:
+        return call
+    tool_name = call.input.get("tool_name")
+    arguments = call.input.get("arguments")
+    if (
+        not isinstance(tool_name, str)
+        or not tool_name
+        or not isinstance(arguments, dict)
+    ):
+        return call
+    return ToolCall(call.id, tool_name, to_json_object(arguments))
 
 
 def definition_fingerprint(definition: ModelToolDefinition) -> str:
@@ -141,4 +164,5 @@ __all__ = [
     "definition_fingerprint",
     "discovery_definition",
     "restored_discoveries",
+    "unwrap_searched_tool_call",
 ]

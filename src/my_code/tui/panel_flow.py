@@ -121,7 +121,8 @@ class PanelFlowMixin:
             try:
                 resumed = await self.runtime.resume_session(action)
                 self._status = resumed.status
-                self._context_status = self.runtime.context_status()
+                self._context_status = None
+                self._status_warning = ""
                 self._todos = resumed.status.todos
                 self._panel = None
                 self.buffer.set_document(Document(""), bypass_readonly=True)
@@ -143,8 +144,8 @@ class PanelFlowMixin:
                 )
                 return
             self._status = status
-            self._context_status = self.runtime.context_status()
-            self._status_warning = self._context_status.warning or ""
+            context = self._refresh_context_status_if_visible()
+            self._status_warning = context.warning or "" if context is not None else ""
             self._close_panel()
             await self._write(system_message(f"Using model {status.model!r}"))
         elif self._panel == "provider_select" and action is not None:
@@ -416,8 +417,8 @@ class PanelFlowMixin:
             )
             return
         self._status = status
-        self._context_status = self.runtime.context_status()
-        self._status_warning = self._context_status.warning or ""
+        context = self._refresh_context_status_if_visible()
+        self._status_warning = context.warning or "" if context is not None else ""
         self._panel = None
         if self._provider_wizard is not None:
             self._provider_wizard.clear_sensitive()
@@ -440,8 +441,8 @@ class PanelFlowMixin:
             )
             return
         self._status = status
-        self._context_status = self.runtime.context_status()
-        self._status_warning = self._context_status.warning or ""
+        context = self._refresh_context_status_if_visible()
+        self._status_warning = context.warning or "" if context is not None else ""
         self._close_panel()
         await self._write(
             system_message(f"Using provider {status.provider_id!r} · {status.model}")
@@ -458,7 +459,7 @@ class PanelFlowMixin:
             )
             return
         self._status = status
-        self._context_status = self.runtime.context_status()
+        self._refresh_context_status_if_visible()
         self._providers = providers
         self._panel = None
         self.buffer.set_document(

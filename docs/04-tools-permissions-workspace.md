@@ -14,7 +14,7 @@ Agent 在每个 step 开始时捕获完整 `ToolCatalogSnapshot`，再结合 Ses
 
 Catalog 在模型流或工具执行期间更新时，当前 step 不漂移，下一 step 才看到新版本。
 
-`tools.toolSearchMode` 支持 `dispatcher` 和 `native`。Dispatcher 模式让稳定的 invoker 转发已搜索工具，真实目标仍完整经过自己的 schema、权限、审计和执行；native 模式从后续 step 暴露命中的原始 definition。两者都不把 Provider 专用 tool-reference 类型带入公共模型。
+`tools.toolSearchMode` 支持 `dispatcher` 和 `native`。Dispatcher 模式让稳定的 invoker 转发已搜索工具，真实目标仍完整经过自己的 schema、权限、审计和执行；native 模式从后续 step 暴露命中的原始 definition。两者都不把 Provider 专用 tool-reference 类型带入公共模型。Canonical transcript 保留外层 dispatcher call 以维持 Provider replay 和 call/result pairing；feature 状态与 history presentation 通过 `tools` 的统一语义解包读取真实目标。例如经 `InvokeSearchedTool` 调用的 `TodoWrite` 仍会更新 Todo 投影、reminder 计数和 TUI 快照。
 
 ## 单次执行管线
 
