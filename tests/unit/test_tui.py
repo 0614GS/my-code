@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from io import StringIO
@@ -271,28 +271,6 @@ class FakeRuntime:
             self.permission_mode = value
         return PermissionModeSwitch(mode, changed, needs_confirmation)
 
-    def cycle_permission_mode(self) -> PermissionModeSwitch:
-        order = ("default", "acceptEdits", "bypassPermissions")
-        target = order[(order.index(self.permission_mode) + 1) % len(order)]
-        needs_confirmation = (
-            target == "bypassPermissions" and not self.full_access_confirmed
-        )
-        if not needs_confirmation:
-            self.permission_mode = target
-        view = PermissionModeView(
-            target,
-            {
-                "default": "Ask for me",
-                "acceptEdits": "Approve edits",
-                "bypassPermissions": "Full access",
-            }[target],
-            not needs_confirmation,
-            target == "bypassPermissions",
-            False,
-            needs_confirmation,
-        )
-        return PermissionModeSwitch(view, not needs_confirmation, needs_confirmation)
-
     def confirm_full_access(self, allow: bool) -> PermissionModeView:
         if allow:
             self.full_access_confirmed = True
@@ -337,6 +315,28 @@ class InvalidateRecordingApp(RecordingMyCodeApp):
         self.invalidate_calls += 1
 
 
+async def wait_until(
+    predicate: Callable[[], bool], *, timeout_seconds: float = 1.0
+) -> None:
+    async with asyncio.timeout(timeout_seconds):
+        while not predicate():  # noqa: ASYNC110 - prompt_toolkit exposes no event
+            await asyncio.sleep(0)
+
+
+async def wait_until_running(app: MyCodeApp) -> None:
+    await wait_until(lambda: app.application.is_running)
+
+
+async def wait_until_idle(app: MyCodeApp) -> None:
+    await wait_until(
+        lambda: not app._busy and not app._agent_active and app._foreground_task is None
+    )
+
+
+async def wait_until_exited(running: asyncio.Task[None]) -> None:
+    await asyncio.wait_for(running, timeout=1.0)
+
+
 @pytest.mark.asyncio
 async def test_inline_host_submits_multiline_and_keeps_normal_scrollback() -> None:
     runtime = FakeRuntime()
@@ -349,13 +349,13 @@ async def test_inline_host_submits_multiline_and_keeps_normal_scrollback() -> No
             console=Console(file=stream, width=100, force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("first\nsecond\r")
         await asyncio.wait_for(runtime.submitted.wait(), 1)
         assert runtime.prompts == ["first\nsecond"]
-        await asyncio.sleep(0.05)
+        await wait_until_idle(app)
         pipe.send_bytes(b"\x04")
-        await running
+        await wait_until_exited(running)
 
     output = stream.getvalue()
     assert "model response" in output
@@ -373,12 +373,9 @@ async def test_multiline_composer_aligns_continuations_after_prompt() -> None:
             console=Console(file=StringIO(), force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("first\nsecond")
-        for _ in range(20):
-            if app.buffer.text == "first\nsecond":
-                break
-            await asyncio.sleep(0.01)
+        await wait_until(lambda: app.buffer.text == "first\nsecond")
 
         content = app.input_control.create_content(width=80, height=8)
         lines = [
@@ -388,7 +385,7 @@ async def test_multiline_composer_aligns_continuations_after_prompt() -> None:
         assert lines == ["› first", "  second"]
 
         pipe.send_bytes(b"\x03\x04")
-        await running
+        await wait_until_exited(running)
 
 
 @pytest.mark.asyncio
@@ -403,11 +400,11 @@ async def test_exit_erases_dynamic_composer_region() -> None:
             console=Console(file=StringIO(), force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         erase_calls_before_exit = output.erase_down_calls
 
         pipe.send_bytes(b"\x04")
-        await running
+        await wait_until_exited(running)
 
     assert output.erase_down_calls == erase_calls_before_exit + 1
 
@@ -423,13 +420,13 @@ async def test_ctrl_d_requires_an_empty_composer() -> None:
             console=Console(file=StringIO(), force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("draft")
         pipe.send_bytes(b"\x04")
         await asyncio.sleep(0.05)
         assert not running.done()
         pipe.send_bytes(b"\x03\x04")
-        await running
+        await wait_until_exited(running)
 
 
 @pytest.mark.asyncio
@@ -449,9 +446,9 @@ async def test_startup_renders_safe_restored_history() -> None:
             console=Console(file=stream, force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_bytes(b"\x04")
-        await running
+        await wait_until_exited(running)
 
     assert "old prompt" in stream.getvalue()
     assert "old answer" in stream.getvalue()
@@ -497,12 +494,9 @@ async def test_startup_keeps_composer_visible_and_queues_one_submission() -> Non
         runtime.release.set()
         await asyncio.wait_for(runtime.submitted.wait(), 1)
         assert runtime.prompts == ["queued prompt"]
-        for _ in range(20):
-            if not app._busy and app._foreground_task is None:
-                break
-            await asyncio.sleep(0.01)
+        await wait_until_idle(app)
         pipe.send_bytes(b"\x04")
-        await running
+        await wait_until_exited(running)
 
     assert "Ready · 5 tools · 1 skills" in stream.getvalue()
 
@@ -581,17 +575,14 @@ async def test_slash_menu_is_started_by_real_input_without_tab() -> None:
             console=Console(file=StringIO(), force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("/")
-        for _ in range(20):
-            if app._slash_active():
-                break
-            await asyncio.sleep(0.01)
+        await wait_until(app._slash_active)
 
         assert app._slash_active()
         assert len(app._slash_menu.matches) > 1
         pipe.send_bytes(b"\x03\x04")
-        await running
+        await wait_until_exited(running)
 
 
 def test_composer_preserves_the_native_terminal_cursor() -> None:
@@ -631,18 +622,16 @@ async def test_enter_executes_the_default_selected_slash_command() -> None:
             console=Console(file=stream, force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("/sta")
-        for _ in range(20):
-            if app._slash_menu.current is not None:
-                break
-            await asyncio.sleep(0.01)
+        await wait_until(lambda: app._slash_menu.current is not None)
         assert app._slash_menu.current is not None
         assert app._slash_menu.current.name == "status"
         pipe.send_text("\r")
-        await asyncio.sleep(0.05)
+        await wait_until(lambda: "/status" in stream.getvalue())
+        await wait_until_idle(app)
         pipe.send_bytes(b"\x04")
-        await running
+        await wait_until_exited(running)
 
     assert runtime.prompts == []
     rendered = stream.getvalue()
@@ -1337,23 +1326,20 @@ async def test_real_arrow_sequences_move_slash_selection_in_screen_direction() -
             console=Console(file=StringIO(), force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("/")
-        for _ in range(20):
-            if app._slash_active():
-                break
-            await asyncio.sleep(0.01)
+        await wait_until(app._slash_active)
 
         assert app._slash_menu.selected == 0
         pipe.send_bytes(b"\x1b[B")
-        await asyncio.sleep(0.05)
+        await wait_until(lambda: app._slash_menu.selected == 1)
         assert app._slash_menu.selected == 1
         pipe.send_bytes(b"\x1b[A")
-        await asyncio.sleep(0.05)
+        await wait_until(lambda: app._slash_menu.selected == 0)
         assert app._slash_menu.selected == 0
 
         pipe.send_bytes(b"\x03\x04")
-        await running
+        await wait_until_exited(running)
 
 
 @pytest.mark.asyncio
@@ -1372,16 +1358,13 @@ async def test_real_arrow_sequences_keep_long_resume_selection_visible() -> None
             console=Console(file=StringIO(), force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("/resume\r")
-        for _ in range(40):
-            if app._panel == "resume":
-                break
-            await asyncio.sleep(0.01)
+        await wait_until(lambda: app._panel == "resume")
 
         assert app._panel == "resume"
         pipe.send_bytes(b"\x1b[B" * 8)
-        await asyncio.sleep(0.05)
+        await wait_until(lambda: app._panel_index == 8)
 
         assert app._panel_index == 8
         rendered = fragment_list_to_text(to_formatted_text(app._interaction_text()))
@@ -1389,7 +1372,7 @@ async def test_real_arrow_sequences_keep_long_resume_selection_visible() -> None
         assert "Session 0" not in rendered
 
         pipe.send_bytes(b"\x1b\x03\x04")
-        await running
+        await wait_until_exited(running)
 
 
 @pytest.mark.asyncio
@@ -1402,19 +1385,13 @@ async def test_escape_is_responsive_and_ctrl_j_inserts_newline() -> None:
             console=Console(file=StringIO(), force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("/")
-        for _ in range(20):
-            if app._slash_active():
-                break
-            await asyncio.sleep(0.01)
+        await wait_until(app._slash_active)
 
         started = monotonic()
         pipe.send_bytes(b"\x1b")
-        for _ in range(30):
-            if not app._slash_active():
-                break
-            await asyncio.sleep(0.01)
+        await wait_until(lambda: not app._slash_active())
 
         assert not app._slash_active()
         assert monotonic() - started < 0.2
@@ -1422,14 +1399,11 @@ async def test_escape_is_responsive_and_ctrl_j_inserts_newline() -> None:
         app.buffer.reset()
         pipe.send_text("line")
         pipe.send_bytes(b"\n")
-        for _ in range(20):
-            if app.buffer.text == "line\n":
-                break
-            await asyncio.sleep(0.01)
+        await wait_until(lambda: app.buffer.text == "line\n")
         assert app.buffer.text == "line\n"
 
         pipe.send_bytes(b"\x03\x04")
-        await running
+        await wait_until_exited(running)
 
 
 @pytest.mark.asyncio
@@ -1443,18 +1417,15 @@ async def test_enhanced_terminal_shift_enter_inserts_newline(sequence: bytes) ->
             console=Console(file=StringIO(), force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("line")
         pipe.send_bytes(sequence)
-        for _ in range(20):
-            if app.buffer.text == "line\n":
-                break
-            await asyncio.sleep(0.01)
+        await wait_until(lambda: app.buffer.text == "line\n")
 
         assert app.buffer.text == "line\n"
 
         pipe.send_bytes(b"\x03\x04")
-        await running
+        await wait_until_exited(running)
 
 
 @pytest.mark.asyncio
@@ -1468,20 +1439,17 @@ async def test_escape_then_enter_no_longer_inserts_newline() -> None:
             console=Console(file=StringIO(), force_terminal=False),
         )
         running = asyncio.create_task(app.run_async())
-        await asyncio.sleep(0.05)
+        await wait_until_running(app)
         pipe.send_text("submit me")
         pipe.send_bytes(b"\x1b\r")
         await asyncio.wait_for(runtime.submitted.wait(), timeout=0.5)
 
         assert runtime.prompts == ["submit me"]
 
-        for _ in range(50):
-            if not app._busy:
-                break
-            await asyncio.sleep(0.01)
+        await wait_until_idle(app)
 
         pipe.send_bytes(b"\x04")
-        await running
+        await wait_until_exited(running)
 
 
 @pytest.mark.asyncio

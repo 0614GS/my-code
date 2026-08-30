@@ -512,6 +512,18 @@ def test_shared_project_cannot_activate_mcp(
             },
             "env cannot contain literal values",
         ),
+        (
+            {"version": 3, "permissions": {"ask": ["Bash(git push"]}},
+            "Malformed",
+        ),
+        (
+            {"version": 3, "permissions": {"allow": [42]}},
+            "must be a string",
+        ),
+        (
+            {"version": 3, "permissions": {"deny": "Bash(rm:*)"}},
+            "must be an array",
+        ),
     ],
 )
 def test_invalid_settings_are_rejected(
@@ -560,31 +572,6 @@ def test_permission_rule_arrays_are_parsed_and_serialized(tmp_path: Path) -> Non
         permission_deny_rules=("Bash(rm:*)",),
         permission_ask_rules=("Bash(git push)",),
     )
-
-
-@pytest.mark.parametrize(
-    "document, message",
-    [
-        (
-            {"version": 3, "permissions": {"ask": ["Bash(git push"]}},
-            "Malformed",
-        ),
-        ({"version": 3, "permissions": {"allow": [42]}}, "must be a string"),
-        (
-            {"version": 3, "permissions": {"deny": "Bash(rm:*)"}},
-            "must be an array",
-        ),
-    ],
-)
-def test_invalid_permission_rules_are_rejected(
-    tmp_path: Path, document: object, message: str
-) -> None:
-    paths = make_paths(tmp_path)
-    paths.user_settings_path.parent.mkdir()
-    paths.user_settings_path.write_text(json.dumps(document), encoding="utf-8")
-
-    with pytest.raises(SettingsFileError, match=message):
-        SettingsStore(paths).load()
 
 
 def test_unknown_and_non_bash_content_rules_are_preserved(tmp_path: Path) -> None:

@@ -23,15 +23,6 @@ from my_code.tools.builtin.bash.permissions import (
         "git diff --stat",
         "git log --oneline -n 5",
         "cat README.md | grep nano",
-    ],
-)
-def test_common_workspace_inspection_is_read_only(tmp_path: Path, command: str) -> None:
-    assert analyze_bash_command(command, tmp_path).is_read_only is True
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
         "find src -type f | head -100",
         "find src -type f | sort",
         "ls src 2>/dev/null",
@@ -40,7 +31,7 @@ def test_common_workspace_inspection_is_read_only(tmp_path: Path, command: str) 
         "echo divider",
     ],
 )
-def test_observed_read_only_shell_forms_are_allowed(
+def test_supported_workspace_inspection_is_read_only(
     tmp_path: Path, command: str
 ) -> None:
     assert analyze_bash_command(command, tmp_path).is_read_only is True
