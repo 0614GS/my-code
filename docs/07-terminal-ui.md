@@ -45,11 +45,13 @@ presentation 中的 200 条代码行记录。
 
 Enter 提交，Shift+Enter 或 Ctrl+J 换行；Esc 按候选菜单、临时面板、当前 invocation 的优先级处理。Agent 与后台 continuation 运行时 composer 仍可编辑，普通 Enter 加入仅内存的 steering queue；accepted 事件到达后才写入 scrollback。空 composer 按 Up 可取消准备任务并召回最近的 pending/failed 输入。Esc 只取消当前 invocation，不清除队列。
 
-composer 下方最多显示三行 queue preview。Slash command 显式分为 `concurrent_read`、`concurrent_ui` 与 `exclusive`：只读命令和纯展示偏好可在 Agent active 时运行；compact、能力 reload/reconnect、provider/model、resume 和 exit 等独占操作保留原草稿并等待 Agent 空闲。Agent active 时 Shift+Tab 不修改 permission mode。
+composer 下方最多显示三行 queue preview。Slash command 显式分为 `concurrent_read`、`concurrent_ui` 与 `exclusive`：只读命令和纯展示偏好可在 Agent active 时运行；compact、能力 reload/reconnect、provider/model、permission mode、resume 和 exit 等独占操作保留原草稿并等待 Agent 空闲。
+
+composer 底栏只显示模型、context entry 数量、按需计算的 context usage 和警告，不常驻显示 permission mode，也不再通过 Shift+Tab 循环切换。`/permissions` 使用共享二级 Picker 展示 Ask for me、Approve edits 和 Full access，当前项使用与其他选择器一致的 `●` 标记；选择 Full access 时继续进入进程级风险确认页。模式选择使用稳定 mode key，通过 Chat 的窄用例持久化到当前 Session，失败时保留原模式和打开的选择器。
 
 `/view` 使用与 `/model`、`/provider`、`/resume` 相同的二级 Picker 选择主界面模式；`/view concise` 与 `/view detailed` 仍可直接原子写入用户级 `tui.viewMode`。默认 concise，偏好跨项目和 Session。切换会清屏并按新模式重新投影当前 Session，复用 resume 的历史渲染路径。Detailed 在每次请求前按 audit ID 去重展示新增/变化的 AGENTS、Attachment、Todo/Skill、工具发现与后台通知正文；恢复历史时从 request audit 投影相同内容。单项限制为 60 行和 8 KiB，并完整格式化 canonical ToolCall input。工具结果继续使用安全摘要/diff。Concise 保持原有展示；完整历史使用 Ctrl+T。
 
-Slash commands 在进入模型前本地解析。已执行命令先在 scrollback 回显；`/status`、`/context`、`/usage`、`/tools`、`/skills`、`/mcp` 和 `/tasks` 使用统一的圆角信息卡，命令与卡片作为一个串行输出批次提交。`/resume`、`/provider`、`/model` 和 `/agents` 等仍只调用 ChatService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
+Slash commands 在进入模型前本地解析。已执行命令先在 scrollback 回显；`/status`、`/context`、`/usage`、`/tools`、`/skills`、`/mcp` 和 `/tasks` 使用统一的圆角信息卡，命令与卡片作为一个串行输出批次提交。`/resume`、`/provider`、`/model`、`/permissions` 和 `/agents` 等仍只调用 ChatService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
 
 Permission、Full Access、Provider 和 Resume 共用 composer 下方的 interaction host。工具权限默认安全拒绝；无 OS sandbox 时首次进入 Full Access 必须经过当前进程有效的危险确认。API key 输入使用密码处理，面板只显示是否已配置。
 

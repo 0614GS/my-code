@@ -245,6 +245,32 @@ class FakeRuntime:
             and not self.full_access_confirmed,
         )
 
+    def permission_modes(self) -> tuple[PermissionModeView, ...]:
+        names = {
+            "default": "Ask for me",
+            "acceptEdits": "Approve edits",
+            "bypassPermissions": "Full access",
+        }
+        return tuple(
+            PermissionModeView(
+                value,
+                name,
+                value == self.permission_mode,
+                value == "bypassPermissions",
+                False,
+                value == "bypassPermissions" and not self.full_access_confirmed,
+            )
+            for value, name in names.items()
+        )
+
+    def select_permission_mode(self, value: str) -> PermissionModeSwitch:
+        mode = next(item for item in self.permission_modes() if item.value == value)
+        needs_confirmation = mode.requires_confirmation
+        changed = value != self.permission_mode and not needs_confirmation
+        if changed:
+            self.permission_mode = value
+        return PermissionModeSwitch(mode, changed, needs_confirmation)
+
     def cycle_permission_mode(self) -> PermissionModeSwitch:
         order = ("default", "acceptEdits", "bypassPermissions")
         target = order[(order.index(self.permission_mode) + 1) % len(order)]
@@ -684,7 +710,7 @@ def test_footer_hides_context_until_a_user_action_measures_it() -> None:
     assert "0.1k / 200k" in after
 
 
-def test_footer_right_aligns_friendly_permission_mode_with_semantic_style() -> None:
+def test_footer_omits_permission_mode_and_shift_tab_hint() -> None:
     runtime = FakeRuntime()
     app = MyCodeApp(
         runtime,  # type: ignore[arg-type]
@@ -696,49 +722,11 @@ def test_footer_right_aligns_friendly_permission_mode_with_semantic_style() -> N
     app._status = runtime.status()
     app._context_status = runtime.context_status()
 
-    fragments = to_formatted_text(app._status_display())
+    footer = fragment_list_to_text(to_formatted_text(app._status_display()))
 
-    assert fragment_list_to_text(fragments).rstrip().endswith("Full access · Shift+Tab")
-    assert any(
-        fragment[0] == "class:error" and "Full access" in fragment[1]
-        for fragment in fragments
-    )
-
-
-def test_permission_mode_cycle_opens_risk_panel_and_defaults_to_no() -> None:
-    runtime = FakeRuntime()
-    app = MyCodeApp(runtime)  # type: ignore[arg-type]
-    app._status = runtime.status()
-    app.buffer.text = "draft"
-
-    app._cycle_permission_mode()
-    app._cycle_permission_mode()
-
-    assert runtime.permission_mode == "acceptEdits"
-    assert app._panel == "full_access"
-    assert app._panel_index == 0
-    assert app.buffer.text == ""
-    app._resolve_full_access(False)
-    assert runtime.permission_mode == "acceptEdits"
-    assert app.buffer.text == "draft"
-
-
-def test_accepting_full_access_only_prompts_once_per_process() -> None:
-    runtime = FakeRuntime()
-    app = MyCodeApp(runtime)  # type: ignore[arg-type]
-    app._status = runtime.status()
-    app._cycle_permission_mode()
-    app._cycle_permission_mode()
-    app._resolve_full_access(True)
-
-    assert runtime.permission_mode == "bypassPermissions"
-    assert app._panel is None
-    app._cycle_permission_mode()
-    app._cycle_permission_mode()
-    assert runtime.permission_mode == "acceptEdits"
-    app._cycle_permission_mode()
-    assert runtime.permission_mode == "bypassPermissions"
-    assert app._panel is None
+    assert "Full access" not in footer
+    assert "bypassPermissions" not in footer
+    assert "Shift+Tab" not in footer
 
 
 def test_slash_menu_is_below_composer_and_uses_terminal_background() -> None:
@@ -1650,6 +1638,74 @@ def test_new_slash_commands_have_strict_subcommands() -> None:
         "Usage: /view [concise|detailed]"
     )
     assert registry.concurrency("/view detailed") is CommandConcurrency.CONCURRENT_UI
+    permissions = registry.dispatch("/permissions", status=status)
+    assert permissions is not None and permissions.open_permission_picker
+    assert registry.concurrency("/permissions") is CommandConcurrency.EXCLUSIVE
+
+
+@pytest.mark.asyncio
+async def test_permissions_command_uses_shared_picker_and_applies_selection() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), width=100, force_terminal=False),
+    )
+    app.buffer.text = "/permissions"
+
+    outcome = app.commands.dispatch("/permissions", status=runtime.status())
+    assert outcome is not None
+    await app._handle_command(outcome, command_line="/permissions")
+
+    assert app._panel == "permission_mode_select"
+    rendered = fragment_list_to_text(to_formatted_text(app._panel_text()))
+    assert "Choose permission mode" in rendered
+    assert "● Ask for me" in rendered
+    assert "Approve edits" in rendered
+    assert "Full access" in rendered
+
+    app._panel_index = 1
+    await app._panel_enter()
+
+    assert app._panel is None
+    assert runtime.permission_mode == "acceptEdits"
+    assert app.buffer.text == "/permissions"
+
+
+@pytest.mark.asyncio
+async def test_permissions_full_access_keeps_shared_confirmation_flow() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(runtime)  # type: ignore[arg-type]
+    app.buffer.text = "draft"
+    app._open_permission_picker()
+    app._panel_index = 2
+
+    await app._panel_enter()
+
+    assert app._panel == "full_access"
+    assert app._panel_index == 0
+    assert runtime.permission_mode == "default"
+    app._resolve_full_access(False)
+    assert runtime.permission_mode == "default"
+    assert app.buffer.text == "draft"
+
+
+@pytest.mark.asyncio
+async def test_permissions_picker_keeps_old_mode_open_when_selection_fails() -> None:
+    class FailingPermissionRuntime(FakeRuntime):
+        def select_permission_mode(self, value: str) -> PermissionModeSwitch:
+            del value
+            raise OSError("session is read-only")
+
+    runtime = FailingPermissionRuntime()
+    app = MyCodeApp(runtime)  # type: ignore[arg-type]
+    app._open_permission_picker()
+    app._panel_index = 1
+
+    await app._panel_enter()
+
+    assert app._panel == "permission_mode_select"
+    assert runtime.permission_mode == "default"
 
 
 @pytest.mark.asyncio

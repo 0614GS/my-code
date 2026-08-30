@@ -71,6 +71,7 @@ from my_code.tui.panels import (
     agent_select_panel,
     full_access_panel,
     model_picker_panel,
+    permission_mode_panel,
     permission_panel,
     provider_actions_panel,
     provider_checking_panel,
@@ -471,6 +472,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             "provider_probe_failure",
             "provider_checking",
             "view_select",
+            "permission_mode_select",
             "agents",
         }:
             return True
@@ -633,22 +635,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             left += f"    {format_context_usage(context)}"
         if self._status_warning:
             left += f" · ! {self._status_warning}"
-        labels = {
-            "default": ("Ask for me", "class:secondary"),
-            "acceptEdits": ("Approve edits", "class:success"),
-            "bypassPermissions": ("Full access", "class:error"),
-        }
-        label, style = labels.get(
-            status.permission_mode, (status.permission_mode, "class:secondary")
-        )
-        right = f"{label} · Shift+Tab"
-        padding = max(2, self.console.width - len(left) - len(right))
-        if len(left) + len(right) + padding > self.console.width:
-            keep = max(0, self.console.width - len(right) - padding - 1)
-            left = left[:keep].rstrip() + ("…" if keep else "")
-        return FormattedText(
-            [("class:secondary", left), ("", " " * padding), (style, right)]
-        )
+        return FormattedText([("class:secondary", left)])
 
     def _reasoning_summary(self) -> str:
         if not self._reasoning_parts:
@@ -712,6 +699,8 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             return model_picker_panel(self._models, self.buffer.text)
         if self._panel == "view_select":
             return view_mode_panel(self._display_density)
+        if self._panel == "permission_mode_select":
+            return permission_mode_panel(self.runtime.permission_modes())
         if self._panel == "agents" and self._agent_task_id is None:
             return agent_select_panel(self._agents)
         return None
@@ -759,16 +748,6 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
 
     def _permission_selecting(self) -> bool:
         return self._panel == "permission" and self._permission_mode == "select"
-
-    def _cycle_permission_mode(self) -> None:
-        switch = getattr(self.runtime, "cycle_permission_mode", None)
-        if switch is None:
-            return
-        result = switch()
-        if result.requires_confirmation:
-            self._open_full_access_confirmation()
-        else:
-            self._refresh_status()
 
     def _open_full_access_confirmation(self) -> None:
         if self._panel is not None:
@@ -949,6 +928,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             or outcome.open_provider_manager
             or outcome.open_model_picker
             or outcome.open_view_picker
+            or outcome.open_permission_picker
         ):
             await self._write(command_echo(command_line))
             echo_pending = False
@@ -962,6 +942,8 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             self._open_model_picker()
         if outcome.open_view_picker:
             self._open_view_picker()
+        if outcome.open_permission_picker:
+            self._open_permission_picker()
         if outcome.should_exit:
             self.application.exit()
 

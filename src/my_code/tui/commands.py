@@ -24,6 +24,7 @@ class SlashCommandAction(StrEnum):
     TASKS = "tasks"
     AGENTS = "agents"
     VIEW = "view"
+    PERMISSIONS = "permissions"
 
 
 class CommandConcurrency(StrEnum):
@@ -59,6 +60,7 @@ class CommandOutcome:
     show_tasks: bool = False
     show_agents: bool = False
     open_view_picker: bool = False
+    open_permission_picker: bool = False
     view_operation: str | None = None
 
 
@@ -123,6 +125,12 @@ class SlashCommandRegistry:
                     "Show or set concise/detailed output",
                     SlashCommandAction.VIEW,
                     concurrency=CommandConcurrency.CONCURRENT_UI,
+                ),
+                SlashCommand(
+                    "permissions",
+                    "Choose the tool permission mode",
+                    SlashCommandAction.PERMISSIONS,
+                    concurrency=CommandConcurrency.EXCLUSIVE,
                 ),
                 SlashCommand(
                     "provider",
@@ -216,6 +224,8 @@ class SlashCommandRegistry:
                 return CommandOutcome(show_tasks=True)
             case SlashCommandAction.AGENTS:
                 return CommandOutcome(show_agents=True)
+            case SlashCommandAction.PERMISSIONS:
+                return CommandOutcome(open_permission_picker=True)
             case SlashCommandAction.PROVIDER:
                 return CommandOutcome(open_provider_manager=True)
             case SlashCommandAction.MODEL:

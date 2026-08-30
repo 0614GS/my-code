@@ -314,6 +314,15 @@ def test_runtime_permission_modes_cycle_without_persisting_settings(
         "Approve edits",
         "Full access",
     ]
+    selected = runtime.select_permission_mode("acceptEdits")
+    assert selected.changed is True
+    assert selected.requires_confirmation is False
+    assert runtime.status().permission_mode == "acceptEdits"
+    pending_direct = runtime.select_permission_mode("bypassPermissions")
+    assert pending_direct.changed is False
+    assert pending_direct.requires_confirmation is True
+    runtime.confirm_full_access(False)
+    runtime.select_permission_mode("default")
     assert runtime.cycle_permission_mode().mode.value == "acceptEdits"
     pending = runtime.cycle_permission_mode()
     assert pending.requires_confirmation is True

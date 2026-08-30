@@ -25,6 +25,7 @@ _NAVIGATION_PANELS = {
     "provider_probe_failure",
     "model_select",
     "view_select",
+    "permission_mode_select",
     "agents",
 }
 _PROVIDER_PANELS = {
@@ -79,8 +80,6 @@ class KeyBindingHost(Protocol):
     def _dismiss_slash(self) -> None: ...
 
     def _cycle_agent_view(self) -> None: ...
-
-    def _cycle_permission_mode(self) -> None: ...
 
     def _resolve_full_access(self, allow: bool) -> None: ...
 
@@ -160,8 +159,6 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
         del event
         if host._panel == "provider_form":
             host._spawn(host._advance_provider(-1))
-        elif host._panel is None and not host._agent_active:
-            host._cycle_permission_mode()
 
     @bindings.add("up")
     def up(event: KeyPressEvent) -> None:

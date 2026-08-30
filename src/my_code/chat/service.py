@@ -1031,6 +1031,27 @@ class ChatService:
         )
         return PermissionModeSwitch(view, not needs_confirmation, needs_confirmation)
 
+    def select_permission_mode(self, value: str) -> PermissionModeSwitch:
+        try:
+            requested = PermissionMode(value)
+        except ValueError as error:
+            raise ValueError(f"Unknown permission mode: {value}") from error
+        current = self.state.permissions.policy.mode
+        target, needs_confirmation = self.state.permissions.request_mode(
+            requested, self._persist_permission_mode
+        )
+        view = permission_mode_view(
+            target,
+            current=not needs_confirmation,
+            sandbox_active=self.state.permissions.sandbox_active,
+            requires_confirmation=needs_confirmation,
+        )
+        return PermissionModeSwitch(
+            view,
+            target is not current and not needs_confirmation,
+            needs_confirmation,
+        )
+
     def confirm_full_access(self, allow: bool) -> PermissionModeView:
         mode = self.state.permissions.confirm_full_access(
             allow, self._persist_permission_mode

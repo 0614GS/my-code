@@ -7,7 +7,7 @@ only turns safe frontend state into compact terminal text.
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.utils import get_cwidth
 
-from my_code.chat.permissions import PermissionRequest
+from my_code.chat.permissions import PermissionModeView, PermissionRequest
 from my_code.chat.views import SubagentTaskView
 from my_code.config.providers import ANTHROPIC_API_BASE_URL, OPENAI_API_BASE_URL
 from my_code.model.display import DisplayDensity
@@ -76,6 +76,28 @@ def full_access_panel() -> PickerView:
             PickerRow("allow", "Yes, enable Full access"),
         ),
         "↑↓ select · Enter confirm · Esc keep current mode",
+    )
+
+
+def permission_mode_panel(modes: tuple[PermissionModeView, ...]) -> PickerView:
+    """Render interactive permission modes using the shared picker style."""
+
+    descriptions = {
+        "default": "ask before protected tool use",
+        "acceptEdits": "approve file edits automatically",
+        "bypassPermissions": "run without permission prompts",
+    }
+    return PickerView(
+        "Choose permission mode",
+        tuple(
+            PickerRow(
+                mode.value,
+                f"{'● ' if mode.current else ''}{mode.display_name}",
+                descriptions.get(mode.value),
+            )
+            for mode in modes
+        ),
+        "↑↓ select · Enter apply · Esc cancel",
     )
 
 
@@ -382,6 +404,7 @@ __all__ = [
     "full_access_panel",
     "model_picker_panel",
     "permission_panel",
+    "permission_mode_panel",
     "provider_actions_panel",
     "provider_form_panel",
     "provider_models_panel",

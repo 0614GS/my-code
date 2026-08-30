@@ -72,7 +72,19 @@ class PermissionState:
     def request_cycle(
         self, persist: Callable[[PermissionMode], object]
     ) -> tuple[PermissionMode, bool]:
-        target = self.next_mode()
+        return self.request_mode(self.next_mode(), persist)
+
+    def request_mode(
+        self,
+        target: PermissionMode,
+        persist: Callable[[PermissionMode], object],
+    ) -> tuple[PermissionMode, bool]:
+        """Select one interactive mode without exposing policy mutation to the UI."""
+
+        if target not in self._CYCLE:
+            raise ValueError(f"Unsupported interactive permission mode: {target.value}")
+        if target is self.policy.mode:
+            return target, False
         if self.requires_full_access_confirmation(target):
             self.full_access_pending = True
             return target, True

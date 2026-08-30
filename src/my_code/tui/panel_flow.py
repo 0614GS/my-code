@@ -45,6 +45,13 @@ class PanelFlowMixin:
         self._panel_index = 0 if self._display_density.view_mode == "concise" else 1
         self._open_panel("view_select")
 
+    def _open_permission_picker(self) -> None:
+        modes = self.runtime.permission_modes()
+        self._panel_index = next(
+            (index for index, mode in enumerate(modes) if mode.current), 0
+        )
+        self._open_panel("permission_mode_select")
+
     def _open_agents(self) -> None:
         self._agents = self.runtime.subagent_tasks()
         self._panel_index = 0
@@ -162,6 +169,27 @@ class PanelFlowMixin:
                 return
             self._close_panel()
             await self._write(system_message(message))
+        elif self._panel == "permission_mode_select" and action is not None:
+            try:
+                switch = self.runtime.select_permission_mode(action)
+            except Exception as error:
+                await self._write(
+                    system_message(
+                        f"Permission mode selection failed: {error}", error=True
+                    )
+                )
+                return
+            if switch.requires_confirmation:
+                self._panel = "full_access"
+                self._panel_index = 0
+                self._full_access_resolved = asyncio.Event()
+                self._invalidate()
+                return
+            self._close_panel()
+            self._refresh_status()
+            await self._write(
+                system_message(f"Permission mode · {switch.mode.display_name}")
+            )
         elif self._panel == "provider_select" and action is not None:
             if action == "add":
                 self._provider_selected_index = -1
