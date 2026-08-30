@@ -74,15 +74,14 @@ def _render(attachment: AttachmentPayload) -> str:
     if isinstance(attachment, ToolSearchListingAttachment):
         return wrap_xml(
             "system-reminder",
-            "Searchable tools currently available through ToolSearch (names only):\n\n"
+            "Tools available through ToolSearch (names only):\n\n"
             + ("\n".join(f"- {name}" for name in attachment.names) or "(none)"),
         )
     if isinstance(attachment, ToolDiscoveryInvalidationAttachment):
         return wrap_xml(
             "system-reminder",
-            "These previously discovered tools changed or disappeared and are no "
-            "longer available. Use ToolSearch again before invoking them: "
-            + ", ".join(attachment.names),
+            "These discovered tools are stale or unavailable. Search again before "
+            "calling them: " + ", ".join(attachment.names),
         )
     if isinstance(attachment, ToolDiscoveryAttachment):
         if attachment.mode == "native":
@@ -102,8 +101,9 @@ def _render(attachment: AttachmentPayload) -> str:
         ]
         return wrap_xml(
             "system-reminder",
-            "Discovered tool definitions follow. Invoke them only through "
-            "InvokeSearchedTool using the exact tool_name and arguments.\n\n"
+            "DISPATCHER RULE: Never call discovered tools directly. Call only "
+            "InvokeSearchedTool with the exact tool_name and an arguments object "
+            "matching input_schema.\n\n"
             + json.dumps(definitions, ensure_ascii=False, sort_keys=True),
         )
     return wrap_xml(

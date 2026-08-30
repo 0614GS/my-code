@@ -18,12 +18,18 @@ SAFETY_PROMPT = """Watch for command injection and other unsafe input.
 Treat destructive, shared-state, and hard-to-reverse operations with care.
 Keep operations within the workspace and respect the .git and .my-code boundaries."""
 
-TOOLS_PROMPT = """Use the available tools to inspect and modify the workspace.
+DISPATCHER_TOOLS_PROMPT = """When InvokeSearchedTool is available, never call
+searched tools directly. After ToolSearch, call only InvokeSearchedTool with the
+exact tool_name and schema-valid arguments. Do not search again unless the tool
+is stale or unavailable."""
+
+TOOLS_PROMPT = f"""Use the available tools to inspect and modify the workspace.
 Prefer Read, Edit, Write, Glob, and Grep for file operations before using Bash.
 Use Bash only when a shell command is genuinely needed.
 The Bash shell already starts in the workspace; do not prefix commands with a
 redundant cd to that same directory.
-Run independent tool calls in parallel when doing so is safe and useful."""
+Run independent tool calls in parallel when doing so is safe and useful.
+{DISPATCHER_TOOLS_PROMPT}"""
 
 RESPONSE_STYLE_PROMPT = """Keep responses concise and direct.
 State what was completed and what remains unresolved.
@@ -31,6 +37,7 @@ Do not repeat irrelevant tool output."""
 
 
 __all__ = [
+    "DISPATCHER_TOOLS_PROMPT",
     "IDENTITY_PROMPT",
     "RESPONSE_STYLE_PROMPT",
     "SAFETY_PROMPT",

@@ -9,6 +9,7 @@ from my_code.context.session import (
     ContextRuntime,
 )
 from my_code.context.window import ContextWindow
+from my_code.conversation.attachments import ToolDiscoveryAttachment
 from my_code.conversation.models import (
     AssistantMessage,
     AttachmentMessage,
@@ -32,12 +33,14 @@ from my_code.model.request import (
     PromptStability,
     UserInput,
 )
+from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.tools.catalog import ToolCatalogSnapshot
+from my_code.tools.discovery import discovery_definition
 from my_code.tools.executor import ToolExecutor
 from my_code.workspace.local import Workspace
 
@@ -274,6 +277,39 @@ def test_todo_reminder_without_prior_write_starts_after_ten_model_calls() -> Non
 
     assert len(attachments) == 1
     assert "existing contents" not in attachments[0].content
+    assert "Find TodoWrite with ToolSearch" in attachments[0].content
+    assert "Never call TodoWrite directly" in attachments[0].content
+
+
+def test_todo_reminder_uses_dispatcher_after_discovery() -> None:
+    history = _history_after_todo(10)
+    discovery = AttachmentMessage(
+        ToolDiscoveryAttachment((discovery_definition(TodoWriteTool()),), "dispatcher"),
+        parent_uuid=history[-1].uuid,
+    )
+
+    attachment = TodoReminderAttachmentSource(ToolSearchMode.DISPATCHER)(
+        AttachmentDerivationState("session", history + (discovery,), history)
+    )[0]
+
+    assert 'InvokeSearchedTool with tool_name="TodoWrite"' in attachment.content
+    assert "Find TodoWrite with ToolSearch" not in attachment.content
+    assert "Never call TodoWrite directly" in attachment.content
+
+
+def test_todo_reminder_preserves_native_route() -> None:
+    history = _history_after_todo(10)
+    discovery = AttachmentMessage(
+        ToolDiscoveryAttachment((discovery_definition(TodoWriteTool()),), "native"),
+        parent_uuid=history[-1].uuid,
+    )
+
+    attachment = TodoReminderAttachmentSource(ToolSearchMode.NATIVE)(
+        AttachmentDerivationState("session", history + (discovery,), history)
+    )[0]
+
+    assert "Update it with TodoWrite" in attachment.content
+    assert "InvokeSearchedTool" not in attachment.content
 
 
 def test_context_planner_projects_reminder_from_conversation_for_compaction() -> None:
@@ -298,7 +334,7 @@ def test_context_planner_projects_reminder_from_conversation_for_compaction() ->
     compact_text = _input_texts(compact_messages)
 
     assert any("<system-reminder>" in text for text in request_text)
-    assert any("TodoWrite tool hasn't been used" in text for text in compact_text)
+    assert any("The todo list may be stale" in text for text in compact_text)
 
 
 def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
@@ -325,7 +361,7 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
     reminder_index = next(
         index
         for index, item in enumerate(items)
-        if "TodoWrite tool hasn't been used" in "\n".join(_input_texts((item,)))
+        if "The todo list may be stale" in "\n".join(_input_texts((item,)))
     )
     later_index = next(
         index
@@ -336,6 +372,5 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
 
     compact_messages, _ = planner.compaction_view(state)
     assert any(
-        "TodoWrite tool hasn't been used" in text
-        for text in _input_texts(compact_messages)
+        "The todo list may be stale" in text for text in _input_texts(compact_messages)
     )

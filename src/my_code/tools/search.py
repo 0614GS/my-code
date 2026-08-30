@@ -26,11 +26,15 @@ from my_code.tools.validation import optional_int, required_string
 class ToolSearch(Tool):
     def __init__(self, mode: ToolSearchMode) -> None:
         self.mode = mode
+        route = (
+            " In dispatcher mode, call matches only through InvokeSearchedTool."
+            if mode is ToolSearchMode.DISPATCHER
+            else " In native mode, call matches directly starting next step."
+        )
         self._definition = ModelToolDefinition(
             TOOL_SEARCH_NAME,
-            "Search hidden tools by name or description. Results become available "
-            "starting with the next model step. Use select:ToolA,ToolB for exact "
-            "selection.",
+            "Find hidden tools by name or description. Results are available next "
+            f"step.{route} Use select:ToolA,ToolB for exact selection.",
             {
                 "type": "object",
                 "properties": {
@@ -141,7 +145,8 @@ class InvokeSearchedTool(Tool):
     def __init__(self) -> None:
         self._definition = ModelToolDefinition(
             INVOKE_SEARCHED_TOOL_NAME,
-            "Invoke a tool previously discovered with ToolSearch.",
+            "Call a tool found by ToolSearch. Never call searched tools directly. "
+            "Use the exact tool_name and schema-valid arguments.",
             {
                 "type": "object",
                 "properties": {

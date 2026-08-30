@@ -4,10 +4,11 @@ from pathlib import Path
 
 import pytest
 
+from my_code.context.attachments.projection import AttachmentProjector
 from my_code.conversation.attachments import ToolDiscoveryAttachment
 from my_code.conversation.models import ToolCall
 from my_code.foundation.json import JsonObject
-from my_code.model.request import ModelToolDefinition
+from my_code.model.request import InputText, ModelToolDefinition
 from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import (
     PermissionDecisionKind,
@@ -81,6 +82,43 @@ def catalog(mode: ToolSearchMode) -> tuple[ToolCatalogSnapshot, SearchableTool]:
     if mode is ToolSearchMode.DISPATCHER:
         tools = (*tools, InvokeSearchedTool())
     return ToolCatalogSnapshot.from_tools(tools), hidden
+
+
+def test_tool_search_describes_the_active_routing_protocol() -> None:
+    dispatcher = ToolSearch(ToolSearchMode.DISPATCHER).definition.description
+    native = ToolSearch(ToolSearchMode.NATIVE).definition.description
+    invoker = InvokeSearchedTool().definition.description
+
+    assert "only through InvokeSearchedTool" in dispatcher
+    assert "call matches directly starting next step" in native
+    assert "Never call searched tools directly" in invoker
+
+
+def test_dispatcher_discovery_projects_schema_with_strict_route() -> None:
+    definition = discovery_definition(SearchableTool())
+    projected = AttachmentProjector().project(
+        ToolDiscoveryAttachment((definition,), "dispatcher")
+    )
+    content = projected.content[0]
+    assert isinstance(content, InputText)
+    text = content.text
+
+    assert "DISPATCHER RULE: Never call discovered tools directly" in text
+    assert '"name": "Hidden"' in text
+    assert '"input_schema"' in text
+
+
+def test_native_discovery_does_not_require_dispatcher() -> None:
+    definition = discovery_definition(SearchableTool())
+    projected = AttachmentProjector().project(
+        ToolDiscoveryAttachment((definition,), "native")
+    )
+    content = projected.content[0]
+    assert isinstance(content, InputText)
+    text = content.text
+
+    assert "available as native tools" in text
+    assert "InvokeSearchedTool" not in text
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,11 @@
 from pathlib import Path
 
 from my_code.model.request import PromptStability
-from my_code.prompts.defaults import RESPONSE_STYLE_PROMPT, SAFETY_PROMPT
+from my_code.prompts.defaults import (
+    DISPATCHER_TOOLS_PROMPT,
+    RESPONSE_STYLE_PROMPT,
+    SAFETY_PROMPT,
+)
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.prompts.system import environment_prompt
@@ -25,11 +29,12 @@ a parent agent.
 Complete only the explicit task you were given. You may inspect, modify, and verify the
 workspace with the available tools, and may delegate when that materially helps."""
 
-_GENERAL_TASK = """Read relevant files before changing them and preserve unrelated work.
-Perform reasonable verification before finishing. Report to the parent agent
-what changed, what you verified, and any unresolved risks. Do not address an
-end user or assume access to the parent conversation; all task context must
-come from the explicit prompt and attachments."""
+_GENERAL_TASK = f"""Read relevant files before changing them and preserve
+unrelated work. Perform reasonable verification before finishing. Report to the
+parent agent what changed, what you verified, and any unresolved risks. Do not
+address an end user or assume access to the parent conversation; all task context
+must come from the explicit prompt and attachments.
+{DISPATCHER_TOOLS_PROMPT}"""
 
 
 def build_explore_prompt_registry(cwd: Path) -> PromptRegistry:

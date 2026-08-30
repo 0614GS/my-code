@@ -12,13 +12,10 @@ from my_code.permissions.models import (
 )
 from my_code.tools.base import Tool, ToolContext, ToolExposure, ToolOutput
 
-_DESCRIPTION = """Update the structured todo list for the current coding session.
-Use it for complex multi-step work, explicit user task lists, and newly discovered
-follow-up work; skip it for a single trivial or purely informational request.
-Keep task statuses current. Use pending, in_progress, or completed; normally keep
-exactly one task in_progress. Each item must include imperative content and a
-present-continuous activeForm. Replace the entire list on every call and remove
-items that are no longer relevant."""
+_DESCRIPTION = """Replace the session todo list for multi-step work; skip trivial
+tasks. Each item requires imperative content, present-continuous activeForm, and
+status pending, in_progress, or completed. Keep statuses current and normally one
+item in_progress."""
 
 
 class TodoWriteTool(Tool):

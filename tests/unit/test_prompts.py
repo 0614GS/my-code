@@ -7,6 +7,10 @@ from my_code.context.documents import ContextInstruction
 from my_code.context.normalization import ModelInputNormalizer
 from my_code.context.xml import render_context_instruction, wrap_xml
 from my_code.conversation.models import ConversationSummaryMessage
+from my_code.features.subagents.prompts import (
+    build_explore_prompt_registry,
+    build_general_prompt_registry,
+)
 from my_code.model.request import InputText, PromptStability, SystemPrompt, UserInput
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
@@ -100,6 +104,21 @@ def test_default_static_prompt_has_my_code_guidance_only(tmp_path: Path) -> None
     )
     lowered = static_text.casefold()
     assert all(term not in lowered for term in ("hooks", "skills", "mcp", "subagent"))
+
+
+def test_dispatcher_protocol_is_stable_for_agents_that_can_search_tools(
+    tmp_path: Path,
+) -> None:
+    main = build_system_prompt_registry(tmp_path).resolve().text
+    general = build_general_prompt_registry(tmp_path).resolve().text
+    explore = build_explore_prompt_registry(tmp_path).resolve().text
+
+    rule = "never call\nsearched tools directly"
+    assert rule in main
+    assert rule in general
+    assert "InvokeSearchedTool" in main
+    assert "InvokeSearchedTool" in general
+    assert "InvokeSearchedTool" not in explore
 
 
 def test_environment_prompt_has_fixed_runtime_order_and_direct_git_check(

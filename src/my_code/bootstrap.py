@@ -248,7 +248,10 @@ def _build_agent_components(
         max_output_tokens=settings.max_output_tokens,
         user_context_resolver=AgentsUserContextResolver(settings.cwd),
         attachment_resolver=DerivedAttachmentResolver(
-            (TodoReminderAttachmentSource(), *attachment_sources)
+            (
+                TodoReminderAttachmentSource(settings.tool_search_mode),
+                *attachment_sources,
+            )
         ),
         binding_resolver=binding,
         model_environment=environment,
