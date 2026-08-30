@@ -38,6 +38,8 @@ ChatService.stream_interactive()
 
 Headless `submit/stream` 不提供 pending source，保留单输入行为。前台与后台 continuation 共用活动 Session 的 pending source，因此用户输入会优先进入任一当前运行 invocation 的下一个安全边界。
 
+完整 compact 具有显式 lifecycle。Agent 的 auto/reactive 路径在摘要请求前发出 started，在 `Session.commit_compaction()` 成功后发出 completed；Chat 的 `/compact` 路径通过 `stream_compaction()` 提供相同的 frontend-neutral 事件。失败和取消沿原调用异常传播，不伪造 completed。轻量 microcompact 不属于这一 lifecycle。
+
 ## 工具与扩展运行
 
 每个 step 只捕获一次工具目录和曝光视图。请求中的 definitions、ToolCall 校验和后续 ToolRound 使用同一快照；MCP refresh、Skill reload 或其他目录更新只影响下一个 step。

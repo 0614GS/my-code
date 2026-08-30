@@ -21,6 +21,7 @@
 - Agent active 时可编辑 composer、session-bound 临时输入队列、FIFO step-boundary steering 与 Up 召回。
 - 单 UI owner、单 worker 离屏 scrollback render，以及有界/latest-wins live Markdown projection。
 - Codex 风格的结构化命令信息卡，以及由显式 model-step 边界驱动的工作组/最终回答分隔。
+- 带 spinner 和 invocation 计时的统一活动行，以及 manual/auto/reactive full compact 生命周期提示。
 - Ruff、Pyright standard、pytest 和 AST 架构守卫。
 - Linux Bash 的 Bubblewrap 挂载与 namespace 隔离、启动探测/fallback 状态，以及受保护 workspace 元数据占位租约。
 - 真实 sandbox 内 Bash 默认执行与逐命令 `require_escalated` 宿主授权；跨 Agent 权限提示串行且越界批准不可记忆。

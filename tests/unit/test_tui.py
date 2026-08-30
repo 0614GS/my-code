@@ -19,6 +19,8 @@ from rich.padding import Padding
 
 from my_code.auth.credentials import CredentialSource
 from my_code.chat.events import (
+    CompactionCompleted,
+    CompactionStarted,
     ContextUpdated,
     MaxStepsReached,
     ModelStepCompleted,
@@ -46,7 +48,7 @@ from my_code.config.providers import ProviderProtocol
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
 from my_code.model.capabilities import ModelDescriptor
-from my_code.model.primitives import ReasoningPresentation
+from my_code.model.primitives import ReasoningPresentation, TokenUsage
 from my_code.permissions.models import PermissionConfirmation
 from my_code.providers.manager import (
     ProviderProbeResult,
@@ -55,6 +57,7 @@ from my_code.providers.manager import (
 )
 from my_code.sessions.catalog import SessionSummary
 from my_code.tools.presentation import ToolUsePresentation
+from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.app import _STREAM_INVALIDATE_INTERVAL, MyCodeApp
 from my_code.tui.commands import SlashCommandRegistry
 from my_code.tui.dimensions import SURFACE_VERTICAL_PADDING
@@ -108,6 +111,11 @@ class FakeRuntime:
         while True:
             await asyncio.sleep(3600)
             yield TextDelta("")
+
+    async def stream_compaction(self) -> AsyncIterator[TurnEvent]:
+        yield CompactionStarted("manual")
+        status = replace(self.context_status(), compact_count=1)
+        yield CompactionCompleted("manual", TokenUsage(4, 2), status)
 
     def status(self) -> RuntimeStatus:
         return RuntimeStatus(
@@ -435,7 +443,7 @@ async def test_startup_keeps_composer_visible_and_queues_one_submission() -> Non
         assert "my-code" in stream.getvalue()
         assert "Capabilities are initializing" not in stream.getvalue()
         assert "Initializing capabilities" in fragment_list_to_text(
-            to_formatted_text(app._dynamic_text())
+            to_formatted_text(app._activity_text())
         )
         assert app._composer_read_only() is False
 
@@ -834,6 +842,7 @@ async def test_max_steps_retires_partial_projection_before_scrollback() -> None:
     assert len(app.write_snapshots) == 2
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
     assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+    assert app._activity_indicator.active is False
 
 
 @pytest.mark.asyncio
@@ -850,6 +859,28 @@ async def test_failed_turn_retires_partial_projection_before_writes() -> None:
     assert len(app.write_snapshots) == 2
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
     assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+    assert app._activity_indicator.active is False
+
+
+@pytest.mark.asyncio
+async def test_activity_ticker_only_invalidates_while_visible_and_stops() -> None:
+    app = InvalidateRecordingApp(FakeRuntime())
+    app._running = True
+    owner = app._begin_activity("Working")
+    baseline = app.invalidate_calls
+    ticker = asyncio.create_task(app._tick_activity())
+
+    await asyncio.sleep(0.22)
+    assert app.invalidate_calls > baseline
+
+    app._end_activity(owner)
+    stopped_at = app.invalidate_calls
+    await asyncio.sleep(0.15)
+    assert app.invalidate_calls == stopped_at
+
+    app._running = False
+    app._activity_changed.set()
+    await asyncio.wait_for(ticker, 1)
 
 
 @pytest.mark.asyncio
@@ -867,6 +898,7 @@ async def test_cancelled_turn_retires_partial_projection_before_writes() -> None
     assert len(app.write_snapshots) == 2
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
     assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+    assert app._activity_indicator.active is False
 
 
 @pytest.mark.asyncio
@@ -1070,6 +1102,75 @@ def test_streaming_assistant_text_renders_markdown_before_completion() -> None:
     assert "partial response" in text
     assert "• first item" in text
     assert any("bold" in style for style, *_ in rendered)
+
+
+def test_work_indicator_is_below_tool_activity_in_its_own_row() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), width=80, force_terminal=False),
+    )
+    app._begin_agent_activity("my-code is working…")
+    app._tool_activity = ToolActivityGroup()
+    app._tool_activity.start(
+        "read-1",
+        ToolUsePresentation(
+            display_name="Read",
+            activity="Reading file",
+            summary="src/example.py",
+        ),
+    )
+
+    dynamic = fragment_list_to_text(to_formatted_text(app._dynamic_text()))
+    activity = fragment_list_to_text(to_formatted_text(app._activity_text()))
+
+    assert "Read" in dynamic
+    assert "my-code is working…" not in dynamic
+    assert "my-code is working…" in activity
+    app._end_agent_activity()
+
+
+@pytest.mark.asyncio
+async def test_manual_compaction_shows_progress_then_commits_status() -> None:
+    class BlockingCompactRuntime(FakeRuntime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.compact_count = 0
+
+        def context_status(self) -> ContextStatus:
+            return replace(super().context_status(), compact_count=self.compact_count)
+
+        async def stream_compaction(self) -> AsyncIterator[TurnEvent]:
+            yield CompactionStarted("manual")
+            self.started.set()
+            await self.release.wait()
+            self.compact_count = 1
+            status = self.context_status()
+            yield CompactionCompleted("manual", TokenUsage(4, 2), status)
+
+    runtime = BlockingCompactRuntime()
+    stream = StringIO()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=stream, width=80, force_terminal=False),
+    )
+    task = asyncio.create_task(app._run_compaction())
+    await runtime.started.wait()
+
+    progress = fragment_list_to_text(to_formatted_text(app._activity_text()))
+    assert "Compacting context…" in progress
+    assert "0s" in progress
+
+    runtime.release.set()
+    await task
+
+    assert app._activity_indicator.active is False
+    assert app._context_status is not None
+    assert app._context_status.compact_count == 1
+    assert "Context compacted · manual" in stream.getvalue()
 
 
 def test_theme_adapts_user_surface_to_light_and_dark_terminals() -> None:

@@ -11,6 +11,8 @@ from rich.console import RenderableType
 
 from my_code.chat.events import (
     AttachmentLoaded,
+    CompactionCompleted,
+    CompactionStarted,
     ContextUpdated,
     MaxStepsReached,
     ModelStepCompleted,
@@ -33,6 +35,10 @@ from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.features.todos.models import TodoItem
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.block_flow import TurnBlockCoordinator
+from my_code.tui.presentation import (
+    compaction_activity_label,
+    compaction_completed_message,
+)
 from my_code.tui.theme import TuiTheme
 from my_code.tui.widgets import (
     assistant_message,
@@ -51,7 +57,6 @@ class TurnFlowMixin:
     theme: TuiTheme
     _busy: bool
     _agent_active: bool
-    _activity: str
     _stream_text: str
     _reasoning_parts: list[str]
     _todos: tuple[TodoItem, ...]
@@ -87,6 +92,15 @@ class TurnFlowMixin:
     def _refresh_status(self) -> None:
         raise NotImplementedError
 
+    def _begin_agent_activity(self, label: str) -> None:
+        raise NotImplementedError
+
+    def _update_agent_activity(self, label: str) -> None:
+        raise NotImplementedError
+
+    def _end_agent_activity(self) -> None:
+        raise NotImplementedError
+
     async def _run_turn(
         self,
         prompt: str,
@@ -96,7 +110,7 @@ class TurnFlowMixin:
     ) -> None:
         self._agent_active = True
         self._busy = True
-        self._activity = "my-code is working…"
+        self._begin_agent_activity("my-code is working…")
         self._stream_text = ""
         self._reasoning_parts = []
         self._blocks.reset_group()
@@ -143,11 +157,17 @@ class TurnFlowMixin:
                     await self._commit_reasoning(event)
                 elif isinstance(event, ModelStepCompleted):
                     await self._commit_model_step(event)
+                elif isinstance(event, CompactionStarted):
+                    self._update_agent_activity(
+                        compaction_activity_label(event.trigger)
+                    )
+                elif isinstance(event, CompactionCompleted):
+                    await self._commit_compaction(event, "my-code is working…")
                 elif isinstance(event, ToolStarted):
                     if self._tool_activity is None:
                         self._tool_activity = ToolActivityGroup()
                     self._tool_activity.start(event.tool_use_id, event.presentation)
-                    self._activity = event.presentation.activity
+                    self._update_agent_activity(event.presentation.activity)
                 elif isinstance(event, ToolFinished):
                     activity = self._tool_activity
                     item = (
@@ -166,7 +186,7 @@ class TurnFlowMixin:
                         and _is_todo(item.use)
                     ):
                         activity.remove(event.tool_use_id)
-                    self._activity = "my-code is working…"
+                    self._update_agent_activity("my-code is working…")
                 elif isinstance(event, TodoListUpdated):
                     await self._flush_tool_activity()
                     self._todos = event.todos
@@ -175,7 +195,6 @@ class TurnFlowMixin:
                     self._apply_context_update(event.status)
                 elif isinstance(event, TurnSucceeded):
                     partial_text = self._retire_transient_content()
-                    self._activity = ""
                     await self._flush_tool_activity()
                     await self._flush_unclassified_blocks()
                     if partial_text:
@@ -190,7 +209,6 @@ class TurnFlowMixin:
                     completed = True
                 elif isinstance(event, MaxStepsReached):
                     partial_text = self._retire_transient_content()
-                    self._activity = ""
                     await self._flush_tool_activity()
                     await self._flush_unclassified_blocks()
                     if partial_text:
@@ -208,7 +226,6 @@ class TurnFlowMixin:
                 self._invalidate_for_event(event)
         except asyncio.CancelledError:
             partial_text = self._retire_transient_content()
-            self._activity = ""
             await self._interrupt_and_flush_tools()
             await self._flush_unclassified_blocks()
             await self._write(system_message("Turn interrupted.", error=True))
@@ -217,7 +234,6 @@ class TurnFlowMixin:
             raise
         except Exception as error:
             partial_text = self._retire_transient_content()
-            self._activity = ""
             await self._interrupt_and_flush_tools()
             await self._flush_unclassified_blocks()
             await self._write(system_message(f"Error: {error}", error=True))
@@ -225,13 +241,13 @@ class TurnFlowMixin:
                 await self._write(assistant_message(partial_text))
         finally:
             partial_text = self._retire_transient_content()
-            self._activity = ""
             await self._interrupt_and_flush_tools()
             await self._flush_unclassified_blocks()
             if not completed and partial_text:
                 await self._write(assistant_message(partial_text))
             self._agent_active = False
             self._busy = False
+            self._end_agent_activity()
             self._refresh_status()
 
     async def _consume_background_event(self, event: TurnEvent) -> None:
@@ -261,11 +277,15 @@ class TurnFlowMixin:
             await self._commit_reasoning(event)
         elif isinstance(event, ModelStepCompleted):
             await self._commit_model_step(event)
+        elif isinstance(event, CompactionStarted):
+            self._update_agent_activity(compaction_activity_label(event.trigger))
+        elif isinstance(event, CompactionCompleted):
+            await self._commit_compaction(event, "Handling background task…")
         elif isinstance(event, ToolStarted):
             if self._tool_activity is None:
                 self._tool_activity = ToolActivityGroup()
             self._tool_activity.start(event.tool_use_id, event.presentation)
-            self._activity = event.presentation.activity
+            self._update_agent_activity(event.presentation.activity)
         elif isinstance(event, ToolFinished):
             activity = self._tool_activity
             item = (
@@ -284,7 +304,7 @@ class TurnFlowMixin:
                 and _is_todo(item.use)
             ):
                 activity.remove(event.tool_use_id)
-            self._activity = "Handling background task…"
+            self._update_agent_activity("Handling background task…")
         elif isinstance(event, TodoListUpdated):
             await self._flush_tool_activity()
             self._todos = event.todos
@@ -293,7 +313,6 @@ class TurnFlowMixin:
             self._apply_context_update(event.status)
         elif isinstance(event, TurnSucceeded):
             partial_text = self._retire_transient_content()
-            self._activity = ""
             await self._flush_tool_activity()
             await self._flush_unclassified_blocks()
             if partial_text:
@@ -306,7 +325,6 @@ class TurnFlowMixin:
             )
         elif isinstance(event, MaxStepsReached):
             partial_text = self._retire_transient_content()
-            self._activity = ""
             await self._flush_tool_activity()
             await self._flush_unclassified_blocks()
             if partial_text:
@@ -326,6 +344,17 @@ class TurnFlowMixin:
                 context_entry_count=status.context_entry_count,
                 conversation_entry_count=status.conversation_entry_count,
             )
+
+    async def _commit_compaction(
+        self, event: CompactionCompleted, resume_label: str
+    ) -> None:
+        self._apply_context_update(event.status)
+        await self._flush_tool_activity()
+        await self._write(
+            system_message(compaction_completed_message(event.trigger, event.status))
+        )
+        self._blocks.mark_work()
+        self._update_agent_activity(resume_label)
 
     async def _commit_assistant_text(self, text: str) -> None:
         """Hold completed text until the model step can classify it."""

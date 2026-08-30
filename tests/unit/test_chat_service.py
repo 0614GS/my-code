@@ -19,6 +19,8 @@ from my_code.bootstrap import bootstrap_chat
 from my_code.chat.events import (
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
+    CompactionCompleted,
+    CompactionStarted,
     ContextUpdated,
     TurnInputAccepted,
     TurnSucceeded,
@@ -424,6 +426,38 @@ async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> 
     assert active.compact_count == 1
     assert active.context_entries == (summary,)
     assert status.compact_count == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_compaction_stream_exposes_committed_lifecycle(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    active = runtime.state.session
+    user = HumanMessage(content="compact with progress")
+    active.append_human_message(user)
+    summary = ConversationSummaryMessage(
+        content="continuation state",
+        parent_uuid=user.uuid,
+    )
+    boundary = CompactBoundary(
+        parent_uuid=user.uuid,
+        summary_uuid=summary.uuid,
+        trigger="manual",
+        pre_compact_chars=10,
+    )
+    runtime.context.compact = AsyncMock(  # type: ignore[method-assign]
+        return_value=CompactionOutcome((), summary, boundary, TokenUsage(4, 2))
+    )
+
+    events = [event async for event in runtime.stream_compaction()]
+
+    assert events[0] == CompactionStarted("manual")
+    assert isinstance(events[1], CompactionCompleted)
+    assert events[1].trigger == "manual"
+    assert events[1].usage == TokenUsage(4, 2)
+    assert events[1].status.compact_count == 1
+    assert active.compact_count == 1
 
 
 @pytest.mark.asyncio

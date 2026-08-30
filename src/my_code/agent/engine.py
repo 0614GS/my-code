@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from my_code.agent.events import (
+    AgentCompactionCompleted,
+    AgentCompactionStarted,
     AgentConversationUpdated,
     AgentEvent,
     AgentInputAccepted,
@@ -28,7 +30,7 @@ from my_code.agent.models import (
     UserTurnInput,
 )
 from my_code.context.engine import ContextEngine
-from my_code.context.models import ContextOverflow, ContextPlan
+from my_code.context.models import CompactionOutcome, ContextOverflow, ContextPlan
 from my_code.context.session import ContextRuntime
 from my_code.conversation.attachments import (
     AttachmentPayload,
@@ -234,7 +236,13 @@ class AgentEngine:
         while True:
             step_count += 1
             tools = self._snapshot_tools(session)
-            request = await self._plan_with_proactive_compact(session, runtime, tools)
+            try:
+                request = await self._plan_request(session, runtime, tools)
+            except ContextOverflow:
+                yield AgentCompactionStarted("auto")
+                outcome = await self._compact_for_retry(session, runtime, "auto")
+                yield AgentCompactionCompleted("auto", outcome.usage)
+                request = await self._plan_request(session, runtime, tools)
             reactive_attempted = False
             while True:
                 projector = _ModelStreamProjector()
@@ -247,7 +255,11 @@ class AgentEngine:
                     if reactive_attempted:
                         raise
                     reactive_attempted = True
-                    await self._compact_for_retry(session, runtime, "reactive")
+                    yield AgentCompactionStarted("reactive")
+                    outcome = await self._compact_for_retry(
+                        session, runtime, "reactive"
+                    )
+                    yield AgentCompactionCompleted("reactive", outcome.usage)
                     request = await self._plan_request(session, runtime, tools)
                     continue
                 break
@@ -470,25 +482,14 @@ class AgentEngine:
         session: Session,
         runtime: ContextRuntime,
         trigger: CompactTrigger,
-    ) -> None:
+    ) -> CompactionOutcome:
         """在当前 turn 内生成并提交 auto/reactive compact。"""
 
         outcome = await self._context.compact(session.context_planning_state(), trigger)
         session.commit_compaction(
             outcome.replacements, outcome.summary, outcome.boundary
         )
-
-    async def _plan_with_proactive_compact(
-        self,
-        session: Session,
-        runtime: ContextRuntime,
-        tools: ToolCatalogSnapshot | ToolExposureSnapshot,
-    ) -> ContextPlan:
-        try:
-            return await self._plan_request(session, runtime, tools)
-        except ContextOverflow:
-            await self._compact_for_retry(session, runtime, "auto")
-            return await self._plan_request(session, runtime, tools)
+        return outcome
 
     async def _plan_request(
         self,

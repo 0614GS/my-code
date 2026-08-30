@@ -10,6 +10,8 @@ from threading import Thread
 from typing import Protocol, cast
 
 from my_code.agent.events import (
+    AgentCompactionCompleted,
+    AgentCompactionStarted,
     AgentConversationUpdated,
     AgentEvent,
     AgentInputAccepted,
@@ -34,6 +36,8 @@ from my_code.chat.events import (
     AttachmentLoaded,
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
+    CompactionCompleted,
+    CompactionStarted,
     ContextUpdated,
     MaxStepsReached,
     ModelStepCompleted,
@@ -764,7 +768,15 @@ class ChatService:
     ) -> AsyncIterator[TurnEvent]:
         previous_todos = project_todos(session.conversation).todos
         async for event in events:
-            if isinstance(event, AgentInputAccepted):
+            if isinstance(event, AgentCompactionStarted):
+                yield CompactionStarted(event.trigger)
+            elif isinstance(event, AgentCompactionCompleted):
+                yield CompactionCompleted(
+                    event.trigger,
+                    event.usage,
+                    self.context_status(),
+                )
+            elif isinstance(event, AgentInputAccepted):
                 yield TurnInputAccepted(event.input_id, event.prompt)
             elif isinstance(event, AgentInputFailed):
                 yield TurnInputFailed(event.input_id, event.prompt, event.error)
@@ -869,8 +881,20 @@ class ChatService:
         )
 
     async def compact(self) -> ContextStatus:
+        completed: CompactionCompleted | None = None
+        async for event in self.stream_compaction():
+            if isinstance(event, CompactionCompleted):
+                completed = event
+        if completed is None:
+            raise RuntimeError("Compaction stream ended without completion")
+        return completed.status
+
+    async def stream_compaction(self) -> AsyncIterator[TurnEvent]:
+        """Run a manual full compaction with frontend-neutral lifecycle events."""
+
         async with self.state.operation_lock():
             session = self.state.session
+            yield CompactionStarted("manual")
             outcome = await self.context.compact(
                 session.context_planning_state(),
                 "manual",
@@ -880,7 +904,7 @@ class ChatService:
                 outcome.summary,
                 outcome.boundary,
             )
-            return self.context_status()
+            yield CompactionCompleted("manual", outcome.usage, self.context_status())
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:
         self.permission_prompter.set_handler(handler)

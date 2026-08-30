@@ -13,6 +13,7 @@ from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import (
     AnyFormattedText,
     FormattedText,
+    StyleAndTextTuples,
     to_formatted_text,
 )
 from prompt_toolkit.history import InMemoryHistory
@@ -30,6 +31,8 @@ from rich.padding import Padding
 from my_code.chat.events import (
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
+    CompactionCompleted,
+    CompactionStarted,
     TurnEvent,
 )
 from my_code.chat.history import (
@@ -49,6 +52,8 @@ from my_code.permissions.models import (
 from my_code.providers.manager import ModelView, ProviderView
 from my_code.sessions.catalog import SessionSummary
 from my_code.tui.activity import ToolActivityGroup
+from my_code.tui.activity_flow import ActivityFlowMixin
+from my_code.tui.activity_indicator import ActivityOwner
 from my_code.tui.block_flow import TurnBlockCoordinator
 from my_code.tui.commands import (
     CommandConcurrency,
@@ -79,10 +84,11 @@ from my_code.tui.panels import (
 )
 from my_code.tui.picker import PickerState, PickerView
 from my_code.tui.presentation import (
+    compaction_activity_label,
+    compaction_completed_message,
     format_context_usage,
     render_agent_view,
     render_context_card,
-    render_context_status,
     render_mcp,
     render_skills,
     render_status_card,
@@ -123,7 +129,7 @@ from my_code.tui.widgets import (
 _STREAM_INVALIDATE_INTERVAL = 0.04
 
 
-class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
+class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
     """Inline terminal application; canonical state stays in ChatService."""
 
     def __init__(
@@ -146,7 +152,8 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         self._running = False
         self._stream_invalidate_pending = False
         self._last_stream_invalidate = 0.0
-        self._activity = ""
+        self._initialize_activity_flow()
+        self._startup_activity_owner: ActivityOwner | None = None
         self._stream_text = ""
         self._stream_frame = FormattedText()
         self._stream_frame_revision = 0
@@ -218,6 +225,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
             input_control=self.input_control,
             key_bindings=self.key_bindings,
             dynamic_text=self._dynamic_text,
+            activity_text=self._activity_text,
             queue_text=self._queue_text,
             status_text=self._status_display,
             interaction_text=self._interaction_text,
@@ -249,7 +257,9 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         self._context_status = self.runtime.context_status()
         self._todos = view.status.todos
         await self._write(welcome(view.status, self.theme))
-        self._activity = "Initializing capabilities…"
+        self._startup_activity_owner = self._begin_activity(
+            "Initializing capabilities…"
+        )
         current_mode = getattr(self.runtime, "current_permission_mode", None)
         if current_mode is not None and current_mode().requires_confirmation:
             self._open_full_access_confirmation()
@@ -259,6 +269,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         self._running = True
 
         def start_background() -> None:
+            self._spawn(self._tick_activity())
             self._spawn(self._restore_startup_history(view.history))
             self._spawn(self._initialize_capabilities())
 
@@ -282,7 +293,8 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
             self._context_status = self.runtime.context_status()
             self._todos = view.status.todos
             await self._history_ready.wait()
-            self._activity = ""
+            self._end_activity(self._startup_activity_owner)
+            self._startup_activity_owner = None
             await self._write(
                 system_message(
                     f"Ready · {view.status.tool_count} tools · "
@@ -295,7 +307,8 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
             raise
         except Exception as error:
             self._startup_error = error
-            self._activity = ""
+            self._end_activity(self._startup_activity_owner)
+            self._startup_activity_owner = None
             await self._write(
                 system_message(f"Capability initialization failed: {error}", error=True)
             )
@@ -468,7 +481,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         start, visible = self._slash_menu.visible(7)
         selected = self._slash_menu.selected
         name_width = max(len(command.name) for command in visible) + 2
-        fragments: list[tuple[str, str]] = []
+        fragments: StyleAndTextTuples = []
         for offset, command in enumerate(visible):
             index = start + offset
             style = "class:selected" if index == selected else ""
@@ -521,15 +534,12 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
     def _dynamic_text(self) -> AnyFormattedText:
         if self._panel == "agents" and self._agent_task_id is not None:
             return self._agent_panel_text()
-        parts = [
-            part
-            for part in (
-                "" if self._tool_activity else self._activity,
-                self._reasoning_summary(),
-            )
-            if part
-        ]
-        fragments = list(to_formatted_text("\n".join(parts)))
+        fragments: StyleAndTextTuples = []
+        reasoning = self._reasoning_summary()
+        if reasoning:
+            if fragments:
+                fragments.append(("", "\n"))
+            fragments.extend(to_formatted_text(reasoning))
         if self._tool_activity:
             if fragments:
                 fragments.append(("", "\n"))
@@ -555,6 +565,9 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
             )
             fragments.extend(to_formatted_text(frame))
         return FormattedText(fragments)
+
+    def _activity_text(self) -> FormattedText:
+        return self._activity_indicator.text()
 
     def _queue_text(self) -> FormattedText:
         queued = getattr(self.runtime, "queued_inputs", lambda: ())()
@@ -770,13 +783,11 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         try:
             if not self._startup_ready.is_set() or not self._history_ready.is_set():
                 self._busy = True
-                self._activity = "Initializing capabilities…"
                 self._invalidate()
                 await asyncio.gather(
                     self._startup_ready.wait(), self._history_ready.wait()
                 )
                 self._busy = False
-                self._activity = ""
                 if self._startup_error is not None:
                     return
             outcome = self.commands.dispatch(line, status=self.runtime.status())
@@ -876,12 +887,12 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
         if outcome.skill_operation is not None:
             if outcome.skill_operation == "reload":
                 self._busy = True
-                self._activity = "Reloading skills…"
+                activity_owner = self._begin_activity("Reloading skills…")
                 try:
                     capabilities = await self.runtime.reload_skills()
                 finally:
                     self._busy = False
-                    self._activity = ""
+                    self._end_activity(activity_owner)
                     self._refresh_status()
             else:
                 capabilities = self.runtime.capabilities()
@@ -892,7 +903,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
                 capabilities = self.runtime.capabilities()
             else:
                 self._busy = True
-                self._activity = f"MCP {operation} · {server}…"
+                activity_owner = self._begin_activity(f"MCP {operation} · {server}…")
                 try:
                     capabilities = (
                         await self.runtime.refresh_mcp(server)
@@ -901,7 +912,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
                     )
                 finally:
                     self._busy = False
-                    self._activity = ""
+                    self._end_activity(activity_owner)
                     self._refresh_status()
             await emit(render_mcp(capabilities))
         if outcome.show_tasks:
@@ -948,7 +959,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
                     self._saved_draft = self.buffer.text
                     self._agent_active = True
                     self._busy = True
-                    self._activity = "Handling background task…"
+                    self._begin_agent_activity("Handling background task…")
                     self._stream_text = ""
                     self._reasoning_parts = []
                     self._tool_activity = None
@@ -956,7 +967,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
                     partial_text = self._retire_transient_content()
                     self._agent_active = False
                     self._busy = False
-                    self._activity = ""
+                    self._end_agent_activity()
                     await self._interrupt_and_flush_tools()
                     if event.error:
                         await self._write(
@@ -980,6 +991,7 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
             )
             self._agent_active = False
             self._busy = False
+            self._end_agent_activity()
 
     async def _watch_subagent_activity(self) -> None:
         stream = getattr(self.runtime, "stream_subagent_activity", None)
@@ -997,20 +1009,25 @@ class MyCodeApp(PanelFlowMixin, TurnFlowMixin):
 
     async def _run_compaction(self) -> None:
         self._busy = True
-        self._activity = "Compacting conversation…"
+        activity_owner: ActivityOwner | None = None
         try:
-            status = await self.runtime.compact()
-            self._context_status = status
-            await self._write(
-                system_message(
-                    "Conversation compacted.\n" + render_context_status(status)
-                )
-            )
+            async for event in self.runtime.stream_compaction():
+                if isinstance(event, CompactionStarted):
+                    activity_owner = self._begin_activity(
+                        compaction_activity_label(event.trigger)
+                    )
+                elif isinstance(event, CompactionCompleted):
+                    self._context_status = event.status
+                    await self._write(
+                        system_message(
+                            compaction_completed_message(event.trigger, event.status)
+                        )
+                    )
         except Exception as error:
             await self._write(system_message(f"Compaction failed: {error}", error=True))
         finally:
             self._busy = False
-            self._activity = ""
+            self._end_activity(activity_owner)
             self._refresh_status()
 
     async def _ask_permission(

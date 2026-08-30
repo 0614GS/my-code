@@ -1,11 +1,14 @@
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
 from my_code.agent.engine import AgentEngine
 from my_code.agent.events import (
+    AgentCompactionCompleted,
+    AgentCompactionStarted,
     AgentConversationUpdated,
     AgentInputAccepted,
     AgentModelStepCompleted,
@@ -24,6 +27,7 @@ from my_code.agent.models import (
 )
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
+from my_code.context.models import ContextOverflow
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
 from my_code.context.window import ContextWindow
@@ -691,11 +695,92 @@ async def test_reactive_retry_does_not_increment_completed_steps(
         model_type=OverflowOnceModel,
     )
 
-    result = await engine.submit(AgentTurnInput("recover"))
+    events = [event async for event in engine.stream(AgentTurnInput("recover"))]
+    result = events[-1]
 
     assert isinstance(result, AgentTurnSucceeded)
     assert result.completed_steps == 1
     assert len(model.requests) == 3
+    lifecycle = [
+        event
+        for event in events
+        if isinstance(event, (AgentCompactionStarted, AgentCompactionCompleted))
+    ]
+    assert lifecycle == [
+        AgentCompactionStarted("reactive"),
+        AgentCompactionCompleted("reactive", TokenUsage(2, 1)),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_proactive_compaction_events_surround_the_durable_commit(
+    tmp_path: Path,
+) -> None:
+    engine, _, session, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput((ModelTextBlock("summary"),), "end_turn", TokenUsage(4, 2)),
+            ModelOutput((ModelTextBlock("done"),), "end_turn", TokenUsage(3, 1)),
+        ],
+    )
+    context = engine.engine._context
+    original_plan = context.plan
+    attempts = 0
+
+    def overflow_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ContextOverflow(10_001, 10_000)
+        return original_plan(*args, **kwargs)
+
+    context.plan = overflow_once  # type: ignore[method-assign]
+    events = [event async for event in engine.stream(AgentTurnInput("compact"))]
+
+    started = next(
+        index
+        for index, event in enumerate(events)
+        if isinstance(event, AgentCompactionStarted)
+    )
+    completed = next(
+        index
+        for index, event in enumerate(events)
+        if isinstance(event, AgentCompactionCompleted)
+    )
+    assert events[started] == AgentCompactionStarted("auto")
+    assert events[completed] == AgentCompactionCompleted("auto", TokenUsage(4, 2))
+    assert started < completed
+    assert session.compact_count == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_proactive_compaction_has_no_completed_event(
+    tmp_path: Path,
+) -> None:
+    engine, _, session, _ = _engine(tmp_path, [])
+    context = engine.engine._context
+
+    def overflow(*args, **kwargs):
+        del args, kwargs
+        raise ContextOverflow(10_001, 10_000)
+
+    context.plan = overflow  # type: ignore[method-assign]
+    context.compact = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("summary failed")
+    )
+    events = []
+
+    with pytest.raises(RuntimeError, match="summary failed"):
+        async for event in engine.stream(AgentTurnInput("compact")):
+            events.append(event)
+
+    lifecycle = [
+        event
+        for event in events
+        if isinstance(event, (AgentCompactionStarted, AgentCompactionCompleted))
+    ]
+    assert lifecycle == [AgentCompactionStarted("auto")]
+    assert session.compact_count == 0
 
 
 @pytest.mark.asyncio

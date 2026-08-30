@@ -7,6 +7,7 @@ from rich.console import Console, RenderableType
 from rich.text import Text
 
 from my_code import __version__
+from my_code.chat.events import CompactionTrigger
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import (
     BackgroundTaskView,
@@ -117,6 +118,25 @@ def render_context_status(status: ContextStatus) -> str:
 def format_context_usage(status: ContextStatus) -> str:
     used = status.input_tokens or status.estimated_input_tokens
     return f"{format_token_k(used)} / {format_token_k(status.input_limit_tokens)}"
+
+
+def compaction_activity_label(trigger: CompactionTrigger) -> str:
+    return {
+        "manual": "Compacting context…",
+        "auto": "Compacting context automatically…",
+        "reactive": "Compacting context after context overflow…",
+    }[trigger]
+
+
+def compaction_completed_message(
+    trigger: CompactionTrigger, status: ContextStatus
+) -> str:
+    source = {
+        "manual": "manual",
+        "auto": "automatic",
+        "reactive": "context overflow recovery",
+    }[trigger]
+    return f"Context compacted · {source} · {format_context_usage(status)}"
 
 
 def format_token_k(tokens: int) -> str:
@@ -261,6 +281,8 @@ def _elapsed(task: SubagentTaskView) -> str:
 
 
 __all__ = [
+    "compaction_activity_label",
+    "compaction_completed_message",
     "format_context_usage",
     "render_context_status",
     "render_context_card",

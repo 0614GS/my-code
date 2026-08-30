@@ -52,6 +52,7 @@ def build_terminal_layout(
     input_control: BufferControl,
     key_bindings: KeyBindings,
     dynamic_text: Callable[[], AnyFormattedText],
+    activity_text: Callable[[], AnyFormattedText],
     queue_text: Callable[[], AnyFormattedText],
     status_text: Callable[[], AnyFormattedText],
     interaction_text: Callable[[], AnyFormattedText],
@@ -78,6 +79,11 @@ def build_terminal_layout(
             Window(
                 content=_formatted_control(dynamic_text),
                 height=Dimension(min=0, max=12),
+                dont_extend_height=True,
+            ),
+            Window(
+                content=_formatted_control(activity_text),
+                height=Dimension(min=0, max=1),
                 dont_extend_height=True,
             ),
             Window(height=1, char="─", style="class:border"),

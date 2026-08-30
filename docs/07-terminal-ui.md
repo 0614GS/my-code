@@ -12,7 +12,7 @@ TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义�
 
 ## 事件与展示
 
-一次 prompt 调用 `ChatService.stream()`，TUI 消费 text/reasoning started、delta、completed，显式 model-step completed，attachment、tool started/finished、Todo/context 更新和 turn 终态。
+一次 prompt 调用 `ChatService.stream()`，TUI 消费 text/reasoning started、delta、completed，显式 model-step completed、完整 compact started/completed、attachment、tool started/finished、Todo/context 更新和 turn 终态。
 
 - delta 只存在于动态区；completed 到达后先清除预览，再把最终 Rich renderable 固化到 scrollback。
 - Markdown live projection 缓存稳定块，只重画不稳定尾块；Rich 输入上限 16 KiB、动态区最多 12 个视觉行，超长未闭合块退化为 8 KiB plain-text tail。最终 completed 内容仍完整渲染。
@@ -23,6 +23,8 @@ TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义�
   或从 Session 恢复时，展开持久化的内联 diff。权限确认、失败和取消路径不展开 diff。
 - 异常、取消、max-steps 和后台 continuation 使用同样的“移除动态副本后固化终态”边界。
 - 状态栏在启动、每个已提交的工具 step、turn 结束、Session 恢复或配置变化等安全边界刷新 context snapshot；重绘 callback 不重新执行 context 规划。工具 step 的 snapshot 在 assistant tool call 与对应 tool results 均提交后生成，避免对未闭合的 model input 做规划。
+- composer 上方的活动行由独立的 TUI state/controller 和独立单行 Window 管理，固定排列在 thinking、工具和流式模型内容之后。它使用单调时钟显示 spinner、阶段标题和整次 invocation 耗时；阶段切换只更新标题，不重置时钟。唯一 ticker 只触发廉价 `FormattedText` redraw，不进入 Rich/Markdown renderer，关闭时随 UI tasks 回收。
+- `/compact` 使用独立操作时钟；auto/reactive compact 保留当前 invocation 时钟。成功事件更新 context snapshot，并把触发来源与压缩后 usage 写入 scrollback；失败或取消只走既有终态错误路径。microcompact 保持静默，压缩进度不写 canonical Session。
 
 恢复历史和实时事件使用相同的安全投影。工具展示优先使用执行时持久化的 presentation；TUI 不重新解释原始 Conversation 或读取外置结果文件。
 

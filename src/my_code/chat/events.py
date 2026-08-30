@@ -1,12 +1,19 @@
 """Frontend-neutral events emitted by :class:`ChatService`."""
 
 from dataclasses import dataclass
+from typing import Literal
 
 from my_code.chat.status import ContextStatus
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
-from my_code.model.primitives import ReasoningDisclosure, ReasoningPresentation
+from my_code.model.primitives import (
+    ReasoningDisclosure,
+    ReasoningPresentation,
+    TokenUsage,
+)
 from my_code.tools.presentation import ToolUsePresentation
+
+type CompactionTrigger = Literal["auto", "manual", "reactive"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +76,22 @@ class ModelStepCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class CompactionStarted:
+    """A full context compaction is generating a continuation summary."""
+
+    trigger: CompactionTrigger
+
+
+@dataclass(frozen=True, slots=True)
+class CompactionCompleted:
+    """A full context compaction was committed and has a fresh budget view."""
+
+    trigger: CompactionTrigger
+    usage: TokenUsage
+    status: ContextStatus
+
+
+@dataclass(frozen=True, slots=True)
 class AttachmentLoaded:
     path: str
     is_directory: bool
@@ -128,6 +151,8 @@ class BackgroundInvocationFinished:
 type TurnEvent = (
     BackgroundInvocationStarted
     | BackgroundInvocationFinished
+    | CompactionStarted
+    | CompactionCompleted
     | AttachmentLoaded
     | TurnInputAccepted
     | TurnInputFailed
@@ -152,6 +177,9 @@ __all__ = [
     "BackgroundInvocationFinished",
     "BackgroundInvocationStarted",
     "ContextUpdated",
+    "CompactionCompleted",
+    "CompactionStarted",
+    "CompactionTrigger",
     "MaxStepsReached",
     "ModelStepCompleted",
     "ReasoningCompleted",

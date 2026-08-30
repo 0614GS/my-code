@@ -4,8 +4,13 @@ from dataclasses import dataclass
 
 from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
 from my_code.conversation.presentation import ToolResultPresentation
+from my_code.conversation.state import CompactTrigger
 from my_code.foundation.json import JsonObject
-from my_code.model.primitives import ReasoningDisclosure, ReasoningPresentation
+from my_code.model.primitives import (
+    ReasoningDisclosure,
+    ReasoningPresentation,
+    TokenUsage,
+)
 from my_code.tools.presentation import ToolUsePresentation
 
 
@@ -67,6 +72,21 @@ class AgentModelStepCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentCompactionStarted:
+    """A full context compaction started before the next model request."""
+
+    trigger: CompactTrigger
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCompactionCompleted:
+    """A full context compaction was committed durably."""
+
+    trigger: CompactTrigger
+    usage: TokenUsage
+
+
+@dataclass(frozen=True, slots=True)
 class AgentToolStarted:
     tool_use_id: str
     name: str
@@ -90,7 +110,9 @@ class AgentConversationUpdated:
 
 
 type AgentEvent = (
-    AgentInputAccepted
+    AgentCompactionStarted
+    | AgentCompactionCompleted
+    | AgentInputAccepted
     | AgentInputFailed
     | AgentTextStarted
     | AgentTextDelta
@@ -108,6 +130,8 @@ type AgentEvent = (
 
 
 __all__ = [
+    "AgentCompactionCompleted",
+    "AgentCompactionStarted",
     "AgentConversationUpdated",
     "AgentInputAccepted",
     "AgentInputFailed",

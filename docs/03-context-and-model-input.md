@@ -61,6 +61,8 @@ Provider adapter 只消费 `ModelRequest`，不读取 Session 或 AppState。绑
 
 `ContextEngine.compact()` 只生成 `CompactionOutcome`；Agent 的自动/反应式路径或 Chat 的手动路径再通过 `Session.commit_compaction()` 原子提交 summary、replacement 和 boundary。摘要失败、截断或重试耗尽时 Session 不改变。
 
+压缩进度事件由拥有用例顺序的 Agent/Chat 在调用 Context 前后发出，Context 本身不持有 observer、UI 状态或事件总线。completed 只允许出现在 persistence-first 提交之后。
+
 Compact 请求显式关闭 reasoning，并使用受模型上限约束的独立输出预算。超长 compact 输入可以按完整用户轮次从最旧部分开始裁剪摘要视图，但不会删除完整 transcript。最终 summary 是新的 Conversation fact，而不是隐藏 cache。
 
 ## 必须保持的不变量
