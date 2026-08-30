@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
+from collections.abc import Sequence
 from difflib import SequenceMatcher
 from functools import lru_cache
 from io import StringIO
@@ -30,6 +32,7 @@ from rich.theme import Theme
 
 from my_code import __version__
 from my_code.chat.history import (
+    HistoryContextGroup,
     HistoryEntry,
     HistoryReasoning,
     HistoryText,
@@ -116,6 +119,17 @@ class ToolResultPresentationView(Protocol):
 
     @property
     def file_diff(self) -> FileDiffPresentationView | None: ...
+
+
+class InjectedContextView(Protocol):
+    @property
+    def source(self) -> str: ...
+
+    @property
+    def attachment_kind(self) -> str | None: ...
+
+    @property
+    def text(self) -> str: ...
 
 
 def welcome(status: RuntimeStatus, theme: TuiTheme | None = None) -> RenderableType:
@@ -304,18 +318,77 @@ def field_table(rows: tuple[tuple[str, RenderableType | str], ...]) -> Table:
     return table
 
 
-class _WorkSeparator:
+class _BlockSeparator:
+    def __init__(self, label: str | None = None) -> None:
+        self.label = label
+
     def __rich_console__(
         self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
         del console
-        yield Text("─" * options.max_width, style="bright_black")
+        if self.label:
+            prefix = f"─ {self.label} "
+            line = prefix + "─" * max(0, options.max_width - len(prefix))
+        else:
+            line = "─" * options.max_width
+        yield Text(line, style="bright_black")
+
+
+def block_separator(label: str | None = None) -> RenderableType:
+    """Return the shared full-width divider for top-level semantic blocks."""
+
+    return _BlockSeparator(label)
 
 
 def work_separator() -> RenderableType:
-    """Return a full-width divider between work and the final answer."""
+    """Compatibility name for an unlabeled semantic block divider."""
 
-    return _WorkSeparator()
+    return block_separator()
+
+
+def injected_context_message(
+    request_number: int, items: Sequence[InjectedContextView]
+) -> RenderableType:
+    blocks: list[RenderableType] = [
+        block_separator(f"Injected context · request #{request_number}")
+    ]
+    for index, item in enumerate(items):
+        if index:
+            blocks.append(block_separator())
+        label = item.source
+        if item.attachment_kind:
+            label += f" · {item.attachment_kind}"
+        blocks.extend(
+            (
+                Text(label, style="bold bright_black"),
+                Text(_bounded_injection(item.text), style="dim"),
+            )
+        )
+    blocks.append(block_separator())
+    return Group(*blocks)
+
+
+def detailed_tool_call_message(name: str, input: object) -> RenderableType:
+    payload = json.dumps(input, ensure_ascii=False, indent=2, sort_keys=True)
+    return Group(
+        block_separator(f"Tool call · {name}"),
+        Text(payload, style="dim"),
+    )
+
+
+def _bounded_injection(value: str) -> str:
+    lines = value.splitlines()
+    omitted_lines = max(0, len(lines) - 60)
+    if omitted_lines:
+        lines = [*lines[:48], f"[… {omitted_lines} lines omitted …]", *lines[-12:]]
+    rendered = "\n".join(lines)
+    if len(rendered.encode("utf-8")) <= 8192:
+        return rendered
+    encoded = rendered.encode("utf-8")
+    head = encoded[:6144].decode("utf-8", errors="ignore")
+    tail = encoded[-1536:].decode("utf-8", errors="ignore")
+    omitted_chars = max(0, len(rendered) - len(head) - len(tail))
+    return f"{head}\n[… {omitted_chars} characters omitted …]\n{tail}"
 
 
 def reasoning_message(presentation: ReasoningPresentation) -> RenderableType:
@@ -579,6 +652,8 @@ def history_message(
         return system_message(entry.text)
     if isinstance(entry, HistoryReasoning):
         return reasoning_message(entry.presentation)
+    if isinstance(entry, HistoryContextGroup):
+        return injected_context_message(entry.request_number, entry.items)
     assert isinstance(entry, HistoryToolCall)
     return tool_message(entry.use, entry.result, is_error=entry.is_error)
 
@@ -624,13 +699,16 @@ def _bounded_reasoning(value: str) -> str:
 
 __all__ = [
     "assistant_message",
+    "block_separator",
     "CodexMarkdown",
     "capability_table",
     "command_echo",
+    "detailed_tool_call_message",
     "field_table",
     "file_diff_message",
     "history_message",
     "information_card",
+    "injected_context_message",
     "reasoning_message",
     "status_line",
     "streaming_assistant_message",

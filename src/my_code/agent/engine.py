@@ -11,6 +11,7 @@ from my_code.agent.events import (
     AgentConversationUpdated,
     AgentEvent,
     AgentInputAccepted,
+    AgentModelRequestPrepared,
     AgentModelStepCompleted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
@@ -20,6 +21,7 @@ from my_code.agent.events import (
     AgentTextStarted,
     AgentToolFinished,
     AgentToolStarted,
+    PreparedContextItem,
 )
 from my_code.agent.models import (
     AgentMaxStepsReached,
@@ -57,6 +59,13 @@ from my_code.model.events import (
     ModelTextCompleted,
     ModelTextDelta,
     ModelTextStarted,
+)
+from my_code.model.invocation import (
+    ModelInputOrigin,
+    ModelInputOriginKind,
+    ModelInvocation,
+    ModelInvocationCoordinator,
+    RequestPurpose,
 )
 from my_code.model.primitives import (
     ProviderReplayRecord,
@@ -233,6 +242,7 @@ class AgentEngine:
         input_tokens = 0
         output_tokens = 0
         step_count = 0
+        continuation = not bool(accepted)
         while True:
             step_count += 1
             tools = self._snapshot_tools(session)
@@ -247,7 +257,43 @@ class AgentEngine:
             while True:
                 projector = _ModelStreamProjector()
                 try:
-                    async for model_event in self._model_call.stream(request.request):
+                    origins = request.provenance or tuple(
+                        ModelInputOrigin(ModelInputOriginKind.CONVERSATION_ENTRY)
+                        for _ in request.request.input
+                    )
+                    invocation = ModelInvocation(
+                        request=request.request,
+                        origins=origins,
+                        purpose=(
+                            RequestPurpose.CONTINUATION
+                            if continuation
+                            else RequestPurpose.AGENT
+                        ),
+                        causal_head=session.causal_head_uuid,
+                        step=step_count,
+                        attempt=2 if reactive_attempted else 1,
+                        budget=request.budget,
+                    )
+                    previous_refs = {
+                        ref
+                        for audited in session.request_audit_snapshot().requests
+                        for ref in audited.manifest.input_refs
+                    }
+                    coordinator = ModelInvocationCoordinator(self._model_call, session)
+                    receipt = coordinator.prepare(invocation)
+                    injections = _prepared_injections(
+                        request,
+                        receipt.input_refs,
+                        previous_refs,
+                        origins=origins,
+                    )
+                    yield AgentModelRequestPrepared(
+                        invocation.request_id,
+                        receipt.request_number,
+                        invocation.purpose.value,
+                        injections,
+                    )
+                    async for model_event in coordinator.stream(invocation):
                         event = projector.project(model_event)
                         if event is not None:
                             yield event
@@ -316,6 +362,7 @@ class AgentEngine:
                     return
                 accepted = await self._accept_boundary(session, (), pending_source)
                 if accepted:
+                    continuation = False
                     for event in accepted:
                         yield event
                     # A no-tool response is a complete step, not necessarily the
@@ -343,6 +390,8 @@ class AgentEngine:
                 )
                 return
             accepted = await self._accept_boundary(session, (), pending_source)
+            if accepted:
+                continuation = False
             for event in accepted:
                 yield event
 
@@ -485,7 +534,9 @@ class AgentEngine:
     ) -> CompactionOutcome:
         """在当前 turn 内生成并提交 auto/reactive compact。"""
 
-        outcome = await self._context.compact(session.context_planning_state(), trigger)
+        outcome = await self._context.compact(
+            session.context_planning_state(), trigger, recorder=session
+        )
         session.commit_compaction(
             outcome.replacements, outcome.summary, outcome.boundary
         )
@@ -543,6 +594,45 @@ def _latest_search_listing(session: Session) -> tuple[str, ...] | None:
         ):
             return entry.payload.names
     return None
+
+
+def _prepared_injections(
+    plan: ContextPlan,
+    refs: tuple[str, ...],
+    previous_refs: set[str],
+    *,
+    origins: tuple[ModelInputOrigin, ...],
+) -> tuple[PreparedContextItem, ...]:
+    from my_code.model.request import InputText, UserInput
+
+    items: list[PreparedContextItem] = []
+    for model_item, origin, audit_id in zip(
+        plan.request.input, origins, refs, strict=True
+    ):
+        if audit_id in previous_refs or origin.kind not in {
+            ModelInputOriginKind.USER_CONTEXT,
+            ModelInputOriginKind.ATTACHMENT,
+            ModelInputOriginKind.CONTENT_REPLACEMENT,
+        }:
+            continue
+        text = (
+            "\n".join(
+                block.text
+                for block in model_item.content
+                if isinstance(block, InputText)
+            )
+            if isinstance(model_item, UserInput)
+            else ""
+        )
+        items.append(
+            PreparedContextItem(
+                audit_id,
+                origin.source or origin.kind.value,
+                origin.attachment_kind,
+                text,
+            )
+        )
+    return tuple(items)
 
 
 __all__ = [

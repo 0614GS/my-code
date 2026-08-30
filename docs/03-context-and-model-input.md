@@ -24,6 +24,8 @@ ContextPlanningState
 
 公共模型支持 text、image、document、reasoning、tool call 和 tool output，但不包含 OpenAI/Anthropic SDK 类型。Context 保留语义顺序，不执行 Provider role 合并。
 
+`ContextPlan.provenance` 与最终 `ModelRequest.input` 一一对应，区分 AGENTS/user context、用户消息、Conversation entry、Attachment kind、summary 和 content replacement。它与 request 一样是纯投影；Context 不负责落盘。compact 请求使用明确的 compact-input origin。
+
 ## Provider 映射
 
 | 公共输入 | Anthropic Messages | OpenAI Responses |
@@ -70,6 +72,7 @@ Compact 请求显式关闭 reasoning，并使用受模型上限约束的独立�
 ## 必须保持的不变量
 
 - 相同 planning state、runtime cache、工具定义和模型环境产生确定性请求计划。
+- 每个最终 input item 必须具有同位置 provenance；微压缩后 origin 仍指向被替换的语义来源。
 - Context 不提交 Session、不缓存第二份 history，也不解释 JSONL。
 - Attachment projector 只能产生 user input，不能制造 assistant 或 tool 协议项。
 - ToolCall 与 ToolOutput 的配对不能被预算或注入拆开。

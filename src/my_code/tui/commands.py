@@ -23,10 +23,12 @@ class SlashCommandAction(StrEnum):
     MCP = "mcp"
     TASKS = "tasks"
     AGENTS = "agents"
+    VIEW = "view"
 
 
 class CommandConcurrency(StrEnum):
     CONCURRENT_READ = "concurrent_read"
+    CONCURRENT_UI = "concurrent_ui"
     EXCLUSIVE = "exclusive"
 
 
@@ -56,6 +58,8 @@ class CommandOutcome:
     mcp_operation: tuple[str, str] | None = None
     show_tasks: bool = False
     show_agents: bool = False
+    open_view_picker: bool = False
+    view_operation: str | None = None
 
 
 class SlashCommandRegistry:
@@ -113,6 +117,12 @@ class SlashCommandRegistry:
                 ),
                 SlashCommand(
                     "agents", "Open the live Subagent viewer", SlashCommandAction.AGENTS
+                ),
+                SlashCommand(
+                    "view",
+                    "Show or set concise/detailed output",
+                    SlashCommandAction.VIEW,
+                    concurrency=CommandConcurrency.CONCURRENT_UI,
                 ),
                 SlashCommand(
                     "provider",
@@ -177,6 +187,15 @@ class SlashCommandRegistry:
             if len(arguments) == 2 and operation in {"refresh", "reconnect"}:
                 return CommandOutcome(mcp_operation=(operation, arguments[1]))
             return CommandOutcome("Usage: /mcp [refresh|reconnect <server>]")
+        if command.action is SlashCommandAction.VIEW:
+            if not arguments:
+                return CommandOutcome(open_view_picker=True)
+            if len(arguments) == 1 and arguments[0].casefold() in {
+                "concise",
+                "detailed",
+            }:
+                return CommandOutcome(view_operation=arguments[0].casefold())
+            return CommandOutcome("Usage: /view [concise|detailed]")
         if arguments:
             return CommandOutcome(f"/{command.name} does not accept arguments.")
 

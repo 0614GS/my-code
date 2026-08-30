@@ -24,6 +24,7 @@ _NAVIGATION_PANELS = {
     "provider_protocol",
     "provider_probe_failure",
     "model_select",
+    "view_select",
     "agents",
 }
 _PROVIDER_PANELS = {

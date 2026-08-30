@@ -39,6 +39,7 @@ from my_code.model.capabilities import (
     fallback_descriptor,
     resolve_environment,
 )
+from my_code.model.invocation import ModelInputOrigin, ModelInputOriginKind
 from my_code.model.primitives import (
     ProviderBinding,
     ProviderContinuationState,
@@ -176,6 +177,11 @@ class ContextPlanner:
             raise ContextOverflow(budget.input_tokens, budget.input_limit_tokens)
         return ContextPlan(
             request=request,
+            provenance=_request_provenance(
+                user_context,
+                selected,
+                state.content_replacements + proposed,
+            ),
             budget=budget,
             new_content_replacements=proposed,
             request_binding=binding,
@@ -520,6 +526,46 @@ def _usage_anchor(
 
 def _chars_to_tokens(chars: int) -> int:
     return (chars + 3) // 4
+
+
+def _request_provenance(
+    user_context: tuple[UserContextDocument, ...],
+    conversation: tuple[ConversationEntry, ...],
+    replacements: tuple[ContentReplacement, ...],
+) -> tuple[ModelInputOrigin, ...]:
+    """Build a stable one-to-one origin projection beside normalization."""
+
+    replaced_tool_ids = {replacement.tool_use_id for replacement in replacements}
+    origins = [
+        ModelInputOrigin(
+            ModelInputOriginKind.USER_CONTEXT,
+            source=document.source,
+        )
+        for document in user_context
+    ]
+    for entry in conversation:
+        if isinstance(entry, ToolResultBatch) and any(
+            result.tool_use_id in replaced_tool_ids for result in entry.content
+        ):
+            kind = ModelInputOriginKind.CONTENT_REPLACEMENT
+        elif isinstance(entry, HumanMessage):
+            kind = ModelInputOriginKind.USER_MESSAGE
+        elif isinstance(entry, AttachmentMessage):
+            kind = ModelInputOriginKind.ATTACHMENT
+        elif isinstance(entry, ConversationSummaryMessage):
+            kind = ModelInputOriginKind.SUMMARY
+        else:
+            kind = ModelInputOriginKind.CONVERSATION_ENTRY
+        origins.append(
+            ModelInputOrigin(
+                kind,
+                source_id=entry.uuid,
+                attachment_kind=(
+                    entry.payload.kind if isinstance(entry, AttachmentMessage) else None
+                ),
+            )
+        )
+    return tuple(origins)
 
 
 def _continuation_chars(state: ProviderContinuationState) -> int:

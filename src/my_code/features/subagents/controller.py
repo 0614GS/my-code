@@ -69,6 +69,7 @@ class SubagentController:
         )
         self._active_by_parent: dict[str, set[str]] = {}
         self._activity: dict[str, SubagentActivityRecord] = {}
+        self._sessions: dict[str, Session] = {}
         self._activity_revision = 0
         self._activity_changed = asyncio.Event()
 
@@ -213,6 +214,7 @@ class SubagentController:
             self._release(parent.run_id, task_id)
             raise
         self._activity[task_id] = activity
+        self._sessions[task_id] = run_spec.session
         self._publish_activity()
         return StartedSubagent(task_id, run_id, spec.agent_type), handle
 
@@ -241,6 +243,9 @@ class SubagentController:
             for record in (*active, *reversed(terminal))
         )
 
+    def session_for_task(self, task_id: str) -> Session | None:
+        return self._sessions.get(task_id)
+
     async def wait_for_activity(self, after_revision: int) -> int:
         while self._activity_revision <= after_revision:
             self._activity_changed.clear()
@@ -262,6 +267,7 @@ class SubagentController:
         ]
         for task_id in terminal_ids[:-20]:
             self._activity.pop(task_id, None)
+            self._sessions.pop(task_id, None)
 
     async def run_foreground(
         self,

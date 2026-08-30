@@ -17,6 +17,15 @@ from my_code.conversation.state import CompactBoundary, CompactTrigger
 from my_code.model.capabilities import ActiveModelEnvironment
 from my_code.model.client import ModelClient, collect_model_output
 from my_code.model.errors import ModelContextOverflow
+from my_code.model.events import ModelOutputCompleted
+from my_code.model.invocation import (
+    ModelInputOrigin,
+    ModelInputOriginKind,
+    ModelInvocation,
+    ModelInvocationCoordinator,
+    ModelInvocationRecorder,
+    RequestPurpose,
+)
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
     InputText,
@@ -104,7 +113,12 @@ class ContextCompactor:
         self._model_environment = model_environment
 
     async def summarize(
-        self, messages: tuple[ModelInputItem, ...]
+        self,
+        messages: tuple[ModelInputItem, ...],
+        *,
+        recorder: ModelInvocationRecorder | None = None,
+        causal_head: str | None = None,
+        trigger: CompactTrigger | None = None,
     ) -> tuple[str, TokenUsage]:
         output_budget = self._effective_output_budget()
         groups = _conversation_turn_groups(messages)
@@ -135,7 +149,24 @@ class ContextCompactor:
                 reasoning_mode="disabled",
             )
             try:
-                response = await collect_model_output(self.provider, request)
+                if recorder is None:
+                    response = await collect_model_output(self.provider, request)
+                else:
+                    invocation = ModelInvocation(
+                        request=request,
+                        origins=tuple(
+                            ModelInputOrigin(ModelInputOriginKind.COMPACT_INPUT)
+                            for _ in request.input
+                        ),
+                        purpose=RequestPurpose.COMPACT,
+                        causal_head=causal_head,
+                        step=1,
+                        attempt=input_retries + output_attempts + 1,
+                        compact_trigger=trigger,
+                    )
+                    coordinator = ModelInvocationCoordinator(self.provider, recorder)
+                    coordinator.prepare(invocation)
+                    response = await _collect_audited_output(coordinator, invocation)
             except ModelContextOverflow as error:
                 if input_retries >= _MAX_INPUT_RETRIES:
                     raise ModelContextOverflow(
@@ -185,12 +216,11 @@ class ContextCompactor:
         planner: ContextPlanner,
         state: ContextPlanningState,
         trigger: CompactTrigger,
+        recorder: ModelInvocationRecorder | None = None,
     ) -> CompactionOutcome:
         if not state.context_entries:
             raise ValueError("Cannot compact an empty conversation")
 
-        model_messages, replacements = planner.compaction_view(state)
-        summary_text, usage = await self.summarize(model_messages)
         parent_uuid = next(
             (
                 message.uuid
@@ -202,6 +232,13 @@ class ContextCompactor:
         )
         if parent_uuid is None:
             raise ValueError("Compaction requires a durable causal parent")
+        model_messages, replacements = planner.compaction_view(state)
+        summary_text, usage = await self.summarize(
+            model_messages,
+            recorder=recorder,
+            causal_head=parent_uuid,
+            trigger=trigger,
+        )
         summary = ConversationSummaryMessage(
             content=_build_continuation_context(summary_text, state.context_entries),
             parent_uuid=parent_uuid,
@@ -218,6 +255,23 @@ class ContextCompactor:
             boundary=boundary,
             usage=usage,
         )
+
+
+async def _collect_audited_output(
+    coordinator: ModelInvocationCoordinator,
+    invocation: ModelInvocation,
+):
+    output = None
+    async for event in coordinator.stream(invocation):
+        if isinstance(event.payload, ModelOutputCompleted):
+            if output is not None:
+                raise RuntimeError(
+                    "Model stream emitted more than one completed output"
+                )
+            output = event.payload.output
+    if output is None:
+        raise RuntimeError("Model stream ended without a completed output")
+    return output
 
 
 def _append_summary_request(

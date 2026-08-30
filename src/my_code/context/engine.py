@@ -10,6 +10,7 @@ from my_code.context.session import (
 )
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.state import CompactTrigger
+from my_code.model.invocation import ModelInvocationRecorder
 from my_code.model.request import ModelToolDefinition
 
 
@@ -65,8 +66,11 @@ class ContextEngine:
         self,
         state: ContextPlanningState,
         trigger: CompactTrigger,
+        recorder: ModelInvocationRecorder | None = None,
     ) -> CompactionOutcome:
-        return await self._compactor.compact(self._planner, state, trigger)
+        return await self._compactor.compact(
+            self._planner, state, trigger, recorder=recorder
+        )
 
 
 __all__ = ["ContextEngine"]

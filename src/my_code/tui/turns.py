@@ -15,6 +15,7 @@ from my_code.chat.events import (
     CompactionStarted,
     ContextUpdated,
     MaxStepsReached,
+    ModelRequestPrepared,
     ModelStepCompleted,
     ReasoningCompleted,
     ReasoningDelta,
@@ -33,6 +34,7 @@ from my_code.chat.events import (
 from my_code.chat.service import ChatService
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.features.todos.models import TodoItem
+from my_code.model.display import DisplayDensity
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.block_flow import TurnBlockCoordinator
 from my_code.tui.presentation import (
@@ -42,6 +44,9 @@ from my_code.tui.presentation import (
 from my_code.tui.theme import TuiTheme
 from my_code.tui.widgets import (
     assistant_message,
+    block_separator,
+    detailed_tool_call_message,
+    injected_context_message,
     system_message,
     todo_snapshot,
     tool_activity_message,
@@ -64,6 +69,7 @@ class TurnFlowMixin:
     _blocks: TurnBlockCoordinator
     _context_status: ContextStatus | None
     _status: RuntimeStatus | None
+    _display_density: DisplayDensity
 
     async def _write(self, renderable: RenderableType, *, clear: bool = False) -> None:
         raise NotImplementedError
@@ -116,12 +122,16 @@ class TurnFlowMixin:
         self._blocks.reset_group()
         self.buffer.cancel_completion()
         if user:
+            if self._display_density.includes(DisplayDensity.DETAILED):
+                await self._write(block_separator("User input"))
             await self._write(user_message(prompt, self.theme))
         completed = False
         try:
             async for event in events:
                 if isinstance(event, TurnInputAccepted):
                     self._blocks.reset_group()
+                    if self._display_density.includes(DisplayDensity.DETAILED):
+                        await self._write(block_separator("User input"))
                     await self._write(user_message(event.prompt, self.theme))
                     history = getattr(self, "_history", None)
                     if history is not None:
@@ -157,6 +167,14 @@ class TurnFlowMixin:
                     await self._commit_reasoning(event)
                 elif isinstance(event, ModelStepCompleted):
                     await self._commit_model_step(event)
+                elif isinstance(event, ModelRequestPrepared):
+                    if (
+                        self._display_density.includes(DisplayDensity.DETAILED)
+                        and event.injections
+                    ):
+                        await self._flush_tool_activity()
+                        await self._write(_detailed_context_group(event))
+                        self._blocks.mark_work()
                 elif isinstance(event, CompactionStarted):
                     self._update_agent_activity(
                         compaction_activity_label(event.trigger)
@@ -164,6 +182,9 @@ class TurnFlowMixin:
                 elif isinstance(event, CompactionCompleted):
                     await self._commit_compaction(event, "my-code is working…")
                 elif isinstance(event, ToolStarted):
+                    if self._display_density.includes(DisplayDensity.DETAILED):
+                        await self._flush_tool_activity()
+                        await self._write(_detailed_tool_call(event))
                     if self._tool_activity is None:
                         self._tool_activity = ToolActivityGroup()
                     self._tool_activity.start(event.tool_use_id, event.presentation)
@@ -253,6 +274,8 @@ class TurnFlowMixin:
     async def _consume_background_event(self, event: TurnEvent) -> None:
         if isinstance(event, TurnInputAccepted):
             self._blocks.reset_group()
+            if self._display_density.includes(DisplayDensity.DETAILED):
+                await self._write(block_separator("User input"))
             await self._write(user_message(event.prompt, self.theme))
             history = getattr(self, "_history", None)
             if history is not None:
@@ -277,11 +300,22 @@ class TurnFlowMixin:
             await self._commit_reasoning(event)
         elif isinstance(event, ModelStepCompleted):
             await self._commit_model_step(event)
+        elif isinstance(event, ModelRequestPrepared):
+            if (
+                self._display_density.includes(DisplayDensity.DETAILED)
+                and event.injections
+            ):
+                await self._flush_tool_activity()
+                await self._write(_detailed_context_group(event))
+                self._blocks.mark_work()
         elif isinstance(event, CompactionStarted):
             self._update_agent_activity(compaction_activity_label(event.trigger))
         elif isinstance(event, CompactionCompleted):
             await self._commit_compaction(event, "Handling background task…")
         elif isinstance(event, ToolStarted):
+            if self._display_density.includes(DisplayDensity.DETAILED):
+                await self._flush_tool_activity()
+                await self._write(_detailed_tool_call(event))
             if self._tool_activity is None:
                 self._tool_activity = ToolActivityGroup()
             self._tool_activity.start(event.tool_use_id, event.presentation)
@@ -369,7 +403,12 @@ class TurnFlowMixin:
         self._blocks.add_reasoning(event.presentation)
 
     async def _commit_model_step(self, event: ModelStepCompleted) -> None:
-        await self._write_many(self._blocks.complete_step(has_tools=event.has_tools))
+        await self._write_many(
+            self._blocks.complete_step(
+                has_tools=event.has_tools,
+                label_answer=self._display_density.includes(DisplayDensity.DETAILED),
+            )
+        )
 
     async def _flush_unclassified_blocks(self) -> None:
         await self._write_many(self._blocks.drain_unclassified())
@@ -400,6 +439,15 @@ class TurnFlowMixin:
 def _is_todo(use: object) -> bool:
     display_name = getattr(use, "display_name", "")
     return display_name in {"TodoWrite", "Update Todos"}
+
+
+def _detailed_context_group(event: ModelRequestPrepared) -> RenderableType:
+    return injected_context_message(event.request_number, event.injections)
+
+
+def _detailed_tool_call(event: ToolStarted) -> RenderableType:
+    name = event.name or event.presentation.display_name
+    return detailed_tool_call_message(name, event.input)
 
 
 __all__ = ["TurnFlowMixin"]

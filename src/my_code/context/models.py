@@ -6,6 +6,7 @@ from typing import Literal
 from my_code.conversation.models import ConversationSummaryMessage
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.capabilities import CapabilitySource, ModelLimits
+from my_code.model.invocation import ModelInputOrigin
 from my_code.model.primitives import ProviderBinding, TokenUsage
 from my_code.model.request import ModelRequest
 
@@ -60,12 +61,17 @@ class ContextPlan:
     """A model request plus decisions that must be committed before use."""
 
     request: ModelRequest
+    provenance: tuple[ModelInputOrigin, ...] = field(default_factory=tuple)
     budget: ContextBudget | None = None
     new_content_replacements: tuple[ContentReplacement, ...] = field(
         default_factory=tuple
     )
     request_binding: ProviderBinding | None = None
     request_input_tokens_estimate: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.provenance and len(self.provenance) != len(self.request.input):
+            raise ValueError("Context provenance must match request input")
 
 
 @dataclass(frozen=True, slots=True)

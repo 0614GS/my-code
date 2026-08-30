@@ -27,6 +27,7 @@ from my_code.chat.views import (
     TranscriptValue,
     TranscriptView,
 )
+from my_code.sessions.request_audit import ResolvedAuditRequest
 from my_code.tui.terminal import (
     configure_key_timeouts,
     terminal_color_depth,
@@ -56,6 +57,9 @@ class TranscriptPager:
         self._follow_tail = True
         self._closed = False
         self._width = -1
+        self._view = TranscriptView(0, ())
+        self._selected_request = 0
+        self._request_detail = False
         self._watch_task: asyncio.Task[None] | None = None
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="my-code-transcript-render"
@@ -148,10 +152,34 @@ class TranscriptPager:
             self.application.invalidate()
 
         @bindings.add("c-t")
-        @bindings.add("escape")
         @bindings.add("q")
         def quit_pager(event: KeyPressEvent) -> None:
             event.app.exit()
+
+        @bindings.add("escape")
+        def escape(event: KeyPressEvent) -> None:
+            if self._request_detail:
+                self._request_detail = False
+                self._rebuild_lines()
+            else:
+                event.app.exit()
+
+        @bindings.add("n")
+        def next_request(event: KeyPressEvent) -> None:
+            del event
+            self._move_request(1)
+
+        @bindings.add("N")
+        def previous_request(event: KeyPressEvent) -> None:
+            del event
+            self._move_request(-1)
+
+        @bindings.add("enter")
+        def open_request(event: KeyPressEvent) -> None:
+            del event
+            if self._view.requests:
+                self._request_detail = True
+                self._rebuild_lines()
 
         return bindings
 
@@ -169,9 +197,22 @@ class TranscriptPager:
         width = max(20, self.application.output.get_size().columns)
         if view.revision == self._revision and width == self._width:
             return
+        initial = self._revision == -1
         self._revision = view.revision
+        self._view = view
         self._width = width
-        self._lines = _render_lines(view, width)
+        self._selected_request = (
+            max(0, len(view.requests) - 1)
+            if initial
+            else min(self._selected_request, max(0, len(view.requests) - 1))
+        )
+        self._lines = (
+            _render_renderable_lines(
+                request_audit_renderable(view.requests[self._selected_request]), width
+            )
+            if self._request_detail and view.requests
+            else _render_lines(view, width)
+        )
         if self._follow_tail:
             self._top = self._max_top()
         else:
@@ -189,7 +230,12 @@ class TranscriptPager:
                 view = self.source.current_transcript_view()
                 if view.revision == self._revision and width == self._width:
                     return
-                snapshots.append((view, _render_lines(view, width)))
+                renderable = (
+                    request_audit_renderable(view.requests[self._selected_request])
+                    if self._request_detail and view.requests
+                    else transcript_renderable(view)
+                )
+                snapshots.append((view, _render_renderable_lines(renderable, width)))
             except BaseException as error:
                 errors.append(error)
 
@@ -199,7 +245,14 @@ class TranscriptPager:
         if not snapshots or self._closed:
             return
         view, lines = snapshots[0]
+        initial = self._revision == -1
         self._revision = view.revision
+        self._view = view
+        self._selected_request = (
+            max(0, len(view.requests) - 1)
+            if initial
+            else min(self._selected_request, max(0, len(view.requests) - 1))
+        )
         self._width = width
         self._lines = lines
         if self._follow_tail:
@@ -217,12 +270,112 @@ class TranscriptPager:
     def _visible_text(self) -> ANSI | FormattedText:
         page_height = self._page_height()
         body = self._lines[self._top : self._top + page_height]
-        footer = "Transcript · ↑↓ PgUp/PgDn Home/End · Ctrl+T/Esc/q close"
+        request_position = (
+            f" · request {self._selected_request + 1}/{len(self._view.requests)}"
+            if self._view.requests
+            else ""
+        )
+        mode = "Request detail" if self._request_detail else "Transcript"
+        footer = (
+            f"{mode}{request_position} · ↑↓ PgUp/PgDn Home/End · "
+            "n/N request · Enter detail · Ctrl+T/q close"
+        )
         return ANSI("\n".join((*body, f"\x1b[2m{footer}\x1b[0m")))
+
+    def _move_request(self, offset: int) -> None:
+        if not self._view.requests:
+            return
+        self._selected_request = min(
+            len(self._view.requests) - 1,
+            max(0, self._selected_request + offset),
+        )
+        self._rebuild_lines()
+
+    def _rebuild_lines(self) -> None:
+        width = max(20, self.application.output.get_size().columns)
+        if self._request_detail and self._view.requests:
+            renderable = request_audit_renderable(
+                self._view.requests[self._selected_request]
+            )
+            self._lines = _render_renderable_lines(renderable, width)
+        else:
+            self._lines = _render_lines(self._view, width)
+        if self._request_detail:
+            self._top = 0
+        else:
+            needle = f"Model request #{self._selected_request + 1}"
+            self._top = min(
+                self._max_top(),
+                next(
+                    (index for index, line in enumerate(self._lines) if needle in line),
+                    self._max_top(),
+                ),
+            )
+        self._follow_tail = False
+        self.application.invalidate()
 
 
 def transcript_renderable(view: TranscriptView) -> RenderableType:
     blocks: list[RenderableType] = []
+    if view.audit_legacy_missing:
+        blocks.append(
+            Text(
+                "Request audit gap · this legacy session predates exact "
+                "request auditing.",
+                style="bold yellow",
+            )
+        )
+    seen_prompt_refs: set[str] = set()
+    seen_tool_refs: set[str] = set()
+    for request in view.requests:
+        manifest = request.manifest
+        lines = [
+            f"purpose: {manifest.purpose.value}",
+            f"status: {manifest.status}",
+            f"causal head: {manifest.causal_head or '(none)'}",
+            f"step/attempt: {manifest.step}/{manifest.attempt}",
+            f"input manifest: {len(manifest.input_refs)} ordered items",
+            f"max output: {manifest.max_output_tokens}",
+            f"reasoning: {manifest.reasoning_mode}",
+        ]
+        new_prompts = tuple(
+            value
+            for ref, value in zip(
+                manifest.system_prompt_refs,
+                request.system_prompt_sections,
+                strict=True,
+            )
+            if ref not in seen_prompt_refs
+        )
+        new_tools = tuple(
+            value
+            for ref, value in zip(manifest.tool_refs, request.tools, strict=True)
+            if ref not in seen_tool_refs
+        )
+        seen_prompt_refs.update(manifest.system_prompt_refs)
+        seen_tool_refs.update(manifest.tool_refs)
+        blocks.append(
+            Group(
+                Text(
+                    f"Model request #{manifest.request_number} · {manifest.request_id}",
+                    style="bold magenta",
+                ),
+                Text("\n".join(lines)),
+                *(
+                    (
+                        Text("New system prompt sections", style="bold"),
+                        _json_text(new_prompts),
+                    )
+                    if new_prompts
+                    else (Text("System prompt · unchanged references", style="dim"),)
+                ),
+                *(
+                    (Text("Tool catalog changes", style="bold"), _json_text(new_tools))
+                    if new_tools
+                    else (Text("Tool catalog · unchanged references", style="dim"),)
+                ),
+            )
+        )
     work_visible = False
     for entry in view.entries:
         if isinstance(entry, TranscriptText):
@@ -313,6 +466,10 @@ def _append_value(lines: list[str], value: TranscriptValue, indent: str) -> None
 
 
 def _render_lines(view: TranscriptView, width: int) -> list[str]:
+    return _render_renderable_lines(transcript_renderable(view), width)
+
+
+def _render_renderable_lines(renderable: RenderableType, width: int) -> list[str]:
     from io import StringIO
 
     stream = StringIO()
@@ -322,8 +479,64 @@ def _render_lines(view: TranscriptView, width: int) -> list[str]:
         force_terminal=True,
         color_system="truecolor",
     )
-    console.print(transcript_renderable(view), end="")
+    console.print(renderable, end="")
     return stream.getvalue().splitlines()
 
 
-__all__ = ["TranscriptPager", "transcript_renderable"]
+def request_audit_renderable(request: ResolvedAuditRequest) -> RenderableType:
+    manifest = request.manifest
+    origins = tuple(
+        {
+            "position": index,
+            "kind": origin.kind.value,
+            "source_id": origin.source_id,
+            "source": origin.source,
+            "attachment_kind": origin.attachment_kind,
+            "input": value,
+        }
+        for index, (origin, value) in enumerate(
+            zip(manifest.origins, request.input, strict=True), 1
+        )
+    )
+    return Group(
+        Text(
+            f"Resolved model request #{manifest.request_number} · "
+            f"{manifest.request_id}",
+            style="bold magenta",
+        ),
+        Text(
+            "\n".join(
+                (
+                    f"purpose: {manifest.purpose.value}",
+                    f"status: {manifest.status}",
+                    f"error: {manifest.error or '(none)'}",
+                    f"causal head: {manifest.causal_head or '(none)'}",
+                    f"step/attempt: {manifest.step}/{manifest.attempt}",
+                    f"compact trigger: {manifest.compact_trigger or '(none)'}",
+                    f"max output tokens: {manifest.max_output_tokens}",
+                    f"reasoning mode: {manifest.reasoning_mode}",
+                )
+            )
+        ),
+        Text("System prompt sections", style="bold"),
+        _json_text(request.system_prompt_sections),
+        Text("Ordered model input and origins", style="bold"),
+        _json_text(origins),
+        Text("Tool definitions and JSON Schema", style="bold"),
+        _json_text(request.tools),
+        Text("Context budget", style="bold"),
+        _json_text(manifest.budget or {}),
+    )
+
+
+def _json_text(value: object) -> Text:
+    import json
+
+    return Text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+__all__ = [
+    "TranscriptPager",
+    "request_audit_renderable",
+    "transcript_renderable",
+]

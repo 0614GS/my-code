@@ -6,6 +6,7 @@ from typing import Literal
 from my_code.chat.history import HistoryEntry
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.model.primitives import ReasoningPresentation
+from my_code.sessions.request_audit import ResolvedAuditRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +79,8 @@ type TranscriptEntry = (
 class TranscriptView:
     revision: int
     entries: tuple[TranscriptEntry, ...]
+    requests: tuple[ResolvedAuditRequest, ...] = ()
+    audit_legacy_missing: bool = False
 
 
 @dataclass(frozen=True, slots=True)

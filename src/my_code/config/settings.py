@@ -25,6 +25,7 @@ from my_code.config.store import (
 )
 from my_code.config.validation import validate_base_url
 from my_code.model.capabilities import ModelDescriptor, ModelLimits
+from my_code.model.display import DisplayDensity
 from my_code.model.primitives import validate_provider_id
 from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import (
@@ -92,6 +93,7 @@ class AgentSettings:
     reasoning: ReasoningConfig = ReasoningConfig()
     model_limits: ModelLimits = ModelLimits()
     compact: CompactConfig = CompactConfig()
+    tui_view_mode: DisplayDensity = DisplayDensity.CONCISE
     model_descriptor: ModelDescriptor | None = None
     model_discovered_at: str | None = None
     model_discovery_error: str | None = None
@@ -281,6 +283,7 @@ class SettingsResolver:
             reasoning=profile.reasoning,
             model_limits=profile.limits,
             compact=profile.compact,
+            tui_view_mode=user.tui_view_mode or DisplayDensity.CONCISE,
             model_descriptor=profile.selected_model,
             model_discovered_at=profile.selected_model.discovered_at,
         )

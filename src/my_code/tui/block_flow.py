@@ -6,7 +6,12 @@ from typing import Literal
 from rich.console import RenderableType
 
 from my_code.model.primitives import ReasoningPresentation
-from my_code.tui.widgets import assistant_message, reasoning_message, work_separator
+from my_code.tui.widgets import (
+    assistant_message,
+    block_separator,
+    reasoning_message,
+    work_separator,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +40,9 @@ class TurnBlockCoordinator:
         self._pending.clear()
         self._work_visible = False
 
-    def complete_step(self, *, has_tools: bool) -> tuple[RenderableType, ...]:
+    def complete_step(
+        self, *, has_tools: bool, label_answer: bool = False
+    ) -> tuple[RenderableType, ...]:
         pending = tuple(self._pending)
         self._pending.clear()
         if has_tools:
@@ -52,8 +59,14 @@ class TurnBlockCoordinator:
                 reasoning_in_step = True
                 renderables.append(_render(block))
                 continue
-            if not separator_written and (self._work_visible or reasoning_in_step):
-                renderables.append(work_separator())
+            if not separator_written and (
+                label_answer or self._work_visible or reasoning_in_step
+            ):
+                renderables.append(
+                    block_separator("Assistant response")
+                    if label_answer
+                    else work_separator()
+                )
                 separator_written = True
             renderables.append(_render(block))
 

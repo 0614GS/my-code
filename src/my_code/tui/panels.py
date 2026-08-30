@@ -10,6 +10,7 @@ from prompt_toolkit.utils import get_cwidth
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.views import SubagentTaskView
 from my_code.config.providers import ANTHROPIC_API_BASE_URL, OPENAI_API_BASE_URL
+from my_code.model.display import DisplayDensity
 from my_code.permissions.models import PermissionPromptCategory
 from my_code.providers.manager import ModelView, ProviderView
 from my_code.sessions.catalog import SessionSummary
@@ -288,6 +289,27 @@ def model_picker_panel(
     )
 
 
+def view_mode_panel(current: DisplayDensity) -> PickerView:
+    """Render output density choices using the shared slash-command picker."""
+
+    return PickerView(
+        "Choose output detail",
+        tuple(
+            PickerRow(
+                density.view_mode,
+                f"{'● ' if density is current else ''}{density.view_mode.title()}",
+                (
+                    "compact tool summaries"
+                    if density is DisplayDensity.CONCISE
+                    else "full tool inputs and injected context"
+                ),
+            )
+            for density in (DisplayDensity.CONCISE, DisplayDensity.DETAILED)
+        ),
+        "↑↓ select · Enter apply · Esc cancel",
+    )
+
+
 def _short_tokens(value: int) -> str:
     return f"{value // 1_000}k" if value >= 1_000 and value % 1_000 == 0 else str(value)
 
@@ -371,4 +393,5 @@ __all__ = [
     "provider_select_panel",
     "render_picker",
     "resume_panel",
+    "view_mode_panel",
 ]

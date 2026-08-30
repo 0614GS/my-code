@@ -9,6 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from my_code.config.paths import MyCodePaths, SettingsScope
+from my_code.model.display import DisplayDensity
 from my_code.model.primitives import validate_provider_id
 from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionMode
@@ -102,6 +103,11 @@ class McpSettingsLayer:
     servers: tuple[McpServerSettingsLayer, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class TuiSettingsLayer:
+    view_mode: DisplayDensity | None = None
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class SettingsLayer:
     """A partial settings layer; nested values mirror the on-disk domains."""
@@ -115,6 +121,7 @@ class SettingsLayer:
     skills: SkillSettingsLayer
     mcp: McpSettingsLayer
     sandbox: SandboxSettingsLayer
+    tui: TuiSettingsLayer
 
     def __init__(
         self,
@@ -128,6 +135,7 @@ class SettingsLayer:
         skills: SkillSettingsLayer | None = None,
         mcp: McpSettingsLayer | None = None,
         sandbox: SandboxSettingsLayer | None = None,
+        tui: TuiSettingsLayer | None = None,
         # Convenience aliases for callers while the disk schema remains nested.
         permission_mode: PermissionMode | None = None,
         permission_allow_rules: tuple[str, ...] = (),
@@ -148,6 +156,7 @@ class SettingsLayer:
         skills_enabled: bool | None = None,
         mcp_enabled: bool | None = None,
         mcp_servers: tuple[McpServerSettingsLayer, ...] = (),
+        tui_view_mode: DisplayDensity | None = None,
     ) -> None:
         if agent is not None and any(
             value is not None for value in (max_steps, max_output_tokens, context_chars)
@@ -189,6 +198,8 @@ class SettingsLayer:
             raise TypeError("skills and flattened Skill values cannot be combined")
         if mcp is not None and (mcp_enabled is not None or mcp_servers):
             raise TypeError("mcp and flattened MCP values cannot be combined")
+        if tui is not None and tui_view_mode is not None:
+            raise TypeError("tui and flattened TUI values cannot be combined")
         object.__setattr__(self, "active_provider", active_provider)
         object.__setattr__(
             self,
@@ -244,6 +255,7 @@ class SettingsLayer:
             ),
         )
         object.__setattr__(self, "sandbox", sandbox or SandboxSettingsLayer())
+        object.__setattr__(self, "tui", tui or TuiSettingsLayer(tui_view_mode))
 
     @property
     def max_steps(self) -> int | None:
@@ -333,6 +345,10 @@ class SettingsLayer:
     def sandbox_allow_unsandboxed_commands(self) -> bool | None:
         return self.sandbox.allow_unsandboxed_commands
 
+    @property
+    def tui_view_mode(self) -> DisplayDensity | None:
+        return self.tui.view_mode
+
     def overlay(self, higher: "SettingsLayer") -> "SettingsLayer":
         return SettingsLayer(
             active_provider=higher.active_provider or self.active_provider,
@@ -406,6 +422,7 @@ class SettingsLayer:
                     else self.sandbox_allow_unsandboxed_commands
                 ),
             ),
+            tui=TuiSettingsLayer(higher.tui_view_mode or self.tui_view_mode),
         )
 
 
@@ -452,6 +469,16 @@ class SettingsStore:
         raw = self._load_editable_document(path, SettingsScope.USER)
         raw["version"] = _SCHEMA_VERSION
         raw["activeProvider"] = provider_id
+        _atomic_json_write(path, raw)
+
+    def set_user_tui_view_mode(self, mode: DisplayDensity) -> None:
+        if mode is DisplayDensity.AUDIT:
+            raise SettingsFileError("Audit view is available only through Ctrl+T")
+        path = self.paths.user_settings_path
+        raw = self._load_editable_document(path, SettingsScope.USER)
+        tui = _nested_object(raw, "tui", path)
+        tui["viewMode"] = mode.view_mode
+        raw.update(version=_SCHEMA_VERSION, tui=tui)
         _atomic_json_write(path, raw)
 
     def replace_permission_rules(
@@ -551,6 +578,9 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
     skills = _nested_mapping(raw, "skills", path)
     mcp = _nested_mapping(raw, "mcp", path)
     sandbox = _nested_mapping(raw, "sandbox", path)
+    tui = _nested_mapping(raw, "tui", path)
+    if scope is not SettingsScope.USER and tui:
+        raise SettingsFileError(f"tui is only allowed in user settings: {path}")
     if scope is SettingsScope.PROJECT and sandbox:
         raise SettingsFileError(
             f"sandbox is not allowed in shared project settings: {path}"
@@ -646,6 +676,7 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
                 "sandbox.allowUnsandboxedCommands",
             ),
         ),
+        tui=TuiSettingsLayer(_tui_view_mode(tui, path)),
     )
     _validate_scope(layer, scope, path)
     return layer
@@ -663,6 +694,8 @@ def _validate_scope(layer: SettingsLayer, scope: SettingsScope, path: Path) -> N
         raise SettingsFileError(
             f"activeProvider is only allowed in user settings: {path}"
         )
+    if scope is not SettingsScope.USER and layer.tui_view_mode is not None:
+        raise SettingsFileError(f"tui is only allowed in user settings: {path}")
     if (
         scope is SettingsScope.PROJECT
         and layer.permission_mode is PermissionMode.BYPASS
@@ -776,6 +809,8 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
     }
     if sandbox:
         document["sandbox"] = sandbox
+    if settings.tui_view_mode is not None:
+        document["tui"] = {"viewMode": settings.tui_view_mode.view_mode}
     return document
 
 
@@ -808,6 +843,7 @@ def _merge_document(
             "backgroundTasks",
             "skills",
             "sandbox",
+            "tui",
         } and isinstance(value, dict):
             current = result.get(key)
             merged = dict(current) if isinstance(current, dict) else {}
@@ -817,6 +853,18 @@ def _merge_document(
             result[key] = value
     result["version"] = _SCHEMA_VERSION
     return result
+
+
+def _tui_view_mode(raw: dict[object, object], path: Path) -> DisplayDensity | None:
+    value = raw.get("viewMode")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SettingsFileError(f"tui.viewMode must be a string: {path}")
+    try:
+        return DisplayDensity.from_view_mode(value)
+    except ValueError as error:
+        raise SettingsFileError(f"Invalid tui.viewMode in {path}: {value}") from error
 
 
 def _nested_mapping(
@@ -1140,4 +1188,5 @@ __all__ = [
     "SkillSettingsLayer",
     "SubagentSettingsLayer",
     "ToolSettingsLayer",
+    "TuiSettingsLayer",
 ]

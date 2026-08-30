@@ -22,7 +22,9 @@ ChatService.stream_interactive()
      -> Step 1 捕获 ToolCatalogSnapshot / ToolExposureSnapshot
      -> 派生动态 Attachment 并由 Session 接受
      -> ContextEngine.plan(...) 生成 ModelRequest
+     -> Session.prepare_model_invocation() 原子提交 request audit blobs + manifest
      -> ModelClient.stream()
+     -> Session.finish_model_invocation() 记录 completed/failed/cancelled/overflow
      -> 完整响应提交为 AssistantMessage
      -> 无工具：形成完整 step boundary；有 pending input 时提交并继续下一 step
      -> 有工具：使用同一 step 工具快照执行 ToolRound
@@ -40,6 +42,8 @@ Headless `submit/stream` 不提供 pending source，保留单输入行为。前�
 
 完整 compact 具有显式 lifecycle。Agent 的 auto/reactive 路径在摘要请求前发出 started，在 `Session.commit_compaction()` 成功后发出 completed；Chat 的 `/compact` 路径通过 `stream_compaction()` 提供相同的 frontend-neutral 事件。失败和取消沿原调用异常传播，不伪造 completed。轻量 microcompact 不属于这一 lifecycle。
 
+所有 session-bound 模型调用都遵守 audit-before-delivery：主 Agent、后台 continuation、child run 及 manual/auto/reactive compact 在 Provider 收到请求前，先持久化 provider-neutral 的 `ModelInvocation`。初始审计写入失败会阻止网络请求；Provider 终态随后追加到 sidecar。进程在 prepared 后中断时，恢复投影为 `delivery-unknown`，不会猜测 Provider 是否已接收。
+
 ## 工具与扩展运行
 
 每个 step 只捕获一次工具目录和曝光视图。请求中的 definitions、ToolCall 校验和后续 ToolRound 使用同一快照；MCP refresh、Skill reload 或其他目录更新只影响下一个 step。
@@ -51,6 +55,7 @@ Foreground Subagent 由标准 Tool 启动。`SubagentController` 只传递显式
 ## 失败与取消
 
 - Provider、事件序列或 context 规划失败不会提交部分 `AssistantMessage`；已经提交的 `HumanMessage` 保留。
+- request audit 初始提交失败时 Provider 不会被调用；compact 的 summary/boundary 也不会提交。
 - context overflow 允许执行一次 reactive compact，再从最新 Session 状态重新规划。
 - 工具轮取消时，执行器取消当前并行组，为未完成调用生成稳定错误结果，按原 ToolCall 顺序提交闭合 batch，然后继续传播取消。
 - Session 恢复仍会幂等修复 transcript 尾部遗留的未闭合 ToolCall，但这不是正常取消路径的替代品。

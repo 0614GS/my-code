@@ -16,6 +16,7 @@ from my_code.agent.events import (
     AgentEvent,
     AgentInputAccepted,
     AgentInputFailed,
+    AgentModelRequestPrepared,
     AgentModelStepCompleted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
@@ -40,7 +41,9 @@ from my_code.chat.events import (
     CompactionStarted,
     ContextUpdated,
     MaxStepsReached,
+    ModelRequestPrepared,
     ModelStepCompleted,
+    PreparedContext,
     ReasoningCompleted,
     ReasoningDelta,
     ReasoningStarted,
@@ -57,6 +60,8 @@ from my_code.chat.events import (
     TurnSucceeded,
 )
 from my_code.chat.history import (
+    HistoryContextGroup,
+    HistoryContextItem,
     HistoryEntry,
     HistoryReasoning,
     HistoryText,
@@ -93,7 +98,9 @@ from my_code.chat.views import (
     TranscriptValue,
     TranscriptView,
 )
+from my_code.config.paths import SettingsScope
 from my_code.config.settings import AgentSettings
+from my_code.config.store import SettingsStore
 from my_code.context.engine import ContextEngine
 from my_code.conversation.attachments import AttachmentPayload, is_durable_attachment
 from my_code.conversation.models import (
@@ -119,6 +126,8 @@ from my_code.model.capabilities import (
     ModelDescriptor,
     resolve_environment,
 )
+from my_code.model.display import DisplayDensity
+from my_code.model.invocation import ModelInputOriginKind
 from my_code.model.primitives import ReasoningPresentation
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
@@ -173,6 +182,8 @@ class SubagentActivitySource(Protocol):
     def task_views(self, owner_run_id: str) -> tuple[RuntimeSubagentTaskView, ...]: ...
 
     async def wait_for_activity(self, after_revision: int) -> int: ...
+
+    def session_for_task(self, task_id: str) -> Session | None: ...
 
 
 def _connection_identity(
@@ -251,6 +262,7 @@ def _project_subagent_entry(
         result,
         entry.is_error,
         running=entry.result is None,
+        name=entry.use.display_name,
     )
 
 
@@ -347,10 +359,38 @@ class ChatService:
         session = self.state.session
         return SessionView(self.status(), self._project_history(session))
 
+    def view_mode(self) -> DisplayDensity:
+        return (
+            SettingsStore(self.settings.paths)
+            .load_scope(SettingsScope.USER)
+            .tui_view_mode
+            or DisplayDensity.CONCISE
+        )
+
+    def set_view_mode(self, mode: DisplayDensity) -> None:
+        """Atomically persist the user-level main scrollback preference."""
+
+        SettingsStore(self.settings.paths).set_user_tui_view_mode(mode)
+
     def current_transcript_view(self) -> TranscriptView:
         """Return the complete persisted conversation without storage internals."""
 
-        conversation = self.state.session.conversation
+        return self._transcript_view(self.state.session)
+
+    def subagent_transcript_view(self, task_id: str) -> TranscriptView:
+        """Project one retained child Session through the same audit DTO."""
+
+        source = self._subagents
+        getter = getattr(source, "session_for_task", None)
+        session = getter(task_id) if getter is not None else None
+        if session is None:
+            raise ValueError(f"Subagent transcript is unavailable: {task_id}")
+        return self._transcript_view(session)
+
+    def _transcript_view(self, session: Session) -> TranscriptView:
+        """Build one complete conversation and request-audit snapshot."""
+
+        conversation = session.conversation
         tool_names = {
             block.id: block.name
             for message in conversation
@@ -408,11 +448,18 @@ class ChatService:
                         _transcript_value(message.payload, omitted={"owner_run_id"}),
                     )
                 )
+        audit = session.request_audit_snapshot()
         digest = hashlib.sha256(
             "\0".join(message.uuid for message in conversation).encode()
+            + audit.revision.to_bytes(8, "big")
         ).digest()
         revision = int.from_bytes(digest[:8], "big")
-        return TranscriptView(revision, tuple(entries))
+        return TranscriptView(
+            revision,
+            tuple(entries),
+            audit.requests,
+            audit.legacy_missing,
+        )
 
     def session_usage(self) -> SessionUsageView:
         usages = (
@@ -780,6 +827,21 @@ class ChatService:
                     event.usage,
                     self.context_status(),
                 )
+            elif isinstance(event, AgentModelRequestPrepared):
+                yield ModelRequestPrepared(
+                    event.request_id,
+                    event.request_number,
+                    event.purpose,
+                    tuple(
+                        PreparedContext(
+                            item.audit_id,
+                            item.source,
+                            item.attachment_kind,
+                            item.text,
+                        )
+                        for item in event.injections
+                    ),
+                )
             elif isinstance(event, AgentInputAccepted):
                 yield TurnInputAccepted(event.input_id, event.prompt)
                 # The first context snapshot is intentionally created only
@@ -808,7 +870,12 @@ class ChatService:
             elif isinstance(event, AgentModelStepCompleted):
                 yield ModelStepCompleted(event.step_index, event.has_tools)
             elif isinstance(event, AgentToolStarted):
-                yield ToolStarted(event.tool_use_id, event.presentation)
+                yield ToolStarted(
+                    event.tool_use_id,
+                    event.presentation,
+                    event.name,
+                    event.input,
+                )
             elif isinstance(event, AgentToolFinished):
                 yield ToolFinished(
                     event.tool_use_id, event.is_error, event.presentation
@@ -912,6 +979,7 @@ class ChatService:
             outcome = await self.context.compact(
                 session.context_planning_state(),
                 "manual",
+                recorder=session,
             )
             session.commit_compaction(
                 outcome.replacements,
@@ -1187,6 +1255,8 @@ class ChatService:
             if isinstance(block, ToolResult)
         }
         history: list[HistoryEntry] = []
+        context_groups = _history_context_groups(session)
+        history.extend(context_groups.pop(None, ()))
         for message in session.conversation:
             if isinstance(message, HumanMessage):
                 history.append(HistoryText("user", message.content))
@@ -1237,9 +1307,69 @@ class ChatService:
                                 todos=todos,
                                 ends_tool_batch=bool(tool_ids)
                                 and block.id == tool_ids[-1],
+                                name=block.name,
+                                input=block.input,
                             )
                         )
+            history.extend(context_groups.pop(message.uuid, ()))
+        for unmatched in context_groups.values():
+            history.extend(unmatched)
         return tuple(history)
+
+
+def _history_context_groups(
+    session: Session,
+) -> dict[str | None, tuple[HistoryContextGroup, ...]]:
+    """Recover the same deduplicated Detailed injections used by live events."""
+
+    grouped: dict[str | None, list[HistoryContextGroup]] = {}
+    previous_refs: set[str] = set()
+    visible_origins = {
+        ModelInputOriginKind.USER_CONTEXT,
+        ModelInputOriginKind.ATTACHMENT,
+        ModelInputOriginKind.CONTENT_REPLACEMENT,
+    }
+    for request in session.request_audit_snapshot().requests:
+        manifest = request.manifest
+        items: list[HistoryContextItem] = []
+        if manifest.purpose.value != "compact":
+            for value, origin, audit_id in zip(
+                request.input,
+                manifest.origins,
+                manifest.input_refs,
+                strict=True,
+            ):
+                if audit_id in previous_refs or origin.kind not in visible_origins:
+                    continue
+                items.append(
+                    HistoryContextItem(
+                        origin.source or origin.kind.value,
+                        origin.attachment_kind,
+                        _audit_input_text(value),
+                    )
+                )
+        previous_refs.update(manifest.input_refs)
+        if items:
+            grouped.setdefault(manifest.causal_head, []).append(
+                HistoryContextGroup(manifest.request_number, tuple(items))
+            )
+    return {key: tuple(value) for key, value in grouped.items()}
+
+
+def _audit_input_text(value: object) -> str:
+    if not isinstance(value, dict) or value.get("type") != "user_input":
+        return ""
+    content = value.get("content")
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "input_text":
+            continue
+        text = block.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+    return "\n".join(parts)
 
 
 def _transcript_value(

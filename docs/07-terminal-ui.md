@@ -35,7 +35,9 @@ presentation 中的 200 条代码行记录。
 
 ## Transcript 与 Agent 视图
 
-`Ctrl+T` 打开当前 Session 的只读 transcript，包括用户/助手文本、允许披露的 reasoning、工具参数与持久化结果、summary 和 durable attachments。投影不包含内部 UUID、provider replay、token 调试元数据、hidden/redacted reasoning，也不展开外置文件。
+`Ctrl+T` 打开当前 Session 的三级 audit transcript。timeline 包含用户/助手文本、允许披露的 reasoning、工具参数与模型实际看到的持久化结果、summary、durable attachments，以及精确 model/compact request 边界。system prompt section 和 tool schema 首次出现时展开，未变化请求显示稳定引用；旧 Session 没有 sidecar 时显示明确缺口。
+
+`n/N` 在请求间移动，Enter 打开当前 request 的 resolved view：完整 section、有序 input 及 origin、tool definitions/JSON Schema、输出预算、reasoning mode、ContextBudget 和终态。resolved view 中 Esc 返回 timeline；timeline 中 Esc、Ctrl+T 或 q 关闭。pager 的 Session/audit revision 在单 worker 中 latest-wins 渲染，UI callback 不解析 JSONL。
 
 `/agents` 和 F6 可查看主会话、活跃 child 与最近结束 child 的进程内安全视图。选择只改变 UI 投影，不切换核心 Session，也不取消 child。
 
@@ -43,7 +45,9 @@ presentation 中的 200 条代码行记录。
 
 Enter 提交，Shift+Enter 或 Ctrl+J 换行；Esc 按候选菜单、临时面板、当前 invocation 的优先级处理。Agent 与后台 continuation 运行时 composer 仍可编辑，普通 Enter 加入仅内存的 steering queue；accepted 事件到达后才写入 scrollback。空 composer 按 Up 可取消准备任务并召回最近的 pending/failed 输入。Esc 只取消当前 invocation，不清除队列。
 
-composer 下方最多显示三行 queue preview。Slash command 显式分为 `concurrent_read` 与 `exclusive`：只读命令可在 Agent active 时运行；compact、能力 reload/reconnect、provider/model、resume 和 exit 等独占操作保留原草稿并等待 Agent 空闲。Agent active 时 Shift+Tab 不修改 permission mode。
+composer 下方最多显示三行 queue preview。Slash command 显式分为 `concurrent_read`、`concurrent_ui` 与 `exclusive`：只读命令和纯展示偏好可在 Agent active 时运行；compact、能力 reload/reconnect、provider/model、resume 和 exit 等独占操作保留原草稿并等待 Agent 空闲。Agent active 时 Shift+Tab 不修改 permission mode。
+
+`/view` 使用与 `/model`、`/provider`、`/resume` 相同的二级 Picker 选择主界面模式；`/view concise` 与 `/view detailed` 仍可直接原子写入用户级 `tui.viewMode`。默认 concise，偏好跨项目和 Session。切换会清屏并按新模式重新投影当前 Session，复用 resume 的历史渲染路径。Detailed 在每次请求前按 audit ID 去重展示新增/变化的 AGENTS、Attachment、Todo/Skill、工具发现与后台通知正文；恢复历史时从 request audit 投影相同内容。单项限制为 60 行和 8 KiB，并完整格式化 canonical ToolCall input。工具结果继续使用安全摘要/diff。Concise 保持原有展示；完整历史使用 Ctrl+T。
 
 Slash commands 在进入模型前本地解析。已执行命令先在 scrollback 回显；`/status`、`/context`、`/usage`、`/tools`、`/skills`、`/mcp` 和 `/tasks` 使用统一的圆角信息卡，命令与卡片作为一个串行输出批次提交。`/resume`、`/provider`、`/model` 和 `/agents` 等仍只调用 ChatService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
 

@@ -4,6 +4,7 @@ import hashlib
 import os
 import tempfile
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 
 from my_code.context.session import AttachmentDerivationState, ContextPlanningState
@@ -28,8 +29,15 @@ from my_code.conversation.models import (
 )
 from my_code.conversation.presentation import generic_tool_result_presentation
 from my_code.conversation.state import CompactBoundary, ContentReplacement
+from my_code.model.invocation import (
+    ModelInvocation,
+    ModelInvocationReceipt,
+    ModelInvocationRecorder,
+    ModelInvocationStatus,
+)
 from my_code.model.primitives import ProviderReplayRecord
 from my_code.sessions._aggregate import ConversationAggregate
+from my_code.sessions._request_audit import RequestAuditStore
 from my_code.sessions._store import SessionStore
 from my_code.sessions._tool_results import ToolResultStore
 from my_code.sessions.models import (
@@ -38,9 +46,10 @@ from my_code.sessions.models import (
     TurnHistoryEntry,
     TurnStarted,
 )
+from my_code.sessions.request_audit import RequestAuditSnapshot
 
 
-class Session:
+class Session(ModelInvocationRecorder):
     """Own one Conversation and commit recoverable changes persistence-first."""
 
     def __init__(
@@ -53,6 +62,10 @@ class Session:
     ) -> None:
         self._store = SessionStore(project_state_dir, session_id, start=start)
         loaded = self._store.load()
+        self._request_audit = RequestAuditStore(self._store.session_dir)
+        self._audit_legacy_gap = bool(loaded.conversation) and (
+            self._request_audit.snapshot().legacy_missing
+        )
         self._conversation = ConversationAggregate(
             loaded.conversation,
             content_replacements=loaded.content_replacements,
@@ -69,6 +82,30 @@ class Session:
             else _default_tool_results_dir(project_state_dir, session_id)
         )
         self._repair_trailing_tool_calls()
+
+    def prepare_model_invocation(
+        self, invocation: ModelInvocation
+    ) -> ModelInvocationReceipt:
+        """Durably record a semantic request before any provider delivery."""
+
+        manifest = self._request_audit.prepare(invocation)
+        return ModelInvocationReceipt(
+            manifest.request_id,
+            manifest.request_number,
+            manifest.input_refs,
+        )
+
+    def finish_model_invocation(
+        self,
+        request_id: str,
+        status: ModelInvocationStatus,
+        error: str | None = None,
+    ) -> None:
+        self._request_audit.finish(request_id, status, error)
+
+    def request_audit_snapshot(self) -> RequestAuditSnapshot:
+        snapshot = self._request_audit.snapshot()
+        return replace(snapshot, legacy_missing=self._audit_legacy_gap)
 
     @classmethod
     def restore(

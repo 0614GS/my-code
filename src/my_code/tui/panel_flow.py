@@ -41,6 +41,10 @@ class PanelFlowMixin:
         )
         self._open_panel("model_select")
 
+    def _open_view_picker(self) -> None:
+        self._panel_index = 0 if self._display_density.view_mode == "concise" else 1
+        self._open_panel("view_select")
+
     def _open_agents(self) -> None:
         self._agents = self.runtime.subagent_tasks()
         self._panel_index = 0
@@ -148,6 +152,16 @@ class PanelFlowMixin:
             self._status_warning = context.warning or "" if context is not None else ""
             self._close_panel()
             await self._write(system_message(f"Using model {status.model!r}"))
+        elif self._panel == "view_select" and action is not None:
+            try:
+                message = await self._change_view_mode(action)
+            except Exception as error:
+                await self._write(
+                    system_message(f"View mode selection failed: {error}", error=True)
+                )
+                return
+            self._close_panel()
+            await self._write(system_message(message))
         elif self._panel == "provider_select" and action is not None:
             if action == "add":
                 self._provider_selected_index = -1

@@ -22,6 +22,7 @@ from my_code.config.store import (
     SettingsLayer,
     SettingsStore,
 )
+from my_code.model.display import DisplayDensity
 from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import (
     PermissionBehavior,
@@ -157,6 +158,31 @@ def test_empty_and_missing_files_are_empty_layers(tmp_path: Path) -> None:
     paths.project_settings_path.write_text("\n", encoding="utf-8")
 
     assert SettingsStore(paths).load() == SettingsLayer()
+
+
+def test_user_tui_view_mode_has_a_narrow_atomic_writer(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(SettingsScope.USER, SettingsLayer(max_steps=7))
+
+    store.set_user_tui_view_mode(DisplayDensity.DETAILED)
+
+    assert store.load_scope(SettingsScope.USER).tui_view_mode is DisplayDensity.DETAILED
+    document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
+    assert document["agent"]["maxSteps"] == 7
+    assert document["tui"] == {"viewMode": "detailed"}
+
+
+def test_project_tui_view_mode_is_rejected(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    paths.project_settings_path.parent.mkdir()
+    paths.project_settings_path.write_text(
+        json.dumps({"version": 3, "tui": {"viewMode": "detailed"}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SettingsFileError, match="only allowed in user"):
+        SettingsStore(paths).load_scope(SettingsScope.PROJECT)
 
 
 def test_project_layers_are_skipped_when_started_from_user_home(

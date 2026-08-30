@@ -15,6 +15,24 @@ from my_code.tools.presentation import ToolUsePresentation
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedContextItem:
+    audit_id: str
+    source: str
+    attachment_kind: str | None
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentModelRequestPrepared:
+    """A semantic model request is durable and may now be delivered."""
+
+    request_id: str
+    request_number: int
+    purpose: str
+    injections: tuple[PreparedContextItem, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class AgentInputAccepted:
     """A host input became a canonical HumanMessage at a safe boundary."""
 
@@ -110,7 +128,8 @@ class AgentConversationUpdated:
 
 
 type AgentEvent = (
-    AgentCompactionStarted
+    AgentModelRequestPrepared
+    | AgentCompactionStarted
     | AgentCompactionCompleted
     | AgentInputAccepted
     | AgentInputFailed
@@ -136,6 +155,7 @@ __all__ = [
     "AgentInputAccepted",
     "AgentInputFailed",
     "AgentModelStepCompleted",
+    "AgentModelRequestPrepared",
     "AgentEvent",
     "AgentReasoningCompleted",
     "AgentReasoningDelta",
@@ -145,4 +165,5 @@ __all__ = [
     "AgentTextStarted",
     "AgentToolFinished",
     "AgentToolStarted",
+    "PreparedContextItem",
 ]

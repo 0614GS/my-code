@@ -36,6 +36,7 @@ from my_code.chat.events import (
     TurnEvent,
 )
 from my_code.chat.history import (
+    HistoryContextGroup,
     HistoryEntry,
     HistoryText,
     HistoryToolCall,
@@ -43,8 +44,9 @@ from my_code.chat.history import (
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.service import ChatService
 from my_code.chat.status import ContextStatus, RuntimeStatus
-from my_code.chat.views import SubagentTaskView
+from my_code.chat.views import SubagentTaskView, TranscriptView
 from my_code.features.file_mentions.models import PathSuggestion
+from my_code.model.display import DisplayDensity
 from my_code.permissions.models import (
     PermissionConfirmation,
     PermissionPromptCategory,
@@ -81,6 +83,7 @@ from my_code.tui.panels import (
     provider_select_panel,
     render_picker,
     resume_panel,
+    view_mode_panel,
 )
 from my_code.tui.picker import PickerState, PickerView
 from my_code.tui.presentation import (
@@ -112,7 +115,9 @@ from my_code.tui.transcript import TranscriptPager
 from my_code.tui.turns import TurnFlowMixin
 from my_code.tui.widgets import (
     assistant_message,
+    block_separator,
     command_echo,
+    detailed_tool_call_message,
     history_message,
     status_line,
     streaming_renderable,
@@ -127,6 +132,15 @@ from my_code.tui.widgets import (
 #: deltas would otherwise trigger a full Markdown re-render of the accumulated
 #: text on every token, starving the single-threaded UI loop.
 _STREAM_INVALIDATE_INTERVAL = 0.04
+
+
+class _ChildTranscriptSource:
+    def __init__(self, view: Any, task_id: str) -> None:
+        self._view = view
+        self._task_id = task_id
+
+    def current_transcript_view(self) -> TranscriptView:
+        return cast(TranscriptView, self._view(self._task_id))
 
 
 class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
@@ -200,6 +214,10 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._has_scrollback_output = False
         self._last_scrollback_was_user = False
         self._transcript_pager: TranscriptPager | None = None
+        view_mode = getattr(self.runtime, "view_mode", None)
+        self._display_density = (
+            view_mode() if view_mode is not None else DisplayDensity.CONCISE
+        )
         self._tasks: set[asyncio.Task[object]] = set()
         self._history = InMemoryHistory()
         self._slash_menu = SlashMenuState()
@@ -420,8 +438,13 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
     async def _open_transcript(self) -> None:
         if self._transcript_pager is not None:
             return
+        source: object = self.runtime
+        if self._panel == "agents" and self._agent_task_id is not None:
+            child_view = getattr(self.runtime, "subagent_transcript_view", None)
+            if child_view is not None:
+                source = _ChildTranscriptSource(child_view, self._agent_task_id)
         pager = TranscriptPager(
-            self.runtime,
+            cast(Any, source),
             input=self.application.input,
             output=self.application.output,
         )
@@ -447,6 +470,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             "provider_protocol",
             "provider_probe_failure",
             "provider_checking",
+            "view_select",
             "agents",
         }:
             return True
@@ -686,6 +710,8 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             return provider_models_panel(self._provider_models, self.buffer.text)
         if self._panel == "model_select":
             return model_picker_panel(self._models, self.buffer.text)
+        if self._panel == "view_select":
+            return view_mode_panel(self._display_density)
         if self._panel == "agents" and self._agent_task_id is None:
             return agent_select_panel(self._agents)
         return None
@@ -881,6 +907,9 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             await emit(render_usage_card(usage))
         if outcome.show_tools:
             await emit(render_tools(self.runtime.capabilities()))
+        if outcome.view_operation is not None:
+            message = await self._change_view_mode(outcome.view_operation)
+            await emit(system_message(message))
         if outcome.skill_operation is not None:
             if outcome.skill_operation == "reload":
                 self._busy = True
@@ -919,6 +948,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             or outcome.open_session_picker
             or outcome.open_provider_manager
             or outcome.open_model_picker
+            or outcome.open_view_picker
         ):
             await self._write(command_echo(command_line))
             echo_pending = False
@@ -930,8 +960,33 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             self._open_provider()
         if outcome.open_model_picker:
             self._open_model_picker()
+        if outcome.open_view_picker:
+            self._open_view_picker()
         if outcome.should_exit:
             self.application.exit()
+
+    async def _change_view_mode(self, operation: str) -> str:
+        requested = DisplayDensity.from_view_mode(operation)
+        if requested is self._display_density:
+            return f"View mode · {requested.view_mode}"
+        await self._flush_tool_activity()
+        await self._flush_unclassified_blocks()
+        setter = getattr(self.runtime, "set_view_mode", None)
+        if setter is None:
+            raise RuntimeError("Runtime does not support view preferences")
+        setter(requested)
+        previous = self._display_density
+        self._display_density = requested
+        view = self.runtime.current_session_view()
+        self._status = view.status
+        self._todos = view.status.todos
+        self._blocks.reset_group()
+        await self._write(welcome(view.status, self.theme), clear=True)
+        await self._render_history(view.history)
+        return (
+            f"View mode changed · {previous.view_mode} → "
+            f"{requested.view_mode} · session re-rendered"
+        )
 
     def _command_context_status(self) -> ContextStatus:
         """Prefer a fresh snapshot, but remain readable during an open tool pair."""
@@ -1168,7 +1223,28 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         renderables: list[RenderableType] = []
         work_visible = False
         for entry in history:
+            if isinstance(entry, HistoryContextGroup):
+                if self._display_density.includes(DisplayDensity.DETAILED):
+                    if group:
+                        renderables.append(tool_activity_message(group))
+                        group = None
+                    renderables.append(history_message(entry, self.theme))
+                    work_visible = True
+                continue
             if isinstance(entry, HistoryToolCall):
+                if (
+                    self._display_density.includes(DisplayDensity.DETAILED)
+                    and entry.input is not None
+                ):
+                    if group:
+                        renderables.append(tool_activity_message(group))
+                        work_visible = True
+                        group = None
+                    renderables.append(
+                        detailed_tool_call_message(
+                            entry.name or entry.use.display_name, entry.input
+                        )
+                    )
                 if entry.todos is not None and not entry.is_error:
                     pending_todos = entry.todos
                 else:
@@ -1201,10 +1277,20 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                     pending_todos = None
                 if isinstance(entry, HistoryText):
                     if entry.role == "user":
+                        if self._display_density.includes(DisplayDensity.DETAILED):
+                            renderables.append(block_separator("User input"))
                         work_visible = False
                     elif entry.is_final_answer and work_visible:
-                        renderables.append(work_separator())
+                        renderables.append(
+                            block_separator("Assistant response")
+                            if self._display_density.includes(DisplayDensity.DETAILED)
+                            else work_separator()
+                        )
                         work_visible = False
+                    elif entry.is_final_answer and self._display_density.includes(
+                        DisplayDensity.DETAILED
+                    ):
+                        renderables.append(block_separator("Assistant response"))
                     elif entry.role == "assistant" and not entry.is_final_answer:
                         work_visible = True
                 else:

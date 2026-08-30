@@ -26,7 +26,12 @@ from my_code.chat.events import (
     TurnInputAccepted,
     TurnSucceeded,
 )
-from my_code.chat.history import HistoryText, HistoryToolCall
+from my_code.chat.history import (
+    HistoryContextGroup,
+    HistoryContextItem,
+    HistoryText,
+    HistoryToolCall,
+)
 from my_code.chat.service import ChatService
 from my_code.chat.views import (
     TranscriptAttachment,
@@ -67,7 +72,14 @@ from my_code.features.background_tasks.registry import BackgroundTask
 from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.foundation.json import JsonObject
 from my_code.model.capabilities import ModelDescriptor, ModelLimits
+from my_code.model.invocation import (
+    ModelInputOrigin,
+    ModelInputOriginKind,
+    ModelInvocation,
+    RequestPurpose,
+)
 from my_code.model.primitives import ReasoningPresentation, TokenUsage
+from my_code.model.request import InputText, ModelRequest, SystemPrompt, UserInput
 from my_code.permissions.models import PermissionMode
 from my_code.providers.discovery import ModelDiscoveryService
 from my_code.providers.manager import ProviderManager, ProviderUpdate
@@ -1030,7 +1042,62 @@ async def test_resume_uses_persisted_tool_presentation_snapshot(tmp_path: Path) 
             result=snapshot,
             is_error=False,
             ends_tool_batch=True,
+            name="Edit",
+            input={
+                "path": "old.py",
+                "old_string": "old",
+                "new_string": "new",
+            },
         ),
+    )
+
+
+def test_session_history_recovers_detailed_injections_from_request_audit(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    session = runtime.state.session
+    session.commit_user_inputs(
+        (("inspect notes", (FileMentionAttachment("notes.txt", "secret notes"),)),)
+    )
+    invocation = ModelInvocation(
+        request=ModelRequest(
+            SystemPrompt.from_text("system"),
+            (UserInput((InputText("secret notes"),)),),
+            (),
+            128,
+        ),
+        origins=(
+            ModelInputOrigin(
+                ModelInputOriginKind.ATTACHMENT,
+                source_id=session.causal_head_uuid,
+                source="File attachment",
+                attachment_kind="file_mention",
+            ),
+        ),
+        purpose=RequestPurpose.AGENT,
+        causal_head=session.causal_head_uuid,
+        step=1,
+    )
+    session.prepare_model_invocation(invocation)
+    session.finish_model_invocation(invocation.request_id, "completed")
+    session.append_assistant_message(
+        AssistantMessage(
+            (TextContent("answer"),),
+            parent_uuid=session.causal_head_uuid,
+            usage=TokenUsage(),
+        )
+    )
+
+    history = runtime.current_session_view().history
+
+    assert history == (
+        HistoryText("user", "inspect notes"),
+        HistoryContextGroup(
+            1,
+            (HistoryContextItem("File attachment", "file_mention", "secret notes"),),
+        ),
+        HistoryText("assistant", "answer", is_final_answer=True),
     )
 
 

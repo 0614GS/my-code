@@ -36,7 +36,13 @@ from my_code.chat.events import (
     TurnEvent,
     TurnSucceeded,
 )
-from my_code.chat.history import HistoryText, HistoryToolCall
+from my_code.chat.history import (
+    HistoryContextGroup,
+    HistoryContextItem,
+    HistoryEntry,
+    HistoryText,
+    HistoryToolCall,
+)
 from my_code.chat.permissions import (
     PermissionModeSwitch,
     PermissionModeView,
@@ -48,6 +54,7 @@ from my_code.config.providers import ProviderProtocol
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
 from my_code.model.capabilities import ModelDescriptor
+from my_code.model.display import DisplayDensity
 from my_code.model.primitives import ReasoningPresentation, TokenUsage
 from my_code.permissions.models import PermissionConfirmation
 from my_code.providers.manager import (
@@ -59,7 +66,7 @@ from my_code.sessions.catalog import SessionSummary
 from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.app import _STREAM_INVALIDATE_INTERVAL, MyCodeApp
-from my_code.tui.commands import SlashCommandRegistry
+from my_code.tui.commands import CommandConcurrency, SlashCommandRegistry
 from my_code.tui.dimensions import SURFACE_VERTICAL_PADDING
 from my_code.tui.presentation import format_context_usage, render_context_status
 from my_code.tui.provider_screen import ProviderForm
@@ -72,7 +79,7 @@ class FakeRuntime:
     def __init__(
         self,
         *,
-        history: tuple[HistoryText, ...] = (),
+        history: tuple[HistoryEntry, ...] = (),
         credential_source: CredentialSource = CredentialSource.STORED,
     ) -> None:
         self.prompts: list[str] = []
@@ -89,12 +96,21 @@ class FakeRuntime:
         self.full_access_confirmed = False
         self.sessions: tuple[SessionSummary, ...] = ()
         self.resumed_session_id: str | None = None
+        self.view_density = DisplayDensity.CONCISE
+        self.view_updates: list[DisplayDensity] = []
 
     async def initialize(self) -> SessionView:
         return SessionView(self.status(), self.history)
 
     def current_session_view(self) -> SessionView:
         return SessionView(self.status(), self.history)
+
+    def view_mode(self) -> DisplayDensity:
+        return self.view_density
+
+    def set_view_mode(self, density: DisplayDensity) -> None:
+        self.view_updates.append(density)
+        self.view_density = density
 
     def set_permission_handler(self, handler):
         self.permission_handler = handler
@@ -1625,6 +1641,125 @@ def test_new_slash_commands_have_strict_subcommands() -> None:
     assert registry.dispatch("/tasks", status=status).show_tasks  # type: ignore[union-attr]
     invalid = registry.dispatch("/mcp refresh", status=status)
     assert invalid is not None and invalid.message.startswith("Usage:")
+    assert registry.dispatch("/view", status=status).open_view_picker  # type: ignore[union-attr]
+    assert registry.dispatch("/view detailed", status=status).view_operation == (  # type: ignore[union-attr]
+        "detailed"
+    )
+    invalid_view = registry.dispatch("/view audit", status=status)
+    assert invalid_view is not None and invalid_view.message == (
+        "Usage: /view [concise|detailed]"
+    )
+    assert registry.concurrency("/view detailed") is CommandConcurrency.CONCURRENT_UI
+
+
+@pytest.mark.asyncio
+async def test_view_command_opens_shared_picker_and_applies_selection() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), width=100, force_terminal=False),
+    )
+
+    outcome = app.commands.dispatch("/view", status=runtime.status())
+    assert outcome is not None
+    await app._handle_command(outcome, command_line="/view")
+
+    assert app._panel == "view_select"
+    rendered = fragment_list_to_text(to_formatted_text(app._panel_text()))
+    assert "Choose output detail" in rendered
+    assert "● Concise" in rendered
+    assert "Detailed" in rendered
+
+    app._panel_index = 1
+    await app._panel_enter()
+
+    assert app._panel is None
+    assert runtime.view_updates == [DisplayDensity.DETAILED]
+    assert app._display_density is DisplayDensity.DETAILED
+
+
+@pytest.mark.asyncio
+async def test_view_picker_keeps_old_mode_open_when_setting_write_fails() -> None:
+    class FailingViewRuntime(FakeRuntime):
+        def set_view_mode(self, density: DisplayDensity) -> None:
+            del density
+            raise OSError("settings are read-only")
+
+    runtime = FailingViewRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._open_view_picker()
+    app._panel_index = 1
+
+    await app._panel_enter()
+
+    assert app._panel == "view_select"
+    assert app._display_density is DisplayDensity.CONCISE
+
+
+@pytest.mark.asyncio
+async def test_view_switch_clears_and_rerenders_detailed_session_history() -> None:
+    history: tuple[HistoryEntry, ...] = (
+        HistoryText("user", "question"),
+        HistoryContextGroup(
+            1,
+            (HistoryContextItem("AGENTS context", "agents", "injected rules"),),
+        ),
+        HistoryText("assistant", "answer", is_final_answer=True),
+    )
+    runtime = FakeRuntime(history=history)
+
+    class RerenderRecordingApp(RecordingMyCodeApp):
+        def __init__(self, runtime: FakeRuntime) -> None:
+            super().__init__(runtime)
+            self.clear_flags: list[bool] = []
+
+        async def _write(
+            self, renderable: RenderableType, *, clear: bool = False
+        ) -> None:
+            self.clear_flags.append(clear)
+            await super()._write(renderable, clear=clear)
+
+    app = RerenderRecordingApp(runtime)
+
+    message = await app._change_view_mode("detailed")
+
+    stream = StringIO()
+    console = Console(file=stream, width=80, force_terminal=False)
+    for _, _, renderable in app.write_snapshots:
+        console.print(renderable)
+    rendered = stream.getvalue()
+    assert app.clear_flags[0]
+    assert "Injected context · request #1" in rendered
+    assert "injected rules" in rendered
+    assert "User input" in rendered
+    assert "Assistant response" in rendered
+    assert message.endswith("session re-rendered")
+
+
+@pytest.mark.asyncio
+async def test_concise_history_hides_detailed_context_groups() -> None:
+    app = RecordingMyCodeApp(FakeRuntime())
+    history: tuple[HistoryEntry, ...] = (
+        HistoryText("user", "question"),
+        HistoryContextGroup(
+            1,
+            (HistoryContextItem("AGENTS context", None, "injected rules"),),
+        ),
+        HistoryText("assistant", "answer", is_final_answer=True),
+    )
+
+    await app._render_history(history)
+
+    stream = StringIO()
+    console = Console(file=stream, force_terminal=False)
+    for _, _, renderable in app.write_snapshots:
+        console.print(renderable)
+    assert "injected rules" not in stream.getvalue()
 
 
 def test_context_usage_remains_compact() -> None:

@@ -14,6 +14,7 @@
 | runtime permission policy | `AppState.permissions` | runtime | mode 由 Session 写入，规则由配置或 durable facts 恢复 |
 | ToolCatalog、task tree、MCP/Skill runtime | 对应 AppState 状态胶囊 | runtime | 只持久化配置或对话产物 |
 | turn 身份与终态 journal | `Session` | session | 是（不复制正文） |
+| provider-neutral request audit | `Session` 私有 sidecar | session | 是（不进入 Conversation） |
 | step、stream、tool progress | 调用栈 | 单次操作 | 否 |
 | pending user input、附件准备状态 | host/runtime 内存 | 当前进程与活动 Session | 否 |
 
@@ -63,6 +64,14 @@ Attachment 是否持久化由 Session 根据 payload 类型统一决定。显式
 
 进程运行期间，已打开 Session 的内存状态是读取权威；本地文件是跨进程恢复依据，不是 refresh API。
 
+## Request audit sidecar
+
+每个 Session 可拥有独立的 `<session-id>/request-audit.jsonl`。它不是 canonical Conversation，也不参与 context planning。私有 store 对规范化 JSON 使用 SHA-256 内容寻址，system prompt section、有序 model input item 和 tool definition/schema 只写一次；每个 request manifest 按顺序引用 blobs，并保存 purpose、causal head、step/attempt、origin、输出预算、reasoning mode 与 ContextBudget 摘要。终态用独立 record 追加。
+
+sidecar 不保存 API key、认证头、Provider wire role 归一化或 opaque continuation。允许披露的 reasoning 只按 provider-neutral presentation 记录；hidden/redacted 内容不会因 audit 而出现。
+
+旧 Session 没有 sidecar 仍可恢复，Transcript 明确显示历史审计缺口。sidecar 一旦存在，哈希不符、悬空引用、重复终态或 manifest 序号损坏都会使 Session 恢复失败关闭；不会用当前 prompt/tool schema 伪造历史请求。
+
 每个 Agent turn 在处理前提交 `turn_started`，并在发布终态事件前提交
 `turn_finished`。`Session.turn_history` 按开始顺序返回只读聚合；未闭合 start 保持可见，
 供恢复和 Harness 判断 incomplete。Journal 写入故障不会覆盖 Agent 本身的执行语义。
@@ -93,6 +102,7 @@ Provider replay 与 canonical assistant content 分离，通过 entry/content ID
 
 - 新的长生命周期状态必须说明所有者、创建、更新、失效、销毁和持久化策略。
 - request、turn、step、tool round、stream delta 和 pending approval 不得提升到 AppState 或 Session。
+- request manifest 是 Session 持久化的审计事实，但不是 `ConversationEntry`，不得被 Context 当作模型历史重放。
 - pending input queue 不是 canonical Session；只有 `commit_user_inputs()` 成功后，独立的 HumanMessage 与 durable attachment 才进入 JSONL 和内存 Conversation。
 - 同一边界的多条用户输入先在候选 aggregate 中完整验证，再通过一次 message batch append 持久化；成功后才发布内存状态和 accepted 事件。
 - 派生状态优先从 canonical facts 和不可变 snapshot 重算，不建立第二份可写权威来源。

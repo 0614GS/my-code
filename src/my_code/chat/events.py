@@ -1,17 +1,35 @@
 """Frontend-neutral events emitted by :class:`ChatService`."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from my_code.chat.status import ContextStatus
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
+from my_code.foundation.json import JsonObject
 from my_code.model.primitives import (
     ReasoningDisclosure,
     ReasoningPresentation,
     TokenUsage,
 )
 from my_code.tools.presentation import ToolUsePresentation
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedContext:
+    audit_id: str
+    source: str
+    attachment_kind: str | None
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRequestPrepared:
+    request_id: str
+    request_number: int
+    purpose: str
+    injections: tuple[PreparedContext, ...] = ()
+
 
 type CompactionTrigger = Literal["auto", "manual", "reactive"]
 
@@ -115,6 +133,8 @@ class TurnInputFailed:
 class ToolStarted:
     tool_use_id: str
     presentation: ToolUsePresentation
+    name: str = ""
+    input: JsonObject = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +173,7 @@ type TurnEvent = (
     | BackgroundInvocationFinished
     | CompactionStarted
     | CompactionCompleted
+    | ModelRequestPrepared
     | AttachmentLoaded
     | TurnInputAccepted
     | TurnInputFailed
@@ -182,6 +203,8 @@ __all__ = [
     "CompactionTrigger",
     "MaxStepsReached",
     "ModelStepCompleted",
+    "ModelRequestPrepared",
+    "PreparedContext",
     "ReasoningCompleted",
     "ReasoningDelta",
     "ReasoningStarted",

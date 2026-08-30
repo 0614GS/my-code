@@ -219,6 +219,22 @@ def _engine(
 
 
 @pytest.mark.asyncio
+async def test_request_audit_failure_prevents_provider_delivery(tmp_path: Path) -> None:
+    output = ModelOutput((ModelTextBlock("never sent"),), "end_turn")
+    bound, model, session, _ = _engine(tmp_path, [output])
+
+    def fail_audit(_invocation: object) -> None:
+        raise OSError("audit disk unavailable")
+
+    session.prepare_model_invocation = fail_audit  # type: ignore[method-assign]
+
+    with pytest.raises(OSError, match="audit disk unavailable"):
+        await bound.submit(AgentTurnInput("hello"))
+
+    assert model.requests == []
+
+
+@pytest.mark.asyncio
 async def test_native_stream_lifecycle_is_not_replayed_from_final_output(
     tmp_path: Path,
 ) -> None:

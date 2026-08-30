@@ -9,6 +9,7 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
+from my_code.chat.history import HistoryContextItem
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import (
     TranscriptField,
@@ -34,6 +35,7 @@ from my_code.tui.transcript import TranscriptPager, transcript_renderable
 from my_code.tui.widgets import (
     assistant_message,
     file_diff_message,
+    injected_context_message,
     streaming_assistant_message,
     streaming_renderable,
     todo_snapshot,
@@ -155,6 +157,47 @@ def test_work_group_adds_one_separator_only_before_a_final_answer() -> None:
     pure.add_text("Just an answer.")
     pure_rendered = _plain(Group(*pure.complete_step(has_tools=False)), width=50)
     assert not any(set(line) == {"─"} for line in pure_rendered.splitlines())
+
+
+def test_single_injected_context_item_has_no_internal_separator() -> None:
+    rendered = _plain(
+        injected_context_message(
+            4,
+            (HistoryContextItem("AGENTS.md", None, "workspace rules"),),
+        ),
+        width=48,
+    )
+    divider_lines = [line for line in rendered.splitlines() if set(line) == {"─"}]
+
+    assert len(divider_lines) == 1
+    assert len(divider_lines[0]) == 48
+    assert "Injected context · request #4" in rendered
+    assert rendered.index("AGENTS.md") < rendered.index("workspace rules")
+
+
+def test_injected_context_items_use_shared_separator_between_origins() -> None:
+    rendered = _plain(
+        injected_context_message(
+            5,
+            (
+                HistoryContextItem("AGENTS.md", None, "workspace rules"),
+                HistoryContextItem("attachment", "tool_search_listing", "- TodoWrite"),
+            ),
+        ),
+        width=48,
+    )
+    divider_lines = [line for line in rendered.splitlines() if set(line) == {"─"}]
+
+    assert len(divider_lines) == 2
+    assert all(len(line) == 48 for line in divider_lines)
+    internal_separator = divider_lines[0]
+    assert rendered.index("workspace rules") < rendered.index(internal_separator)
+    assert rendered.index(internal_separator) < rendered.index(
+        "attachment · tool_search_listing"
+    )
+    assert rendered.index("attachment · tool_search_listing") < rendered.index(
+        "- TodoWrite"
+    )
 
 
 def test_codex_markdown_snapshot_and_streaming_renderer_match() -> None:
