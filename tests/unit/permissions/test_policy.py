@@ -15,6 +15,7 @@ from my_code.permissions.models import (
     PermissionRule,
     PermissionUpdate,
     PermissionUpdateDestination,
+    ToolPermissionBehavior,
     ToolPermissionContext,
 )
 from my_code.permissions.policy import PermissionPolicy
@@ -302,7 +303,10 @@ async def test_plan_mode_allows_read_only_bash_and_denies_mutation(
     policy = PermissionPolicy(PermissionMode.PLAN)
 
     read = await decide(
-        policy, BashTool(), {"command": "git status"}, ToolExecutionContext(tmp_path)
+        policy,
+        BashTool(),
+        {"command": f"git -C {tmp_path} status"},
+        ToolExecutionContext(tmp_path),
     )
     mutation = await decide(
         policy, BashTool(), {"command": "git add ."}, ToolExecutionContext(tmp_path)
@@ -310,6 +314,22 @@ async def test_plan_mode_allows_read_only_bash_and_denies_mutation(
 
     assert read.behavior is PermissionBehavior.ALLOW
     assert mutation.behavior is PermissionBehavior.DENY
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_describes_unproven_bash_without_claiming_mutation(
+    tmp_path: Path,
+) -> None:
+    result = await BashTool().check_permissions(
+        {"command": "unknown-command"},
+        ToolPermissionContext(PermissionMode.PLAN, (), tmp_path),
+    )
+
+    assert result.behavior is ToolPermissionBehavior.DENY
+    assert result.message == (
+        "Only Bash commands proven read-only by static analysis are available in "
+        "plan mode."
+    )
 
 
 @pytest.mark.asyncio

@@ -46,6 +46,17 @@ def test_exact_current_directory_prefix_is_permission_neutral(tmp_path: Path) ->
     assert analysis.match_commands == (f"cd {tmp_path}", "git status --short")
 
 
+def test_git_c_current_workspace_is_read_only(tmp_path: Path) -> None:
+    command = (
+        f'git -C {tmp_path} status --short && echo "---BRANCH---" '
+        f"&& git -C {tmp_path} branch --show-current"
+    )
+
+    analysis = analyze_bash_command(command, tmp_path)
+
+    assert analysis.is_read_only is True
+
+
 @pytest.mark.parametrize(
     "template",
     [
@@ -53,6 +64,9 @@ def test_exact_current_directory_prefix_is_permission_neutral(tmp_path: Path) ->
         "cd {cwd}/other && git status",
         "cd $PWD && git status",
         "cd {cwd} && rm README.md",
+        "git -C {outside} status --short",
+        "git -C {cwd} add README.md",
+        "git -C {cwd} -C {cwd} status --short",
         "sort -o result.txt README.md",
         "sed -n '1,20w output.txt' README.md",
         "rg *.py",
@@ -61,7 +75,7 @@ def test_exact_current_directory_prefix_is_permission_neutral(tmp_path: Path) ->
 def test_similar_but_unproven_shell_forms_still_require_approval(
     tmp_path: Path, template: str
 ) -> None:
-    command = template.format(cwd=tmp_path)
+    command = template.format(cwd=tmp_path, outside=tmp_path.parent)
     assert analyze_bash_command(command, tmp_path).is_read_only is False
 
 

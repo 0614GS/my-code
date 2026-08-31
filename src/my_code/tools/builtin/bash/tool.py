@@ -249,7 +249,10 @@ class BashTool(Tool):
 
         if context.mode is PermissionMode.PLAN and not analysis.is_read_only:
             return ToolPermissionResult.deny(
-                message="Mutating Bash commands are unavailable in plan mode.",
+                message=(
+                    "Only Bash commands proven read-only by static analysis are "
+                    "available in plan mode."
+                ),
                 reason=PermissionDecisionReason(PermissionDecisionKind.MODE, "plan"),
             )
 

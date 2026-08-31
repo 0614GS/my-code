@@ -393,7 +393,7 @@ def command_is_read_only(parts: tuple[str, ...], cwd: Path) -> tuple[bool, str]:
     if name == "find":
         return _validate_find(arguments, cwd)
     if name == "git":
-        return _validate_git(arguments)
+        return _validate_git(arguments, cwd)
     return False, f"{name!r} is not in the read-only command allowlist"
 
 
@@ -483,9 +483,24 @@ def _validate_find(arguments: list[str], cwd: Path) -> tuple[bool, str]:
     return True, "find uses read-only predicates"
 
 
-def _validate_git(arguments: list[str]) -> tuple[bool, str]:
+def _validate_git(arguments: list[str], cwd: Path) -> tuple[bool, str]:
     if not arguments:
         return False, "git requires a read-only subcommand"
+    if arguments[0] == "-C":
+        if len(arguments) < 3:
+            return False, "git -C requires a workspace path and subcommand"
+        target = Path(arguments[1]).expanduser()
+        if not target.is_absolute():
+            target = cwd / target
+        try:
+            is_current_workspace = target.resolve(strict=False) == cwd.resolve(
+                strict=False
+            )
+        except OSError:
+            is_current_workspace = False
+        if not is_current_workspace:
+            return False, "git -C may only select the current workspace"
+        arguments = arguments[2:]
     if arguments[0].startswith("-"):
         return False, "git global options require approval"
     subcommand, *subcommand_arguments = arguments
