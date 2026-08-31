@@ -25,6 +25,7 @@ from prompt_toolkit.layout.processors import (
     PasswordProcessor,
 )
 from prompt_toolkit.output import Output
+from prompt_toolkit.utils import get_cwidth
 from rich.console import Console, RenderableType
 from rich.padding import Padding
 
@@ -643,13 +644,18 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             return FormattedText([("class:secondary", "Starting my-code…")])
         context = self._context_status
         left = f"{status.model} · {status.context_entry_count} context entries"
-        if status.collaboration_mode == "plan":
-            left = "Plan · " + left
         if context is not None:
             left += f"    {format_context_usage(context)}"
         if self._status_warning:
             left += f" · ! {self._status_warning}"
-        return FormattedText([("class:secondary", left)])
+        fragments: list[tuple[str, str]] = [("class:secondary", left)]
+        if status.collaboration_mode == "plan":
+            indicator = "Plan"
+            width = max(20, self.console.width)
+            gap = max(1, width - get_cwidth(left) - get_cwidth(indicator))
+            fragments.append(("class:secondary", " " * gap))
+            fragments.append(("class:plan", indicator))
+        return FormattedText(fragments)
 
     def _reasoning_summary(self) -> str:
         if not self._reasoning_parts:

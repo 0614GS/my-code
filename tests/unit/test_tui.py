@@ -717,6 +717,39 @@ def test_footer_omits_permission_mode_and_shift_tab_hint() -> None:
     assert "Shift+Tab" not in footer
 
 
+def test_footer_shows_plan_indicator_at_right_edge_in_plan_mode() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), width=100, force_terminal=False),
+    )
+    app._status = replace(runtime.status(), collaboration_mode="plan")
+    app._context_status = runtime.context_status()
+
+    footer = fragment_list_to_text(to_formatted_text(app._status_display()))
+
+    assert footer.endswith("Plan")
+    assert len(footer) == 100
+    assert "Plan · " not in footer
+
+
+def test_footer_omits_plan_indicator_in_default_mode() -> None:
+    runtime = FakeRuntime()
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), width=100, force_terminal=False),
+    )
+    app._status = runtime.status()
+    app._context_status = runtime.context_status()
+
+    footer = fragment_list_to_text(to_formatted_text(app._status_display()))
+
+    assert "Plan" not in footer
+    assert footer.rstrip() == footer
+
+
 def test_slash_menu_is_below_composer_and_uses_terminal_background() -> None:
     app = MyCodeApp(
         FakeRuntime(),  # type: ignore[arg-type]

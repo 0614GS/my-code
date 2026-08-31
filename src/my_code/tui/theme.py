@@ -69,6 +69,7 @@ class TuiTheme:
             {
                 "border": "ansibrightblack",
                 "status": "ansibrightblack",
+                "plan": f"fg:{accent} bold",
                 "surface": f"bg:{surface}",
                 "prompt": f"fg:{accent} bold",
                 "secondary": "ansibrightblack",
