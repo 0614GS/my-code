@@ -174,12 +174,7 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
         del event
         if host._panel == "provider_form":
             host._spawn(host._advance_provider(-1))
-        elif (
-            host._panel is None
-            and not host._busy
-            and not host._agent_active
-            and not host.buffer.text
-        ):
+        elif host._panel is None and not host._busy and not host._agent_active:
             host._cycle_collaboration_mode()
 
     @bindings.add("up")

@@ -68,6 +68,7 @@ from my_code.providers.manager import (
     ProviderView,
 )
 from my_code.sessions.catalog import SessionSummary
+from my_code.sessions.models import CollaborationMode
 from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.app import _STREAM_INVALIDATE_INTERVAL, MyCodeApp
@@ -564,6 +565,56 @@ async def test_file_suggestions_start_unselected_and_allow_cancel_and_backspace(
         pipe.send_bytes(b"\x7f")
         await wait_until(lambda: app.buffer.text == "open @bench")
 
+        pipe.send_bytes(b"\x03\x04")
+        await wait_until_exited(running)
+
+
+@pytest.mark.asyncio
+async def test_shift_tab_keeps_draft_but_does_not_switch_while_working() -> None:
+    class ModeRuntime(FakeRuntime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.mode = CollaborationMode.DEFAULT
+            self.mode_switches = 0
+
+        def status(self) -> ApplicationStatus:
+            return replace(super().status(), collaboration_mode=self.mode.value)
+
+        def cycle_collaboration_mode(self) -> CollaborationMode:
+            self.mode_switches += 1
+            self.mode = (
+                CollaborationMode.PLAN
+                if self.mode is CollaborationMode.DEFAULT
+                else CollaborationMode.DEFAULT
+            )
+            return self.mode
+
+    runtime = ModeRuntime()
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await wait_until_running(app)
+        pipe.send_text("draft")
+        pipe.send_bytes(b"\x1b[Z")
+        await wait_until(lambda: runtime.mode_switches == 1)
+
+        assert app.buffer.text == "draft"
+        assert runtime.mode is CollaborationMode.PLAN
+
+        app._busy = True
+        app._agent_active = True
+        pipe.send_bytes(b"\x1b[Z")
+        pipe.send_text("x")
+        await wait_until(lambda: app.buffer.text == "draftx")
+        assert runtime.mode_switches == 1
+
+        app._busy = False
+        app._agent_active = False
         pipe.send_bytes(b"\x03\x04")
         await wait_until_exited(running)
 
