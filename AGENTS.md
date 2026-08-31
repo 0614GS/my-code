@@ -2,7 +2,7 @@
 
 ## 项目结构与模块组织
 
-生产代码位于 `src/my_code/`。核心领域包包括 `agent/`、`config/`、`context/`、`messages/`、`sessions/`、`tools/`、`permissions/` 和 `providers/`；`cli/` 负责终端交互。内置工具放在 `tools/builtin/`。单元测试按领域镜像到 `tests/unit/`，跨组件流程放在 `tests/integration/`。架构文档位于 `docs/`，`claude-code/` 仅作为参考源码。
+生产代码位于 `src/my_code/`。顶层领域包由 `tach.toml` 独立建模；`features/` 仅包含 `background_tasks`、`subagents` 和 `todos` 三个纵向能力，Question 与文件 mention 由 `chat/` 拥有。`cli/` 与 `tui/` 负责终端交互，内置工具放在 `tools/builtin/`。单元测试按领域镜像到 `tests/unit/`，跨组件流程放在 `tests/integration/`，源码级所有权守卫放在 `tests/architecture/`。架构文档位于 `docs/`，`claude-code/` 仅作为参考源码。
 
 ## 构建、测试与开发命令
 
@@ -13,6 +13,7 @@
 - `uv run mycode`：启动交互式 TUI。
 - `uv run ruff format .`：格式化 Python 文件。
 - `uv run ruff check .`：执行代码规范检查。
+- `uv run tach check`：检查精确模块依赖、声明准确性和循环依赖。
 - `uv run pyright`：以 standard 模式执行静态类型检查。
 - `uv run pytest`：运行测试套件。
 

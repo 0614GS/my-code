@@ -61,7 +61,7 @@ flowchart TB
     Skills -.Tool source.-> Sources
 ```
 
-虚线表示组装、所有权或 Tool source 发布，实线表示主要调用/数据流。精确包依赖以 `tests/architecture/dependency_rules.py` 为准。
+虚线表示组装、所有权或 Tool source 发布，实线表示主要调用/数据流。精确包依赖以 `tach.toml` 为唯一机器事实来源；源码级 API 与技术所有权规则位于 `tests/architecture/`。
 
 ## 四个边界
 

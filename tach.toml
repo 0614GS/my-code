@@ -1,0 +1,119 @@
+source_roots = ["src"]
+exclude = ["**/*__pycache__", "**/*egg-info", "**/docs", "**/tests", "**/venv"]
+exact = true
+forbid_circular_dependencies = true
+ignore_type_checking_imports = false
+include_string_imports = true
+root_module = "dependenciesonly"
+
+[rules]
+unused_ignore_directives = "error"
+require_ignore_directive_reasons = "error"
+
+[[modules]]
+path = "<root>"
+depends_on = ["my_code.version"]
+
+[[modules]]
+path = "my_code.version"
+depends_on = []
+
+[[modules]]
+path = "my_code.foundation"
+depends_on = []
+
+[[modules]]
+path = "my_code.model"
+depends_on = ["my_code.foundation"]
+
+[[modules]]
+path = "my_code.workspace"
+depends_on = []
+
+[[modules]]
+path = "my_code.permissions"
+depends_on = ["my_code.foundation"]
+
+[[modules]]
+path = "my_code.prompts"
+depends_on = ["my_code.model"]
+
+[[modules]]
+path = "my_code.auth"
+depends_on = ["my_code.model"]
+
+[[modules]]
+path = "my_code.config"
+depends_on = ["my_code.auth", "my_code.model", "my_code.permissions"]
+
+[[modules]]
+path = "my_code.conversation"
+depends_on = ["my_code.foundation", "my_code.model"]
+
+[[modules]]
+path = "my_code.context"
+depends_on = ["my_code.conversation", "my_code.model", "my_code.prompts"]
+
+[[modules]]
+path = "my_code.tools"
+depends_on = ["my_code.conversation", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.workspace"]
+
+[[modules]]
+path = "my_code.sessions"
+depends_on = ["my_code.context", "my_code.conversation", "my_code.foundation", "my_code.model"]
+
+[[modules]]
+path = "my_code.providers"
+depends_on = ["my_code.auth", "my_code.config", "my_code.foundation", "my_code.model"]
+
+[[modules]]
+path = "my_code.tasks"
+depends_on = []
+
+[[modules]]
+path = "my_code.agent"
+depends_on = ["my_code.context", "my_code.conversation", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.sessions", "my_code.tools"]
+
+[[modules]]
+path = "my_code.mcp"
+depends_on = ["my_code.foundation", "my_code.model", "my_code.permissions", "my_code.tools"]
+
+[[modules]]
+path = "my_code.skills"
+depends_on = ["my_code.context", "my_code.conversation", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.tools"]
+
+[[modules]]
+path = "my_code.observability"
+depends_on = ["my_code.foundation"]
+
+[[modules]]
+path = "my_code.runtime"
+depends_on = ["my_code.agent", "my_code.context", "my_code.conversation", "my_code.mcp", "my_code.model", "my_code.observability", "my_code.permissions", "my_code.prompts", "my_code.providers", "my_code.sessions", "my_code.skills", "my_code.tasks", "my_code.tools", "my_code.workspace"]
+
+[[modules]]
+path = "my_code.features.background_tasks"
+depends_on = ["my_code.agent", "my_code.context", "my_code.conversation", "my_code.foundation", "my_code.tasks", "my_code.tools"]
+
+[[modules]]
+path = "my_code.features.subagents"
+depends_on = ["my_code.agent", "my_code.conversation", "my_code.features.background_tasks", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.prompts", "my_code.runtime", "my_code.sessions", "my_code.tasks", "my_code.tools"]
+
+[[modules]]
+path = "my_code.features.todos"
+depends_on = ["my_code.context", "my_code.conversation", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.tools"]
+
+[[modules]]
+path = "my_code.chat"
+depends_on = ["my_code.agent", "my_code.config", "my_code.context", "my_code.conversation", "my_code.features.background_tasks", "my_code.features.subagents", "my_code.features.todos", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.providers", "my_code.runtime", "my_code.sessions", "my_code.skills", "my_code.tools", "my_code.workspace"]
+
+[[modules]]
+path = "my_code.cli"
+depends_on = ["my_code.config", "my_code.permissions", "my_code.version"]
+
+[[modules]]
+path = "my_code.tui"
+depends_on = ["my_code.chat", "my_code.config", "my_code.features.todos", "my_code.model", "my_code.permissions", "my_code.providers", "my_code.sessions", "my_code.tools", "my_code.version"]
+
+[[modules]]
+path = "my_code.bootstrap"
+depends_on = ["my_code.agent", "my_code.auth", "my_code.chat", "my_code.cli", "my_code.config", "my_code.context", "my_code.features.background_tasks", "my_code.features.subagents", "my_code.features.todos", "my_code.mcp", "my_code.model", "my_code.observability", "my_code.permissions", "my_code.prompts", "my_code.providers", "my_code.runtime", "my_code.sessions", "my_code.skills", "my_code.tasks", "my_code.tools", "my_code.tui", "my_code.workspace"]

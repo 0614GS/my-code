@@ -17,10 +17,12 @@ from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
 from my_code.conversation.models import HumanMessage, ToolResultBatch
+from my_code.features.background_tasks.notifications import (
+    BackgroundTaskNotificationSource,
+)
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import SubagentParentContext
-from my_code.features.subagents.notifications import BackgroundTaskNotificationSource
 from my_code.features.subagents.tool import SubagentTool
 from my_code.model.capabilities import (
     ActiveModelEnvironment,
@@ -196,7 +198,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
         definitions=build_subagent_definitions(tmp_path),
         background_enabled=True,
     )
-    notifications = BackgroundTaskNotificationSource(controller)
+    notifications = BackgroundTaskNotificationSource(controller.background_registry)
     parent_id = "11111111-1111-1111-1111-111111111111"
     catalog = ToolCatalog()
     catalog.register_source(

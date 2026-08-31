@@ -6,7 +6,6 @@ from io import StringIO
 from rich.console import Console, RenderableType
 from rich.text import Text
 
-from my_code import __version__
 from my_code.chat.events import CompactionTrigger
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import (
@@ -22,6 +21,7 @@ from my_code.tui.widgets import (
     history_message,
     information_card,
 )
+from my_code.version import __version__
 
 
 def render_status_card(status: RuntimeStatus, context: ContextStatus) -> RenderableType:

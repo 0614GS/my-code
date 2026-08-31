@@ -10,7 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from my_code.agent.models import UserTurnInput
-from my_code.features.file_mentions.loader import AttachmentLoader
+from my_code.chat.mentions.loader import AttachmentLoader
 
 
 class QueueInputState(StrEnum):

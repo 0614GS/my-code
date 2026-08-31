@@ -7,18 +7,13 @@ from my_code.conversation.attachments import (
 )
 from my_code.conversation.models import AttachmentMessage
 from my_code.features.background_tasks.registry import BackgroundTaskRegistry
-from my_code.features.subagents.controller import SubagentController
 
 
 class BackgroundTaskNotificationSource:
     """Expose terminal child tasks at model-request boundaries exactly once."""
 
-    def __init__(self, source: SubagentController | BackgroundTaskRegistry) -> None:
-        self.registry = (
-            source.background_registry
-            if isinstance(source, SubagentController)
-            else source
-        )
+    def __init__(self, registry: BackgroundTaskRegistry) -> None:
+        self.registry = registry
 
     def __call__(
         self, state: AttachmentDerivationState

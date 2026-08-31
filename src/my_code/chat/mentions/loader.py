@@ -1,9 +1,9 @@
 """Load submitted file mentions into live context attachments."""
 
+from my_code.chat.mentions.models import FileMention, LoadedAttachment
+from my_code.chat.mentions.parser import parse_file_mentions
+from my_code.chat.mentions.reader import WorkspaceAttachmentReader
 from my_code.conversation.attachments import FileMentionAttachment
-from my_code.features.file_mentions.models import FileMention, LoadedAttachment
-from my_code.features.file_mentions.parser import parse_file_mentions
-from my_code.features.file_mentions.reader import WorkspaceAttachmentReader
 
 
 class AttachmentLoader:

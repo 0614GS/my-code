@@ -1,4 +1,4 @@
-"""Value objects owned by the file mention capability."""
+"""Value objects owned by Chat's file mention capability."""
 
 from dataclasses import dataclass
 

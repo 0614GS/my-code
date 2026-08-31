@@ -77,6 +77,9 @@ from my_code.chat.history import (
     HistoryToolCall,
     ResumedSession,
 )
+from my_code.chat.mentions.loader import AttachmentLoader
+from my_code.chat.mentions.models import PathSuggestion
+from my_code.chat.mentions.suggestions import WorkspacePathSuggester
 from my_code.chat.pending_inputs import PendingInputController, QueuedInputView
 from my_code.chat.permissions import (
     DeferredPermissionPrompter,
@@ -134,9 +137,14 @@ from my_code.conversation.proposed_plan import (
     strip_proposed_plan,
 )
 from my_code.features.background_tasks.registry import BackgroundTaskRegistry
-from my_code.features.file_mentions.loader import AttachmentLoader
-from my_code.features.file_mentions.models import PathSuggestion
-from my_code.features.file_mentions.suggestions import WorkspacePathSuggester
+from my_code.features.subagents.views import (
+    SubagentActivityView as RuntimeSubagentActivityView,
+)
+from my_code.features.subagents.views import (
+    SubagentTranscriptReasoning,
+    SubagentTranscriptText,
+    SubagentTranscriptTool,
+)
 from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME, parse_todo_input
 from my_code.features.todos.projection import project_todos
 from my_code.model.capabilities import (
@@ -164,14 +172,6 @@ from my_code.sessions.catalog import SessionCatalog, SessionSummary
 from my_code.sessions.models import CollaborationMode
 from my_code.sessions.session import Session
 from my_code.skills.tool import restore_skill_permissions
-from my_code.tasks.models import (
-    SubagentTaskView as RuntimeSubagentTaskView,
-)
-from my_code.tasks.models import (
-    SubagentTranscriptReasoning,
-    SubagentTranscriptText,
-    SubagentTranscriptTool,
-)
 from my_code.tools.discovery import (
     ToolExposureSnapshot,
     restored_discoveries,
@@ -198,7 +198,9 @@ class SubagentActivitySource(Protocol):
     @property
     def activity_revision(self) -> int: ...
 
-    def task_views(self, owner_run_id: str) -> tuple[RuntimeSubagentTaskView, ...]: ...
+    def task_views(
+        self, owner_run_id: str
+    ) -> tuple[RuntimeSubagentActivityView, ...]: ...
 
     async def wait_for_activity(self, after_revision: int) -> int: ...
 

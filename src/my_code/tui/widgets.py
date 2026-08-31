@@ -30,7 +30,6 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
-from my_code import __version__
 from my_code.chat.history import (
     HistoryContextGroup,
     HistoryEntry,
@@ -46,6 +45,7 @@ from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.activity import ToolActivityGroup, ToolActivityItem
 from my_code.tui.dimensions import SURFACE_VERTICAL_PADDING
 from my_code.tui.theme import TuiTheme
+from my_code.version import __version__
 
 
 class FileDiffLineView(Protocol):

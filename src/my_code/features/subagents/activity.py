@@ -15,19 +15,19 @@ from my_code.agent.events import (
 )
 from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
 from my_code.features.subagents.models import SubagentType
-from my_code.model.primitives import (
-    ReasoningDisclosure,
-    TokenUsage,
-)
-from my_code.tasks.models import (
-    SubagentTaskView,
+from my_code.features.subagents.views import (
+    SubagentActivityView,
     SubagentToolResultView,
     SubagentToolUseView,
     SubagentTranscriptReasoning,
     SubagentTranscriptText,
     SubagentTranscriptTool,
-    TaskSnapshot,
 )
+from my_code.model.primitives import (
+    ReasoningDisclosure,
+    TokenUsage,
+)
+from my_code.tasks.models import TaskSnapshot
 
 
 @dataclass(slots=True)
@@ -97,7 +97,7 @@ class SubagentActivityRecord:
         elif isinstance(event, (AgentTurnSucceeded, AgentMaxStepsReached)):
             self.usage = event.usage
 
-    def view(self, task: TaskSnapshot) -> SubagentTaskView:
+    def view(self, task: TaskSnapshot) -> SubagentActivityView:
         failure = task.failure.message if task.failure is not None else None
         transcript = list(self.transcript)
         if self.reasoning_stream and self.reasoning_disclosure in {
@@ -115,7 +115,7 @@ class SubagentActivityRecord:
             transcript.append(
                 SubagentTranscriptText("assistant", self.text_stream, streaming=True)
             )
-        return SubagentTaskView(
+        return SubagentActivityView(
             task_id=self.task_id,
             run_id=self.run_id,
             agent_type=self.agent_type.value,

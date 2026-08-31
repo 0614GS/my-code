@@ -42,12 +42,12 @@ from my_code.chat.history import (
     HistoryText,
     HistoryToolCall,
 )
+from my_code.chat.mentions.models import PathSuggestion
 from my_code.chat.permissions import PermissionRequest
 from my_code.chat.questions import QuestionAnswer, QuestionRequest
 from my_code.chat.service import ChatService
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import SubagentTaskView, TranscriptView
-from my_code.features.file_mentions.models import PathSuggestion
 from my_code.model.display import DisplayDensity
 from my_code.permissions.models import (
     PermissionConfirmation,

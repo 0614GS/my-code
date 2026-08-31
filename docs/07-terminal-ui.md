@@ -8,6 +8,8 @@
 
 TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义模块读取安全 DTO。它不会直接访问 Session、Conversation、Context、ToolExecutor、ToolCatalog、TaskSupervisor、MCP/Skill runtime 或 Provider SDK。
 
+`@path` 的解析、附件准备与路径建议由 Chat 的 mention 子模块拥有；TUI 只消费 Chat 提供的 frontend-neutral suggestion 与加载结果。
+
 模块按 UI 职责拆分：`app.py` 负责编排，`turns.py` 消费事件，`layout.py` 和 `key_bindings.py` 管理动态区与按键，`picker.py`/`panels.py` 管理临时交互，`widgets.py`/`theme.py`/`terminal.py` 管理展示和终端能力。
 
 ## 事件与展示

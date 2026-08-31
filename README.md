@@ -26,7 +26,7 @@ Claude Code 是 my-code 最重要的行为参考之一：两者都围绕终端 A
 | 核心定位 | 成熟的 Claude 编程产品 | 小型、可研究、可修改的 Agent 实现 |
 | 模型边界 | 围绕 Claude 及其托管渠道 | Anthropic / OpenAI 协议之上的 provider-neutral core |
 | 架构可见性 | 以产品行为和公开文档为主要接口 | 源码、状态所有权和架构不变量都在仓库中 |
-| 模块约束 | 不推测其内部实现 | Pyright + AST dependency/API guards 自动验证 |
+| 模块约束 | 不推测其内部实现 | Tach + Pyright + source API guards 自动验证 |
 | 终端界面 | Claude Code 自有交互体验 | `prompt_toolkit + Rich`，保留原生 terminal scrollback |
 | 项目阶段 | 完整产品与生态 | 早期开发，优先保持实现清晰和可验证 |
 
@@ -73,6 +73,7 @@ my-code 仍处于早期开发阶段。它已经具备完整的交互式 Agent �
 
 ```bash
 uv sync --group dev
+uv run tach check
 uv run ruff check .
 uv run pyright
 uv run pytest

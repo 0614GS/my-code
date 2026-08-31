@@ -28,11 +28,12 @@ from my_code.features.subagents.models import (
     SubagentType,
 )
 from my_code.features.subagents.read_only import ReadOnlyToolProxy
+from my_code.features.subagents.views import SubagentActivityView
 from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.permissions.policy import PermissionPolicy
 from my_code.runtime.runs import AgentRunFactory, AgentRunSpec
 from my_code.sessions.session import Session
-from my_code.tasks.models import SubagentTaskView, TaskSnapshot, TaskStatus
+from my_code.tasks.models import TaskSnapshot, TaskStatus
 from my_code.tasks.supervisor import TaskHandle, TaskSupervisor
 from my_code.tools.base import Tool, ToolExecutionError
 from my_code.tools.catalog import ToolCatalog, ToolSourceId
@@ -222,7 +223,7 @@ class SubagentController:
     def activity_revision(self) -> int:
         return self._activity_revision
 
-    def task_views(self, owner_run_id: str) -> tuple[SubagentTaskView, ...]:
+    def task_views(self, owner_run_id: str) -> tuple[SubagentActivityView, ...]:
         records = [
             record
             for record in self._activity.values()

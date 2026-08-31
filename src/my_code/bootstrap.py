@@ -15,8 +15,11 @@ from my_code.agent.budget import TokenBudgetModelClient
 from my_code.agent.engine import AgentEngine
 from my_code.agent.runner import AgentRunner
 from my_code.auth.credentials import CredentialStore
+from my_code.chat.mentions.loader import AttachmentLoader
+from my_code.chat.mentions.reader import WorkspaceAttachmentReader
+from my_code.chat.mentions.suggestions import WorkspacePathSuggester
 from my_code.chat.permissions import DeferredPermissionPrompter
-from my_code.chat.questions import DeferredQuestionBroker
+from my_code.chat.questions import DeferredQuestionBroker, QuestionTool
 from my_code.chat.service import ChatService
 from my_code.cli.arguments import CliOptions, parse_cli
 from my_code.config.paths import MyCodePaths, SettingsScope
@@ -38,15 +41,13 @@ from my_code.context.meter import ContextMeter
 from my_code.context.planner import ContextPlanner
 from my_code.context.user_context import AgentsUserContextResolver
 from my_code.features.background_tasks.bash import BashBackgroundController
+from my_code.features.background_tasks.notifications import (
+    BackgroundTaskNotificationSource,
+)
 from my_code.features.background_tasks.registry import BackgroundTaskRegistry
-from my_code.features.file_mentions.loader import AttachmentLoader
-from my_code.features.file_mentions.reader import WorkspaceAttachmentReader
-from my_code.features.file_mentions.suggestions import WorkspacePathSuggester
-from my_code.features.plan_mode.question import QuestionTool
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import SubagentLimits, SubagentParentContext
-from my_code.features.subagents.notifications import BackgroundTaskNotificationSource
 from my_code.features.subagents.task_tools import (
     TaskCancelTool,
     TaskListTool,

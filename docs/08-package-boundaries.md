@@ -21,8 +21,10 @@ my-code 是模块化单体。类型放在哪里由它维护的语义、不变量
 | `agent` | 无活动会话状态的 turn/step 循环 |
 | `mcp` / `skills` | 各自的发现、runtime 与标准 Tool adapter |
 | `runtime` | AppState、ProviderRuntime、ToolState 和 AgentRunFactory |
-| `features.*` | File mention、Todo、Subagent、后台任务等纵向能力 |
-| `chat` | 基于 AppState 的用户级用例和安全投影 |
+| `features.background_tasks` | 用户级后台任务 owner、投递、唤醒和结果展示 |
+| `features.subagents` | child Agent 生命周期、策略、activity 与 View |
+| `features.todos` | Todo 模型、投影、提醒和工具 |
+| `chat` | 基于 AppState 的用户级用例、安全投影、Question 与 file mentions |
 | `cli` / `tui` | Host 输入输出 |
 | `bootstrap` | 唯一对象组装入口 |
 
@@ -44,7 +46,9 @@ foundation
   -> bootstrap
 ```
 
-该图用于阅读，不是授权表。同层不自动互相依赖，Feature 也按 `features.<name>` 分别识别。精确机器规则只维护在 `tests/architecture/dependency_rules.py`，文档不复制一份容易漂移的字典。
+该图用于阅读，不是授权表。同层不自动互相依赖。`features` 不作为 umbrella 模块，当前只包含 background_tasks、subagents 与 todos 三个真正跨技术层的纵向能力。精确模块、依赖和循环规则只维护在 `tach.toml`，文档与测试不复制第二份允许表。
+
+`tasks` 与 `features.background_tasks` 有意分离：前者是无产品语义的通用进程内状态机，后者拥有 owner、投递、唤醒与结果展示。Chat 自己拥有 Question DTO/tool/broker，以及 file mention 的解析、读取、附件准备和路径建议；TUI 只消费 Chat 的安全类型。
 
 ## 公开 API
 
@@ -75,14 +79,15 @@ from my_code.permissions.models import PermissionDecision
 
 ## 自动架构守卫
 
-`tests/architecture` 使用 Python AST 检查：
+Tach 以 `exact = true` 检查声明与实际导入一致，并检查循环、TYPE_CHECKING 导入和字符串导入。根模块只允许依赖显式模块并仅保留包版本 API；未使用 ignore 和缺少理由的 ignore 都是错误。标准 `pytest` 通过轻量包装测试执行同一个 `python -m tach check`。
 
-- 实际依赖是否符合允许表，允许表与实际图是否无环；
+`tests/architecture` 的 Python AST 守卫只补充 Tach 无法准确表达的规则：
+
 - 跨模块 import 是否来自公开语义模块；
 - 私有导入、wildcard、未声明符号和跨所有者 re-export；
 - Provider SDK、TUI 库、Session 私有实现、AppState 和 bootstrap 是否泄漏；
-- 是否出现 Session 外的可写 conversation 或第二份 runtime permission 权威来源。
+- Claude Code 参考快照是否可能进入打包输入。
 
 架构守卫扫描生产代码；测试可以导入局部实现验证行为。静态守卫不替代权限、取消、恢复、compact 和工具失败路径测试。
 
-主要源码入口：`tests/architecture/dependency_rules.py`、`tests/architecture/test_dependencies.py`、`tests/architecture/test_public_imports.py`。
+主要入口：`tach.toml`、`tests/architecture/test_tach.py`、`tests/architecture/dependency_rules.py`、`tests/architecture/test_public_imports.py`。

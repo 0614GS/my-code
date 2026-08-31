@@ -1,4 +1,3 @@
--- Active: 1782987758255@@115.190.199.119@3306@resume_match
 # 当前能力范围
 
 本文只记录当前实现、明确延后的能力和有意保留的产品差异。具体机制由相应专题解释。
@@ -68,6 +67,7 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 - Subagent 使用固定角色、fresh child Session 和独立 lease；默认不设置 step/token/timeout 上限，但保留显式可选限制。
 - ToolSearch 使用 provider-neutral dispatcher/native 模式，不发送特定 Provider 的 defer/reference wire 类型；canonical dispatcher call 与 feature-facing 目标语义分别保留。
 - 后台完成用无 payload wake signal 触发 pull，再通过 durable attachment 交付，不建立第二份消息队列。
+- 相对参考源码，my-code 有意保持通用 `TaskSupervisor` 与用户级后台任务能力分离：前者只拥有任务状态机、取消树和终态，`features.background_tasks` 另行拥有 owner、投递、唤醒与结果展示语义。
 - Linux Bubblewrap 只隔离 Bash 进程树；MCP、Provider 与 my-code 主进程仍在宿主运行，应用层权限继续作为独立前置边界。
 
 调整上述差异或长期不变量时，应同时修改对应架构专题、测试和本文件。

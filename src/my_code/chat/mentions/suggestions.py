@@ -8,7 +8,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 
-from my_code.features.file_mentions.models import PathSuggestion
+from my_code.chat.mentions.models import PathSuggestion
 
 _INDEX_LIMIT = 10_000
 _EXCLUDED_ROOTS = frozenset({".git", ".my-code", ".venv"})

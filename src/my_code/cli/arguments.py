@@ -4,9 +4,9 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
-from my_code import __version__
 from my_code.config.settings import SettingsOverrides
 from my_code.permissions.models import PermissionMode
+from my_code.version import __version__
 
 
 @dataclass(frozen=True, slots=True)

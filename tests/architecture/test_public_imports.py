@@ -9,13 +9,12 @@ import pytest
 
 from . import dependency_rules
 from .dependency_rules import (
-    ALLOWED_DEPENDENCIES,
     REPOSITORY_ROOT,
     SOURCE_ROOT,
-    TEMPORARY_TECHNICAL_LEAKS,
     ImportEdge,
     collect_import_edges,
     collect_technical_leaks,
+    configured_module_paths,
     foreign_reexports,
     format_edges,
     public_import_violations,
@@ -74,16 +73,54 @@ def test_foreign_reexport_guard_reports_the_exporting_module(
     violations = dependency_rules.foreign_reexports()
 
     assert len(violations) == 1
-    assert violations[0].source == "chat"
-    assert violations[0].target == "permissions"
+    assert violations[0].source == "my_code.chat"
+    assert violations[0].target == "my_code.permissions"
     assert violations[0].imported_names == ("PermissionMode",)
 
 
+def test_tach_boundaries_use_longest_prefix_matching() -> None:
+    assert (
+        dependency_rules.architecture_module("my_code.features.subagents.views")
+        == "my_code.features.subagents"
+    )
+
+
+def test_technology_guard_rejects_sdk_app_state_and_session_leaks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_root = tmp_path / "src" / "my_code"
+    source = source_root / "agent" / "leak.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "import openai\n"
+        "import opentelemetry\n"
+        "import rich\n"
+        "from my_code.runtime.state import AppState\n"
+        "from my_code.sessions._codec import decode\n"
+        "path = 'outside.jsonl'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dependency_rules, "SOURCE_ROOT", source_root)
+    monkeypatch.setattr(dependency_rules, "REPOSITORY_ROOT", tmp_path)
+
+    kinds = {leak.kind for leak in dependency_rules.collect_technical_leaks()}
+
+    assert kinds == {
+        "app-state",
+        "jsonl-path",
+        "jsonl-record",
+        "observability-sdk",
+        "provider-sdk",
+        "tui-framework",
+    }
+
+
 def test_architecture_package_initializers_do_not_aggregate_apis() -> None:
-    for module in ALLOWED_DEPENDENCIES:
-        if module == "bootstrap":
+    for module in configured_module_paths():
+        if module in {"my_code.bootstrap", "my_code.version"}:
             continue
-        initializer = SOURCE_ROOT / Path(*module.split(".")) / "__init__.py"
+        relative = module.removeprefix("my_code.")
+        initializer = SOURCE_ROOT / Path(*relative.split(".")) / "__init__.py"
         if not initializer.exists():
             continue
         tree = ast.parse(initializer.read_text(encoding="utf-8"))
@@ -95,12 +132,10 @@ def test_architecture_package_initializers_do_not_aggregate_apis() -> None:
         )
 
 
-def test_technology_leaks_match_registered_migration_debt() -> None:
+def test_owner_specific_technologies_do_not_leak() -> None:
     leaks = collect_technical_leaks()
-    actual = {item.key for item in leaks}
-    registered = {item.key for item in TEMPORARY_TECHNICAL_LEAKS}
     details = "\n".join(f"  - {leak.describe()}" for leak in leaks)
-    assert actual == registered, f"unregistered or stale technology leaks:\n{details}"
+    assert not leaks, f"owner-specific technology leaks:\n{details}"
 
 
 def test_reference_snapshot_is_excluded_from_packaging_inputs() -> None:

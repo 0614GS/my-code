@@ -7,6 +7,7 @@ from my_code.agent.collaboration import resolve_mode_prelude
 from my_code.chat.questions import (
     DeferredQuestionBroker,
     QuestionAnswer,
+    QuestionTool,
 )
 from my_code.conversation.attachments import (
     CollaborationModeAttachment,
@@ -20,7 +21,6 @@ from my_code.conversation.proposed_plan import (
     extract_proposed_plan,
     strip_proposed_plan,
 )
-from my_code.features.plan_mode.question import QuestionTool
 from my_code.foundation.json import JsonObject, to_json_object
 from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionMode

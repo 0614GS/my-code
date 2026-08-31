@@ -11,12 +11,14 @@ from my_code.agent.events import (
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.subagents.activity import SubagentActivityRecord
 from my_code.features.subagents.models import SubagentType
-from my_code.model.primitives import ReasoningPresentation
-from my_code.tasks.models import (
+from my_code.features.subagents.views import (
     SubagentToolResultView,
     SubagentTranscriptReasoning,
     SubagentTranscriptText,
     SubagentTranscriptTool,
+)
+from my_code.model.primitives import ReasoningPresentation
+from my_code.tasks.models import (
     TaskSnapshot,
     TaskStatus,
 )
