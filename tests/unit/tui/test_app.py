@@ -10,7 +10,7 @@ from prompt_toolkit.data_structures import Size
 from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.layout import Window
-from prompt_toolkit.layout.containers import VerticalAlign
+from prompt_toolkit.layout.containers import ConditionalContainer, VerticalAlign
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.utils import get_cwidth
@@ -859,6 +859,30 @@ def test_dynamic_layout_naturally_follows_terminal_scrollback() -> None:
     )
 
     assert app.body.align is VerticalAlign.JUSTIFY
+
+
+def test_empty_dynamic_rows_collapse_without_removing_composer_padding() -> None:
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    dynamic = app.body.children[0]
+    activity = app.body.children[1]
+    top_padding = app.body.children[3]
+
+    assert isinstance(dynamic, ConditionalContainer)
+    assert isinstance(activity, ConditionalContainer)
+    assert dynamic.filter() is False
+    assert activity.filter() is False
+    assert isinstance(top_padding, Window)
+    assert top_padding.height == SURFACE_VERTICAL_PADDING
+
+    app._stream_text = "answer"
+    assert dynamic.filter() is True
+    app._begin_agent_activity("my-code is working…")
+    assert activity.filter() is True
+    app._end_agent_activity()
 
 
 @pytest.mark.asyncio

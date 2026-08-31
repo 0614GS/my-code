@@ -259,6 +259,8 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             status_text=self._status_display,
             interaction_text=self._interaction_text,
             has_interaction=self._interaction_active,
+            has_dynamic=self._dynamic_active,
+            has_activity=self._activity_active,
             input=input,
             output=output,
             theme=self.theme,
@@ -605,6 +607,17 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
 
     def _activity_text(self) -> FormattedText:
         return self._activity_indicator.text()
+
+    def _dynamic_active(self) -> bool:
+        return bool(
+            (self._panel == "agents" and self._agent_task_id is not None)
+            or self._reasoning_summary()
+            or self._tool_activity
+            or self._stream_text
+        )
+
+    def _activity_active(self) -> bool:
+        return self._activity_indicator.active
 
     def _queue_text(self) -> FormattedText:
         queued = getattr(self.application, "queued_inputs", lambda: ())()

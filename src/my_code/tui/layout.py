@@ -57,13 +57,17 @@ def build_terminal_layout(
     status_text: Callable[[], AnyFormattedText],
     interaction_text: Callable[[], AnyFormattedText],
     has_interaction: Callable[[], bool],
+    has_dynamic: Callable[[], bool],
+    has_activity: Callable[[], bool],
     input: Input | None,
     output: Output | None,
     theme: TuiTheme,
 ) -> TerminalLayout:
-    """Build the non-full-screen dynamic area below terminal scrollback."""
+    """构建 terminal scrollback 下方的非全屏动态区域。"""
 
     active_interaction = Condition(has_interaction)
+    active_dynamic = Condition(has_dynamic)
+    active_activity = Condition(has_activity)
     completions_menu = _completion_menu(active_interaction)
     interaction_menu = ConditionalContainer(
         Window(
@@ -76,15 +80,21 @@ def build_terminal_layout(
     )
     body = HSplit(
         [
-            Window(
-                content=_formatted_control(dynamic_text),
-                height=Dimension(min=0, max=12),
-                dont_extend_height=True,
+            ConditionalContainer(
+                Window(
+                    content=_formatted_control(dynamic_text),
+                    height=Dimension(min=1, max=12),
+                    dont_extend_height=True,
+                ),
+                active_dynamic,
             ),
-            Window(
-                content=_formatted_control(activity_text),
-                height=Dimension(min=0, max=1),
-                dont_extend_height=True,
+            ConditionalContainer(
+                Window(
+                    content=_formatted_control(activity_text),
+                    height=1,
+                    dont_extend_height=True,
+                ),
+                active_activity,
             ),
             Window(height=1, char="─", style="class:border"),
             Window(height=SURFACE_VERTICAL_PADDING, style="class:surface"),
