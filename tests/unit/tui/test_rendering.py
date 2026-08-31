@@ -3,7 +3,8 @@
 import re
 from io import StringIO
 
-from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
+import pytest
+from prompt_toolkit.formatted_text import ANSI, fragment_list_to_text, to_formatted_text
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -31,6 +32,7 @@ from my_code.tools.presentation import ToolUsePresentation
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.block_flow import TurnBlockCoordinator
 from my_code.tui.presentation import render_status_card
+from my_code.tui.rendering import ScrollbackWriter, StreamingMarkdownProjector
 from my_code.tui.transcript import TranscriptPager, transcript_renderable
 from my_code.tui.widgets import (
     assistant_message,
@@ -245,6 +247,65 @@ print("hello")
         to_formatted_text(streaming_renderable(assistant_message(markdown), 60))
     )
     assert re.sub(r"id=\d+", "id", streamed) == re.sub(r"id=\d+", "id", final)
+
+
+def test_streaming_projection_commits_visual_prefix_without_repeating_tail() -> None:
+    projector = StreamingMarkdownProjector()
+    chunks = (
+        "A paragraph that wraps across several visual lines at a narrow width.\n\n",
+        "- first item\n- second item with enough text to wrap on screen\n\n",
+        "```python\nprint('one')\nprint('two')\n```\n",
+    )
+    source = ""
+    fragments: list[str] = []
+    for chunk in chunks:
+        source += chunk
+        projection = projector.update(source, 28)
+        fragments.extend(projection.committed)
+    fragments.extend(projector.flush(source, 28).committed)
+
+    streamed = fragment_list_to_text(to_formatted_text(ANSI("".join(fragments))))
+    final = fragment_list_to_text(
+        to_formatted_text(streaming_renderable(assistant_message(source), 28))
+    )
+
+    assert streamed.splitlines() == final.splitlines()
+    assert streamed.count("first item") == 1
+    assert streamed.count("print('two')") == 1
+
+
+def test_streaming_projection_flushes_old_tail_once_when_width_changes() -> None:
+    projector = StreamingMarkdownProjector()
+    source = "alpha beta gamma delta epsilon\n\nsecond paragraph"
+    first = projector.update(source, 24)
+    resized = projector.update(source + " grows", 40)
+    completed = projector.flush(source + " grows", 40)
+
+    output = fragment_list_to_text(
+        to_formatted_text(
+            ANSI("".join((*first.committed, *resized.committed, *completed.committed)))
+        )
+    )
+
+    assert output.count("alpha beta gamma") == 1
+    assert output.count("grows") == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_fragments_append_without_cursor_or_mouse_control_sequences() -> (
+    None
+):
+    stream = StringIO()
+    writer = ScrollbackWriter(Console(file=stream, width=40, force_terminal=False))
+    writer.seed(True, False)
+
+    await writer.write_stream_fragment("stable one\n", first=True)
+    await writer.write_stream_fragment("stable two\n", first=False)
+    await writer.close()
+
+    assert stream.getvalue() == "\nstable one\nstable two\n"
+    assert "\x1b[?100" not in stream.getvalue()
+    assert "\x1b[999" not in stream.getvalue()
 
 
 def test_numbered_chinese_h2_keeps_visible_heading_marker_and_text() -> None:

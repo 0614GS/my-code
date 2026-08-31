@@ -19,56 +19,107 @@ from my_code.tui.widgets import assistant_message
 _MAX_UNSTABLE_MARKDOWN = 16 * 1024
 _FALLBACK_TEXT_CHARS = 8 * 1024
 _MAX_VISUAL_LINES = 12
+_PROTECTED_VISUAL_LINES = 3
+
+
+@dataclass(frozen=True, slots=True)
+class StreamingProjection:
+    """一次流式投影产生的稳定片段和仍需原地显示的尾部。"""
+
+    committed: tuple[str, ...]
+    tail: FormattedText
 
 
 class StreamingMarkdownProjector:
-    """Cache stable top-level blocks and only parse the changing tail."""
+    """把稳定视觉行提交给 scrollback，只在动态区保留易变尾部。"""
 
     def __init__(self) -> None:
         self._width = 0
-        self._stable_source = ""
-        self._stable_rendered = ""
+        self._source = ""
+        self._source_offset = 0
+        self._rendered_lines: tuple[str, ...] = ()
+        self._committed_lines = 0
         self.last_rich_input_chars = 0
 
     def invalidate(self) -> None:
         self._width = 0
-        self._stable_source = ""
-        self._stable_rendered = ""
+        self._source = ""
+        self._source_offset = 0
+        self._rendered_lines = ()
+        self._committed_lines = 0
 
-    def project(self, source: str, width: int) -> FormattedText:
+    def update(self, source: str, width: int) -> StreamingProjection:
+        """推进 append-only Markdown，并返回新稳定行与受保护尾部。"""
+
         width = max(width, 20)
-        if width != self._width:
-            self.invalidate()
-            self._width = width
-        boundary = source.rfind("\n\n")
-        stable = source[: boundary + 2] if boundary >= 0 else ""
-        unstable = source[len(stable) :]
-
-        if stable != self._stable_source:
-            if stable.startswith(self._stable_source):
-                addition = stable[len(self._stable_source) :]
-                self._stable_rendered += self._render_markdown(
-                    addition[-_MAX_UNSTABLE_MARKDOWN:], width
-                )
-            else:
-                # Provider streams are append-only. If a caller replaces text,
-                # retain bounded work instead of reparsing an unbounded prefix.
-                self._stable_rendered = self._render_markdown(
-                    stable[-_MAX_UNSTABLE_MARKDOWN:], width
-                )
-            self._stable_source = stable
-            self._stable_rendered = _tail_lines(
-                self._stable_rendered, _MAX_VISUAL_LINES
+        committed: list[str] = []
+        width_changed = bool(self._width and width != self._width)
+        replaced = bool(self._width and not source.startswith(self._source))
+        crossed_render_bound = (
+            len(source) - self._source_offset > _MAX_UNSTABLE_MARKDOWN
+            and len(self._source) - self._source_offset <= _MAX_UNSTABLE_MARKDOWN
+        )
+        if width_changed or replaced or crossed_render_bound:
+            # 已经显示的视觉行无法在 terminal scrollback 中重排。宽度变化或
+            # provider 替换快照时，先按旧宽度固化动态尾部，再从新快照继续。
+            committed.extend(self._uncommitted_lines())
+            self._rendered_lines = ()
+            self._committed_lines = 0
+            self._source_offset = (
+                len(self._source) if width_changed or crossed_render_bound else 0
             )
 
-        if len(unstable) > _MAX_UNSTABLE_MARKDOWN:
-            tail = unstable[-_FALLBACK_TEXT_CHARS:]
-            rendered_tail = tail
+        rendered = self._render_bounded(source[self._source_offset :], width)
+        lines = tuple(rendered.splitlines())
+        previous = self._uncommitted_lines()
+        current = lines[self._committed_lines :]
+        common = _common_prefix_length(previous, current)
+        stable_count = max(0, common - _PROTECTED_VISUAL_LINES)
+        if stable_count:
+            committed.extend(current[:stable_count])
+            self._committed_lines += stable_count
+
+        self._width = width
+        self._source = source
+        self._rendered_lines = lines
+        tail_lines = lines[self._committed_lines :]
+        tail = "\n".join(tail_lines[-_MAX_VISUAL_LINES:])
+        return StreamingProjection(
+            (_lines_fragment(tuple(committed)),) if committed else (),
+            FormattedText(to_formatted_text(ANSI(tail))),
+        )
+
+    def flush(self, source: str, width: int) -> StreamingProjection:
+        """固化最终快照中尚未提交的全部视觉行，并清空动态尾部。"""
+
+        projection = self.update(source, width)
+        fragments = list(projection.committed)
+        remaining = self._uncommitted_lines()
+        if remaining:
+            fragments.append(_lines_fragment(remaining))
+        self.invalidate()
+        return StreamingProjection(tuple(fragments), FormattedText())
+
+    def project(self, source: str, width: int) -> FormattedText:
+        """兼容只读预览调用；状态推进由 ``update`` 显式完成。"""
+
+        if source == self._source and max(width, 20) == self._width:
+            tail = "\n".join(self._uncommitted_lines()[-_MAX_VISUAL_LINES:])
+            return FormattedText(to_formatted_text(ANSI(tail)))
+        rendered = self._render_bounded(source, max(width, 20))
+        tail = _tail_lines(rendered, _MAX_VISUAL_LINES)
+        return FormattedText(to_formatted_text(ANSI(tail)))
+
+    def _render_bounded(self, source: str, width: int) -> str:
+        if len(source) > _MAX_UNSTABLE_MARKDOWN:
+            rendered = source[-_FALLBACK_TEXT_CHARS:]
             self.last_rich_input_chars = 0
         else:
-            rendered_tail = self._render_markdown(unstable, width)
-        rendered = _tail_lines(self._stable_rendered + rendered_tail, _MAX_VISUAL_LINES)
-        return FormattedText(to_formatted_text(ANSI(rendered)))
+            rendered = self._render_markdown(source, width)
+        return rendered
+
+    def _uncommitted_lines(self) -> tuple[str, ...]:
+        return self._rendered_lines[self._committed_lines :]
 
     def _render_markdown(self, source: str, width: int) -> str:
         if not source:
@@ -242,6 +293,23 @@ class ScrollbackWriter:
             self._has_output = True
             self._last_was_user = isinstance(renderables[-1], Padding)
 
+    async def write_stream_fragment(self, fragment: str, *, first: bool) -> None:
+        """写入已渲染视觉行；同一回答的片段之间不增加卡片间距。"""
+
+        if not fragment:
+            return
+        async with self._lock:
+            if self._closed:
+                return
+            prefix = (
+                "\n" if first and self._has_output and not self._last_was_user else ""
+            )
+            async with in_terminal():
+                self._console.file.write(prefix + fragment)
+                self._console.file.flush()
+            self._has_output = True
+            self._last_was_user = False
+
     def _render_many(
         self,
         renderables: tuple[RenderableType, ...],
@@ -277,8 +345,22 @@ def _tail_lines(value: str, count: int) -> str:
     return "\n".join(value.splitlines()[-count:])
 
 
+def _common_prefix_length(left: tuple[str, ...], right: tuple[str, ...]) -> int:
+    count = 0
+    for old, new in zip(left, right, strict=False):
+        if old != new:
+            break
+        count += 1
+    return count
+
+
+def _lines_fragment(lines: tuple[str, ...]) -> str:
+    return "\n".join(lines) + "\n"
+
+
 __all__ = [
     "RenderCoordinator",
     "ScrollbackWriter",
+    "StreamingProjection",
     "StreamingMarkdownProjector",
 ]

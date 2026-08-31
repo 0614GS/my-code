@@ -118,7 +118,6 @@ from my_code.tui.theme import TuiTheme
 from my_code.tui.transcript import TranscriptPager
 from my_code.tui.turns import TurnFlowMixin
 from my_code.tui.widgets import (
-    assistant_message,
     block_separator,
     command_echo,
     detailed_tool_call_message,
@@ -173,9 +172,11 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._initialize_activity_flow()
         self._startup_activity_owner: ActivityOwner | None = None
         self._stream_text = ""
+        self._stream_answer_started = False
         self._stream_plan = ""
         self._stream_frame = FormattedText()
         self._stream_frame_revision = 0
+        self._stream_projected_chars = 0
         self._stream_projector = StreamingMarkdownProjector()
         self._render_coordinator = RenderCoordinator(
             self._stream_projector, frame_interval=_STREAM_INVALIDATE_INTERVAL
@@ -398,6 +399,50 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             return
         for renderable in renderables:
             await self._write(renderable)
+
+    def _update_stream_projection(self) -> tuple[str, ...]:
+        threshold = max(self.console.width // 2, 20)
+        if (
+            len(self._stream_text) - self._stream_projected_chars < threshold
+            and "\n" not in self._stream_text[self._stream_projected_chars :]
+        ):
+            return ()
+        projection = self._stream_projector.update(
+            self._stream_text, self.console.width
+        )
+        self._stream_projected_chars = len(self._stream_text)
+        self._stream_frame = projection.tail
+        return projection.committed
+
+    def _flush_stream_projection(self) -> tuple[str, ...]:
+        projection = self._stream_projector.flush(self._stream_text, self.console.width)
+        self._render_coordinator.clear()
+        self._stream_projected_chars = 0
+        self._stream_frame = FormattedText()
+        return projection.committed
+
+    def _reset_stream_projection(self) -> None:
+        self._render_coordinator.clear()
+        self._stream_projector.invalidate()
+        self._stream_projected_chars = 0
+        self._stream_frame = FormattedText()
+
+    async def _write_stream_fragment(self, fragment: str, *, first: bool) -> None:
+        if not fragment:
+            return
+        if self._running:
+            await self._scrollback_writer.write_stream_fragment(fragment, first=first)
+        else:
+            if (
+                first
+                and self._has_scrollback_output
+                and not self._last_scrollback_was_user
+            ):
+                self.console.file.write("\n")
+            self.console.file.write(fragment)
+            self.console.file.flush()
+        self._has_scrollback_output = True
+        self._last_scrollback_was_user = False
 
     def _invalidate(self) -> None:
         self.terminal_application.invalidate()
@@ -1079,10 +1124,12 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                     self._busy = True
                     self._begin_agent_activity("Handling background task…")
                     self._stream_text = ""
+                    self._stream_answer_started = False
+                    self._reset_stream_projection()
                     self._reasoning_parts = []
                     self._tool_activity = None
                 elif isinstance(event, BackgroundInvocationFinished):
-                    partial_text = self._retire_transient_content()
+                    await self._retire_transient_content()
                     self._agent_active = False
                     self._busy = False
                     self._end_agent_activity()
@@ -1094,8 +1141,6 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                                 error=True,
                             )
                         )
-                    if partial_text:
-                        await self._write(assistant_message(partial_text))
                     self._refresh_status()
                 else:
                     invocation.append(event)

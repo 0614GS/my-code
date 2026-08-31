@@ -16,8 +16,9 @@ TUI 通过 `ApplicationService` 执行用户级操作，并从各领域的公开
 
 一次 prompt 调用 `ApplicationService.stream()`，TUI 消费 text/reasoning started、delta、completed，显式 model-step completed、完整 compact started/completed、attachment、tool started/finished、Todo/context 更新和 turn 终态。
 
-- delta 只存在于动态区；completed 到达后先清除预览，再把最终 Rich renderable 固化到 scrollback。
-- Markdown live projection 缓存稳定块，只重画不稳定尾块；Rich 输入上限 16 KiB、动态区最多 12 个视觉行，超长未闭合块退化为 8 KiB plain-text tail。最终 completed 内容仍完整渲染。
+- 流式 Markdown 按连续帧的渲染行公共前缀识别稳定视觉行，并保留 3 行保护尾部；稳定行通过无片段间距的 writer 逐步进入原生 scrollback，动态 Window 最多保留 12 个尚可能变化的视觉行。Rich 输入上限 16 KiB，跨过上限时先固化已有尾部，超长未闭合块退化为 8 KiB plain-text tail。
+- `TextCompleted`、取消、异常和 step-limit 共用同一个尾部 flush；`ModelStepCompleted` 仍决定 reasoning、工具结果与回答分隔符的顺序，但不会重放已经进入 scrollback 的回答正文。
+- 主界面不发送强制跳底控制序列，也不启用 mouse tracking。terminal 在视口位于底部时自行 follow tail；用户上划后保留原生视口位置，重新划到底部后由 terminal 恢复跟随。
 - reasoning live view 保留原始换行并跟随尾部多行；终态只固化 Provider disclosure 允许显示的完整段落。
 - 完整 display block 暂存到 model-step completed；含工具的连续 step 组成一个工作组，只有工作组转入无工具最终回答时才插入一条全宽暗色分隔线。纯对话回答不显示空分隔线，steering 用户输入建立新工作组。
 - 连续 ToolCall 组成一个稳定有序块，并行完成只按 call ID 更新原位置，不重排。

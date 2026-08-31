@@ -301,12 +301,16 @@ class RecordingMyCodeApp(MyCodeApp):
             console=Console(file=StringIO(), force_terminal=False),
         )
         self.write_snapshots: list[tuple[str, tuple[str, ...], RenderableType]] = []
+        self.stream_fragments: list[tuple[str, bool]] = []
 
     async def _write(self, renderable: RenderableType, *, clear: bool = False) -> None:
         del clear
         self.write_snapshots.append(
             (self._stream_text, tuple(self._reasoning_parts), renderable)
         )
+
+    async def _write_stream_fragment(self, fragment: str, *, first: bool) -> None:
+        self.stream_fragments.append((fragment, first))
 
 
 class InvalidateRecordingApp(RecordingMyCodeApp):
@@ -952,9 +956,42 @@ async def test_completed_markdown_retires_live_projection_before_scrollback() ->
 
     await app._run_turn("", events(), user=False)
 
-    assert len(app.write_snapshots) == 3
+    assert len(app.write_snapshots) == 2
+    assert "Result" in "".join(fragment for fragment, _ in app.stream_fragments)
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
     assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
+
+
+@pytest.mark.asyncio
+async def test_streamed_answer_keeps_reasoning_separator_order_without_replay() -> None:
+    stream = StringIO()
+    app = MyCodeApp(
+        FakeRuntime(),  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=stream, width=32, force_terminal=False),
+    )
+    answer = "\n".join(f"answer line {index}" for index in range(18))
+
+    async def events() -> AsyncIterator[TurnEvent]:
+        yield ReasoningStarted("summary")
+        yield ReasoningCompleted(
+            ReasoningPresentation("summary", ("checked ordering",))
+        )
+        yield TextStarted()
+        yield TextDelta(answer)
+        yield TextDelta("\nlast line")
+        yield TextCompleted(answer + "\nlast line")
+        yield ModelStepCompleted(1, False)
+        yield TurnSucceeded(answer + "\nlast line", 1, 10, 2)
+
+    await app._run_turn("", events(), user=False)
+
+    rendered = stream.getvalue()
+    divider = next(line for line in rendered.splitlines() if set(line) == {"─"})
+    assert rendered.index("checked ordering") < rendered.index(divider)
+    assert rendered.index(divider) < rendered.index("answer line 0")
+    assert rendered.count("answer line 0") == 1
+    assert rendered.count("last line") == 1
 
 
 @pytest.mark.asyncio
@@ -990,7 +1027,8 @@ async def test_success_fallback_retires_partial_markdown_before_scrollback() -> 
 
     await app._run_turn("", events(), user=False)
 
-    assert len(app.write_snapshots) == 2
+    assert len(app.write_snapshots) == 1
+    assert "partial" in "".join(fragment for fragment, _ in app.stream_fragments)
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
 
 
@@ -1005,7 +1043,8 @@ async def test_max_steps_retires_partial_projection_before_scrollback() -> None:
 
     await app._run_turn("", events(), user=False)
 
-    assert len(app.write_snapshots) == 2
+    assert len(app.write_snapshots) == 1
+    assert len(app.stream_fragments) == 1
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
     assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
     assert app._activity_indicator.active is False
@@ -1022,7 +1061,8 @@ async def test_failed_turn_retires_partial_projection_before_writes() -> None:
 
     await app._run_turn("", events(), user=False)
 
-    assert len(app.write_snapshots) == 2
+    assert len(app.write_snapshots) == 1
+    assert len(app.stream_fragments) == 1
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
     assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
     assert app._activity_indicator.active is False
@@ -1061,7 +1101,8 @@ async def test_cancelled_turn_retires_partial_projection_before_writes() -> None
     with pytest.raises(asyncio.CancelledError):
         await app._run_turn("", events(), user=False)
 
-    assert len(app.write_snapshots) == 2
+    assert len(app.write_snapshots) == 1
+    assert len(app.stream_fragments) == 1
     assert all(not stream_text for stream_text, _, _ in app.write_snapshots)
     assert all(not reasoning for _, reasoning, _ in app.write_snapshots)
     assert app._activity_indicator.active is False
@@ -1142,8 +1183,9 @@ async def test_background_completion_retires_live_projection_before_scrollback()
     await app._consume_background_event(TextCompleted("background answer"))
     await app._consume_background_event(ModelStepCompleted(1, False))
 
-    assert len(app.write_snapshots) == 1
-    assert app.write_snapshots[0][:2] == ("", ("background reasoning",))
+    assert app.write_snapshots == []
+    assert len(app.stream_fragments) == 1
+    assert "background answer" in app.stream_fragments[0][0]
 
 
 @pytest.mark.asyncio

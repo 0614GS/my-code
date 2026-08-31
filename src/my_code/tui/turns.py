@@ -67,6 +67,7 @@ class TurnFlowMixin:
     _busy: bool
     _agent_active: bool
     _stream_text: str
+    _stream_answer_started: bool
     _stream_plan: str
     _reasoning_parts: list[str]
     _todos: tuple[TodoItem, ...]
@@ -83,6 +84,18 @@ class TurnFlowMixin:
         raise NotImplementedError
 
     async def _write_many(self, renderables: tuple[RenderableType, ...]) -> None:
+        raise NotImplementedError
+
+    def _update_stream_projection(self) -> tuple[str, ...]:
+        raise NotImplementedError
+
+    def _flush_stream_projection(self) -> tuple[str, ...]:
+        raise NotImplementedError
+
+    async def _write_stream_fragment(self, fragment: str, *, first: bool) -> None:
+        raise NotImplementedError
+
+    def _reset_stream_projection(self) -> None:
         raise NotImplementedError
 
     def _invalidate(self) -> None:
@@ -126,6 +139,8 @@ class TurnFlowMixin:
         self._busy = True
         self._begin_agent_activity("my-code is working…")
         self._stream_text = ""
+        self._stream_answer_started = False
+        self._reset_stream_projection()
         self._reasoning_parts = []
         self._blocks.reset_group()
         self.buffer.cancel_completion()
@@ -133,7 +148,6 @@ class TurnFlowMixin:
             if self._display_density.includes(DisplayDensity.DETAILED):
                 await self._write(block_separator("User input"))
             await self._write(user_message(prompt, self.theme))
-        completed = False
         try:
             async for event in events:
                 if isinstance(event, TurnInputAccepted):
@@ -156,9 +170,11 @@ class TurnFlowMixin:
                 elif isinstance(event, TextStarted):
                     await self._flush_tool_activity()
                     self._stream_text = ""
+                    self._stream_answer_started = False
+                    self._reset_stream_projection()
                 elif isinstance(event, TextDelta):
                     await self._flush_tool_activity()
-                    self._stream_text += event.text
+                    await self._append_assistant_text(event.text)
                 elif isinstance(event, TextCompleted):
                     await self._flush_tool_activity()
                     await self._commit_assistant_text(event.text)
@@ -235,11 +251,9 @@ class TurnFlowMixin:
                 elif isinstance(event, ContextUpdated):
                     self._apply_context_update(event.status)
                 elif isinstance(event, TurnSucceeded):
-                    partial_text = self._retire_transient_content()
+                    await self._retire_transient_content()
                     await self._flush_tool_activity()
                     await self._flush_unclassified_blocks()
-                    if partial_text:
-                        await self._write(assistant_message(partial_text))
                     await self._write(
                         system_message(
                             f"Done · {event.completed_steps} steps · "
@@ -247,7 +261,6 @@ class TurnFlowMixin:
                             f"{event.output_tokens} output tokens"
                         )
                     )
-                    completed = True
                     if (
                         self._pending_plan
                         and not getattr(self.application, "queued_inputs", lambda: ())()
@@ -255,11 +268,9 @@ class TurnFlowMixin:
                         self._panel = "plan_action"
                         self._panel_picker.reset()
                 elif isinstance(event, MaxStepsReached):
-                    partial_text = self._retire_transient_content()
+                    await self._retire_transient_content()
                     await self._flush_tool_activity()
                     await self._flush_unclassified_blocks()
-                    if partial_text:
-                        await self._write(assistant_message(partial_text))
                     await self._write(
                         system_message(
                             "Max steps reached "
@@ -269,29 +280,22 @@ class TurnFlowMixin:
                             error=True,
                         )
                     )
-                    completed = True
                 self._invalidate_for_event(event)
         except asyncio.CancelledError:
-            partial_text = self._retire_transient_content()
+            await self._retire_transient_content()
             await self._interrupt_and_flush_tools()
             await self._flush_unclassified_blocks()
             await self._write(system_message("Turn interrupted.", error=True))
-            if partial_text:
-                await self._write(assistant_message(partial_text))
             raise
         except Exception as error:
-            partial_text = self._retire_transient_content()
+            await self._retire_transient_content()
             await self._interrupt_and_flush_tools()
             await self._flush_unclassified_blocks()
             await self._write(system_message(f"Error: {error}", error=True))
-            if partial_text:
-                await self._write(assistant_message(partial_text))
         finally:
-            partial_text = self._retire_transient_content()
+            await self._retire_transient_content()
             await self._interrupt_and_flush_tools()
             await self._flush_unclassified_blocks()
-            if not completed and partial_text:
-                await self._write(assistant_message(partial_text))
             self._agent_active = False
             self._busy = False
             self._end_agent_activity()
@@ -312,7 +316,7 @@ class TurnFlowMixin:
             )
         elif isinstance(event, TextDelta):
             await self._flush_tool_activity()
-            self._stream_text += event.text
+            await self._append_assistant_text(event.text)
         elif isinstance(event, TextCompleted):
             await self._flush_tool_activity()
             await self._commit_assistant_text(event.text)
@@ -375,11 +379,9 @@ class TurnFlowMixin:
         elif isinstance(event, ContextUpdated):
             self._apply_context_update(event.status)
         elif isinstance(event, TurnSucceeded):
-            partial_text = self._retire_transient_content()
+            await self._retire_transient_content()
             await self._flush_tool_activity()
             await self._flush_unclassified_blocks()
-            if partial_text:
-                await self._write(assistant_message(partial_text))
             await self._write(
                 system_message(
                     f"Background done · {event.completed_steps} steps · "
@@ -387,11 +389,9 @@ class TurnFlowMixin:
                 )
             )
         elif isinstance(event, MaxStepsReached):
-            partial_text = self._retire_transient_content()
+            await self._retire_transient_content()
             await self._flush_tool_activity()
             await self._flush_unclassified_blocks()
-            if partial_text:
-                await self._write(assistant_message(partial_text))
             await self._write(
                 system_message(
                     f"Background continuation reached max steps ({event.max_steps}).",
@@ -420,10 +420,14 @@ class TurnFlowMixin:
         self._update_agent_activity(resume_label)
 
     async def _commit_assistant_text(self, text: str) -> None:
-        """Hold completed text until the model step can classify it."""
+        """仅固化未提交尾部；step 仍负责 reasoning 与分隔符收尾。"""
 
+        self._stream_text = text
+        fragments = self._flush_stream_projection()
+        await self._commit_stream_fragments(fragments)
         self._stream_text = ""
-        self._blocks.add_text(text)
+        if not self._stream_answer_started:
+            self._blocks.add_text(text)
 
     async def _commit_reasoning(self, event: ReasoningCompleted) -> None:
         """Hold reasoning so its order with the step text remains stable."""
@@ -443,13 +447,34 @@ class TurnFlowMixin:
     async def _flush_unclassified_blocks(self) -> None:
         await self._write_many(self._blocks.drain_unclassified())
 
-    def _retire_transient_content(self) -> str:
-        """Clear unfinished multi-line projections and return partial text."""
+    async def _append_assistant_text(self, text: str) -> None:
+        self._stream_text += text
+        fragments = self._update_stream_projection()
+        await self._commit_stream_fragments(fragments)
 
-        partial_text = self._stream_text
+    async def _commit_stream_fragments(self, fragments: tuple[str, ...]) -> None:
+        if not fragments:
+            return
+        first = not self._stream_answer_started
+        if first:
+            await self._write_many(
+                self._blocks.begin_streamed_text(
+                    label_answer=self._display_density.includes(DisplayDensity.DETAILED)
+                )
+            )
+            self._stream_answer_started = True
+        for fragment in fragments:
+            await self._write_stream_fragment(fragment, first=first)
+            first = False
+
+    async def _retire_transient_content(self) -> None:
+        """统一固化未完成回答的动态尾部，并清除 reasoning 投影。"""
+
+        if self._stream_text:
+            fragments = self._flush_stream_projection()
+            await self._commit_stream_fragments(fragments)
         self._stream_text = ""
         self._reasoning_parts = []
-        return partial_text
 
     async def _flush_tool_activity(self) -> None:
         activity = self._tool_activity

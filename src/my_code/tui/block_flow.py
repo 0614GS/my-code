@@ -26,6 +26,7 @@ class TurnBlockCoordinator:
     def __init__(self) -> None:
         self._pending: list[_PendingBlock] = []
         self._work_visible = False
+        self._streamed_answer = False
 
     def add_text(self, text: str) -> None:
         self._pending.append(_PendingBlock("text", text))
@@ -39,6 +40,25 @@ class TurnBlockCoordinator:
     def reset_group(self) -> None:
         self._pending.clear()
         self._work_visible = False
+        self._streamed_answer = False
+
+    def begin_streamed_text(
+        self, *, label_answer: bool = False
+    ) -> tuple[RenderableType, ...]:
+        """在首个稳定回答片段前提交 reasoning 与回答分隔符。"""
+
+        pending = tuple(self._pending)
+        self._pending.clear()
+        reasoning_visible = any(block.kind == "reasoning" for block in pending)
+        renderables = [_render(block) for block in pending]
+        if label_answer or self._work_visible or reasoning_visible:
+            renderables.append(
+                block_separator("Assistant response")
+                if label_answer
+                else work_separator()
+            )
+        self._streamed_answer = True
+        return tuple(renderables)
 
     def complete_step(
         self, *, has_tools: bool, label_answer: bool = False
@@ -46,8 +66,9 @@ class TurnBlockCoordinator:
         pending = tuple(self._pending)
         self._pending.clear()
         if has_tools:
-            if pending:
+            if pending or self._streamed_answer:
                 self._work_visible = True
+            self._streamed_answer = False
             return tuple(_render(block) for block in pending)
 
         renderables: list[RenderableType] = []
@@ -70,10 +91,11 @@ class TurnBlockCoordinator:
                 separator_written = True
             renderables.append(_render(block))
 
-        if has_answer:
+        if has_answer or self._streamed_answer:
             self._work_visible = False
         elif reasoning_in_step:
             self._work_visible = True
+        self._streamed_answer = False
         return tuple(renderables)
 
     def drain_unclassified(self) -> tuple[RenderableType, ...]:
