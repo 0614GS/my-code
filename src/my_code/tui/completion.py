@@ -2,11 +2,11 @@
 
 
 def mention_at_cursor(value: str, cursor: int) -> tuple[int, int, str] | None:
-    """Return the replaceable unquoted mention fragment under the cursor."""
+    """返回光标所在的可替换文件 mention 片段。"""
 
     prefix = value[:cursor]
     at = prefix.rfind("@")
-    if at < 0 or (at > 0 and not (value[at - 1].isspace() or value[at - 1] in "([{,:")):
+    if at <= 0 or value[at - 1] != " ":
         return None
     fragment = prefix[at + 1 :]
     if fragment.startswith('"'):

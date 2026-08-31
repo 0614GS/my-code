@@ -1305,7 +1305,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             return
         self._path_suggestions = suggestions
         if suggestions:
-            self.buffer.start_completion(select_first=True)
+            self.buffer.start_completion(select_first=False)
 
     async def _render_history(self, history: tuple[HistoryEntry, ...]) -> None:
         previous_todos = ()

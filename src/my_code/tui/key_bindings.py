@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import Condition
+from prompt_toolkit.filters import Condition, is_read_only
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 
@@ -138,6 +138,13 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
             host._close_panel()
         elif host._foreground_task is not None:
             host._foreground_task.cancel()
+
+    @bindings.add("backspace", filter=~is_read_only)
+    def backspace(event: KeyPressEvent) -> None:
+        del event
+        if host.buffer.complete_state is not None:
+            host.buffer.cancel_completion()
+        host.buffer.delete_before_cursor()
 
     @bindings.add("tab")
     def tab(event: KeyPressEvent) -> None:

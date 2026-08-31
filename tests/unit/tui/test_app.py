@@ -42,6 +42,7 @@ from my_code.application.contracts.history import (
     HistoryText,
     HistoryToolCall,
 )
+from my_code.application.contracts.inputs import PathSuggestion
 from my_code.application.contracts.permissions import (
     PermissionModeSwitch,
     PermissionModeView,
@@ -228,7 +229,7 @@ class FakeRuntime:
             self.credential_source = CredentialSource.NONE
         return self.status()
 
-    async def suggest_paths(self, query: str):
+    async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
         del query
         return ()
 
@@ -521,6 +522,50 @@ def test_slash_opens_command_suggestions_while_typing() -> None:
     }
     menu = app._slash_menu_text()
     assert menu[0][0] == "class:selected"
+
+
+@pytest.mark.asyncio
+async def test_file_suggestions_start_unselected_and_allow_cancel_and_backspace() -> (
+    None
+):
+    class SuggestingRuntime(FakeRuntime):
+        async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
+            return (PathSuggestion(f"benchmarks/{query}", False, "candidate"),)
+
+    runtime = SuggestingRuntime()
+    with create_pipe_input() as pipe:
+        app = MyCodeApp(
+            runtime,  # type: ignore[arg-type]
+            input=pipe,
+            output=DummyOutput(),
+            console=Console(file=StringIO(), force_terminal=False),
+        )
+        running = asyncio.create_task(app.run_async())
+        await wait_until_running(app)
+        pipe.send_text("open @bench")
+        await wait_until(lambda: app.buffer.complete_state is not None)
+
+        assert app.buffer.complete_state is not None
+        assert app.buffer.complete_state.current_completion is None
+
+        pipe.send_bytes(b"\x1b[B")
+        await wait_until(
+            lambda: (
+                app.buffer.complete_state is not None
+                and app.buffer.complete_state.current_completion is not None
+            )
+        )
+        pipe.send_bytes(b"\x1b")
+        await wait_until(lambda: app.buffer.complete_state is None)
+        assert app.buffer.text == "open @bench"
+
+        pipe.send_text("x")
+        await wait_until(lambda: app.buffer.complete_state is not None)
+        pipe.send_bytes(b"\x7f")
+        await wait_until(lambda: app.buffer.text == "open @bench")
+
+        pipe.send_bytes(b"\x03\x04")
+        await wait_until_exited(running)
 
 
 def test_refresh_status_isolates_context_failure() -> None:
