@@ -635,6 +635,75 @@ async def test_one_human_turn_can_contain_multiple_steps_and_one_tool_round(
 
 
 @pytest.mark.asyncio
+async def test_permission_mode_change_during_step_applies_to_next_step(
+    tmp_path: Path,
+) -> None:
+    catalog = ToolCatalog()
+    catalog.register_source(ToolSourceId("test", "permissions"), builtin_tools())
+    policy = PermissionPolicy(PermissionMode.DEFAULT)
+    executor = ToolExecutor(
+        catalog.snapshot(),
+        policy,
+        HeadlessPrompter(),
+        Workspace(tmp_path),
+    )
+    outputs = [
+        ModelOutput(
+            (
+                ModelToolUseBlock(
+                    "first", "Write", {"path": "first.txt", "content": "first"}
+                ),
+            ),
+            "tool_use",
+        ),
+        ModelOutput(
+            (
+                ModelToolUseBlock(
+                    "second", "Write", {"path": "second.txt", "content": "second"}
+                ),
+            ),
+            "tool_use",
+        ),
+        ModelOutput((ModelTextBlock("done"),), "end_turn"),
+    ]
+    model = FakeModel(outputs)
+    original_complete = model.complete
+
+    async def change_mode_during_first_step(request: ModelRequest) -> ModelOutput:
+        output = await original_complete(request)
+        if len(model.requests) == 1:
+            policy.mode = PermissionMode.BYPASS
+        return output
+
+    model.complete = change_mode_during_first_step  # type: ignore[method-assign]
+    planner = ContextPlanner(
+        prompt=PromptRegistry(
+            (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
+        ),
+        max_output_tokens=100,
+    )
+    session = Session(tmp_path / "sessions", "22222222-2222-2222-2222-222222222222")
+    engine = AgentEngine(
+        model_call=model,
+        tool_round=ToolRoundExecutor(executor),
+        context=ContextEngine(planner, ContextCompactor(model)),
+        tool_catalog=catalog,
+    )
+
+    result = await engine.submit(session, ContextRuntime(), AgentTurnInput("write"))
+
+    assert isinstance(result, AgentTurnSucceeded)
+    batches = [
+        item for item in session.conversation if isinstance(item, ToolResultBatch)
+    ]
+    assert batches[0].content[0].is_error
+    assert "Permission denied" in batches[0].content[0].content
+    assert not (tmp_path / "first.txt").exists()
+    assert batches[1].content[0].is_error is False
+    assert (tmp_path / "second.txt").read_text(encoding="utf-8") == "second"
+
+
+@pytest.mark.asyncio
 async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
     tmp_path: Path,
 ) -> None:
@@ -982,11 +1051,17 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
         call: ToolCall,
         *,
         tools: ToolCatalogSnapshot | None = None,
+        permission_policy: PermissionPolicy | None = None,
         run_id: str | None = None,
     ) -> ToolExecutionOutcome:
         if call.id == "read-1":
             raise asyncio.CancelledError
-        return await execute(call, tools=tools, run_id=run_id)
+        return await execute(
+            call,
+            tools=tools,
+            permission_policy=permission_policy,
+            run_id=run_id,
+        )
 
     tool_round.executor.execute = cancel_second  # type: ignore[assignment]
     events = []

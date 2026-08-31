@@ -28,6 +28,11 @@ class PermissionPolicy:
         self.mode = mode
         self.rules = tuple(rules)
 
+    def snapshot(self) -> "PermissionPolicy":
+        """Capture the mode and rules used by one Agent step."""
+
+        return PermissionPolicy(self.mode, self.rules)
+
     def add_rules(self, rules: Iterable[PermissionRule]) -> None:
         """把规则注入当前权限 context。持久化由 update applier 负责。"""
 

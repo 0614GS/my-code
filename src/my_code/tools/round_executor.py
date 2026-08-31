@@ -17,6 +17,7 @@ from my_code.conversation.models import (
 )
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.permissions.models import PermissionMode, PermissionUpdate
+from my_code.permissions.policy import PermissionPolicy
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.discovery import ToolExposureSnapshot
 from my_code.tools.executor import ToolExecutionOutcome
@@ -52,6 +53,8 @@ type ToolRoundEvent = ToolCallStarted | ToolCallFinished | ToolRoundCompleted
 class ToolCallExecutor(Protocol):
     tools: ToolCatalogSnapshot
 
+    def permission_snapshot(self) -> PermissionPolicy: ...
+
     def present_use(
         self,
         call: ToolCall,
@@ -86,6 +89,7 @@ class ToolCallExecutor(Protocol):
         call: ToolCall,
         *,
         tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+        permission_policy: PermissionPolicy | None = None,
         run_id: str | None = None,
     ) -> ToolExecutionOutcome: ...
 
@@ -110,12 +114,19 @@ class ToolRoundExecutor:
         self.executor = executor
         self.max_parallel_calls = max_parallel_calls
 
+    def permission_snapshot(self) -> PermissionPolicy | None:
+        """Capture policy when supported, keeping injected test executors compatible."""
+
+        snapshot = getattr(self.executor, "permission_snapshot", None)
+        return snapshot() if snapshot is not None else None
+
     async def run_round(
         self,
         calls: tuple[ToolCall, ...],
         assistant_message: AssistantMessage,
         *,
         tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+        permission_policy: PermissionPolicy | None = None,
         run_id: str | None = None,
     ) -> AsyncIterator[ToolRoundEvent]:
         active_tools = self.executor.tools if tools is None else tools
@@ -132,6 +143,7 @@ class ToolRoundExecutor:
                 outcomes = await self._execute_group(
                     group,
                     active_tools,
+                    permission_policy=permission_policy,
                     run_id=run_id,
                 )
                 for call, outcome in zip(group, outcomes, strict=True):
@@ -186,6 +198,7 @@ class ToolRoundExecutor:
         calls: tuple[ToolCall, ...],
         tools: ToolCatalogSnapshot | ToolExposureSnapshot,
         *,
+        permission_policy: PermissionPolicy | None,
         run_id: str | None,
     ) -> tuple[ToolExecutionOutcome, ...]:
         semaphore = asyncio.Semaphore(self.max_parallel_calls)
@@ -193,11 +206,15 @@ class ToolRoundExecutor:
         async def execute(call: ToolCall) -> ToolExecutionOutcome:
             async with semaphore:
                 try:
-                    return await self.executor.execute(
-                        call,
-                        tools=tools,
-                        run_id=run_id,
-                    )
+                    execute_call = self.executor.execute
+                    if permission_policy is not None:
+                        return await execute_call(
+                            call,
+                            tools=tools,
+                            permission_policy=permission_policy,
+                            run_id=run_id,
+                        )
+                    return await execute_call(call, tools=tools, run_id=run_id)
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:

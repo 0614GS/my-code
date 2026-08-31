@@ -44,6 +44,7 @@ from my_code.permissions.models import (
     PermissionPrompter,
     PermissionUpdate,
 )
+from my_code.permissions.policy import PermissionPolicy
 from my_code.sessions.models import TurnFinished, TurnStarted
 from my_code.sessions.session import Session
 from my_code.tools.catalog import ToolCatalogSnapshot
@@ -373,6 +374,9 @@ class InstrumentedToolExecutor:
         self._observer = observer
         self.tools = executor.tools
 
+    def permission_snapshot(self) -> PermissionPolicy:
+        return self._executor.permission_snapshot()
+
     def present_use(self, call: ToolCall, **kwargs: object) -> ToolUsePresentation:
         return self._executor.present_use(call, **kwargs)  # type: ignore[arg-type]
 
@@ -399,6 +403,7 @@ class InstrumentedToolExecutor:
         call: ToolCall,
         *,
         tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+        permission_policy: PermissionPolicy | None = None,
         run_id: str | None = None,
     ) -> ToolExecutionOutcome:
         with _safe_span(
@@ -411,7 +416,12 @@ class InstrumentedToolExecutor:
             },
         ) as span:
             try:
-                outcome = await self._executor.execute(call, tools=tools, run_id=run_id)
+                outcome = await self._executor.execute(
+                    call,
+                    tools=tools,
+                    permission_policy=permission_policy,
+                    run_id=run_id,
+                )
             except asyncio.CancelledError:
                 span.finish(ObservationOutcome.CANCELLED)
                 raise

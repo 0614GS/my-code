@@ -94,6 +94,7 @@ from my_code.model.request import (
 )
 from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionUpdate, PermissionUpdateType
+from my_code.permissions.policy import PermissionPolicy
 from my_code.sessions.models import CollaborationMode
 from my_code.sessions.session import Session
 from my_code.tools.base import ToolExposure
@@ -265,6 +266,7 @@ class AgentEngine:
         while True:
             step_count += 1
             tools = self._snapshot_tools(session)
+            permission_policy = self._tool_round.permission_snapshot()
             try:
                 request = await self._plan_request(session, runtime, tools)
             except ContextOverflow as overflow:
@@ -423,6 +425,7 @@ class AgentEngine:
                 assistant_message,
                 tool_calls,
                 tools,
+                permission_policy,
             ):
                 yield event
             if self.max_steps is not None and step_count >= self.max_steps:
@@ -511,6 +514,7 @@ class AgentEngine:
         assistant_message: AssistantMessage,
         tool_calls: tuple[ToolCall, ...],
         tools: ToolCatalogSnapshot | ToolExposureSnapshot,
+        permission_policy: PermissionPolicy | None,
     ) -> AsyncIterator[AgentEvent]:
         result_message: ToolResultBatch | None = None
         results: list[ToolResult] = []
@@ -522,6 +526,7 @@ class AgentEngine:
                 tool_calls,
                 assistant_message,
                 tools=tools,
+                permission_policy=permission_policy,
                 run_id=session.session_id,
             ):
                 if isinstance(tool_event, ToolCallStarted):

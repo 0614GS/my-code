@@ -130,7 +130,7 @@ class SlashCommandRegistry:
                     "permissions",
                     "Choose the tool permission mode",
                     SlashCommandAction.PERMISSIONS,
-                    concurrency=CommandConcurrency.EXCLUSIVE,
+                    concurrency=CommandConcurrency.CONCURRENT_UI,
                 ),
                 SlashCommand(
                     "provider",

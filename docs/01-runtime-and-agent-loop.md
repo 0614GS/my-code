@@ -19,7 +19,7 @@ ChatService.stream_interactive()
   -> AgentEngine.stream_continuation(..., pending_source)
      -> 首次请求前 drain 全部 ready input
      -> Session.commit_user_inputs() 原子提交相邻 HumanMessage + durable attachment
-     -> Step 1 捕获 ToolCatalogSnapshot / ToolExposureSnapshot
+     -> Step 1 捕获 ToolCatalogSnapshot / ToolExposureSnapshot 与 PermissionPolicy
      -> 派生动态 Attachment 并由 Session 接受
      -> ContextEngine.plan(...) 生成 ModelRequest
      -> Session.prepare_model_invocation() 原子提交 request audit blobs + manifest
@@ -27,7 +27,7 @@ ChatService.stream_interactive()
      -> Session.finish_model_invocation() 记录 completed/failed/cancelled/overflow
      -> 完整响应提交为 AssistantMessage
      -> 无工具：形成完整 step boundary；有 pending input 时提交并继续下一 step
-     -> 有工具：使用同一 step 工具快照执行 ToolRound
+     -> 有工具：使用同一 step 工具与权限快照执行 ToolRound
         -> Session 原子提交 ToolResultBatch
         -> 提交成功调用产生的 Attachment
         -> 应用已验证的 session permission updates
@@ -46,7 +46,7 @@ Headless `submit/stream` 不提供 pending source，保留单输入行为。前�
 
 ## 工具与扩展运行
 
-每个 step 只捕获一次工具目录和曝光视图。请求中的 definitions、ToolCall 校验和后续 ToolRound 使用同一快照；MCP refresh、Skill reload 或其他目录更新只影响下一个 step。
+每个 step 只捕获一次工具目录、曝光视图和权限策略。请求中的 definitions、ToolCall 校验和后续 ToolRound 使用同一工具快照；运行中切换 permission mode 会立即持久化并更新 UI，但当前 step 继续使用已捕获的 mode/rules，下一 step 才重新捕获。MCP refresh、Skill reload 或其他目录更新也只影响下一个 step。
 
 Foreground Subagent 由标准 Tool 启动。`SubagentController` 只传递显式 prompt 和 attachments，不复制父 transcript；child 使用独立 Session、`ContextRuntime`、Agent 组件和 provider lease，最终只向父 ToolCall 返回一个结构化结果。
 

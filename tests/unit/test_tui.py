@@ -1642,7 +1642,7 @@ def test_new_slash_commands_have_strict_subcommands() -> None:
     assert registry.concurrency("/view detailed") is CommandConcurrency.CONCURRENT_UI
     permissions = registry.dispatch("/permissions", status=status)
     assert permissions is not None and permissions.open_permission_picker
-    assert registry.concurrency("/permissions") is CommandConcurrency.EXCLUSIVE
+    assert registry.concurrency("/permissions") is CommandConcurrency.CONCURRENT_UI
 
 
 @pytest.mark.asyncio
@@ -1672,6 +1672,25 @@ async def test_permissions_command_uses_shared_picker_and_applies_selection() ->
     assert app._panel is None
     assert runtime.permission_mode == "acceptEdits"
     assert app.buffer.text == "/permissions"
+
+
+@pytest.mark.asyncio
+async def test_permissions_command_opens_during_active_agent_turn() -> None:
+    runtime = FakeRuntime()
+    app = RecordingMyCodeApp(runtime)
+    app._startup_ready.set()
+    app._history_ready.set()
+    app._agent_active = True
+    app._busy = True
+    app.buffer.text = "/permissions"
+
+    await app._submit_buffer()
+
+    assert app._panel == "permission_mode_select"
+    assert not any(
+        "Wait for the active Agent turn" in str(renderable)
+        for _, _, renderable in app.write_snapshots
+    )
 
 
 @pytest.mark.asyncio

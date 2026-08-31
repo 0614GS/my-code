@@ -45,7 +45,7 @@ presentation 中的 200 条代码行记录。
 
 Enter 提交，Shift+Enter 或 Ctrl+J 换行；Esc 按候选菜单、临时面板、当前 invocation 的优先级处理。Agent 与后台 continuation 运行时 composer 仍可编辑，普通 Enter 加入仅内存的 steering queue；accepted 事件到达后才写入 scrollback。空 composer 按 Up 可取消准备任务并召回最近的 pending/failed 输入。Esc 只取消当前 invocation，不清除队列。
 
-composer 下方最多显示三行 queue preview。Slash command 显式分为 `concurrent_read`、`concurrent_ui` 与 `exclusive`：只读命令和纯展示偏好可在 Agent active 时运行；compact、能力 reload/reconnect、provider/model、permission mode、resume 和 exit 等独占操作保留原草稿并等待 Agent 空闲。
+composer 下方最多显示三行 queue preview。Slash command 显式分为 `concurrent_read`、`concurrent_ui` 与 `exclusive`：只读命令、纯展示偏好和 permission mode 可在 Agent active 时运行；permission mode 切换从下一 step 生效。compact、能力 reload/reconnect、provider/model、resume 和 exit 等独占操作保留原草稿并等待 Agent 空闲。
 
 composer 底栏显示模型、context entry 数量、按需计算的 context usage 和警告；Plan 时底栏右下角显示 `Plan` 指示器。普通 composer 在空闲、空输入且无独占面板时用 Shift+Tab 切换 Default/Plan，provider form 中 Shift+Tab 仍表示上一字段。Plan 中 `/permissions` 与权限 Picker 禁用。
 

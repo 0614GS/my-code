@@ -139,6 +139,11 @@ class ToolExecutor:
         self.requester_name = requester_name
         self._permission_prompt_lock = asyncio.Lock()
 
+    def permission_snapshot(self) -> PermissionPolicy:
+        """Return a detached policy for a single Agent step."""
+
+        return self.policy.snapshot()
+
     def present_use(
         self,
         call: ToolCall,
@@ -232,9 +237,11 @@ class ToolExecutor:
         call: ToolCall,
         *,
         tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+        permission_policy: PermissionPolicy | None = None,
         invocation: ToolInvocation | None = None,
         run_id: str | None = None,
     ) -> ToolExecutionOutcome:
+        active_policy = self.policy if permission_policy is None else permission_policy
         active_tools = self.tools if tools is None else tools
         submitted_call, tool, route_error, routed_invocation = self._resolve(
             call, active_tools, invocation
@@ -274,13 +281,13 @@ class ToolExecutor:
             tool_result = await tool.check_permissions(
                 to_json_object(submitted_input),
                 ToolPermissionContext(
-                    mode=self.policy.mode,
-                    rules=self.policy.rules,
+                    mode=active_policy.mode,
+                    rules=active_policy.rules,
                     workspace_root=self.workspace.root,
                     internal_read_root=self.context.internal_read_root,
                 ),
             )
-            decision = self.policy.decide(
+            decision = active_policy.decide(
                 PermissionRequest(
                     tool_name=tool.definition.name,
                     tool_input=to_json_object(submitted_input),

@@ -158,7 +158,7 @@ def test_tool_permission_and_workspace_ownership() -> None:
 
     executor = (_PACKAGE_ROOT / "tools" / "executor.py").read_text(encoding="utf-8")
     assert "tool.check_permissions(" in executor
-    assert "self.policy.decide(" in executor
+    assert "active_policy.decide(" in executor
     assert "await tool.execute(" in executor
 
 
