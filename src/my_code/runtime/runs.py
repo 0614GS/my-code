@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from my_code.agent.events import AgentEvent
-from my_code.agent.models import AgentTurnInput, AgentTurnOutcome
+from my_code.agent.models import AgentInvocationOutcome, AgentTurnInput
 from my_code.agent.runner import InteractiveAgentRunner
 from my_code.context.engine import ContextEngine
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.model.capabilities import ActiveModelEnvironment
 from my_code.observability.api import EvaluationContext
 from my_code.permissions.policy import PermissionPolicy
@@ -30,6 +30,8 @@ class AgentRunSpec:
     session: Session
     name: str
     parent_run_id: str | None = None
+    parent_session_id: str | None = None
+    root_session_id: str | None = None
     run_id: str = field(default_factory=lambda: str(uuid4()))
     tool_catalog: ToolCatalog | None = None
     permission_policy: PermissionPolicy | None = None
@@ -44,6 +46,14 @@ class AgentRunSpec:
             raise ValueError("Agent run name must not be blank")
         if self.parent_run_id is not None and not self.parent_run_id.strip():
             raise ValueError("Agent parent run ID must be non-empty or null")
+        if self.parent_session_id is not None and not self.parent_session_id.strip():
+            raise ValueError("Agent parent Session ID must be non-empty or null")
+        if (self.parent_run_id is None) != (self.parent_session_id is None):
+            raise ValueError(
+                "Agent parent Run and Session IDs must be provided together"
+            )
+        if self.root_session_id is not None and not self.root_session_id.strip():
+            raise ValueError("Agent root Session ID must be non-empty or null")
         if not self.run_id.strip():
             raise ValueError("Agent run ID must not be blank")
         if self.max_steps is not None and self.max_steps < 1:
@@ -87,7 +97,7 @@ class AgentRun:
         self.session = spec.session
         self.agent = components.agent
         self.context = components.context
-        self.context_runtime = ContextRuntime()
+        self.context_cache = SessionContextCache()
         self.tool_executor = components.tool_executor
         self.provider = provider
         self.environment = environment
@@ -98,15 +108,15 @@ class AgentRun:
     def closed(self) -> bool:
         return self._closed
 
-    async def submit(self, turn_input: AgentTurnInput) -> AgentTurnOutcome:
+    async def submit(self, turn_input: AgentTurnInput) -> AgentInvocationOutcome:
         if self._closed:
             raise RuntimeError("Agent run is closed")
-        return await self.agent.submit(self.session, self.context_runtime, turn_input)
+        return await self.agent.submit(self.session, self.context_cache, turn_input)
 
     def stream(self, turn_input: AgentTurnInput) -> AsyncIterator[AgentEvent]:
         if self._closed:
             raise RuntimeError("Agent run is closed")
-        return self.agent.stream(self.session, self.context_runtime, turn_input)
+        return self.agent.stream(self.session, self.context_cache, turn_input)
 
     async def close(self) -> None:
         if self._closed:
@@ -145,6 +155,7 @@ class AgentRunFactory:
         if spec.run_id in self._runs:
             raise ValueError(f"Agent run ID is already active: {spec.run_id}")
         environment = self._environment()
+        spec.session.bind_run(spec.run_id)
         provider = self._leases.acquire()
         try:
             if self._session_start is not None:

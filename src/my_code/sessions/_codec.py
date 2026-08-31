@@ -46,7 +46,7 @@ from my_code.model.capabilities import ModelLimits
 from my_code.model.primitives import (
     ContextFootprint,
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ProviderReplayRecord,
     ReasoningPresentation,
     TokenUsage,
@@ -60,6 +60,8 @@ from my_code.sessions._records import (
     ContentReplacementRecord,
     ConversationSummaryMessageRecord,
     HumanMessageRecord,
+    InvocationFinishedRecord,
+    InvocationStartedRecord,
     LegacyToolResultBatchRecord,
     MessageRecord,
     ProviderReplaySidecarRecord,
@@ -74,16 +76,15 @@ from my_code.sessions._records import (
     ToolResultBatchRecord,
     ToolResultRecord,
     TranscriptEntry,
-    TurnFinishedRecord,
-    TurnStartedRecord,
 )
 from my_code.sessions.models import (
     CollaborationMode,
+    InvocationFinished,
+    InvocationOutcome,
+    InvocationStarted,
+    SessionKind,
     SessionMetadata,
     SessionStart,
-    TurnFinished,
-    TurnOutcome,
-    TurnStarted,
 )
 
 
@@ -99,8 +100,8 @@ type DecodedEntry = (
     | SessionMetadata
     | SessionPermissionModeRecord
     | SessionCollaborationModeRecord
-    | TurnStarted
-    | TurnFinished
+    | InvocationStarted
+    | InvocationFinished
     | ToolPresentationRecord
     | ProviderReplayRecord
 )
@@ -125,6 +126,10 @@ def decode_entry(value: object) -> DecodedEntry:
             entry.compact_trigger_tokens,
             entry.provider_protocol,
             entry.collaboration_mode,
+            entry.session_kind,
+            entry.parent_session_id,
+            entry.created_by_run_id,
+            entry.agent_name,
         )
     if isinstance(entry, SessionMetadataRecord):
         return SessionMetadata(
@@ -134,9 +139,9 @@ def decode_entry(value: object) -> DecodedEntry:
         return entry
     if isinstance(entry, SessionCollaborationModeRecord):
         return entry
-    if isinstance(entry, TurnStartedRecord):
-        return TurnStarted(
-            entry.turn_id,
+    if isinstance(entry, InvocationStartedRecord):
+        return InvocationStarted(
+            entry.invocation_id,
             entry.run_id,
             entry.parent_run_id,
             entry.agent_name,
@@ -146,9 +151,9 @@ def decode_entry(value: object) -> DecodedEntry:
             entry.test_case_id,
             entry.attempt_id,
         )
-    if isinstance(entry, TurnFinishedRecord):
-        return TurnFinished(
-            entry.turn_id,
+    if isinstance(entry, InvocationFinishedRecord):
+        return InvocationFinished(
+            entry.invocation_id,
             entry.finished_at,
             entry.outcome,
             entry.completed_steps,
@@ -225,6 +230,10 @@ def encode_start(start: SessionStart) -> JsonObject:
             start.compact_trigger_tokens,
             start.provider_protocol,
             start.collaboration_mode,
+            start.session_kind,
+            start.parent_session_id,
+            start.created_by_run_id,
+            start.agent_name,
         )
     )
 
@@ -253,10 +262,10 @@ def encode_collaboration_mode(collaboration_mode: str) -> JsonObject:
     return entry_to_json(SessionCollaborationModeRecord(mode.value))
 
 
-def encode_turn_started(turn: TurnStarted) -> JsonObject:
+def encode_invocation_started(turn: InvocationStarted) -> JsonObject:
     return entry_to_json(
-        TurnStartedRecord(
-            turn.turn_id,
+        InvocationStartedRecord(
+            turn.invocation_id,
             turn.run_id,
             turn.parent_run_id,
             turn.agent_name,
@@ -269,10 +278,10 @@ def encode_turn_started(turn: TurnStarted) -> JsonObject:
     )
 
 
-def encode_turn_finished(turn: TurnFinished) -> JsonObject:
+def encode_invocation_finished(turn: InvocationFinished) -> JsonObject:
     return entry_to_json(
-        TurnFinishedRecord(
-            turn.turn_id,
+        InvocationFinishedRecord(
+            turn.invocation_id,
             turn.finished_at,
             turn.outcome,
             turn.completed_steps,
@@ -452,6 +461,10 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             compact_trigger_tokens=entry.compact_trigger_tokens,
             provider_protocol=entry.provider_protocol,
             collaboration_mode=entry.collaboration_mode,
+            session_kind=entry.session_kind,
+            parent_session_id=entry.parent_session_id,
+            created_by_run_id=entry.created_by_run_id,
+            agent_name=entry.agent_name,
         )
         return base
     if isinstance(entry, SessionMetadataRecord):
@@ -468,9 +481,9 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
     if isinstance(entry, SessionCollaborationModeRecord):
         base["collaboration_mode"] = entry.collaboration_mode
         return base
-    if isinstance(entry, TurnStartedRecord):
+    if isinstance(entry, InvocationStartedRecord):
         base.update(
-            turn_id=entry.turn_id,
+            invocation_id=entry.invocation_id,
             run_id=entry.run_id,
             parent_run_id=entry.parent_run_id,
             agent_name=entry.agent_name,
@@ -481,9 +494,9 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             attempt_id=entry.attempt_id,
         )
         return base
-    if isinstance(entry, TurnFinishedRecord):
+    if isinstance(entry, InvocationFinishedRecord):
         base.update(
-            turn_id=entry.turn_id,
+            invocation_id=entry.invocation_id,
             finished_at=entry.finished_at,
             outcome=entry.outcome,
             completed_steps=entry.completed_steps,
@@ -567,9 +580,15 @@ def entry_from_json(value: object) -> TranscriptEntry:
         data = to_json_object(value)
     except TypeError as error:
         raise TranscriptDecodeError("Transcript entry must be an object") from error
-    if data.get("schema_version") != 6:
+    schema_version = data.get("schema_version")
+    if schema_version not in {6, 7}:
         raise TranscriptDecodeError("Unsupported transcript schema version")
     kind = _string(data, "type")
+    if schema_version == 6 and kind in {"turn_started", "turn_finished"}:
+        data = dict(data)
+        data["type"] = kind.replace("turn", "invocation", 1)
+        data["invocation_id"] = data.pop("turn_id", None)
+        kind = str(data["type"])
     expected_fields = _ENTRY_FIELDS.get(kind)
     if expected_fields is None:
         raise TranscriptDecodeError(f"Unsupported transcript entry type: {kind}")
@@ -585,7 +604,17 @@ def entry_from_json(value: object) -> TranscriptEntry:
             "provider_protocol",
             "collaboration_mode",
         }
-        actual_expected = expected_fields | (frozenset(data) & optional)
+        required_identity: set[str] = set()
+        if schema_version == 7:
+            required_identity = {
+                "session_kind",
+                "parent_session_id",
+                "created_by_run_id",
+                "agent_name",
+            }
+        actual_expected = (
+            expected_fields | required_identity | (frozenset(data) & optional)
+        )
     _require_exact_fields(data, actual_expected)
     if kind == "session_started":
         cwd = _string(data, "cwd")
@@ -597,20 +626,68 @@ def entry_from_json(value: object) -> TranscriptEntry:
         except ValueError as error:
             raise TranscriptDecodeError(str(error)) from error
         permission_mode = _validate_permission_mode(_string(data, "permission_mode"))
+        try:
+            start = SessionStart(
+                session_id=_string(data, "session_id"),
+                created_at=_timestamp_string(data, "created_at"),
+                cwd=cwd,
+                provider_id=provider_id,
+                model=_string(data, "model"),
+                permission_mode=permission_mode,
+                max_steps=_optional_positive_int(data, "max_steps"),
+                max_output_tokens=_positive_int(data, "max_output_tokens"),
+                model_limits=_model_limits(data.get("model_limits")),
+                model_limit_source=_optional_non_empty_string(
+                    data, "model_limit_source"
+                ),
+                compact_trigger_tokens=_optional_positive_int(
+                    data, "compact_trigger_tokens"
+                ),
+                provider_protocol=_optional_non_empty_string(data, "provider_protocol"),
+                collaboration_mode=_collaboration_mode(
+                    data.get("collaboration_mode", "default")
+                ),
+                session_kind=(
+                    _session_kind(data.get("session_kind"))
+                    if schema_version == 7
+                    else SessionKind.FOREGROUND.value
+                ),
+                parent_session_id=(
+                    _optional_non_empty_string(data, "parent_session_id")
+                    if schema_version == 7
+                    else None
+                ),
+                created_by_run_id=(
+                    _optional_non_empty_string(data, "created_by_run_id")
+                    if schema_version == 7
+                    else None
+                ),
+                agent_name=(
+                    _optional_non_empty_string(data, "agent_name")
+                    if schema_version == 7
+                    else None
+                ),
+            )
+        except ValueError as error:
+            raise TranscriptDecodeError(str(error)) from error
         return SessionStartedRecord(
-            _string(data, "session_id"),
-            _timestamp_string(data, "created_at"),
-            cwd,
-            provider_id,
-            _string(data, "model"),
-            permission_mode,
-            _optional_positive_int(data, "max_steps"),
-            _positive_int(data, "max_output_tokens"),
-            _model_limits(data.get("model_limits")),
-            _optional_non_empty_string(data, "model_limit_source"),
-            _optional_positive_int(data, "compact_trigger_tokens"),
-            _optional_non_empty_string(data, "provider_protocol"),
-            _collaboration_mode(data.get("collaboration_mode", "default")),
+            start.session_id,
+            start.created_at,
+            start.cwd,
+            start.provider_id,
+            start.model,
+            start.permission_mode,
+            start.max_steps,
+            start.max_output_tokens,
+            start.model_limits,
+            start.model_limit_source,
+            start.compact_trigger_tokens,
+            start.provider_protocol,
+            start.collaboration_mode,
+            start.session_kind,
+            start.parent_session_id,
+            start.created_by_run_id,
+            start.agent_name,
         )
     if kind == "session_metadata":
         return SessionMetadataRecord(
@@ -627,12 +704,12 @@ def entry_from_json(value: object) -> TranscriptEntry:
         return SessionCollaborationModeRecord(
             _collaboration_mode(_string(data, "collaboration_mode"))
         )
-    if kind == "turn_started":
+    if kind == "invocation_started":
         continuation = data.get("continuation")
         if not isinstance(continuation, bool):
             raise TranscriptDecodeError("'continuation' must be a boolean")
-        return TurnStartedRecord(
-            _string(data, "turn_id"),
+        return InvocationStartedRecord(
+            _string(data, "invocation_id"),
             _string(data, "run_id"),
             _optional_non_empty_string(data, "parent_run_id"),
             _string(data, "agent_name"),
@@ -642,10 +719,10 @@ def entry_from_json(value: object) -> TranscriptEntry:
             _optional_non_empty_string(data, "test_case_id"),
             _optional_non_empty_string(data, "attempt_id"),
         )
-    if kind == "turn_finished":
+    if kind == "invocation_finished":
         raw_outcome = _string(data, "outcome")
         if raw_outcome == "succeeded":
-            outcome: TurnOutcome = "succeeded"
+            outcome: InvocationOutcome = "succeeded"
         elif raw_outcome == "max_steps":
             outcome = "max_steps"
         elif raw_outcome == "failed":
@@ -653,10 +730,10 @@ def entry_from_json(value: object) -> TranscriptEntry:
         elif raw_outcome == "cancelled":
             outcome = "cancelled"
         else:
-            raise TranscriptDecodeError("Unsupported turn outcome")
+            raise TranscriptDecodeError("Unsupported invocation outcome")
         try:
-            finished = TurnFinished(
-                _string(data, "turn_id"),
+            finished = InvocationFinished(
+                _string(data, "invocation_id"),
                 _timestamp_string(data, "finished_at"),
                 outcome,
                 _optional_non_negative_int(data, "completed_steps"),
@@ -666,8 +743,8 @@ def entry_from_json(value: object) -> TranscriptEntry:
             )
         except ValueError as error:
             raise TranscriptDecodeError(str(error)) from error
-        return TurnFinishedRecord(
-            finished.turn_id,
+        return InvocationFinishedRecord(
+            finished.invocation_id,
             finished.finished_at,
             finished.outcome,
             finished.completed_steps,
@@ -811,7 +888,7 @@ def _assistant_block_json(
     return result
 
 
-def _continuation_json(state: ProviderContinuationState) -> JsonObject:
+def _continuation_json(state: ProviderContinuation) -> JsonObject:
     return {
         "binding": _binding_json(state.binding),
         "replay_scope": state.replay_scope,
@@ -1166,6 +1243,15 @@ def _collaboration_mode(value: object) -> str:
         raise TranscriptDecodeError("Unsupported collaboration_mode") from error
 
 
+def _session_kind(value: object) -> str:
+    if not isinstance(value, str):
+        raise TranscriptDecodeError("session_kind must be a string")
+    try:
+        return SessionKind(value).value
+    except ValueError as error:
+        raise TranscriptDecodeError("Unsupported session_kind") from error
+
+
 def _optional_string(data: Mapping[str, object], key: str) -> str | None:
     value = data.get(key)
     if value is not None and not isinstance(value, str):
@@ -1304,7 +1390,7 @@ def _assistant_block(
 
 def _optional_continuation(
     data: Mapping[str, object],
-) -> ProviderContinuationState | None:
+) -> ProviderContinuation | None:
     raw = data.get("continuation")
     if raw is None:
         return None
@@ -1314,7 +1400,7 @@ def _optional_continuation(
         binding = _optional_binding(item.get("binding"))
         if binding is None:
             raise TranscriptDecodeError("continuation binding is required")
-        return ProviderContinuationState(
+        return ProviderContinuation(
             binding,
             _string(item, "replay_scope"),  # type: ignore[arg-type]
             to_json_object(item.get("payload")),
@@ -1577,11 +1663,11 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
     "session_collaboration_mode": frozenset(
         {"type", "schema_version", "collaboration_mode"}
     ),
-    "turn_started": frozenset(
+    "invocation_started": frozenset(
         {
             "type",
             "schema_version",
-            "turn_id",
+            "invocation_id",
             "run_id",
             "parent_run_id",
             "agent_name",
@@ -1592,11 +1678,11 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
             "attempt_id",
         }
     ),
-    "turn_finished": frozenset(
+    "invocation_finished": frozenset(
         {
             "type",
             "schema_version",
-            "turn_id",
+            "invocation_id",
             "finished_at",
             "outcome",
             "completed_steps",

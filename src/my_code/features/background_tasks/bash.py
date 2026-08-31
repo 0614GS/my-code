@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,7 +14,7 @@ from my_code.features.background_tasks.registry import (
 from my_code.foundation.json import JsonObject
 from my_code.tasks.models import TaskStatus
 from my_code.tasks.supervisor import TaskSupervisor
-from my_code.tools.base import ToolContext, ToolOutput
+from my_code.tools.base import ToolExecutionContext, ToolOutput
 from my_code.tools.builtin.bash.process import (
     BashTaskFailed,
     execute_bash_to_file,
@@ -26,18 +27,18 @@ class BashBackgroundController:
         self,
         tasks: TaskSupervisor,
         registry: BackgroundTaskRegistry,
-        output_dir: Path,
-        owner_run_id: str,
+        output_dir: Callable[[str], Path],
+        fallback_session_id: str,
     ) -> None:
         self.tasks = tasks
         self.registry = registry
-        self.output_dir = output_dir
-        self.owner_run_id = owner_run_id
+        self._output_dir = output_dir
+        self._fallback_session_id = fallback_session_id
 
     async def execute(
         self,
         command: str,
-        context: ToolContext,
+        context: ToolExecutionContext,
         foreground_budget: float,
         *,
         background: bool,
@@ -45,8 +46,11 @@ class BashBackgroundController:
         escalation_available: bool = False,
     ) -> ToolOutput:
         task_id = str(uuid4())
-        output_file = secure_task_output_path(self.output_dir, task_id)
-        owner = context.run_id or self.owner_run_id
+        owner = (
+            context.root_session_id or context.session_id or self._fallback_session_id
+        )
+        output_dir = self._output_dir(owner)
+        output_file = secure_task_output_path(output_dir, task_id)
         details: JsonObject = {
             "command": compact_text(command),
             "output_file": str(output_file),

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -175,6 +176,44 @@ async def test_question_is_closed_with_error_without_frontend(tmp_path: Path) ->
     assert outcome.result.tool_use_id == "outer"
     assert outcome.result.is_error
     assert "interactive frontend" in outcome.result.content
+
+
+@pytest.mark.asyncio
+async def test_question_uses_execution_identity_after_session_switch(
+    tmp_path: Path,
+) -> None:
+    broker = DeferredQuestionBroker()
+    broker.set_handler(
+        lambda _request: asyncio.sleep(
+            0, result=(QuestionAnswer("public_api", "Narrow (Recommended)"),)
+        )
+    )
+    question = QuestionTool(broker)
+    catalog = ToolCatalogSnapshot.from_tools((question,))
+    executor = ToolExecutor(
+        tools=catalog,
+        policy=PermissionPolicy(PermissionMode.PLAN),
+        prompter=HeadlessPrompter(),
+        workspace=Workspace(tmp_path),
+    )
+    resumed_session = "22222222-2222-2222-2222-222222222222"
+
+    root = await executor.execute(
+        ToolCall("root", "Question", _question_input()),
+        run_id="new-run",
+        session_id=resumed_session,
+        root_session_id=resumed_session,
+    )
+    child = await executor.execute(
+        ToolCall("child", "Question", _question_input()),
+        run_id="child-run",
+        session_id="33333333-3333-3333-3333-333333333333",
+        root_session_id=resumed_session,
+    )
+
+    assert root.result.is_error is False
+    assert child.result.is_error is True
+    assert "root foreground session" in child.result.content
 
 
 def test_proposed_plan_parser_handles_split_tags_and_missing_close() -> None:

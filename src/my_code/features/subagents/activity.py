@@ -13,7 +13,7 @@ from my_code.agent.events import (
     AgentToolFinished,
     AgentToolStarted,
 )
-from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentMaxStepsReached
 from my_code.features.subagents.models import SubagentType
 from my_code.features.subagents.views import (
     SubagentActivityView,
@@ -94,7 +94,7 @@ class SubagentActivityRecord:
             else:
                 index = self.transcript.index(started)
                 self.transcript[index] = completed
-        elif isinstance(event, (AgentTurnSucceeded, AgentMaxStepsReached)):
+        elif isinstance(event, (AgentInvocationSucceeded, AgentMaxStepsReached)):
             self.usage = event.usage
 
     def view(self, task: TaskSnapshot) -> SubagentActivityView:

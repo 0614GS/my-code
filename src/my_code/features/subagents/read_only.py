@@ -12,7 +12,7 @@ from my_code.permissions.models import (
 from my_code.tools.base import (
     ReadOnlyAssessment,
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolExecutionError,
     ToolOutput,
 )
@@ -57,11 +57,13 @@ class ReadOnlyToolProxy(Tool):
     def to_model_result(self, output: ToolOutput) -> str:
         return self.wrapped.to_model_result(output)
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         return self.wrapped.is_read_only(tool_input, context)
 
     def assess_read_only(
-        self, tool_input: JsonObject, context: ToolContext
+        self, tool_input: JsonObject, context: ToolExecutionContext
     ) -> ReadOnlyAssessment:
         return self.wrapped.assess_read_only(tool_input, context)
 
@@ -75,7 +77,7 @@ class ReadOnlyToolProxy(Tool):
     ) -> ToolPermissionResult:
         assessment = self.wrapped.assess_read_only(
             tool_input,
-            ToolContext(context.workspace_root),
+            ToolExecutionContext(context.workspace_root),
         )
         if not assessment.is_read_only:
             return ToolPermissionResult.deny(
@@ -93,7 +95,7 @@ class ReadOnlyToolProxy(Tool):
     async def execute(
         self,
         tool_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> ToolOutput:
         assessment = self.wrapped.assess_read_only(tool_input, context)
         if not assessment.is_read_only:

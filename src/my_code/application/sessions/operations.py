@@ -31,7 +31,7 @@ class SessionRestoreCandidate:
     history: tuple[HistoryEntry, ...]
 
 
-class SessionLifecycle:
+class SessionOperations:
     def __init__(
         self,
         project_state_dir: Path,
@@ -131,4 +131,4 @@ async def _offload_session_io[T](operation: Callable[[], T]) -> T:
     return result[0]
 
 
-__all__ = ["SessionLifecycle", "SessionRestoreCandidate"]
+__all__ = ["SessionOperations", "SessionRestoreCandidate"]

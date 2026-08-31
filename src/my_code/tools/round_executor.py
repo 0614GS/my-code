@@ -91,6 +91,8 @@ class ToolCallExecutor(Protocol):
         tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
         permission_policy: PermissionPolicy | None = None,
         run_id: str | None = None,
+        session_id: str | None = None,
+        root_session_id: str | None = None,
     ) -> ToolExecutionOutcome: ...
 
     def apply_session_updates(
@@ -128,6 +130,8 @@ class ToolRoundExecutor:
         tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
         permission_policy: PermissionPolicy | None = None,
         run_id: str | None = None,
+        session_id: str | None = None,
+        root_session_id: str | None = None,
     ) -> AsyncIterator[ToolRoundEvent]:
         active_tools = self.executor.tools if tools is None else tools
         results: list[ToolResult] = []
@@ -145,6 +149,8 @@ class ToolRoundExecutor:
                     active_tools,
                     permission_policy=permission_policy,
                     run_id=run_id,
+                    session_id=session_id,
+                    root_session_id=root_session_id,
                 )
                 for call, outcome in zip(group, outcomes, strict=True):
                     results.append(outcome.result)
@@ -200,6 +206,8 @@ class ToolRoundExecutor:
         *,
         permission_policy: PermissionPolicy | None,
         run_id: str | None,
+        session_id: str | None,
+        root_session_id: str | None,
     ) -> tuple[ToolExecutionOutcome, ...]:
         semaphore = asyncio.Semaphore(self.max_parallel_calls)
 
@@ -213,8 +221,16 @@ class ToolRoundExecutor:
                             tools=tools,
                             permission_policy=permission_policy,
                             run_id=run_id,
+                            session_id=session_id,
+                            root_session_id=root_session_id,
                         )
-                    return await execute_call(call, tools=tools, run_id=run_id)
+                    return await execute_call(
+                        call,
+                        tools=tools,
+                        run_id=run_id,
+                        session_id=session_id,
+                        root_session_id=root_session_id,
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:

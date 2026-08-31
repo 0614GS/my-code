@@ -95,7 +95,7 @@ def test_technology_guard_rejects_sdk_app_state_and_session_leaks(
         "import openai\n"
         "import opentelemetry\n"
         "import rich\n"
-        "from my_code.runtime.state import AppState\n"
+        "from my_code.runtime.application import ApplicationRuntime\n"
         "from my_code.sessions._codec import decode\n"
         "path = 'outside.jsonl'\n",
         encoding="utf-8",
@@ -145,7 +145,7 @@ def test_narrow_runtime_state_capsules_are_allowed_outside_app_state_owners(
     source = source_root / "application" / "configuration" / "modes.py"
     source.parent.mkdir(parents=True)
     source.write_text(
-        "from my_code.runtime.state import PermissionState\n",
+        "from my_code.runtime.application import PermissionRuntime\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(dependency_rules, "SOURCE_ROOT", source_root)

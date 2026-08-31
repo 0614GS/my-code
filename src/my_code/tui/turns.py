@@ -35,7 +35,7 @@ from my_code.application.contracts.events import (
     TurnInputFailed,
     TurnSucceeded,
 )
-from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
 from my_code.application.service import ApplicationService
 from my_code.features.todos.models import TodoItem
 from my_code.model.display import DisplayDensity
@@ -72,8 +72,8 @@ class TurnFlowMixin:
     _todos: tuple[TodoItem, ...]
     _tool_activity: ToolActivityGroup | None
     _blocks: TurnBlockCoordinator
-    _context_status: ContextStatus | None
-    _status: RuntimeStatus | None
+    _context_status: ContextUsageView | None
+    _status: ApplicationStatus | None
     _display_density: DisplayDensity
     _panel: str | None
     _panel_picker: Any
@@ -399,7 +399,7 @@ class TurnFlowMixin:
                 )
             )
 
-    def _apply_context_update(self, status: ContextStatus) -> None:
+    def _apply_context_update(self, status: ContextUsageView) -> None:
         self._context_status = status
         if self._status is not None:
             self._status = replace(

@@ -13,7 +13,7 @@ from my_code.conversation.models import (
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.primitives import (
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ProviderReplayRecord,
     ReasoningPresentation,
     TokenUsage,
@@ -36,7 +36,7 @@ def test_hidden_reasoning_rejects_parts(disclosure: str) -> None:
 
 def test_continuation_payload_is_defensively_copied() -> None:
     payload = {"type": "reasoning", "summary": [{"text": "safe"}]}
-    state = ProviderContinuationState(
+    state = ProviderContinuation(
         ProviderBinding("openai-responses", "openai", "gpt-test"),
         "working_context",
         payload,  # type: ignore[arg-type]
@@ -60,12 +60,12 @@ def test_reasoning_only_output_is_not_actionable() -> None:
 
 def test_scoped_continuations_are_selected_and_compaction_strips_them() -> None:
     binding = ProviderBinding("openai-responses", "openai", "gpt-test")
-    working = ProviderContinuationState(
+    working = ProviderContinuation(
         binding,
         "working_context",
         {"type": "message", "id": "msg", "role": "assistant", "content": []},
     )
-    active = ProviderContinuationState(
+    active = ProviderContinuation(
         ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
         "active_trajectory",
         {"type": "thinking", "thinking": "shown", "signature": "secret"},

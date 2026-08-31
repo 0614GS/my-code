@@ -19,7 +19,7 @@ from my_code.application.activity.projection import ActivityProjection
 from my_code.application.configuration.modes import ModeOperations
 from my_code.application.configuration.providers import ProviderOperations
 from my_code.application.service import ApplicationService
-from my_code.application.sessions.lifecycle import SessionLifecycle
+from my_code.application.sessions.operations import SessionOperations
 from my_code.application.sessions.transcript_projection import project_transcript
 from my_code.application.turns.coordinator import TurnCoordinator
 from my_code.application.turns.mentions.loader import AttachmentLoader
@@ -86,6 +86,11 @@ from my_code.providers.discovery import resolve_without_network
 from my_code.providers.leases import ProviderClientLease, ProviderLeaseRegistry
 from my_code.providers.manager import ProviderManager, effective_reasoning
 from my_code.providers.router import ProviderConnection, ProviderRouter
+from my_code.runtime.application import (
+    ApplicationRuntime,
+    PermissionRuntime,
+    ProviderRuntime,
+)
 from my_code.runtime.instrumentation import (
     InstrumentedAgentRunner,
     InstrumentedModelClient,
@@ -98,14 +103,7 @@ from my_code.runtime.runs import (
     AgentRunFactory,
     AgentRunSpec,
 )
-from my_code.runtime.state import (
-    AppState,
-    PermissionState,
-    ProviderRuntime,
-    ToolState,
-    WorkspaceState,
-)
-from my_code.sessions.models import CollaborationMode, SessionStart
+from my_code.sessions.models import CollaborationMode, SessionKind, SessionStart
 from my_code.sessions.session import Session
 from my_code.skills.attachments import SkillListingAttachmentSource
 from my_code.skills.discovery import SkillSearchRoot
@@ -113,11 +111,10 @@ from my_code.skills.models import SkillSourceId, SkillSourceKind
 from my_code.skills.runtime import SkillRuntime
 from my_code.skills.tool import restore_skill_permissions
 from my_code.tasks.supervisor import TaskSupervisor
-from my_code.tools.base import Tool, ToolContext
+from my_code.tools.base import Tool
 from my_code.tools.builtin import builtin_tools
 from my_code.tools.catalog import (
     ToolCatalog,
-    ToolCatalogSnapshot,
     ToolSourceId,
 )
 from my_code.tools.executor import LoggingToolInvocationAudit, ToolExecutor
@@ -136,24 +133,13 @@ class StorageInitialization:
 
 
 @dataclass(frozen=True, slots=True)
-class ApplicationAssembly:
-    """Concrete components assembled once by the composition root."""
+class _BootstrapComponents:
+    """Runtime 之外，façade 组装仍需连接的窄组件。"""
 
+    runtime: ApplicationRuntime
     agent: InteractiveAgentRunner
     context: ContextEngine
-    provider: ProviderRouter
-    tool_catalog: ToolCatalog
-    initial_tools: ToolCatalogSnapshot
-    permissions: PermissionPolicy
-    tool_context: ToolContext
     tool_executor: ToolExecutor
-    provider_runtime: ProviderRuntime
-    run_factory: AgentRunFactory
-    tasks: TaskSupervisor
-    mcp: McpRuntime
-    skills: SkillRuntime
-    session: Session
-    observer: Observer
     question_broker: DeferredQuestionBroker
     bypass_confirmed: bool = False
     background_notifications: BackgroundTaskNotificationSource | None = None
@@ -221,6 +207,7 @@ def _build_agent_components(
     run_id: str | None,
     parent_run_id: str | None = None,
     agent_name: str = "main",
+    root_session_id: str | None = None,
     evaluation: EvaluationContext | None = None,
 ) -> AgentRunComponents:
     permission_updates = (
@@ -292,6 +279,7 @@ def _build_agent_components(
                 tool_catalog=tool_catalog,
                 tool_search_mode=settings.tool_search_mode,
                 max_steps=settings.max_steps if max_steps is None else max_steps,
+                root_session_id=root_session_id,
             ),
             observer,
             run_id=run_id,
@@ -311,7 +299,7 @@ def _assemble_agent(
     permission_mode_override: PermissionMode | None = None,
     permission_prompter: PermissionPrompter | None = None,
     mcp_transport_factory: McpTransportFactory | None = None,
-) -> ApplicationAssembly:
+) -> _BootstrapComponents:
     actual_session_id = session_id or str(uuid4())
     observer = build_observer()
     descriptor = settings.model_descriptor or _resolve_local_descriptor(settings)
@@ -386,7 +374,7 @@ def _assemble_agent(
     bash_background = BashBackgroundController(
         tasks,
         background_registry,
-        settings.paths.task_output_dir(actual_session_id),
+        settings.paths.task_output_dir,
         actual_session_id,
     )
     background_notifications = (
@@ -413,7 +401,7 @@ def _assemble_agent(
     question_broker = DeferredQuestionBroker()
     tool_catalog.register_source(
         ToolSourceId("feature", "plan-mode"),
-        (QuestionTool(question_broker, root_session_id=actual_session_id),),
+        (QuestionTool(question_broker),),
     )
     search_tools: tuple[Tool, ...] = (ToolSearch(settings.tool_search_mode),)
     if settings.tool_search_mode is ToolSearchMode.DISPATCHER:
@@ -531,6 +519,7 @@ def _assemble_agent(
             run_id=spec.run_id,
             parent_run_id=spec.parent_run_id,
             agent_name=spec.name,
+            root_session_id=spec.root_session_id,
             evaluation=spec.evaluation,
         )
 
@@ -555,6 +544,14 @@ def _assemble_agent(
             model_limit_source=environment.descriptor.source.value,
             compact_trigger_tokens=environment.compact_trigger_tokens,
             provider_protocol=lease.connection.protocol.value,
+            session_kind=(
+                SessionKind.SUBAGENT.value
+                if spec.parent_session_id is not None
+                else SessionKind.FOREGROUND.value
+            ),
+            parent_session_id=spec.parent_session_id,
+            created_by_run_id=spec.parent_run_id,
+            agent_name=spec.name if spec.parent_session_id is not None else None,
         ),
     )
     subagents: SubagentController | None = None
@@ -576,7 +573,11 @@ def _assemble_agent(
             wake_signal=background_wake_signal,
             background_registry=background_registry,
         )
-        parent = SubagentParentContext(actual_session_id)
+        parent = SubagentParentContext(
+            actual_session_id,
+            session_id=actual_session_id,
+            root_session_id=actual_session_id,
+        )
         feature_tools: list[Tool] = [
             SubagentTool(
                 subagents,
@@ -596,7 +597,11 @@ def _assemble_agent(
             feature_tools,
         )
     elif effective_background_enabled:
-        parent = SubagentParentContext(actual_session_id)
+        parent = SubagentParentContext(
+            actual_session_id,
+            session_id=actual_session_id,
+            root_session_id=actual_session_id,
+        )
         tool_catalog.register_source(
             ToolSourceId("feature", "background-tasks"),
             (
@@ -604,7 +609,6 @@ def _assemble_agent(
                 TaskCancelTool(background_registry, parent=parent),
             ),
         )
-    initial_tools = tool_catalog.snapshot()
     components = _build_agent_components(
         settings,
         model_call=provider,
@@ -621,25 +625,31 @@ def _assemble_agent(
         ),
         observer=observer,
         run_id=None,
+        root_session_id=actual_session_id,
     )
-    return ApplicationAssembly(
-        agent=components.agent,
-        context=components.context,
-        provider=provider,
-        tool_catalog=tool_catalog,
-        initial_tools=initial_tools,
-        permissions=permission_policy,
-        tool_context=components.tool_executor.context,
-        tool_executor=components.tool_executor,
-        provider_runtime=provider_runtime,
-        run_factory=run_factory,
+    runtime = ApplicationRuntime(
+        workspace=workspace,
+        session=session,
+        permissions=PermissionRuntime(
+            permission_policy,
+            sandbox_active=command_launcher.status.sandboxed,
+            execution_environment=command_launcher.status.display,
+            full_access_confirmed=bypass_confirmed,
+        ),
+        provider=provider_runtime,
+        tools=tool_catalog,
         tasks=tasks,
+        runs=run_factory,
         mcp=mcp,
         skills=skills,
-        session=session,
-        observer=observer,
+        shutdown_observability=observer.shutdown,
+    )
+    return _BootstrapComponents(
+        runtime=runtime,
+        agent=components.agent,
+        context=components.context,
+        tool_executor=components.tool_executor,
         question_broker=question_broker,
-        bypass_confirmed=bypass_confirmed,
         background_notifications=background_notifications,
         background_wake_signal=background_wake_signal,
         background_tasks=background_registry,
@@ -662,33 +672,19 @@ def bootstrap_application(
         permission_mode_override=permission_mode_override,
         permission_prompter=prompter,
     )
-    state = AppState(
-        workspace=WorkspaceState(assembled.tool_executor.workspace),
-        session=assembled.session,
-        permissions=PermissionState(
-            assembled.permissions,
-            sandbox_active=assembled.tool_context.command_launcher.status.sandboxed,
-            execution_environment=assembled.tool_context.command_launcher.status.display,
-            full_access_confirmed=assembled.bypass_confirmed,
-        ),
-        provider=assembled.provider_runtime,
-        tools=ToolState(assembled.tool_catalog),
-        tasks=assembled.tasks,
-        runs=assembled.run_factory,
-        mcp=assembled.mcp,
-        skills=assembled.skills,
-    )
+    application_runtime = assembled.runtime
     attachment_loader = AttachmentLoader(
-        WorkspaceAttachmentReader(settings.cwd, assembled.permissions)
+        WorkspaceAttachmentReader(settings.cwd, application_runtime.permissions.policy)
     )
     turns = TurnCoordinator(
         assembled.agent,
-        assembled.session.session_id,
+        application_runtime.session.session_id,
         attachment_loader,
         prompter,
         assembled.question_broker,
     )
-    sessions = SessionLifecycle(
+    application_runtime.bind_foreground_closer(turns.close)
+    sessions = SessionOperations(
         settings.paths.project_state_dir,
         settings.paths,
         assembled.tool_executor,
@@ -703,11 +699,11 @@ def bootstrap_application(
         context=assembled.context,
         tool_executor=assembled.tool_executor,
         settings=settings,
-        state=state,
+        runtime=application_runtime,
         turns=turns,
         sessions=sessions,
         provider_operations=ProviderOperations(
-            ProviderManager(settings.paths), state.provider, settings
+            ProviderManager(settings.paths), application_runtime.provider, settings
         ),
         mode_operations=ModeOperations(),
         activity_projection=activity,
@@ -715,7 +711,6 @@ def bootstrap_application(
         path_suggester=WorkspacePathSuggester(settings.cwd),
         background_notifications=assembled.background_notifications,
         background_wake_signal=assembled.background_wake_signal,
-        shutdown_observability=assembled.observer.shutdown,
     )
 
 

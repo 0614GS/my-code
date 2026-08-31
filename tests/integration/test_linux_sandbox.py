@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from my_code.tools.base import ToolContext
+from my_code.tools.base import ToolExecutionContext
 from my_code.tools.builtin.bash.process import execute_bash
 from my_code.workspace.launcher import resolve_command_launcher
 
@@ -16,7 +16,7 @@ async def test_linux_bubblewrap_workspace_and_metadata_policy(tmp_path: Path) ->
         pytest.skip(launcher.status.fallback_reason or "bubblewrap unavailable")
     outside = tmp_path / "outside.txt"
     outside.write_text("unchanged", encoding="utf-8")
-    context = ToolContext(workspace, command_launcher=launcher)
+    context = ToolExecutionContext(workspace, command_launcher=launcher)
 
     created = await execute_bash(
         'printf changed > visible.txt; printf temp > "$TMPDIR/file"',
@@ -52,7 +52,7 @@ async def test_linux_bubblewrap_regular_tmp_is_read_only(tmp_path: Path) -> None
     launcher = resolve_command_launcher(workspace)
     if not launcher.status.sandboxed:
         pytest.skip(launcher.status.fallback_reason or "bubblewrap unavailable")
-    context = ToolContext(workspace, command_launcher=launcher)
+    context = ToolExecutionContext(workspace, command_launcher=launcher)
     target = tmp_path / "ordinary-tmp-must-not-write"
 
     output = await execute_bash(f"printf unsafe > {target}", context, 10)

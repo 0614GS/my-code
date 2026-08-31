@@ -13,7 +13,7 @@ from my_code.agent.events import (
     AgentEvent,
     AgentInputAccepted,
 )
-from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentTurnInput
 from my_code.application.contracts.events import (
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
@@ -46,7 +46,7 @@ from my_code.config.paths import MyCodePaths
 from my_code.config.providers import ProviderProtocol
 from my_code.config.settings import AgentSettings, SandboxMode
 from my_code.context.models import CompactionOutcome
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.attachments import (
     FileMentionAttachment,
     TodoReminderAttachment,
@@ -99,19 +99,19 @@ class CapturingAgent:
     async def submit(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput,
-    ) -> AgentTurnSucceeded:
+    ) -> AgentInvocationSucceeded:
         del session, runtime
         self.turn_input = turn_input
-        return AgentTurnSucceeded("done", 1, TokenUsage())
+        return AgentInvocationSucceeded("done", 1, TokenUsage())
 
 
 class InteractiveCapturingAgent:
     async def stream_continuation(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         pending_source=None,
     ) -> AsyncIterator[AgentEvent]:
         del runtime
@@ -122,7 +122,7 @@ class InteractiveCapturingAgent:
         pending_source.accept_pending(ids)
         for item in inputs:
             yield AgentInputAccepted(item.input_id, item.prompt)
-        yield AgentTurnSucceeded("done", 1, TokenUsage())
+        yield AgentInvocationSucceeded("done", 1, TokenUsage())
 
 
 def _bootstrap_runtime(
@@ -155,10 +155,10 @@ def test_app_state_is_the_single_runtime_owner(tmp_path: Path) -> None:
     assert not hasattr(runtime, "_active")
     assert not hasattr(runtime, "active_model_state")
     assert not hasattr(runtime, "provider_router")
-    assert runtime.state.workspace.workspace is runtime.tool_executor.workspace
-    assert runtime.state.permissions.policy is runtime.tool_executor.policy
-    assert runtime.state.tools.catalog.snapshot() == runtime.tool_executor.tools
-    assert runtime.state.session.session_id == _CURRENT_SESSION_ID
+    assert runtime.runtime.workspace is runtime.tool_executor.workspace
+    assert runtime.runtime.permissions.policy is runtime.tool_executor.policy
+    assert runtime.runtime.tools.snapshot() == runtime.tool_executor.tools
+    assert runtime.runtime.session.session_id == _CURRENT_SESSION_ID
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_interactive_stream_accepts_queued_inputs_before_scrollback(
     assert runtime.queued_inputs() == ()
     assert [
         item.content
-        for item in runtime.state.session.conversation
+        for item in runtime.runtime.session.conversation
         if isinstance(item, HumanMessage)
     ] == ["first", "second"]
 
@@ -188,7 +188,7 @@ async def test_interactive_stream_accepts_queued_inputs_before_scrollback(
 @pytest.mark.asyncio
 async def test_committed_model_step_projects_a_context_snapshot(tmp_path: Path) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    runtime.state.session.append_human_message(HumanMessage("inspect context"))
+    runtime.runtime.session.append_human_message(HumanMessage("inspect context"))
 
     async def agent_events() -> AsyncIterator[AgentEvent]:
         yield AgentConversationUpdated()
@@ -196,7 +196,7 @@ async def test_committed_model_step_projects_a_context_snapshot(tmp_path: Path) 
     events = [
         event
         async for event in project_agent_events(
-            runtime.state.session, agent_events(), runtime.context_status
+            runtime.runtime.session, agent_events(), runtime.context_status
         )
     ]
 
@@ -211,7 +211,7 @@ async def test_accepted_input_creates_the_first_context_snapshot(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    runtime.state.session.append_human_message(HumanMessage("first prompt"))
+    runtime.runtime.session.append_human_message(HumanMessage("first prompt"))
 
     async def agent_events() -> AsyncIterator[AgentEvent]:
         yield AgentInputAccepted("input-1", "first prompt")
@@ -219,7 +219,7 @@ async def test_accepted_input_creates_the_first_context_snapshot(
     events = [
         event
         async for event in project_agent_events(
-            runtime.state.session, agent_events(), runtime.context_status
+            runtime.runtime.session, agent_events(), runtime.context_status
         )
     ]
 
@@ -230,7 +230,7 @@ async def test_accepted_input_creates_the_first_context_snapshot(
 @pytest.mark.asyncio
 async def test_input_batch_creates_only_one_context_snapshot(tmp_path: Path) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    runtime.state.session.commit_user_inputs((("first", ()), ("second", ())))
+    runtime.runtime.session.commit_user_inputs((("first", ()), ("second", ())))
 
     async def agent_events() -> AsyncIterator[AgentEvent]:
         yield AgentInputAccepted("input-1", "first")
@@ -239,7 +239,7 @@ async def test_input_batch_creates_only_one_context_snapshot(tmp_path: Path) -> 
     events = [
         event
         async for event in project_agent_events(
-            runtime.state.session, agent_events(), runtime.context_status
+            runtime.runtime.session, agent_events(), runtime.context_status
         )
     ]
 
@@ -251,7 +251,7 @@ async def test_dispatcher_todo_write_always_projects_its_completed_snapshot(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    session = runtime.state.session
+    session = runtime.runtime.session
     session.append_human_message(HumanMessage("show completed todos"))
     todo_input: JsonObject = {
         "todos": [
@@ -309,7 +309,7 @@ def test_runtime_permission_modes_cycle_without_persisting_settings(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    runtime.state.session.append_human_message(HumanMessage("persist mode"))
+    runtime.runtime.session.append_human_message(HumanMessage("persist mode"))
     configured = runtime.settings.permission_mode
 
     assert [item.display_name for item in runtime.permission_modes()] == [
@@ -347,19 +347,19 @@ def test_non_carousel_permission_mode_cycles_back_to_default(
     tmp_path: Path, mode: PermissionMode
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    runtime.state.permissions.policy.mode = mode
+    runtime.runtime.permissions.policy.mode = mode
 
     switched = runtime.cycle_permission_mode()
 
     assert switched.changed is True
-    assert runtime.state.permissions.policy.mode is PermissionMode.DEFAULT
+    assert runtime.runtime.permissions.policy.mode is PermissionMode.DEFAULT
 
 
 def test_full_access_confirmation_is_per_process_and_skipped_in_sandbox(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    runtime.state.permissions.policy.mode = PermissionMode.ACCEPT_EDITS
+    runtime.runtime.permissions.policy.mode = PermissionMode.ACCEPT_EDITS
 
     assert runtime.cycle_permission_mode().requires_confirmation is True
     runtime.confirm_full_access(True)
@@ -368,9 +368,9 @@ def test_full_access_confirmation_is_per_process_and_skipped_in_sandbox(
     runtime.cycle_permission_mode()
     assert runtime.status().permission_mode == "bypassPermissions"
 
-    runtime.state.permissions.full_access_confirmed = False
-    runtime.state.permissions.sandbox_active = True
-    runtime.state.permissions.policy.mode = PermissionMode.ACCEPT_EDITS
+    runtime.runtime.permissions.full_access_confirmed = False
+    runtime.runtime.permissions.sandbox_active = True
+    runtime.runtime.permissions.policy.mode = PermissionMode.ACCEPT_EDITS
     switched = runtime.cycle_permission_mode()
     assert switched.requires_confirmation is False
     assert runtime.status().permission_mode == "bypassPermissions"
@@ -384,7 +384,7 @@ def test_rejecting_bypass_startup_falls_back_to_default(tmp_path: Path) -> None:
     current = runtime.confirm_full_access(False)
 
     assert current.value == "default"
-    assert runtime.state.session.permission_mode == "default"
+    assert runtime.runtime.session.permission_mode == "default"
 
 
 def test_permission_mode_write_failure_preserves_runtime_policy(
@@ -395,7 +395,7 @@ def test_permission_mode_write_failure_preserves_runtime_policy(
     def fail(_: str) -> bool:
         raise OSError("disk full")
 
-    monkeypatch.setattr(runtime.state.session, "set_permission_mode", fail)
+    monkeypatch.setattr(runtime.runtime.session, "set_permission_mode", fail)
     with pytest.raises(OSError, match="disk full"):
         runtime.cycle_permission_mode()
 
@@ -418,7 +418,7 @@ async def test_background_watcher_runs_continuation_without_human_message(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    runtime.state.session.append_human_message(HumanMessage("original"))
+    runtime.runtime.session.append_human_message(HumanMessage("original"))
     signal = BackgroundTaskWakeSignal()
 
     class PendingSource:
@@ -436,7 +436,7 @@ async def test_background_watcher_runs_continuation_without_human_message(
         async def stream_continuation(
             self,
             session: Session,
-            context_runtime: ContextRuntime,
+            context_runtime: SessionContextCache,
             pending_source=None,
         ) -> AsyncIterator[AgentEvent]:
             del context_runtime, pending_source
@@ -446,7 +446,7 @@ async def test_background_watcher_runs_continuation_without_human_message(
                 sum(isinstance(item, HumanMessage) for item in session.conversation)
                 == 1
             )
-            yield AgentTurnSucceeded(
+            yield AgentInvocationSucceeded(
                 "handled", 1, TokenUsage(2, 1, provider_reported=True)
             )
 
@@ -480,7 +480,7 @@ async def test_failed_background_continuation_waits_for_a_new_revision(
         async def stream_continuation(
             self,
             session: Session,
-            context_runtime: ContextRuntime,
+            context_runtime: SessionContextCache,
             pending_source=None,
         ) -> AsyncIterator[AgentEvent]:
             del session, context_runtime, pending_source
@@ -528,7 +528,7 @@ async def test_runtime_loads_mentions_before_creating_turn_input(
 @pytest.mark.asyncio
 async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    active = runtime.state.session
+    active = runtime.runtime.session
     user = HumanMessage(content="compact this conversation")
     active.append_human_message(user)
     summary = ConversationSummaryMessage(
@@ -566,7 +566,7 @@ async def test_manual_compaction_stream_exposes_committed_lifecycle(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    active = runtime.state.session
+    active = runtime.runtime.session
     user = HumanMessage(content="compact with progress")
     active.append_human_message(user)
     summary = ConversationSummaryMessage(
@@ -602,8 +602,8 @@ async def test_initialize_and_usage_return_safe_frontend_snapshots(
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
     user = HumanMessage("measure this")
-    runtime.state.session.append_human_message(user)
-    runtime.state.session.append_assistant_message(
+    runtime.runtime.session.append_human_message(user)
+    runtime.runtime.session.append_assistant_message(
         AssistantMessage(
             (TextContent("measured"),),
             TokenUsage(11, 3, 5, 7, True),
@@ -627,8 +627,8 @@ async def test_initialize_and_usage_return_safe_frontend_snapshots(
     assert usage.total_input_tokens == 23
     assert usage.output_tokens == 3
     assert all(isinstance(tool.name, str) for tool in capabilities.tools)
-    assert runtime.state.skills.started is True
-    assert runtime.state.mcp.started is True
+    assert runtime.runtime.skills.started is True
+    assert runtime.runtime.mcp.started is True
     await runtime.close()
 
 
@@ -646,10 +646,10 @@ async def test_initialize_uses_persisted_model_metadata_without_network(
 
     await runtime.initialize()
 
-    descriptor = runtime.state.provider.environment().descriptor
+    descriptor = runtime.runtime.provider.environment().descriptor
     assert descriptor.id == "test-model"
-    assert runtime.state.session.start.model_limits == descriptor.limits
-    assert runtime.state.session.start.model_limit_source == descriptor.source.value
+    assert runtime.runtime.session.start.model_limits == descriptor.limits
+    assert runtime.runtime.session.start.model_limit_source == descriptor.source.value
     await runtime.close()
 
 
@@ -676,7 +676,7 @@ async def test_local_model_switch_persists_and_updates_runtime(
 
     assert runtime.status().provider_id == "other"
     assert runtime.status().model == "second-model"
-    assert runtime.state.provider.environment().descriptor.id == "second-model"
+    assert runtime.runtime.provider.environment().descriptor.id == "second-model"
     assert runtime.provider_manager.resolve("other").model == "second-model"
     await runtime.close()
 
@@ -728,7 +728,9 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    previous = runtime.state.session
+    previous = runtime.runtime.session
+    previous_binding = runtime.runtime.foreground
+    previous_cache = runtime.runtime.context_cache
     store = SessionStore(
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
@@ -755,12 +757,15 @@ async def test_runtime_lists_and_atomically_switches_project_session(
         HistoryText("assistant", "historical answer", is_final_answer=True),
     )
     assert runtime.status().session_id == _TARGET_SESSION_ID
-    assert runtime.state.session is not previous
+    assert runtime.runtime.session is not previous
+    assert runtime.runtime.foreground is not previous_binding
+    assert runtime.runtime.context_cache is not previous_cache
+    assert runtime.runtime.session.run_id != runtime.runtime.session.session_id
     assert not any(
         isinstance(message, AttachmentMessage)
-        for message in runtime.state.session.context_entries
+        for message in runtime.runtime.session.context_entries
     )
-    assert runtime.state.session.session_id == _TARGET_SESSION_ID
+    assert runtime.runtime.session.session_id == _TARGET_SESSION_ID
 
 
 @pytest.mark.asyncio
@@ -779,7 +784,7 @@ async def test_resume_restores_persisted_bypass_without_confirmation(
 
     assert resumed.status.permission_mode == "bypassPermissions"
     assert runtime.current_permission_mode().requires_confirmation is False
-    assert runtime.state.permissions.full_access_confirmed is True
+    assert runtime.runtime.permissions.full_access_confirmed is True
 
 
 def test_startup_session_uses_saved_mode_and_cli_override_is_persisted(
@@ -843,14 +848,14 @@ async def test_session_switch_pulses_background_watcher_without_delivery(
     assert signal.revision == 1
     assert not any(
         isinstance(message, AttachmentMessage)
-        for message in runtime.state.session.conversation
+        for message in runtime.runtime.session.conversation
     )
 
 
 @pytest.mark.asyncio
 async def test_provider_switch_does_not_modify_session_facts(tmp_path: Path) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    session = runtime.state.session
+    session = runtime.runtime.session
     session.append_human_message(HumanMessage("keep canonical facts"))
     before = session.conversation
 
@@ -860,11 +865,11 @@ async def test_provider_switch_does_not_modify_session_facts(tmp_path: Path) -> 
         )
     )
 
-    assert runtime.state.session is session
+    assert runtime.runtime.session is session
     assert session.conversation == before
     assert status.provider_id == "other"
     assert status.model == "other-model"
-    assert runtime.state.provider.environment().descriptor.id == "other-model"
+    assert runtime.runtime.provider.environment().descriptor.id == "other-model"
 
 
 @pytest.mark.asyncio
@@ -879,15 +884,15 @@ async def test_removing_current_provider_key_rebinds_runtime(tmp_path: Path) -> 
             "stored-key",
         )
     )
-    await runtime.state.provider.switch(
+    await runtime.runtime.provider.switch(
         runtime.provider_manager.resolve("anthropic"),
-        runtime.state.provider.environment(),
+        runtime.runtime.provider.environment(),
     )
 
     status = await runtime.remove_provider_credential("anthropic")
 
     assert status.credential_source == "none"
-    assert runtime.state.provider.router.connection.api_key is None
+    assert runtime.runtime.provider.router.connection.api_key is None
     assert (
         CredentialStore(runtime.settings.paths.credentials_path).load_api_key(
             "anthropic"
@@ -918,11 +923,11 @@ async def test_removing_non_current_provider_key_does_not_switch_runtime(
             None,
         )
     )
-    connection = runtime.state.provider.router.connection
+    connection = runtime.runtime.provider.router.connection
 
     await runtime.remove_provider_credential("other")
 
-    assert runtime.state.provider.router.connection is connection
+    assert runtime.runtime.provider.router.connection is connection
     assert (
         CredentialStore(runtime.settings.paths.credentials_path).load_api_key("other")
         is None
@@ -947,15 +952,15 @@ async def test_removing_current_stored_key_ignores_environment_key(
             "stored-key",
         )
     )
-    await runtime.state.provider.switch(
+    await runtime.runtime.provider.switch(
         connection,
-        runtime.state.provider.environment(),
+        runtime.runtime.provider.environment(),
     )
 
     status = await runtime.remove_provider_credential("anthropic")
 
     assert status.credential_source == "none"
-    assert runtime.state.provider.router.connection.api_key is None
+    assert runtime.runtime.provider.router.connection.api_key is None
     assert "environment-key" not in repr(runtime.providers()[0])
 
 
@@ -973,11 +978,11 @@ async def test_credential_delete_failure_preserves_connection_and_key(
             "stored-key",
         )
     )
-    await runtime.state.provider.switch(
+    await runtime.runtime.provider.switch(
         connection,
-        runtime.state.provider.environment(),
+        runtime.runtime.provider.environment(),
     )
-    connection = runtime.state.provider.router.connection
+    connection = runtime.runtime.provider.router.connection
 
     def fail(_provider_id: str) -> bool:
         raise OSError("disk unavailable")
@@ -987,7 +992,7 @@ async def test_credential_delete_failure_preserves_connection_and_key(
     with pytest.raises(OSError, match="disk unavailable"):
         await runtime.remove_provider_credential("anthropic")
 
-    assert runtime.state.provider.router.connection is connection
+    assert runtime.runtime.provider.router.connection is connection
     assert runtime.provider_manager.credentials.load_api_key("anthropic") == (
         "stored-key"
     )
@@ -1082,7 +1087,7 @@ def test_session_history_recovers_detailed_injections_from_request_audit(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    session = runtime.state.session
+    session = runtime.runtime.session
     session.commit_user_inputs(
         (("inspect notes", (FileMentionAttachment("notes.txt", "secret notes"),)),)
     )
@@ -1173,7 +1178,9 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    active = runtime.state.session
+    binding = runtime.runtime.foreground
+    cache = runtime.runtime.context_cache
+    active = runtime.runtime.session
     anchor = HumanMessage(content="keep this session")
     active.append_human_message(anchor)
     active.append_attachment(TodoReminderAttachment("keep"))
@@ -1183,16 +1190,38 @@ async def test_failed_resume_keeps_the_complete_active_session_bundle(
     with pytest.raises(ValueError, match="contains no messages"):
         await runtime.resume_session(empty_id)
 
-    assert runtime.state.session is active
+    assert runtime.runtime.session is active
+    assert runtime.runtime.foreground is binding
+    assert runtime.runtime.context_cache is cache
     assert runtime.status().session_id == _CURRENT_SESSION_ID
     assert any(
         isinstance(message, AttachmentMessage)
-        for message in runtime.state.session.context_entries
+        for message in runtime.runtime.session.context_entries
     )
 
 
 @pytest.mark.asyncio
-async def test_stream_prevents_session_switch_until_turn_finishes(
+async def test_cancelled_resume_keeps_the_complete_active_session_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    binding = runtime.runtime.foreground
+
+    async def cancel(*_args: object, **_kwargs: object) -> object:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(runtime.sessions, "restore", cancel)
+
+    with pytest.raises(asyncio.CancelledError):
+        await runtime.resume_session(_TARGET_SESSION_ID)
+
+    assert runtime.runtime.foreground is binding
+    assert runtime.runtime.session.session_id == _CURRENT_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_stream_prevents_session_switch_until_invocation_finishes(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
@@ -1205,13 +1234,13 @@ async def test_stream_prevents_session_switch_until_turn_finishes(
         async def stream(
             self,
             session: Session,
-            context_runtime: ContextRuntime,
+            context_runtime: SessionContextCache,
             turn_input: AgentTurnInput,
         ) -> AsyncIterator[AgentEvent]:
             del session, context_runtime, turn_input
             started.set()
             await release.wait()
-            yield AgentTurnSucceeded("done", 1, TokenUsage())
+            yield AgentInvocationSucceeded("done", 1, TokenUsage())
 
     runtime.agent = BlockingAgent()  # type: ignore[assignment]
 
@@ -1235,7 +1264,7 @@ def test_complete_transcript_view_projects_persisted_content_only(
     tmp_path: Path,
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    session = runtime.state.session
+    session = runtime.runtime.session
     user = HumanMessage("show everything")
     session.append_human_message(user)
     assistant = AssistantMessage(

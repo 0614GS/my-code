@@ -1,6 +1,6 @@
 """Non-persistent, live-session TodoWrite reminder attachment."""
 
-from my_code.context.session import AttachmentDerivationState
+from my_code.context.session_cache import AttachmentProjectionInput
 from my_code.conversation.attachments import TodoReminderAttachment
 from my_code.conversation.models import AssistantMessage, AttachmentMessage, ToolCall
 from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME
@@ -18,7 +18,7 @@ class TodoReminderAttachmentSource:
         self.mode = mode
 
     def __call__(
-        self, state: AttachmentDerivationState
+        self, state: AttachmentProjectionInput
     ) -> tuple[TodoReminderAttachment, ...]:
         projection = project_todos(state.conversation)
         calls_since_write = _completed_model_calls_since_todo_write(state)
@@ -66,7 +66,7 @@ def _reminder(mode: ToolSearchMode, discovered: bool) -> str:
     )
 
 
-def _completed_model_calls_since_todo_write(state: AttachmentDerivationState) -> int:
+def _completed_model_calls_since_todo_write(state: AttachmentProjectionInput) -> int:
     completed_calls = 0
     for message in reversed(state.context_entries):
         if not isinstance(message, AssistantMessage):
@@ -81,7 +81,7 @@ def _completed_model_calls_since_todo_write(state: AttachmentDerivationState) ->
     return completed_calls
 
 
-def _completed_model_calls_since_reminder(state: AttachmentDerivationState) -> int:
+def _completed_model_calls_since_reminder(state: AttachmentProjectionInput) -> int:
     completed_calls = 0
     for message in reversed(state.context_entries):
         if isinstance(message, AttachmentMessage) and isinstance(

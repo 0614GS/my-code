@@ -6,8 +6,12 @@ import tempfile
 from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
+from uuid import uuid4
 
-from my_code.context.session import AttachmentDerivationState, ContextPlanningState
+from my_code.context.session_cache import (
+    AttachmentProjectionInput,
+    ContextPlanningInput,
+)
 from my_code.conversation.attachments import (
     AttachmentPayload,
     CollaborationModeAttachment,
@@ -42,10 +46,10 @@ from my_code.sessions._request_audit import RequestAuditStore
 from my_code.sessions._store import SessionStore
 from my_code.sessions._tool_results import ToolResultStore
 from my_code.sessions.models import (
+    InvocationFinished,
+    InvocationHistoryEntry,
+    InvocationStarted,
     SessionStart,
-    TurnFinished,
-    TurnHistoryEntry,
-    TurnStarted,
 )
 from my_code.sessions.request_audit import RequestAuditSnapshot
 
@@ -60,7 +64,9 @@ class Session(ModelInvocationRecorder):
         *,
         tool_results_dir: Path | None = None,
         start: SessionStart | None = None,
+        run_id: str | None = None,
     ) -> None:
+        self._run_id = run_id or str(uuid4())
         self._store = SessionStore(project_state_dir, session_id, start=start)
         loaded = self._store.load()
         self._request_audit = RequestAuditStore(self._store.session_dir)
@@ -76,7 +82,7 @@ class Session(ModelInvocationRecorder):
             (record.entry_id, record.content_id): record
             for record in loaded.replay_records
         }
-        self._turn_history = list(loaded.turn_history)
+        self._invocation_history = list(loaded.invocation_history)
         self._tool_results = ToolResultStore(
             tool_results_dir
             if tool_results_dir is not None
@@ -128,6 +134,19 @@ class Session(ModelInvocationRecorder):
         return self._store.session_id
 
     @property
+    def run_id(self) -> str:
+        """当前进程中这次 Session activation 的身份。"""
+
+        return self._run_id
+
+    def bind_run(self, run_id: str) -> None:
+        """在 Run 首次执行前将 activation 绑定到显式 Run 身份。"""
+
+        if not run_id.strip():
+            raise ValueError("run_id must not be blank")
+        self._run_id = run_id
+
+    @property
     def start(self) -> SessionStart:
         return self._store.start
 
@@ -140,26 +159,30 @@ class Session(ModelInvocationRecorder):
         return self._store.collaboration_mode
 
     @property
-    def turn_history(self) -> tuple[TurnHistoryEntry, ...]:
-        """Return journal entries in turn start order."""
+    def invocation_history(self) -> tuple[InvocationHistoryEntry, ...]:
+        """Return journal entries in invocation start order."""
 
-        return tuple(self._turn_history)
+        return tuple(self._invocation_history)
 
-    def append_turn_started(self, turn: TurnStarted) -> bool:
-        appended = self._store.append_turn_started(turn)
+    def append_invocation_started(self, invocation: InvocationStarted) -> bool:
+        appended = self._store.append_invocation_started(invocation)
         if appended:
-            self._turn_history.append(TurnHistoryEntry(turn))
+            self._invocation_history.append(InvocationHistoryEntry(invocation))
         return appended
 
-    def append_turn_finished(self, turn: TurnFinished) -> bool:
-        appended = self._store.append_turn_finished(turn)
+    def append_invocation_finished(self, invocation: InvocationFinished) -> bool:
+        appended = self._store.append_invocation_finished(invocation)
         if appended:
-            for index, item in enumerate(self._turn_history):
-                if item.started.turn_id == turn.turn_id:
-                    self._turn_history[index] = TurnHistoryEntry(item.started, turn)
+            for index, item in enumerate(self._invocation_history):
+                if item.started.invocation_id == invocation.invocation_id:
+                    self._invocation_history[index] = InvocationHistoryEntry(
+                        item.started, invocation
+                    )
                     break
             else:
-                raise AssertionError("Persisted turn finish has no in-memory start")
+                raise AssertionError(
+                    "Persisted invocation finish has no in-memory start"
+                )
         return appended
 
     def configure_start(self, start: SessionStart) -> None:
@@ -179,9 +202,9 @@ class Session(ModelInvocationRecorder):
     def context_entries(self) -> tuple[ConversationEntry, ...]:
         return self._conversation.context_entries
 
-    def context_planning_state(self) -> ContextPlanningState:
+    def context_planning_state(self) -> ContextPlanningInput:
         context_ids = {entry.uuid for entry in self.context_entries}
-        return ContextPlanningState(
+        return ContextPlanningInput(
             context_entries=self.context_entries,
             content_replacements=self._conversation.content_replacements,
             replay_records=tuple(
@@ -191,8 +214,8 @@ class Session(ModelInvocationRecorder):
             ),
         )
 
-    def attachment_derivation_state(self) -> AttachmentDerivationState:
-        return AttachmentDerivationState(
+    def attachment_derivation_state(self) -> AttachmentProjectionInput:
+        return AttachmentProjectionInput(
             self.session_id, self.conversation, self.context_entries
         )
 

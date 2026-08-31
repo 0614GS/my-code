@@ -1,6 +1,6 @@
 # 扩展能力
 
-my-code 不为每类扩展建立一套新的执行框架。动态能力以 Tool source 接入 `ToolCatalog`；需要独立生命周期的组件由 AppState 持有，面向模型的产物仍进入标准 Tool、Context 和 Session 路径。
+my-code 不为每类扩展建立一套新的执行框架。动态能力以 Tool source 接入 `ToolCatalog`；需要独立生命周期的组件由 ApplicationRuntime 持有，面向模型的产物仍进入标准 Tool、Context 和 Session 路径。
 
 ## 统一扩展模型
 
@@ -33,7 +33,7 @@ MCP Tool adapter 只负责 schema 和调用协议转换，执行时仍是普通 
 
 ## Subagent 与 AgentRun
 
-`AgentRunFactory` 为 child 创建独立 Session、Agent 组件、`ContextRuntime`、child-local ToolCatalog 和 provider lease。父级只传显式 prompt/attachments，child transcript 不合并到父 Session。
+`AgentRunFactory` 为 child 创建独立 Run ID、Session、Agent 组件、`SessionContextCache`、child-local ToolCatalog 和 provider lease。child Session header 持久化 subagent kind、parent Session、创建它的 parent Run 与 agent name；Session ID 不复用 Run ID。父级只传显式 prompt/attachments，child transcript 不合并到父 Session，Session catalog 也不会把它列入 `/resume`。
 
 内置角色为 `explore` 与 `general`：
 
@@ -46,7 +46,7 @@ MCP Tool adapter 只负责 schema 和调用协议转换，执行时仍是普通 
 
 `TaskSupervisor` 提供进程内任务状态机、父子取消树和有限终态快照。Bash 与 Subagent 通过 background feature 复用 owner/delivery 控制面；TaskList/TaskCancel 仍是标准、可搜索 Tool。
 
-后台提交先返回 task ID。完成状态通过无 payload 的 wake signal 提醒交互 host，实际结果随后从 registry 拉取，并以 task ID 幂等地提交 durable attachment；Session 接受后才 acknowledge。任务进度、registry 和 wake signal 都不是 Conversation facts。
+后台提交先返回 task ID。registry 与输出目录都按 root Session identity 隔离，live Run ID 只用于执行 lineage；切换前台 Session 不会把旧 Session 的完成结果投递到新 Session。完成状态通过无 payload 的 wake signal 提醒交互 host，实际结果随后从 registry 拉取，并以 task ID 幂等地提交 durable attachment；Session 接受后才 acknowledge。任务进度、registry 和 wake signal 都不是 Conversation facts。
 
 首版不承诺进程重启后继续运行。正常关闭会取消并等待任务终止；异常恢复不会把旧任务伪装为仍在运行。
 

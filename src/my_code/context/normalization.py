@@ -15,7 +15,7 @@ from my_code.conversation.models import (
 )
 from my_code.model.primitives import (
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ProviderReplayRecord,
     replay_content_id,
 )
@@ -83,7 +83,7 @@ def _conversation_message(
     *,
     active_trajectory: bool = False,
     replay_continuation: bool = True,
-    replay_records: dict[str, ProviderContinuationState] | None = None,
+    replay_records: dict[str, ProviderContinuation] | None = None,
     active_binding: ProviderBinding | None = None,
 ) -> ModelInputItem:
     if isinstance(message, AttachmentMessage):
@@ -186,7 +186,7 @@ def _conversation_history(
         else None
     )
     projected: list[ModelInputItem] = []
-    replay_by_entry: dict[str, dict[str, ProviderContinuationState]] = {}
+    replay_by_entry: dict[str, dict[str, ProviderContinuation]] = {}
     for record in replay_records:
         replay_by_entry.setdefault(record.entry_id, {})[record.content_id] = (
             record.state
@@ -211,11 +211,11 @@ def _conversation_history(
 
 
 def _selected_continuation(
-    continuation: ProviderContinuationState | None,
+    continuation: ProviderContinuation | None,
     active_trajectory: bool,
     replay: bool,
     active_binding: ProviderBinding | None = None,
-) -> ProviderContinuationState | None:
+) -> ProviderContinuation | None:
     if continuation is None or not replay:
         return None
     if active_binding is not None and continuation.binding != active_binding:

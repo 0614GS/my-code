@@ -3,10 +3,10 @@ from pathlib import Path
 import pytest
 
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import (
-    AttachmentDerivationState,
-    ContextPlanningState,
-    ContextRuntime,
+from my_code.context.session_cache import (
+    AttachmentProjectionInput,
+    ContextPlanningInput,
+    SessionContextCache,
 )
 from my_code.conversation.attachments import ToolDiscoveryAttachment
 from my_code.conversation.models import (
@@ -227,30 +227,30 @@ def test_todo_reminder_uses_independent_write_and_delivery_thresholds() -> None:
     source = TodoReminderAttachmentSource()
     history10 = _history_after_todo(10)
     history9 = _history_after_todo(9)
-    assert source(AttachmentDerivationState("session", history9, history9)) == ()
+    assert source(AttachmentProjectionInput("session", history9, history9)) == ()
 
-    attachments = source(AttachmentDerivationState("session", history10, history10))
+    attachments = source(AttachmentProjectionInput("session", history10, history10))
     assert len(attachments) == 1
     assert "1. [in_progress] Run tests" in attachments[0].content
     assert "NEVER mention this reminder" in attachments[0].content
 
     reminder = AttachmentMessage(attachments[0], parent_uuid=history10[-1].uuid)
     history11 = history10 + (reminder, _assistant(TextContent("call 11")))
-    assert source(AttachmentDerivationState("session", history11, history11)) == ()
+    assert source(AttachmentProjectionInput("session", history11, history11)) == ()
 
     history20 = (
         history10
         + (reminder,)
         + tuple(_assistant(TextContent(f"later {index}")) for index in range(10))
     )
-    assert len(source(AttachmentDerivationState("session", history20, history20))) == 1
+    assert len(source(AttachmentProjectionInput("session", history20, history20))) == 1
 
     # reminder 不持久化：恢复时没有 delivery history，已经超过阈值会立即提醒，
     # 而不是等到 turns_since_write 恰好能被 10 整除。
     history15 = history10 + tuple(
         _assistant(TextContent(f"resumed {index}")) for index in range(5)
     )
-    assert len(source(AttachmentDerivationState("session", history15, history15))) == 1
+    assert len(source(AttachmentProjectionInput("session", history15, history15))) == 1
 
 
 def test_todo_reminder_uses_full_session_history_after_compaction() -> None:
@@ -260,7 +260,7 @@ def test_todo_reminder_uses_full_session_history_after_compaction() -> None:
     )
 
     attachments = TodoReminderAttachmentSource()(
-        AttachmentDerivationState("session", history, compact_entries)
+        AttachmentProjectionInput("session", history, compact_entries)
     )
 
     assert len(attachments) == 1
@@ -271,7 +271,7 @@ def test_todo_reminder_without_prior_write_starts_after_ten_model_calls() -> Non
     history = tuple(_assistant(TextContent(str(index))) for index in range(10))
 
     attachments = TodoReminderAttachmentSource()(
-        AttachmentDerivationState("session", history, history)
+        AttachmentProjectionInput("session", history, history)
     )
 
     assert len(attachments) == 1
@@ -288,7 +288,7 @@ def test_todo_reminder_uses_dispatcher_after_discovery() -> None:
     )
 
     attachment = TodoReminderAttachmentSource(ToolSearchMode.DISPATCHER)(
-        AttachmentDerivationState("session", history + (discovery,), history)
+        AttachmentProjectionInput("session", history + (discovery,), history)
     )[0]
 
     assert 'InvokeSearchedTool with tool_name="TodoWrite"' in attachment.content
@@ -304,7 +304,7 @@ def test_todo_reminder_preserves_native_route() -> None:
     )
 
     attachment = TodoReminderAttachmentSource(ToolSearchMode.NATIVE)(
-        AttachmentDerivationState("session", history + (discovery,), history)
+        AttachmentProjectionInput("session", history + (discovery,), history)
     )[0]
 
     assert "Update it with TodoWrite" in attachment.content
@@ -321,12 +321,12 @@ def test_context_planner_projects_reminder_from_conversation_for_compaction() ->
         max_output_tokens=100,
     )
     attachment = TodoReminderAttachmentSource()(
-        AttachmentDerivationState("session", history, history)
+        AttachmentProjectionInput("session", history, history)
     )[0]
     reminder = AttachmentMessage(attachment, parent_uuid=history[-1].uuid)
-    state = ContextPlanningState(history + (reminder,))
+    state = ContextPlanningInput(history + (reminder,))
 
-    plan = planner.plan(state, ContextRuntime(), tools=(tool.definition,))
+    plan = planner.plan(state, SessionContextCache(), tools=(tool.definition,))
     request_text = _input_texts(plan.request.input)
     compact_messages, _ = planner.compaction_view(state)
     compact_text = _input_texts(compact_messages)
@@ -338,7 +338,7 @@ def test_context_planner_projects_reminder_from_conversation_for_compaction() ->
 def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
     history10 = _history_after_todo(10)
     attachment = TodoReminderAttachmentSource()(
-        AttachmentDerivationState("session", history10, history10)
+        AttachmentProjectionInput("session", history10, history10)
     )[0]
     reminder = AttachmentMessage(attachment, parent_uuid=history10[-1].uuid)
     later = _assistant(TextContent("after reminder"))
@@ -350,9 +350,9 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
         max_output_tokens=100,
     )
 
-    state = ContextPlanningState(history)
+    state = ContextPlanningInput(history)
     items = planner.plan(
-        state, ContextRuntime(), tools=(TodoWriteTool().definition,)
+        state, SessionContextCache(), tools=(TodoWriteTool().definition,)
     ).request.input
 
     reminder_index = next(

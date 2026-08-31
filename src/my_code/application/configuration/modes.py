@@ -5,7 +5,7 @@ from my_code.application.contracts.permissions import (
     PermissionModeView,
 )
 from my_code.permissions.models import PermissionMode
-from my_code.runtime.state import PermissionState
+from my_code.runtime.application import PermissionRuntime
 from my_code.sessions.models import CollaborationMode
 from my_code.sessions.session import Session
 
@@ -39,7 +39,7 @@ class ModeOperations:
         return CollaborationMode(session.collaboration_mode)
 
     def cycle_collaboration(
-        self, session: Session, permissions: PermissionState
+        self, session: Session, permissions: PermissionRuntime
     ) -> CollaborationMode:
         current = self.collaboration_mode(session)
         target = (
@@ -57,7 +57,7 @@ class ModeOperations:
         return target
 
     def permission_modes(
-        self, session: Session, permissions: PermissionState
+        self, session: Session, permissions: PermissionRuntime
     ) -> tuple[PermissionModeView, ...]:
         if self.collaboration_mode(session) is CollaborationMode.PLAN:
             return ()
@@ -79,7 +79,7 @@ class ModeOperations:
         )
 
     def current_permission_mode(
-        self, session: Session, permissions: PermissionState
+        self, session: Session, permissions: PermissionRuntime
     ) -> PermissionModeView:
         current = permissions.policy.mode
         if current is PermissionMode.PLAN:
@@ -92,7 +92,7 @@ class ModeOperations:
         )
 
     def cycle_permission(
-        self, session: Session, permissions: PermissionState
+        self, session: Session, permissions: PermissionRuntime
     ) -> PermissionModeSwitch:
         self._require_default_collaboration(session)
         target, needs_confirmation = permissions.request_cycle(
@@ -110,7 +110,7 @@ class ModeOperations:
         )
 
     def select_permission(
-        self, value: str, session: Session, permissions: PermissionState
+        self, value: str, session: Session, permissions: PermissionRuntime
     ) -> PermissionModeSwitch:
         self._require_default_collaboration(session)
         try:
@@ -134,7 +134,7 @@ class ModeOperations:
 
     @staticmethod
     def confirm_full_access(
-        allow: bool, session: Session, permissions: PermissionState
+        allow: bool, session: Session, permissions: PermissionRuntime
     ) -> PermissionModeView:
         mode = permissions.confirm_full_access(
             allow, lambda selected: session.set_permission_mode(selected.value)

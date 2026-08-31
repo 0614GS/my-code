@@ -1,6 +1,6 @@
 """Single-delivery background task completion attachments."""
 
-from my_code.context.session import AttachmentDerivationState
+from my_code.context.session_cache import AttachmentProjectionInput
 from my_code.conversation.attachments import (
     AttachmentPayload,
     BackgroundTaskCompletionAttachment,
@@ -16,7 +16,7 @@ class BackgroundTaskNotificationSource:
         self.registry = registry
 
     def __call__(
-        self, state: AttachmentDerivationState
+        self, state: AttachmentProjectionInput
     ) -> tuple[BackgroundTaskCompletionAttachment, ...]:
         owner_run_id = state.session_id
         already_in_session = {

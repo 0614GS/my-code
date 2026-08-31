@@ -11,7 +11,7 @@ from my_code.foundation.json import JsonObject
 
 if TYPE_CHECKING:
     from my_code.permissions.models import PermissionDecision
-    from my_code.tools.base import Tool, ToolContext
+    from my_code.tools.base import Tool, ToolExecutionContext
 
 
 class ToolInvocationOrigin(StrEnum):
@@ -43,7 +43,7 @@ class ToolInvocationHook(Protocol):
         call: ToolCall,
         tool: Tool,
         approved_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> None: ...
 
     async def after_execute(

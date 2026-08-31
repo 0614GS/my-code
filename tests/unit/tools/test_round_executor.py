@@ -86,8 +86,10 @@ async def test_round_executor_cancellation_closes_every_call(tmp_path: Path) -> 
         tools: ToolCatalogSnapshot | None = None,
         permission_policy: PermissionPolicy | None = None,
         run_id: str | None = None,
+        session_id: str | None = None,
+        root_session_id: str | None = None,
     ) -> ToolExecutionOutcome:
-        del tools, permission_policy, run_id
+        del tools, permission_policy, run_id, session_id, root_session_id
         raise asyncio.CancelledError
 
     runner.executor.execute = cancel  # type: ignore[assignment]

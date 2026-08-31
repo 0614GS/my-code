@@ -1,7 +1,7 @@
 """Stateful user-level application façade."""
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from dataclasses import replace
 
 from my_code.agent.runner import InteractiveAgentRunner
@@ -14,8 +14,8 @@ from my_code.application.contracts.events import (
     BackgroundInvocationStarted,
     CompactionCompleted,
     CompactionStarted,
+    InvocationOutcome,
     TurnEvent,
-    TurnOutcome,
 )
 from my_code.application.contracts.history import (
     ResumedSession,
@@ -27,7 +27,7 @@ from my_code.application.contracts.permissions import (
     PermissionModeView,
 )
 from my_code.application.contracts.questions import QuestionHandler
-from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
 from my_code.application.contracts.views import (
     BackgroundTaskView,
     CapabilitiesView,
@@ -43,7 +43,7 @@ from my_code.application.runtime_views import (
     project_session_usage,
 )
 from my_code.application.sessions.history_projection import project_history
-from my_code.application.sessions.lifecycle import SessionLifecycle
+from my_code.application.sessions.operations import SessionOperations
 from my_code.application.sessions.transcript_projection import project_transcript
 from my_code.application.turns.coordinator import TurnCoordinator
 from my_code.application.turns.mentions.suggestions import WorkspacePathSuggester
@@ -73,14 +73,14 @@ from my_code.providers.manager import (
     ProviderUpdate,
     ProviderView,
 )
-from my_code.runtime.state import AppState
+from my_code.runtime.application import ApplicationRuntime
 from my_code.sessions.catalog import SessionSummary
 from my_code.sessions.models import CollaborationMode
 from my_code.tools.executor import ToolExecutor
 
 
 class ApplicationService:
-    """Coordinate application use cases over the explicit AppState graph."""
+    """Coordinate application use cases over the explicit ApplicationRuntime graph."""
 
     def __init__(
         self,
@@ -88,9 +88,9 @@ class ApplicationService:
         context: ContextEngine,
         tool_executor: ToolExecutor,
         settings: AgentSettings,
-        state: AppState,
+        runtime: ApplicationRuntime,
         turns: TurnCoordinator,
-        sessions: SessionLifecycle,
+        sessions: SessionOperations,
         provider_operations: ProviderOperations,
         mode_operations: ModeOperations,
         activity_projection: ActivityProjection,
@@ -98,19 +98,17 @@ class ApplicationService:
         path_suggester: WorkspacePathSuggester | None = None,
         background_notifications: BackgroundTaskNotificationSource | None = None,
         background_wake_signal: BackgroundTaskWakeSignal | None = None,
-        shutdown_observability: Callable[[], None] | None = None,
     ) -> None:
         self.context = context
         self.tool_executor = tool_executor
         self.settings = settings
-        self.state = state
+        self.runtime = runtime
         self._project_state_dir = settings.paths.project_state_dir
         self.path_suggester = path_suggester or WorkspacePathSuggester(settings.cwd)
         self.background_notifications = background_notifications
         self.background_wake_signal = background_wake_signal
         self._initialization_lock = asyncio.Lock()
         self._initialized = False
-        self._shutdown_observability = shutdown_observability or (lambda: None)
         self.turns = turns
         self.sessions = sessions
         self.providers_ops = provider_operations
@@ -140,22 +138,22 @@ class ApplicationService:
         async with self._initialization_lock:
             if self._initialized:
                 return self.current_session_view()
-            connection = self.state.provider.router.connection
-            await self.state.start()
+            connection = self.runtime.provider.router.connection
+            await self.runtime.start()
             descriptor = connection.model_descriptor or resolve_without_network(
                 connection.protocol,
                 connection.base_url,
                 connection.model,
                 connection.limits,
             )
-            async with self.state.operation_lock():
+            async with self.runtime.operation_lock():
                 environment = self.providers_ops.initialize_environment(
                     connection, descriptor
                 )
                 if environment is not None:
-                    if not self.state.session.conversation:
-                        start = self.state.session.start
-                        self.state.session.configure_start(
+                    if not self.runtime.session.conversation:
+                        start = self.runtime.session.start
+                        self.runtime.session.configure_start(
                             replace(
                                 start,
                                 provider_id=connection.id,
@@ -172,12 +170,12 @@ class ApplicationService:
             return self.current_session_view()
 
     def current_session_view(self) -> SessionView:
-        session = self.state.session
+        session = self.runtime.session
         return SessionView(
             self.status(),
             project_history(
                 session,
-                catalog=self.state.tools.snapshot(),
+                catalog=self.runtime.tools.snapshot(),
                 search_mode=self.settings.tool_search_mode,
                 tool_executor=self.tool_executor,
             ),
@@ -199,7 +197,7 @@ class ApplicationService:
     def current_transcript_view(self) -> TranscriptView:
         """Return the complete persisted conversation without storage internals."""
 
-        return project_transcript(self.state.session)
+        return project_transcript(self.runtime.session)
 
     def subagent_transcript_view(self, task_id: str) -> TranscriptView:
         """Project one retained child Session through the same audit DTO."""
@@ -207,24 +205,24 @@ class ApplicationService:
         return self.activity.subagent_transcript(task_id)
 
     def session_usage(self) -> SessionUsageView:
-        return project_session_usage(self.state.session, self.context_status())
+        return project_session_usage(self.runtime.session, self.context_status())
 
     def capabilities(self) -> CapabilitiesView:
         """Return a fresh catalog snapshot without leaking runtime objects."""
 
         return project_capabilities(
-            tools=self.state.tools.snapshot(),
-            skills=self.state.skills.catalog.snapshot(),
-            mcp_servers=self.state.mcp.snapshots(),
+            tools=self.runtime.tools.snapshot(),
+            skills=self.runtime.skills.catalog.snapshot(),
+            mcp_servers=self.runtime.mcp.snapshots(),
             tool_search_mode=self.settings.tool_search_mode,
-            session=self.state.session,
+            session=self.runtime.session,
         )
 
     def background_tasks(self) -> tuple[BackgroundTaskView, ...]:
-        return self.activity.background_tasks(self.state.session.session_id)
+        return self.activity.background_tasks(self.runtime.session.session_id)
 
     def subagent_tasks(self) -> tuple[SubagentTaskView, ...]:
-        return self.activity.subagent_tasks(self.state.session.session_id)
+        return self.activity.subagent_tasks(self.runtime.session.session_id)
 
     async def stream_subagent_activity(
         self,
@@ -233,37 +231,37 @@ class ApplicationService:
             yield view
 
     async def reload_skills(self) -> CapabilitiesView:
-        async with self.state.operation_lock():
-            await self.state.start()
-            self.state.skills.reload()
+        async with self.runtime.operation_lock():
+            await self.runtime.start()
+            self.runtime.skills.reload()
             return self.capabilities()
 
     async def refresh_mcp(self, server: str) -> CapabilitiesView:
-        async with self.state.operation_lock():
-            await self.state.start()
-            await self.state.mcp.refresh(server)
+        async with self.runtime.operation_lock():
+            await self.runtime.start()
+            await self.runtime.mcp.refresh(server)
             return self.capabilities()
 
     async def reconnect_mcp(self, server: str) -> CapabilitiesView:
-        async with self.state.operation_lock():
-            await self.state.start()
-            await self.state.mcp.reconnect(server)
+        async with self.runtime.operation_lock():
+            await self.runtime.start()
+            await self.runtime.mcp.reconnect(server)
             return self.capabilities()
 
-    async def submit(self, prompt: str) -> TurnOutcome:
-        async with self.state.operation_lock():
-            await self.state.start()
+    async def submit(self, prompt: str) -> InvocationOutcome:
+        async with self.runtime.operation_lock():
+            await self.runtime.start()
             return await self.turns.submit(
-                self.state.session, self.state.context_runtime, prompt
+                self.runtime.session, self.runtime.context_cache, prompt
             )
 
     async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
-        async with self.state.operation_lock():
-            await self.state.start()
-            session = self.state.session
+        async with self.runtime.operation_lock():
+            await self.runtime.start()
+            session = self.runtime.session
             async for event in self.turns.stream(
                 session,
-                self.state.context_runtime,
+                self.runtime.context_cache,
                 prompt,
                 self.context_status,
             ):
@@ -283,11 +281,11 @@ class ApplicationService:
     async def stream_interactive(self) -> AsyncIterator[TurnEvent]:
         """Consume queued inputs across fresh step budgets until the queue is idle."""
 
-        async with self.state.operation_lock():
-            await self.state.start()
+        async with self.runtime.operation_lock():
+            await self.runtime.start()
             async for event in self.turns.stream_interactive(
-                self.state.session,
-                self.state.context_runtime,
+                self.runtime.session,
+                self.runtime.context_cache,
                 self.context_status,
             ):
                 yield event
@@ -304,16 +302,16 @@ class ApplicationService:
             return
         revision = signal.revision
         while True:
-            async with self.state.operation_lock():
-                await self.state.start()
-                session = self.state.session
+            async with self.runtime.operation_lock():
+                await self.runtime.start()
+                session = self.runtime.session
                 if source.has_pending(session.session_id):
                     yield BackgroundInvocationStarted()
                     failed = False
                     try:
                         async for event in self.turns.stream_continuation(
                             session,
-                            self.state.context_runtime,
+                            self.runtime.context_cache,
                             self.context_status,
                         ):
                             yield event
@@ -332,27 +330,27 @@ class ApplicationService:
     async def suggest_paths(self, query: str) -> tuple[PathSuggestion, ...]:
         return await self.path_suggester.suggest(query)
 
-    def status(self) -> RuntimeStatus:
-        session = self.state.session
-        connection = self.state.provider.router.connection
+    def status(self) -> ApplicationStatus:
+        session = self.runtime.session
+        connection = self.runtime.provider.router.connection
         return project_runtime_status(
             settings=self.settings,
             session=session,
             connection=connection,
-            permission_mode=self.state.permissions.policy.mode.value,
-            execution_environment=self.state.permissions.execution_environment,
+            permission_mode=self.runtime.permissions.policy.mode.value,
+            execution_environment=self.runtime.permissions.execution_environment,
             capabilities=self.capabilities(),
         )
 
-    def context_status(self) -> ContextStatus:
+    def context_status(self) -> ContextUsageView:
         return project_context_status(
             self.context,
-            self.state.session,
-            self.state.context_runtime,
-            self.state.tools.snapshot(),
+            self.runtime.session,
+            self.runtime.context_cache,
+            self.runtime.tools.snapshot(),
         )
 
-    async def compact(self) -> ContextStatus:
+    async def compact(self) -> ContextUsageView:
         completed: CompactionCompleted | None = None
         async for event in self.stream_compaction():
             if isinstance(event, CompactionCompleted):
@@ -364,13 +362,13 @@ class ApplicationService:
     async def stream_compaction(self) -> AsyncIterator[TurnEvent]:
         """Run a manual full compaction with frontend-neutral lifecycle events."""
 
-        async with self.state.operation_lock():
-            session = self.state.session
+        async with self.runtime.operation_lock():
+            session = self.runtime.session
             yield CompactionStarted("manual")
-            tools = self.state.tools.snapshot()
+            tools = self.runtime.tools.snapshot()
             pre_compact_budget = self.context.inspect(
                 session.context_planning_state(),
-                self.state.context_runtime,
+                self.runtime.context_cache,
                 tools=tools.definitions,
             )
             outcome = await self.context.compact(
@@ -393,13 +391,13 @@ class ApplicationService:
         self.turns.set_question_handler(handler)
 
     def current_collaboration_mode(self) -> CollaborationMode:
-        return self.modes.collaboration_mode(self.state.session)
+        return self.modes.collaboration_mode(self.runtime.session)
 
     def cycle_collaboration_mode(self) -> CollaborationMode:
         """Persist the target first, then publish its effective permission policy."""
 
         if (
-            self.state.operation_lock().locked()
+            self.runtime.operation_lock().locked()
             or self.turns.is_active
             or self.turns.queued_inputs()
         ):
@@ -407,7 +405,7 @@ class ApplicationService:
         if self.turns.question_active:
             raise RuntimeError("Collaboration mode cannot change during Question")
         return self.modes.cycle_collaboration(
-            self.state.session, self.state.permissions
+            self.runtime.session, self.runtime.permissions
         )
 
     def start_plan_implementation(self, *, fresh_context: bool) -> QueuedInputView:
@@ -415,46 +413,52 @@ class ApplicationService:
 
         if self.current_collaboration_mode() is not CollaborationMode.PLAN:
             raise RuntimeError("No Plan-mode handoff is active")
-        plan = _latest_proposed_plan(self.state.session.conversation)
+        plan = _latest_proposed_plan(self.runtime.session.conversation)
         if not plan:
             raise RuntimeError("The session has no completed proposed plan")
         if fresh_context:
-            previous = self.state.session
+            previous = self.runtime.session
             session, policy = self.sessions.create_plan_handoff(
                 previous,
                 plan,
-                permission_rules=self.state.permissions.policy.rules,
+                permission_rules=self.runtime.permissions.policy.rules,
             )
-            self.state.replace_session(session, permission_policy=policy)
             self.turns.rebind_session(session.session_id)
+            self.runtime.publish_foreground(
+                self.runtime.build_foreground(session, policy)
+            )
         else:
-            self.state.session.set_collaboration_mode(CollaborationMode.DEFAULT.value)
-            self.state.permissions.restore_mode(
-                PermissionMode(self.state.session.permission_mode)
+            self.runtime.session.set_collaboration_mode(CollaborationMode.DEFAULT.value)
+            self.runtime.permissions.restore_mode(
+                PermissionMode(self.runtime.session.permission_mode)
             )
         return self.queue_input("Implement the approved plan.")
 
     def permission_modes(self) -> tuple[PermissionModeView, ...]:
         """Project process-local mode state without exposing the mutable policy."""
 
-        return self.modes.permission_modes(self.state.session, self.state.permissions)
+        return self.modes.permission_modes(
+            self.runtime.session, self.runtime.permissions
+        )
 
     def current_permission_mode(self) -> PermissionModeView:
         return self.modes.current_permission_mode(
-            self.state.session, self.state.permissions
+            self.runtime.session, self.runtime.permissions
         )
 
     def cycle_permission_mode(self) -> PermissionModeSwitch:
-        return self.modes.cycle_permission(self.state.session, self.state.permissions)
+        return self.modes.cycle_permission(
+            self.runtime.session, self.runtime.permissions
+        )
 
     def select_permission_mode(self, value: str) -> PermissionModeSwitch:
         return self.modes.select_permission(
-            value, self.state.session, self.state.permissions
+            value, self.runtime.session, self.runtime.permissions
         )
 
     def confirm_full_access(self, allow: bool) -> PermissionModeView:
         return self.modes.confirm_full_access(
-            allow, self.state.session, self.state.permissions
+            allow, self.runtime.session, self.runtime.permissions
         )
 
     def providers(self) -> tuple[ProviderView, ...]:
@@ -466,7 +470,7 @@ class ApplicationService:
         return self.providers_ops.models()
 
     async def refresh_provider_models(self, provider_id: str) -> ProviderView:
-        async with self.state.operation_lock():
+        async with self.runtime.operation_lock():
             return await self.providers_ops.refresh_models(provider_id)
 
     async def probe_provider(
@@ -476,15 +480,15 @@ class ApplicationService:
 
         return await self.providers_ops.probe(request)
 
-    async def select_provider(self, provider_id: str) -> RuntimeStatus:
-        async with self.state.operation_lock():
+    async def select_provider(self, provider_id: str) -> ApplicationStatus:
+        async with self.runtime.operation_lock():
             await self.providers_ops.select_provider(provider_id)
             return self.status()
 
-    async def select_model(self, model_id: str) -> RuntimeStatus:
+    async def select_model(self, model_id: str) -> ApplicationStatus:
         """Persist and publish a local catalog selection as one operation."""
 
-        async with self.state.operation_lock():
+        async with self.runtime.operation_lock():
             await self.providers_ops.select_model(model_id)
             return self.status()
 
@@ -492,47 +496,44 @@ class ApplicationService:
         self,
         update: ProviderUpdate,
         probe_result: ProviderProbeResult | None = None,
-    ) -> RuntimeStatus:
-        async with self.state.operation_lock():
+    ) -> ApplicationStatus:
+        async with self.runtime.operation_lock():
             await self.providers_ops.configure(update, probe_result)
             return self.status()
 
-    async def remove_provider_credential(self, provider_id: str) -> RuntimeStatus:
+    async def remove_provider_credential(self, provider_id: str) -> ApplicationStatus:
         """Remove a stored key and refresh the active connection when necessary."""
 
-        async with self.state.operation_lock():
+        async with self.runtime.operation_lock():
             await self.providers_ops.remove_credential(provider_id)
             return self.status()
 
     async def list_sessions(self) -> tuple[SessionSummary, ...]:
-        return await self.sessions.list(self.state.session.session_id)
+        return await self.sessions.list(self.runtime.session.session_id)
 
     async def resume_session(self, session_id: str) -> ResumedSession:
-        async with self.state.operation_lock():
-            if session_id == self.state.session.session_id:
+        async with self.runtime.operation_lock():
+            if session_id == self.runtime.session.session_id:
                 raise ValueError("Session is already active")
             if self.turns.queued_inputs():
                 raise RuntimeError("Recall or clear queued inputs before resuming")
             candidate = await self.sessions.restore(
                 session_id,
-                permission_rules=self.state.permissions.policy.rules,
-                tools=self.state.tools.snapshot(),
-            )
-            self.state.replace_session(
-                candidate.session,
-                permission_policy=candidate.permission_policy,
+                permission_rules=self.runtime.permissions.policy.rules,
+                tools=self.runtime.tools.snapshot(),
             )
             self.turns.rebind_session(candidate.session.session_id)
+            self.runtime.publish_foreground(
+                self.runtime.build_foreground(
+                    candidate.session, candidate.permission_policy
+                )
+            )
             if self.background_wake_signal is not None:
                 self.background_wake_signal.pulse()
             return ResumedSession(status=self.status(), history=candidate.history)
 
     async def close(self) -> None:
-        try:
-            await self.turns.close()
-            await self.state.close()
-        finally:
-            self._shutdown_observability()
+        await self.runtime.close()
 
 
 def _latest_proposed_plan(

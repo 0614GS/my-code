@@ -163,10 +163,10 @@ def foreign_reexports() -> tuple[ImportEdge, ...]:
 
 def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
     leaks: list[TechnicalLeak] = []
-    app_state_owners = {
+    application_runtime_owners = {
         "src/my_code/bootstrap.py",
         "src/my_code/application/service.py",
-        "src/my_code/runtime/state.py",
+        "src/my_code/runtime/application.py",
     }
     for path in iter_python_files():
         module_name, is_package = _module_name_for_path(path)
@@ -221,9 +221,9 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
                         )
                     )
                 if (
-                    imported_module == "my_code.runtime.state"
-                    and "AppState" in imported_names
-                    and relative_path not in app_state_owners
+                    imported_module == "my_code.runtime.application"
+                    and "ApplicationRuntime" in imported_names
+                    and relative_path not in application_runtime_owners
                 ):
                     leaks.append(
                         TechnicalLeak(

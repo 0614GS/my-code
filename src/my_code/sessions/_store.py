@@ -26,14 +26,14 @@ from my_code.sessions._codec import (
     decode_entry,
     encode_boundary,
     encode_collaboration_mode,
+    encode_invocation_finished,
+    encode_invocation_started,
     encode_message,
     encode_metadata,
     encode_permission_mode,
     encode_replacement,
     encode_replay,
     encode_start,
-    encode_turn_finished,
-    encode_turn_started,
     presentations_from_json,
     replay_from_json,
 )
@@ -43,11 +43,11 @@ from my_code.sessions._records import (
     ToolPresentationRecord,
 )
 from my_code.sessions.models import (
+    InvocationFinished,
+    InvocationHistoryEntry,
+    InvocationStarted,
     SessionMetadata,
     SessionStart,
-    TurnFinished,
-    TurnHistoryEntry,
-    TurnStarted,
 )
 
 _UUID_PATTERN = re.compile(
@@ -64,7 +64,7 @@ class _HydratedSession:
     content_replacements: tuple[ContentReplacement, ...] = ()
     compact_boundaries: tuple[CompactBoundary, ...] = ()
     replay_records: tuple[ProviderReplayRecord, ...] = ()
-    turn_history: tuple[TurnHistoryEntry, ...] = ()
+    invocation_history: tuple[InvocationHistoryEntry, ...] = ()
 
 
 def is_session_id(value: str) -> bool:
@@ -117,8 +117,8 @@ class SessionStore:
         self._content_replacements: dict[str, ContentReplacement] | None = None
         self._boundaries: dict[str, CompactBoundary] | None = None
         self._replay_records: dict[tuple[str, str], ProviderReplayRecord] | None = None
-        self._turn_starts: dict[str, TurnStarted] | None = None
-        self._turn_finishes: dict[str, TurnFinished] | None = None
+        self._invocation_starts: dict[str, InvocationStarted] | None = None
+        self._invocation_finishes: dict[str, InvocationFinished] | None = None
 
     @property
     def session_id(self) -> str:
@@ -159,8 +159,8 @@ class SessionStore:
             self._content_replacements = {}
             self._boundaries = {}
             self._replay_records = {}
-            self._turn_starts = {}
-            self._turn_finishes = {}
+            self._invocation_starts = {}
+            self._invocation_finishes = {}
             return _HydratedSession(conversation=())
 
         messages: list[ConversationEntry] = []
@@ -171,8 +171,8 @@ class SessionStore:
         embedded_presentations: dict[str, ToolResultPresentation] = {}
         legacy_presentations: dict[str, ToolResultPresentation] = {}
         replay_records: dict[tuple[str, str], ProviderReplayRecord] = {}
-        turn_starts: dict[str, TurnStarted] = {}
-        turn_finishes: dict[str, TurnFinished] = {}
+        invocation_starts: dict[str, InvocationStarted] = {}
+        invocation_finishes: dict[str, InvocationFinished] = {}
         contents = self.path.read_bytes()
         lines = contents.splitlines(keepends=True)
         start: SessionStart | None = None
@@ -201,7 +201,7 @@ class SessionStore:
                 if (
                     line_number == 1
                     and isinstance(legacy_version, int)
-                    and legacy_version != 6
+                    and legacy_version not in {6, 7}
                 ):
                     raise ValueError(
                         f"Transcript schema v{legacy_version} is incompatible: "
@@ -263,25 +263,32 @@ class SessionStore:
                 if isinstance(entry, SessionCollaborationModeRecord):
                     collaboration_mode = entry.collaboration_mode
                     continue
-                if isinstance(entry, TurnStarted):
-                    previous_start = turn_starts.get(entry.turn_id)
+                if isinstance(entry, InvocationStarted):
+                    previous_start = invocation_starts.get(entry.invocation_id)
                     if previous_start is not None:
-                        raise ValueError(f"Duplicate turn_started: {entry.turn_id}")
-                    turn_starts[entry.turn_id] = entry
+                        raise ValueError(
+                            f"Duplicate invocation_started: {entry.invocation_id}"
+                        )
+                    invocation_starts[entry.invocation_id] = entry
                     continue
-                if isinstance(entry, TurnFinished):
-                    started = turn_starts.get(entry.turn_id)
+                if isinstance(entry, InvocationFinished):
+                    started = invocation_starts.get(entry.invocation_id)
                     if started is None:
                         raise ValueError(
-                            f"turn_finished has no matching start: {entry.turn_id}"
+                            "invocation_finished has no matching start: "
+                            f"{entry.invocation_id}"
                         )
-                    if entry.turn_id in turn_finishes:
-                        raise ValueError(f"Duplicate turn_finished: {entry.turn_id}")
+                    if entry.invocation_id in invocation_finishes:
+                        raise ValueError(
+                            f"Duplicate invocation_finished: {entry.invocation_id}"
+                        )
                     if datetime.fromisoformat(
                         entry.finished_at
                     ) < datetime.fromisoformat(started.started_at):
-                        raise ValueError("turn_finished cannot precede turn_started")
-                    turn_finishes[entry.turn_id] = entry
+                        raise ValueError(
+                            "invocation_finished cannot precede invocation_started"
+                        )
+                    invocation_finishes[entry.invocation_id] = entry
                     continue
                 if isinstance(entry, ContentReplacement):
                     replacement = entry
@@ -385,8 +392,8 @@ class SessionStore:
         self._content_replacements = replacements
         self._boundaries = boundaries
         self._replay_records = replay_records
-        self._turn_starts = turn_starts
-        self._turn_finishes = turn_finishes
+        self._invocation_starts = invocation_starts
+        self._invocation_finishes = invocation_finishes
         self._metadata = metadata
         assert permission_mode is not None
         self._permission_mode = permission_mode
@@ -398,45 +405,51 @@ class SessionStore:
             content_replacements=tuple(replacements.values()),
             compact_boundaries=active_boundaries,
             replay_records=_validated_replay_records(replay_records, by_id),
-            turn_history=tuple(
-                TurnHistoryEntry(started, turn_finishes.get(started.turn_id))
-                for started in turn_starts.values()
+            invocation_history=tuple(
+                InvocationHistoryEntry(
+                    started, invocation_finishes.get(started.invocation_id)
+                )
+                for started in invocation_starts.values()
             ),
         )
 
-    def append_turn_started(self, turn: TurnStarted) -> bool:
+    def append_invocation_started(self, invocation: InvocationStarted) -> bool:
         self._ensure_loaded()
-        assert self._turn_starts is not None
-        if turn.turn_id in self._turn_starts:
-            if self._turn_starts[turn.turn_id] != turn:
-                raise ValueError(f"Conflicting turn_started: {turn.turn_id}")
+        assert self._invocation_starts is not None
+        if invocation.invocation_id in self._invocation_starts:
+            if self._invocation_starts[invocation.invocation_id] != invocation:
+                raise ValueError(
+                    f"Conflicting invocation_started: {invocation.invocation_id}"
+                )
             return False
         records: list[object] = []
         if not self.path.exists():
             records.append(encode_start(self._start))
-        records.append(encode_turn_started(turn))
+        records.append(encode_invocation_started(invocation))
         self._append_records(records)
-        self._turn_starts[turn.turn_id] = turn
+        self._invocation_starts[invocation.invocation_id] = invocation
         return True
 
-    def append_turn_finished(self, turn: TurnFinished) -> bool:
+    def append_invocation_finished(self, invocation: InvocationFinished) -> bool:
         self._ensure_loaded()
-        assert self._turn_starts is not None
-        assert self._turn_finishes is not None
-        started = self._turn_starts.get(turn.turn_id)
+        assert self._invocation_starts is not None
+        assert self._invocation_finishes is not None
+        started = self._invocation_starts.get(invocation.invocation_id)
         if started is None:
-            raise ValueError(f"Unknown turn_id: {turn.turn_id}")
-        previous = self._turn_finishes.get(turn.turn_id)
+            raise ValueError(f"Unknown invocation_id: {invocation.invocation_id}")
+        previous = self._invocation_finishes.get(invocation.invocation_id)
         if previous is not None:
-            if previous != turn:
-                raise ValueError(f"Conflicting turn_finished: {turn.turn_id}")
+            if previous != invocation:
+                raise ValueError(
+                    f"Conflicting invocation_finished: {invocation.invocation_id}"
+                )
             return False
-        if datetime.fromisoformat(turn.finished_at) < datetime.fromisoformat(
+        if datetime.fromisoformat(invocation.finished_at) < datetime.fromisoformat(
             started.started_at
         ):
-            raise ValueError("turn_finished cannot precede turn_started")
-        self._append_record(encode_turn_finished(turn))
-        self._turn_finishes[turn.turn_id] = turn
+            raise ValueError("invocation_finished cannot precede invocation_started")
+        self._append_record(encode_invocation_finished(invocation))
+        self._invocation_finishes[invocation.invocation_id] = invocation
         return True
 
     def append(self, message: ConversationEntry) -> bool:

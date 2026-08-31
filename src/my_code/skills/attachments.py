@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from my_code.context.session import AttachmentDerivationState
+from my_code.context.session_cache import AttachmentProjectionInput
 from my_code.conversation.attachments import SkillListingAttachment, SkillListingEntry
 from my_code.conversation.models import AttachmentMessage
 from my_code.skills.catalog import SkillCatalogSnapshot
@@ -17,7 +17,7 @@ class SkillListingAttachmentSource:
         self._catalog = catalog
 
     def __call__(
-        self, state: AttachmentDerivationState
+        self, state: AttachmentProjectionInput
     ) -> tuple[SkillListingAttachment, ...]:
         catalog = self._catalog.snapshot()
         if not catalog.entries:

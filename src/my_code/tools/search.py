@@ -14,7 +14,12 @@ from my_code.permissions.models import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from my_code.tools.base import Tool, ToolContext, ToolExecutionError, ToolOutput
+from my_code.tools.base import (
+    Tool,
+    ToolExecutionContext,
+    ToolExecutionError,
+    ToolOutput,
+)
 from my_code.tools.discovery import (
     INVOKE_SEARCHED_TOOL_NAME,
     TOOL_SEARCH_NAME,
@@ -59,7 +64,9 @@ class ToolSearch(Tool):
         del tool_input
         return True
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return True
 
@@ -82,7 +89,9 @@ class ToolSearch(Tool):
         if unexpected:
             raise ValueError(f"Unexpected input field: {sorted(unexpected)[0]}")
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         query = required_string(tool_input, "query").strip()
         limit = optional_int(tool_input, "max_results", 5, minimum=1, maximum=20)
         searchable = tuple(
@@ -169,7 +178,9 @@ class InvokeSearchedTool(Tool):
         if not isinstance(tool_input.get("arguments"), dict):
             raise ValueError("arguments must be an object")
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return False
 
@@ -185,7 +196,9 @@ class InvokeSearchedTool(Tool):
             ),
         )
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del tool_input, context
         raise ToolExecutionError("InvokeSearchedTool must be handled by ToolExecutor")
 

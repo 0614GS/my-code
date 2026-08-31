@@ -10,6 +10,7 @@
 4. [Context 与模型输入](03-context-and-model-input.md)：理解事实如何变成 provider-neutral 请求。
 5. [工具、权限与工作区](04-tools-permissions-workspace.md)：理解工具发现、执行和安全边界。
 6. [扩展能力](05-extensions.md)：理解 MCP、Skill、Subagent、后台任务和 Hooks 的位置。
+7. [生命周期与命名体系](11-lifecycle-and-naming.md)：统一 State、Context、Runtime、Session、Run 与 Invocation 等术语。
 
 按需查阅：
 
@@ -17,22 +18,24 @@
 - [终端 UI](07-terminal-ui.md)
 - [包边界与架构守卫](08-package-boundaries.md)
 - [当前能力范围](09-current-scope.md)
+- [可观测性与评测](10-observability-and-evaluation.md)
+- [架构整理任务索引](refactor/todolist.md)
 
 ## 架构地图
 
 ```text
 CLI / TUI
     -> ApplicationService
-        -> AppState
-            ├── active Session + ContextRuntime
-            ├── WorkspaceState / PermissionState
-            ├── ToolState / TaskSupervisor
+        -> ApplicationRuntime
+            ├── ActiveSessionBinding
+            ├── Workspace / PermissionRuntime
+            ├── ToolCatalog / TaskSupervisor
             ├── AgentRunFactory / ProviderRuntime
             └── McpRuntime / SkillRuntime
 
 ApplicationService
     ├── turns -> AgentEngine
-    ├── sessions -> Session lifecycle / projections
+    ├── sessions -> Session operations / projections
     ├── configuration -> Provider / mode operations
     └── activity -> background / Subagent views
 
@@ -41,19 +44,11 @@ AgentEngine
     -> ToolRoundExecutor -> ToolExecutor -> standard Tool
 ```
 
-`AppState` 是活动 runtime 状态的唯一入口，但不是全局变量或 service locator。`Session` 是对话事实及其持久化的唯一公开边界；`ContextEngine` 只构造单次模型请求。内置工具、MCP、Skill、Subagent 和后台任务最终都复用标准 Tool、权限和 Session 提交路径。
+`ApplicationRuntime` 是活动 runtime 状态的唯一入口，但不是全局变量或 service locator。`Session` 是对话事实及其持久化的唯一公开边界；`ContextEngine` 只构造单次模型请求。内置工具、MCP、Skill、Subagent 和后台任务最终都复用标准 Tool、权限和 Session 提交路径。
 
 ## 统一术语
 
-- **Turn**：从一次真实用户输入开始，到下一次真实用户输入之前；可以包含多个 step。
-- **Step**：一次模型调用；只有完整响应才提交一条 `AssistantMessage`。
-- **ToolRound**：同一 `AssistantMessage` 中工具调用的分组执行与有序结果闭合。
-- **Conversation facts**：Session 私有持有的 provider-neutral canonical entries。
-- **Context**：从不可变 Session snapshot 构造的临时模型输入，不是第二份历史。
-- **Compact**：提交摘要事实并建立新的工作集边界，不删除完整 transcript。
-- **Task**：由 `TaskSupervisor` 管理的进程内异步生命周期；进度不是 Conversation fact。
-- **AgentRun**：独立 Session、Agent 组件和 provider lease 构成的可关闭运行单元。
-- **Tool source**：以稳定来源 ID 原子发布到 `ToolCatalog` 的一组标准 Tool。
+项目术语的规范定义统一维护在[生命周期与命名体系](11-lifecycle-and-naming.md)。专题文档可以解释领域内行为，但不应为 State、Context、Runtime、Session、Run、Invocation、Turn、Step、Request 或 Call 建立另一套定义。生命周期与命名迁移的决策记录和完成证据位于[架构整理任务索引](refactor/todolist.md)。
 
 ## 文档维护原则
 

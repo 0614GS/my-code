@@ -16,7 +16,7 @@ from my_code.permissions.models import (
 )
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolExposure,
     ToolInputError,
     ToolOutput,
@@ -49,7 +49,9 @@ class TaskListTool(Tool):
             {"type": "object", "additionalProperties": False},
         )
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return True
 
@@ -68,7 +70,7 @@ class TaskListTool(Tool):
     async def execute(
         self,
         tool_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> ToolOutput:
         del tool_input
         owner = _owner(self.parent, context)
@@ -125,7 +127,9 @@ class TaskCancelTool(Tool):
             },
         )
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return False
 
@@ -150,7 +154,7 @@ class TaskCancelTool(Tool):
     async def execute(
         self,
         tool_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> ToolOutput:
         owner = _owner(self.parent, context)
         item = await self.registry.cancel(owner, _task_id(tool_input))
@@ -167,7 +171,7 @@ class TaskCancelTool(Tool):
         return _present_task_result(tool_input, output)
 
 
-def _owner(parent: SubagentParentContext, context: ToolContext) -> str:
+def _owner(parent: SubagentParentContext, context: ToolExecutionContext) -> str:
     run_id = context.run_id or parent.run_id
     return run_id if parent.depth == 0 else parent.owner_run_id
 

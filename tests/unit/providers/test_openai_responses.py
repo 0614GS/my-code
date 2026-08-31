@@ -14,7 +14,7 @@ from my_code.model.events import (
     ModelTextDelta,
     ModelTextStarted,
 )
-from my_code.model.primitives import ProviderBinding, ProviderContinuationState
+from my_code.model.primitives import ProviderBinding, ProviderContinuation
 from my_code.model.request import (
     AssistantOutput,
     InputDocument,
@@ -146,7 +146,7 @@ def test_input_replays_matching_items_and_maps_tool_results() -> None:
         "arguments": '{"path":"x"}',
         "status": "completed",
     }
-    continuation = ProviderContinuationState(provider.binding, "working_context", raw)
+    continuation = ProviderContinuation(provider.binding, "working_context", raw)
     messages = (
         AssistantOutput(
             (ModelToolUseBlock("call", "Read", {"path": "x"}, continuation),)
@@ -264,7 +264,7 @@ def test_openai_maps_multimodal_tool_output_without_role_wrapper() -> None:
 
 def test_mismatched_binding_does_not_replay_encrypted_item() -> None:
     provider = _provider()
-    other = ProviderContinuationState(
+    other = ProviderContinuation(
         ProviderBinding("openai-responses", "other", "gpt-test"),
         "working_context",
         {

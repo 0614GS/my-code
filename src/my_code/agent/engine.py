@@ -28,10 +28,10 @@ from my_code.agent.events import (
     PreparedContextItem,
 )
 from my_code.agent.models import (
+    AgentInvocationOutcome,
+    AgentInvocationSucceeded,
     AgentMaxStepsReached,
     AgentTurnInput,
-    AgentTurnOutcome,
-    AgentTurnSucceeded,
     PendingInputSource,
     UserTurnInput,
 )
@@ -42,7 +42,7 @@ from my_code.context.models import (
     ContextOverflow,
     ContextPlan,
 )
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.attachments import (
     AttachmentPayload,
     ToolDiscoveryInvalidationAttachment,
@@ -191,6 +191,7 @@ class AgentEngine:
         tool_catalog: ToolCatalog,
         tool_search_mode: ToolSearchMode | None = None,
         max_steps: int | None = None,
+        root_session_id: str | None = None,
     ) -> None:
         if max_steps is not None and max_steps < 1:
             raise ValueError("max_steps must be positive")
@@ -200,21 +201,22 @@ class AgentEngine:
         self._tool_catalog = tool_catalog
         self._tool_search_mode = tool_search_mode
         self.max_steps = max_steps
+        self._root_session_id = root_session_id
 
     async def submit(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput | Sequence[UserTurnInput],
         pending_source: PendingInputSource | None = None,
-    ) -> AgentTurnOutcome:
+    ) -> AgentInvocationOutcome:
         """消费可观察循环并返回终态值。"""
 
-        completed: AgentTurnOutcome | None = None
+        completed: AgentInvocationOutcome | None = None
         async for event in self.stream(
             session, runtime, turn_input, pending_source=pending_source
         ):
-            if isinstance(event, (AgentTurnSucceeded, AgentMaxStepsReached)):
+            if isinstance(event, (AgentInvocationSucceeded, AgentMaxStepsReached)):
                 completed = event
         if completed is None:
             raise RuntimeError("Agent stream ended without a completed turn")
@@ -223,7 +225,7 @@ class AgentEngine:
     def stream(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput | Sequence[UserTurnInput],
         pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]:
@@ -239,7 +241,7 @@ class AgentEngine:
     def stream_continuation(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Continue from canonical conversation facts without a human message."""
@@ -249,7 +251,7 @@ class AgentEngine:
     async def _stream(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         initial_inputs: tuple[UserTurnInput, ...],
         pending_source: PendingInputSource | None,
     ) -> AsyncIterator[AgentEvent]:
@@ -395,7 +397,7 @@ class AgentEngine:
             yield AgentModelStepCompleted(step_count, bool(tool_calls))
             if not tool_calls:
                 if self.max_steps is not None and step_count >= self.max_steps:
-                    yield AgentTurnSucceeded(
+                    yield AgentInvocationSucceeded(
                         text=final_text,
                         completed_steps=step_count,
                         usage=TokenUsage(
@@ -411,7 +413,7 @@ class AgentEngine:
                     # A no-tool response is a complete step, not necessarily the
                     # end of an interactive invocation when steering is waiting.
                     continue
-                yield AgentTurnSucceeded(
+                yield AgentInvocationSucceeded(
                     text=final_text,
                     completed_steps=step_count,
                     usage=TokenUsage(
@@ -527,7 +529,9 @@ class AgentEngine:
                 assistant_message,
                 tools=tools,
                 permission_policy=permission_policy,
-                run_id=session.session_id,
+                run_id=session.run_id,
+                session_id=session.session_id,
+                root_session_id=self._root_session_id or session.session_id,
             ):
                 if isinstance(tool_event, ToolCallStarted):
                     yield AgentToolStarted(
@@ -598,7 +602,7 @@ class AgentEngine:
     async def _compact_for_retry(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         trigger: CompactTrigger,
         *,
         pre_budget: ContextBudget | None = None,
@@ -619,7 +623,7 @@ class AgentEngine:
     async def _plan_request(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         tools: ToolCatalogSnapshot | ToolExposureSnapshot,
     ) -> ContextPlan:
         derived = self._context.derive_attachments(

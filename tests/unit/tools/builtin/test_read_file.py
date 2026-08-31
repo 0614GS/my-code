@@ -8,7 +8,7 @@ from my_code.permissions.models import (
     PermissionRule,
     ToolPermissionContext,
 )
-from my_code.tools.base import ToolContext, ToolInputError
+from my_code.tools.base import ToolExecutionContext, ToolInputError
 from my_code.tools.builtin.read_file import ReadFileTool
 from my_code.tools.paths import resolve_read_path
 
@@ -25,7 +25,8 @@ async def test_read_accepts_only_controlled_project_temp_root(tmp_path: Path) ->
     tool = ReadFileTool()
 
     result = await tool.execute(
-        {"path": str(output)}, ToolContext(workspace, internal_read_root=runtime)
+        {"path": str(output)},
+        ToolExecutionContext(workspace, internal_read_root=runtime),
     )
 
     assert "hello" in result.content
@@ -46,7 +47,9 @@ async def test_read_caps_visible_output_and_reports_next_offset(tmp_path: Path) 
         encoding="utf-8",
     )
 
-    result = await ReadFileTool().execute({"path": "large.txt"}, ToolContext(workspace))
+    result = await ReadFileTool().execute(
+        {"path": "large.txt"}, ToolExecutionContext(workspace)
+    )
 
     assert len(result.content) <= 16_000
     assert result.metadata["truncated_by"] == "characters"
@@ -65,7 +68,7 @@ async def test_read_marks_single_overlong_line_without_fake_line_pagination(
     (workspace / "minified.js").write_text("x" * 30_000, encoding="utf-8")
 
     result = await ReadFileTool().execute(
-        {"path": "minified.js"}, ToolContext(workspace)
+        {"path": "minified.js"}, ToolExecutionContext(workspace)
     )
 
     assert len(result.content) <= 16_000

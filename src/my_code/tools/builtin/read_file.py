@@ -10,7 +10,7 @@ from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolExecutionError,
     ToolOutput,
 )
@@ -73,7 +73,9 @@ class ReadFileTool(Tool):
     def get_activity_description(self, tool_input: JsonObject) -> str:
         return f"Reading {required_string(tool_input, 'path')}"
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return True
 
@@ -99,7 +101,9 @@ class ReadFileTool(Tool):
         optional_int(tool_input, "offset", 1, minimum=1, maximum=10_000_000)
         optional_int(tool_input, "limit", 2000, minimum=1, maximum=5000)
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         path, internal = resolve_read_path(
             context.cwd,
             required_string(tool_input, "path"),

@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 from my_code.agent.engine import AgentEngine
-from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentTurnInput
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.models import ToolResultBatch
 from my_code.foundation.json import JsonObject
 from my_code.model.events import (
@@ -39,7 +39,7 @@ from my_code.permissions.prompt import HeadlessPrompter
 from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.sessions.session import Session
-from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.base import Tool, ToolExecutionContext, ToolOutput
 from my_code.tools.catalog import ToolCatalog, ToolSourceId
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.round_executor import ToolRoundExecutor
@@ -59,7 +59,9 @@ class VersionedTool(Tool):
             input_schema={"type": "object", "additionalProperties": False},
         )
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return True
 
@@ -84,7 +86,7 @@ class VersionedTool(Tool):
     async def execute(
         self,
         tool_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> ToolOutput:
         del tool_input, context
         self.executions += 1
@@ -162,10 +164,10 @@ async def test_catalog_update_during_step_waits_until_next_step(
     )
 
     outcome = await engine.submit(
-        session, ContextRuntime(), AgentTurnInput("use Dynamic")
+        session, SessionContextCache(), AgentTurnInput("use Dynamic")
     )
 
-    assert outcome == AgentTurnSucceeded(
+    assert outcome == AgentInvocationSucceeded(
         "finished", 2, TokenUsage(5, 2, provider_reported=True)
     )
     assert original.executions == 1

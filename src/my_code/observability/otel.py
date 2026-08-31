@@ -241,7 +241,7 @@ def _context_attributes(context: RunObservationContext) -> dict[str, AttributeVa
         "gen_ai.agent.name": context.agent_name,
         "gen_ai.conversation.id": context.session_id,
         "my_code.run.id": context.run_id,
-        "my_code.turn.id": context.turn_id,
+        "my_code.invocation.id": context.invocation_id,
     }
     if context.parent_run_id is not None:
         values["my_code.parent_run.id"] = context.parent_run_id

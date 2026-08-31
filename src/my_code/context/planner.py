@@ -12,10 +12,10 @@ from my_code.context.microcompact import (
 )
 from my_code.context.models import ContextBudget, ContextOverflow, ContextPlan
 from my_code.context.normalization import ModelInputNormalizer
-from my_code.context.session import (
-    AttachmentDerivationState,
-    ContextPlanningState,
-    ContextRuntime,
+from my_code.context.session_cache import (
+    AttachmentProjectionInput,
+    ContextPlanningInput,
+    SessionContextCache,
 )
 from my_code.context.user_context import EmptyUserContextResolver, UserContextResolver
 from my_code.conversation.attachments import AttachmentPayload
@@ -87,8 +87,8 @@ class ContextPlanner:
 
     def plan(
         self,
-        state: ContextPlanningState,
-        runtime: ContextRuntime,
+        state: ContextPlanningInput,
+        runtime: SessionContextCache,
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextPlan:
@@ -160,8 +160,8 @@ class ContextPlanner:
 
     def inspect(
         self,
-        state: ContextPlanningState,
-        runtime: ContextRuntime,
+        state: ContextPlanningInput,
+        runtime: SessionContextCache,
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextBudget:
@@ -187,7 +187,7 @@ class ContextPlanner:
         return budget
 
     def compaction_view(
-        self, state: ContextPlanningState
+        self, state: ContextPlanningInput
     ) -> tuple[tuple[ModelInputItem, ...], tuple[ContentReplacement, ...]]:
         effective = apply_content_replacements(
             state.context_entries, state.content_replacements
@@ -224,7 +224,7 @@ class ContextPlanner:
         return self.meter.response_footprint(plan.request, response)
 
     def derive_attachments(
-        self, state: AttachmentDerivationState
+        self, state: AttachmentProjectionInput
     ) -> tuple[AttachmentPayload, ...]:
         return self.attachment_resolver.resolve(state)
 

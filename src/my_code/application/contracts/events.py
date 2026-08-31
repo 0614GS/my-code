@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from my_code.application.contracts.status import ContextStatus
+from my_code.application.contracts.status import ContextUsageView
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
 from my_code.foundation.json import JsonObject
@@ -50,7 +50,7 @@ class MaxStepsReached:
     output_tokens: int
 
 
-type TurnOutcome = TurnSucceeded | MaxStepsReached
+type InvocationOutcome = TurnSucceeded | MaxStepsReached
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +121,7 @@ class CompactionCompleted:
 
     trigger: CompactionTrigger
     usage: TokenUsage
-    status: ContextStatus
+    status: ContextUsageView
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +168,7 @@ class TodoListUpdated:
 class ContextUpdated:
     """The committed context changed at a safe model-step boundary."""
 
-    status: ContextStatus
+    status: ContextUsageView
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,7 +236,7 @@ __all__ = [
     "ToolFinished",
     "ToolStarted",
     "TurnEvent",
-    "TurnOutcome",
+    "InvocationOutcome",
     "TurnInputAccepted",
     "TurnInputFailed",
     "TurnSucceeded",

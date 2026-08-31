@@ -37,7 +37,7 @@ class EvaluationContext:
 class RunObservationContext:
     session_id: str
     run_id: str
-    turn_id: str
+    invocation_id: str
     agent_name: str
     parent_run_id: str | None = None
     evaluation: EvaluationContext | None = None

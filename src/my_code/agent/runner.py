@@ -5,12 +5,12 @@ from typing import Protocol
 
 from my_code.agent.events import AgentEvent
 from my_code.agent.models import (
+    AgentInvocationOutcome,
     AgentTurnInput,
-    AgentTurnOutcome,
     PendingInputSource,
     UserTurnInput,
 )
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.sessions.session import Session
 
 
@@ -18,21 +18,21 @@ class AgentRunner(Protocol):
     async def submit(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput,
-    ) -> AgentTurnOutcome: ...
+    ) -> AgentInvocationOutcome: ...
 
     def stream(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput,
     ) -> AsyncIterator[AgentEvent]: ...
 
     def stream_continuation(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
     ) -> AsyncIterator[AgentEvent]: ...
 
 
@@ -42,15 +42,15 @@ class InteractiveAgentRunner(Protocol):
     async def submit(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput | Sequence[UserTurnInput],
         pending_source: PendingInputSource | None = None,
-    ) -> AgentTurnOutcome: ...
+    ) -> AgentInvocationOutcome: ...
 
     def stream(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput | Sequence[UserTurnInput],
         pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]: ...
@@ -58,7 +58,7 @@ class InteractiveAgentRunner(Protocol):
     def stream_continuation(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]: ...
 

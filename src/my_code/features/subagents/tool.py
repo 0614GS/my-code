@@ -2,7 +2,7 @@
 
 import json
 
-from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentMaxStepsReached
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.models import (
@@ -22,7 +22,7 @@ from my_code.permissions.policy import PermissionPolicy
 from my_code.tasks.models import TaskStatus
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolInputError,
     ToolOutput,
 )
@@ -89,7 +89,9 @@ class SubagentTool(Tool):
             input_schema=input_schema,
         )
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return False
 
@@ -144,7 +146,7 @@ class SubagentTool(Tool):
     async def execute(
         self,
         tool_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> ToolOutput:
         snapshot_version = context.tool_snapshot_version
         if snapshot_version is None:
@@ -210,7 +212,7 @@ class SubagentTool(Tool):
                 ),
                 is_error=True,
             )
-        if not isinstance(outcome, AgentTurnSucceeded):
+        if not isinstance(outcome, AgentInvocationSucceeded):
             raise RuntimeError("Subagent completed without a valid outcome")
         return ToolOutput(
             json.dumps(
@@ -230,14 +232,16 @@ class SubagentTool(Tool):
         description = tool_input.get("description")
         return description if isinstance(description, str) else "child agent"
 
-    def _runtime_parent(self, context: ToolContext) -> SubagentParentContext:
+    def _runtime_parent(self, context: ToolExecutionContext) -> SubagentParentContext:
         run_id = context.run_id or self.parent.run_id
         root_run_id = run_id if self.parent.depth == 0 else self.parent.owner_run_id
         return SubagentParentContext(
-            run_id,
-            self.parent.depth,
-            self.parent.task_id,
-            root_run_id,
+            run_id=run_id,
+            depth=self.parent.depth,
+            task_id=self.parent.task_id,
+            root_run_id=root_run_id,
+            session_id=context.session_id or self.parent.session_id,
+            root_session_id=context.root_session_id or self.parent.root_session_id,
         )
 
     def get_activity_description(self, tool_input: JsonObject) -> str:

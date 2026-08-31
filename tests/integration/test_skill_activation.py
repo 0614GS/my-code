@@ -9,12 +9,12 @@ from pathlib import Path
 import pytest
 
 from my_code.agent.engine import AgentEngine
-from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentTurnInput
 from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.foundation.json import JsonObject
 from my_code.model.events import (
     ModelStreamEvent,
@@ -46,7 +46,7 @@ from my_code.skills.attachments import SkillListingAttachmentSource
 from my_code.skills.discovery import SkillSearchRoot
 from my_code.skills.models import SkillSourceId, SkillSourceKind
 from my_code.skills.runtime import SkillRuntime
-from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.base import Tool, ToolExecutionContext, ToolOutput
 from my_code.tools.catalog import ToolCatalog, ToolSourceId
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.round_executor import ToolRoundExecutor
@@ -66,7 +66,9 @@ class SafeTool(Tool):
             {"type": "object", "additionalProperties": False},
         )
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return True
 
@@ -84,7 +86,9 @@ class SafeTool(Tool):
         if tool_input:
             raise ValueError(f"{self.name} expects no input")
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del tool_input, context
         self.executions += 1
         return ToolOutput(f"{self.name} completed")
@@ -218,10 +222,10 @@ async def test_activation_adds_durable_body_without_narrowing_tools(
     engine, session, runtime, echo, other = await _engine(tmp_path, model)
 
     outcome = await engine.submit(
-        session, ContextRuntime(), AgentTurnInput("use a focused skill")
+        session, SessionContextCache(), AgentTurnInput("use a focused skill")
     )
 
-    assert isinstance(outcome, AgentTurnSucceeded)
+    assert isinstance(outcome, AgentInvocationSucceeded)
     assert body not in model.requests[0].system_prompt.text
     assert body not in model.requests[1].system_prompt.text
     assert any(body in str(item) for item in model.requests[1].input)
@@ -261,7 +265,7 @@ async def test_reload_during_request_only_changes_next_step(tmp_path: Path) -> N
     engine, session, runtime, echo, _ = await _engine(tmp_path, model)
     runtime_ref.append(runtime)
 
-    await engine.submit(session, ContextRuntime(), AgentTurnInput("reload safely"))
+    await engine.submit(session, SessionContextCache(), AgentTurnInput("reload safely"))
 
     first_skill = next(tool for tool in model.requests[0].tools if tool.name == "Skill")
     second_skill = next(

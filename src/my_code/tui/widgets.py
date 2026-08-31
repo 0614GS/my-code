@@ -38,7 +38,7 @@ from my_code.application.contracts.history import (
     HistoryText,
     HistoryToolCall,
 )
-from my_code.application.contracts.status import RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus
 from my_code.features.todos.models import TodoItem
 from my_code.model.primitives import ReasoningPresentation
 from my_code.tools.presentation import ToolUsePresentation
@@ -133,7 +133,7 @@ class InjectedContextView(Protocol):
     def text(self) -> str: ...
 
 
-def welcome(status: RuntimeStatus, theme: TuiTheme | None = None) -> RenderableType:
+def welcome(status: ApplicationStatus, theme: TuiTheme | None = None) -> RenderableType:
     theme = theme or TuiTheme.detect()
     wordmark = Text.assemble(
         ("›_", "bold cyan"),
@@ -677,7 +677,7 @@ def todo_snapshot(todos: tuple[TodoItem, ...]) -> RenderableType:
     return Group(*lines)
 
 
-def status_line(status: RuntimeStatus, context_usage: str | None) -> str:
+def status_line(status: ApplicationStatus, context_usage: str | None) -> str:
     line = f"{status.model} · {status.context_entry_count} context entries"
     return line if context_usage is None else f"{line}    {context_usage}"
 

@@ -19,7 +19,7 @@ from my_code.permissions.models import (
 )
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
-from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.base import Tool, ToolExecutionContext, ToolOutput
 from my_code.tools.builtin.bash import BashTool
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutor
@@ -93,7 +93,9 @@ class NormalizingTool(Tool):
             },
         )
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del context
         return tool_input.get("mutating") is False
 
@@ -111,7 +113,9 @@ class NormalizingTool(Tool):
             reason=PermissionDecisionReason(PermissionDecisionKind.TOOL, "normalized"),
         )
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del tool_input, context
         return ToolOutput("should not execute")
 

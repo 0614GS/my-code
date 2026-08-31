@@ -9,7 +9,7 @@ from my_code.model.capabilities import ModelLimits
 from my_code.model.primitives import (
     ContextFootprint,
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ReasoningPresentation,
     TokenUsage,
 )
@@ -30,8 +30,12 @@ class SessionStartedRecord:
     compact_trigger_tokens: int | None = None
     provider_protocol: str | None = None
     collaboration_mode: str = "default"
+    session_kind: str = "foreground"
+    parent_session_id: str | None = None
+    created_by_run_id: str | None = None
+    agent_name: str | None = None
     type: Literal["session_started"] = "session_started"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,26 +45,26 @@ class SessionMetadataRecord:
     title: str | None = None
     last_prompt: str | None = None
     type: Literal["session_metadata"] = "session_metadata"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
 class SessionPermissionModeRecord:
     permission_mode: str
     type: Literal["session_permission_mode"] = "session_permission_mode"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
 class SessionCollaborationModeRecord:
     collaboration_mode: str
     type: Literal["session_collaboration_mode"] = "session_collaboration_mode"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
-class TurnStartedRecord:
-    turn_id: str
+class InvocationStartedRecord:
+    invocation_id: str
     run_id: str
     parent_run_id: str | None
     agent_name: str
@@ -69,27 +73,27 @@ class TurnStartedRecord:
     evaluation_run_id: str | None = None
     test_case_id: str | None = None
     attempt_id: str | None = None
-    type: Literal["turn_started"] = "turn_started"
-    schema_version: Literal[6] = 6
+    type: Literal["invocation_started"] = "invocation_started"
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
-class TurnFinishedRecord:
-    turn_id: str
+class InvocationFinishedRecord:
+    invocation_id: str
     finished_at: str
     outcome: Literal["succeeded", "max_steps", "failed", "cancelled"]
     completed_steps: int | None = None
     max_steps: int | None = None
     usage: TokenUsage | None = None
     error_type: str | None = None
-    type: Literal["turn_finished"] = "turn_finished"
-    schema_version: Literal[6] = 6
+    type: Literal["invocation_finished"] = "invocation_finished"
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
 class TextContentRecord:
     text: str
-    continuation: ProviderContinuationState | None = None
+    continuation: ProviderContinuation | None = None
     type: Literal["text"] = "text"
 
 
@@ -98,7 +102,7 @@ class ToolCallRecord:
     id: str
     name: str
     input: JsonObject
-    continuation: ProviderContinuationState | None = None
+    continuation: ProviderContinuation | None = None
     type: Literal["tool_call"] = "tool_call"
 
 
@@ -106,7 +110,7 @@ class ToolCallRecord:
 class ReasoningContentRecord:
     id: str
     presentation: ReasoningPresentation
-    continuation: ProviderContinuationState | None = None
+    continuation: ProviderContinuation | None = None
     type: Literal["reasoning"] = "reasoning"
 
 
@@ -124,16 +128,16 @@ class ToolPresentationRecord:
     tool_use_id: str
     presentation: ToolResultPresentation
     type: Literal["tool_presentation"] = "tool_presentation"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderReplaySidecarRecord:
     entry_id: str
     content_id: str
-    continuation: ProviderContinuationState
+    continuation: ProviderContinuation
     type: Literal["provider_replay"] = "provider_replay"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,7 +147,7 @@ class HumanMessageRecord:
     timestamp: str
     content: str
     type: Literal["human_message"] = "human_message"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +160,7 @@ class AssistantMessageRecord:
     provider_binding: ProviderBinding | None = None
     context_footprint: ContextFootprint | None = None
     type: Literal["assistant_message"] = "assistant_message"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +171,7 @@ class LegacyToolResultBatchRecord:
     content: tuple[ToolResultRecord, ...]
     source_assistant_uuid: str
     type: Literal["tool_results_message"] = "tool_results_message"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,7 +182,7 @@ class ToolResultBatchRecord:
     content: tuple[ToolResultRecord, ...]
     source_assistant_id: str
     type: Literal["tool_result_batch"] = "tool_result_batch"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +192,7 @@ class ConversationSummaryMessageRecord:
     timestamp: str
     content: str
     type: Literal["conversation_summary_message"] = "conversation_summary_message"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,7 +202,7 @@ class AttachmentMessageRecord:
     timestamp: str
     payload: JsonObject
     type: Literal["attachment_message"] = "attachment_message"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,7 +212,7 @@ class ContentReplacementRecord:
     original_chars: int
     content: str
     type: Literal["content_replacement"] = "content_replacement"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,7 +224,7 @@ class CompactBoundaryRecord:
     pre_compact_tokens: int
     measurement: Literal["reported", "estimated"]
     type: Literal["compact_boundary"] = "compact_boundary"
-    schema_version: Literal[6] = 6
+    schema_version: Literal[7] = 7
 
 
 type MessageRecord = (
@@ -236,8 +240,8 @@ type TranscriptEntry = (
     | SessionMetadataRecord
     | SessionPermissionModeRecord
     | SessionCollaborationModeRecord
-    | TurnStartedRecord
-    | TurnFinishedRecord
+    | InvocationStartedRecord
+    | InvocationFinishedRecord
     | MessageRecord
     | ContentReplacementRecord
     | CompactBoundaryRecord

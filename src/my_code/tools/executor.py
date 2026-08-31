@@ -31,7 +31,7 @@ from my_code.permissions.models import (
 from my_code.permissions.policy import PermissionPolicy
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolExecutionError,
     ToolInputError,
     ToolOutput,
@@ -123,7 +123,7 @@ class ToolExecutor:
         self.policy = policy
         self.prompter = prompter
         self.workspace = workspace
-        self.context = ToolContext(
+        self.context = ToolExecutionContext(
             workspace,
             internal_read_root=internal_read_root,
             command_launcher=command_launcher,
@@ -240,6 +240,8 @@ class ToolExecutor:
         permission_policy: PermissionPolicy | None = None,
         invocation: ToolInvocation | None = None,
         run_id: str | None = None,
+        session_id: str | None = None,
+        root_session_id: str | None = None,
     ) -> ToolExecutionOutcome:
         active_policy = self.policy if permission_policy is None else permission_policy
         active_tools = self.tools if tools is None else tools
@@ -257,6 +259,8 @@ class ToolExecutor:
             catalog.as_mapping(),
             version=catalog.version,
             run_id=run_id,
+            session_id=session_id,
+            root_session_id=root_session_id,
             tool_use_id=call.id,
             searched_fingerprints=(
                 active_tools.searched_fingerprints()

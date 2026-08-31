@@ -19,7 +19,7 @@ from my_code.permissions.models import (
 )
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
-from my_code.tools.base import Tool, ToolContext, ToolExposure, ToolOutput
+from my_code.tools.base import Tool, ToolExecutionContext, ToolExposure, ToolOutput
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.discovery import (
     ToolExposureSnapshot,
@@ -52,7 +52,9 @@ class SearchableTool(Tool):
     def exposure(self) -> ToolExposure:
         return ToolExposure.SEARCHABLE
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return False
 
@@ -70,7 +72,9 @@ class SearchableTool(Tool):
         if set(tool_input) != {"value"} or not isinstance(tool_input.get("value"), str):
             raise ValueError("value must be a string")
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del context
         self.inputs.append(tool_input)
         return ToolOutput(f"target:{tool_input['value']}")

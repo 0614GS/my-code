@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from my_code.agent.models import AgentTurnOutcome
+from my_code.agent.models import AgentInvocationOutcome
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.prompts.registry import PromptRegistry
 from my_code.tasks.models import TaskSnapshot
@@ -60,20 +60,30 @@ class SubagentParentContext:
     depth: int = 0
     task_id: str | None = None
     root_run_id: str | None = None
+    session_id: str | None = None
+    root_session_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.run_id.strip():
             raise ValueError("Subagent parent run ID must not be blank")
+        if self.session_id is not None and not self.session_id.strip():
+            raise ValueError("Subagent parent Session ID must be non-empty or null")
         if self.depth < 0:
             raise ValueError("Subagent depth must not be negative")
         if self.task_id is not None and not self.task_id.strip():
             raise ValueError("Subagent parent task ID must be non-empty or null")
         if self.root_run_id is not None and not self.root_run_id.strip():
             raise ValueError("Subagent root run ID must be non-empty or null")
+        if self.root_session_id is not None and not self.root_session_id.strip():
+            raise ValueError("Subagent root Session ID must be non-empty or null")
 
     @property
     def owner_run_id(self) -> str:
         return self.root_run_id or self.run_id
+
+    @property
+    def owner_session_id(self) -> str:
+        return self.root_session_id or self.session_id or self.run_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +117,7 @@ class StartedSubagent:
 class CompletedSubagent:
     task: TaskSnapshot
     run_id: str
-    outcome: AgentTurnOutcome | None
+    outcome: AgentInvocationOutcome | None
     agent_type: SubagentType
 
     def __post_init__(self) -> None:

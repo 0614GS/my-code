@@ -8,7 +8,7 @@ from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolInputError,
     ToolOutput,
 )
@@ -48,7 +48,9 @@ class GlobTool(Tool):
     def get_activity_description(self, tool_input: JsonObject) -> str:
         return f"Finding {required_string(tool_input, 'pattern')}"
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return True
 
@@ -79,7 +81,9 @@ class GlobTool(Tool):
         optional_string(tool_input, "path", ".")
         optional_int(tool_input, "limit", 200, minimum=1, maximum=500)
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         pattern = required_string(tool_input, "pattern")
         self._validate_pattern(pattern)
         base = resolve_workspace_path(

@@ -27,7 +27,7 @@ from my_code.permissions.models import (
 )
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
-from my_code.tools.base import Tool, ToolContext, ToolInputError, ToolOutput
+from my_code.tools.base import Tool, ToolExecutionContext, ToolInputError, ToolOutput
 from my_code.tools.builtin import builtin_tools
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutor
@@ -129,7 +129,9 @@ class NormalizingTool(Tool):
             input_schema={"type": "object"},
         )
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return False
 
@@ -148,7 +150,9 @@ class NormalizingTool(Tool):
             ),
         )
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del context
         return ToolOutput(str(tool_input["value"]))
 
@@ -171,7 +175,9 @@ class BrokenPresentationTool(NormalizingTool):
 
 
 class ExplodingExecutionTool(NormalizingTool):
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del tool_input, context
         raise RuntimeError("secret implementation detail")
 
@@ -192,7 +198,9 @@ class CapturingNormalizingTool(NormalizingTool):
             ),
         )
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         self.executed_input = to_json_object(tool_input)
         return await super().execute(tool_input, context)
 
@@ -217,7 +225,9 @@ class InvalidNormalizingTool(NormalizingTool):
             ),
         )
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del tool_input, context
         self.executed = True
         raise AssertionError("invalid approved input must not execute")
@@ -230,7 +240,7 @@ class MutatingHook:
         call: ToolCall,
         tool: Tool,
         approved_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> None:
         del invocation, tool, context
         call.input["value"] = "hook-call"

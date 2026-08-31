@@ -21,16 +21,16 @@ from my_code.agent.events import (
     AgentTextStarted,
 )
 from my_code.agent.models import (
+    AgentInvocationSucceeded,
     AgentMaxStepsReached,
     AgentTurnInput,
-    AgentTurnSucceeded,
     UserTurnInput,
 )
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.models import ContextOverflow
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.attachments import FileMentionAttachment
 from my_code.conversation.models import (
     AssistantMessage,
@@ -58,7 +58,7 @@ from my_code.model.events import (
 )
 from my_code.model.primitives import (
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ReasoningPresentation,
     TokenUsage,
 )
@@ -163,7 +163,7 @@ class BoundEngine:
     ) -> None:
         self.engine = engine
         self.session = session
-        self.runtime = ContextRuntime()
+        self.runtime = SessionContextCache()
 
     async def submit(self, turn_input: AgentTurnInput):
         return await self.engine.submit(self.session, self.runtime, turn_input)
@@ -378,7 +378,7 @@ async def test_engine_persists_human_and_assistant_messages(tmp_path: Path) -> N
     )
     result = await engine.submit(AgentTurnInput("hello"))
 
-    assert isinstance(result, AgentTurnSucceeded)
+    assert isinstance(result, AgentInvocationSucceeded)
     assert result.text == "done"
     assert isinstance(conversation.context_entries[0], HumanMessage)
     assert isinstance(conversation.context_entries[1], AssistantMessage)
@@ -399,7 +399,7 @@ async def test_continuation_does_not_append_a_human_message(tmp_path: Path) -> N
         async for event in engine.engine.stream_continuation(session, engine.runtime)
     ]
 
-    assert isinstance(events[-1], AgentTurnSucceeded)
+    assert isinstance(events[-1], AgentInvocationSucceeded)
     assert sum(isinstance(item, HumanMessage) for item in session.conversation) == 1
     assert isinstance(session.conversation[-1], AssistantMessage)
 
@@ -609,7 +609,7 @@ async def test_one_human_turn_can_contain_multiple_steps_and_one_tool_round(
 
     result = await engine.submit(AgentTurnInput("read"))
 
-    assert isinstance(result, AgentTurnSucceeded)
+    assert isinstance(result, AgentInvocationSucceeded)
     assert result.text == "finished"
     tool_messages = [
         message
@@ -690,9 +690,11 @@ async def test_permission_mode_change_during_step_applies_to_next_step(
         tool_catalog=catalog,
     )
 
-    result = await engine.submit(session, ContextRuntime(), AgentTurnInput("write"))
+    result = await engine.submit(
+        session, SessionContextCache(), AgentTurnInput("write")
+    )
 
-    assert isinstance(result, AgentTurnSucceeded)
+    assert isinstance(result, AgentInvocationSucceeded)
     batches = [
         item for item in session.conversation if isinstance(item, ToolResultBatch)
     ]
@@ -710,7 +712,7 @@ async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
     opaque = ModelReasoningBlock(
         "thinking",
         ReasoningPresentation("verbatim", ("hidden",)),
-        ProviderContinuationState(
+        ProviderContinuation(
             ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
             "active_trajectory",
             {"type": "thinking", "thinking": "hidden", "signature": "signed"},
@@ -734,7 +736,7 @@ async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
 
     result = await engine.submit(AgentTurnInput("read"))
 
-    assert isinstance(result, AgentTurnSucceeded)
+    assert isinstance(result, AgentInvocationSucceeded)
     assert result.text == "finished"
     assert any(
         isinstance(block, ModelReasoningBlock)
@@ -771,7 +773,7 @@ async def test_engine_has_no_default_step_limit(tmp_path: Path) -> None:
 
     result = await engine.submit(AgentTurnInput("keep going"))
 
-    assert isinstance(result, AgentTurnSucceeded)
+    assert isinstance(result, AgentInvocationSucceeded)
     assert result.completed_steps == 14
     assert len(model.requests) == 14
 
@@ -814,7 +816,7 @@ async def test_explicit_max_steps_returns_structured_terminal_outcome(
 
     continued = await engine.submit(AgentTurnInput("continue"))
 
-    assert isinstance(continued, AgentTurnSucceeded)
+    assert isinstance(continued, AgentInvocationSucceeded)
     assert continued.text == "continued"
     assert len(model.requests) == 3
 
@@ -847,7 +849,7 @@ async def test_reactive_retry_does_not_increment_completed_steps(
     events = [event async for event in engine.stream(AgentTurnInput("recover"))]
     result = events[-1]
 
-    assert isinstance(result, AgentTurnSucceeded)
+    assert isinstance(result, AgentInvocationSucceeded)
     assert result.completed_steps == 1
     assert len(model.requests) == 3
     lifecycle = [
@@ -1053,6 +1055,8 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
         tools: ToolCatalogSnapshot | None = None,
         permission_policy: PermissionPolicy | None = None,
         run_id: str | None = None,
+        session_id: str | None = None,
+        root_session_id: str | None = None,
     ) -> ToolExecutionOutcome:
         if call.id == "read-1":
             raise asyncio.CancelledError
@@ -1061,6 +1065,8 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
             tools=tools,
             permission_policy=permission_policy,
             run_id=run_id,
+            session_id=session_id,
+            root_session_id=root_session_id,
         )
 
     tool_round.executor.execute = cancel_second  # type: ignore[assignment]

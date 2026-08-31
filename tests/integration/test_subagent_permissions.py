@@ -59,11 +59,10 @@ from my_code.runtime.runs import (
     AgentRunFactory,
     AgentRunSpec,
 )
-from my_code.sessions.session import Session
 from my_code.tasks.supervisor import TaskSupervisor
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolOutput,
 )
 from my_code.tools.builtin.write_file import WriteFileTool
@@ -97,7 +96,9 @@ class ProbeTool(Tool):
             {"type": "object", "additionalProperties": False},
         )
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return False
 
@@ -120,7 +121,7 @@ class ProbeTool(Tool):
     async def execute(
         self,
         tool_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> ToolOutput:
         del tool_input, context
         self.executions += 1
@@ -258,7 +259,9 @@ async def test_child_cannot_promote_parent_ask_or_deny(
     assert completed.outcome is not None
     assert probe.executions == 0
     assert [definition.name for definition in provider.requests[0].tools] == ["Probe"]
-    history = Session(tmp_path / "sessions", completed.run_id).conversation
+    child_session = controller.session_for_task(completed.task.task_id)
+    assert child_session is not None
+    history = child_session.conversation
     result_batch = history[2]
     assert isinstance(result_batch, ToolResultBatch)
     assert result_batch.content[0].is_error is True
@@ -317,7 +320,9 @@ async def test_child_cannot_escape_parent_workspace_in_bypass_mode(
 
     assert completed.outcome is not None
     assert not (tmp_path.parent / "escaped.txt").exists()
-    history = Session(tmp_path / "sessions", completed.run_id).conversation
+    child_session = controller.session_for_task(completed.task.task_id)
+    assert child_session is not None
+    history = child_session.conversation
     result_batch = history[2]
     assert isinstance(result_batch, ToolResultBatch)
     assert result_batch.content[0].is_error is True

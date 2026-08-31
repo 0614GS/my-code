@@ -1,6 +1,6 @@
 # 当前总体架构
 
-my-code 是一个 provider-neutral 的模块化单体。核心设计只有一条主线：Session 保存已经发生的事实，Context 为一次模型调用构造投影，Agent 协调模型与工具，所有可变 runtime 能力从 AppState 进入。
+my-code 是一个 provider-neutral 的模块化单体。核心设计只有一条主线：Session 保存已经发生的事实，Context 为一次模型调用构造投影，Agent 协调模型与工具，所有可变 runtime 能力从 ApplicationRuntime 进入。
 
 ## 组件图
 
@@ -10,11 +10,11 @@ flowchart TB
     Host["CLI / TUI"]
     Application["ApplicationService<br/>用户级用例"]
 
-    subgraph Runtime["AppState"]
-        Session["active Session + ContextRuntime"]
-        Workspace["WorkspaceState"]
-        Permissions["PermissionState"]
-        Tools["ToolState / ToolCatalog"]
+    subgraph Runtime["ApplicationRuntime"]
+        Session["ActiveSessionBinding<br/>Session + SessionContextCache + Run ID"]
+        Workspace["Workspace"]
+        Permissions["PermissionRuntime"]
+        Tools["ToolCatalog"]
         Tasks["TaskSupervisor"]
         Runs["AgentRunFactory"]
         ProviderRuntime["ProviderRuntime / leases"]
@@ -67,15 +67,15 @@ flowchart TB
 
 ### Application：用例协调
 
-`application.service.ApplicationService` 是 TUI 唯一 façade，也是 `AppState`
-operation lock 的唯一应用层获取者。它把显式的 Session、ContextRuntime 和窄状态胶囊
+`application.service.ApplicationService` 是 TUI 唯一 façade，也是 `ApplicationRuntime`
+operation lock 的唯一应用层获取者。它把显式的 Session、SessionContextCache 和窄状态胶囊
 交给 `turns`、`sessions`、`configuration` 与 `activity` 用例组件；host-safe DTO 和事件
 只由 `application.contracts` 暴露，纯 runtime 投影位于 `application.runtime_views`。
-应用子包不读取完整 `AppState`，也不反向依赖 façade。
+应用子包不读取完整 `ApplicationRuntime`，也不反向依赖 façade。
 
-### AppState：runtime 所有权
+### ApplicationRuntime：runtime 所有权
 
-`runtime.state.AppState` 持有活动 Session、配对的 `ContextRuntime`、workspace、permission policy、工具目录、任务树、child run factory、MCP/Skill runtime 和 ProviderRuntime。它提供统一 operation lock 和关闭顺序，但不构造 Context、不执行 Agent loop，也不能被任意模块通过全局函数查找。
+`runtime.application.ApplicationRuntime` 持有原子替换的 `ActiveSessionBinding`、Workspace、PermissionRuntime、ToolCatalog、任务树、child run factory、MCP/Skill runtime、ProviderRuntime、前台关闭入口和 observer shutdown。它提供统一 operation lock 和关闭顺序，但不构造 Context、不执行 Agent loop，也不能被任意模块通过全局函数查找。
 
 ### Session：事实与持久化
 
@@ -94,7 +94,7 @@ operation lock 的唯一应用层获取者。它把显式的 Session、ContextRu
 ```text
 用户输入
   -> Session 提交 HumanMessage
-  -> ContextPlanningState
+  -> ContextPlanningInput
   -> ordered ModelInputItem[]
   -> Provider wire request
   -> 完整 AssistantMessage
@@ -108,18 +108,18 @@ operation lock 的唯一应用层获取者。它把显式的 Session、ContextRu
 
 ToolCatalog source 更新只影响下一个 step。并行 ToolRound 在安全调用之间并发，在不安全调用处设置屏障，并始终按原 ToolCall 顺序形成 batch。
 
-Subagent 是标准 Tool 之上的纵向能力。每个 child run 使用独立 Session、Agent 组件、ContextRuntime 和 provider lease；父级只接收结构化 ToolResult 或后台 task ID。TaskSupervisor 管理进程内任务和取消树，最终结果通过 durable Attachment 进入父 Session。
+Subagent 是标准 Tool 之上的纵向能力。每个 child run 使用独立 Session、Agent 组件、SessionContextCache 和 provider lease；父级只接收结构化 ToolResult 或后台 task ID。TaskSupervisor 管理进程内任务和取消树，最终结果通过 durable Attachment 进入父 Session。
 
 ## 关键生命周期
 
 ```text
-启动：bootstrap -> AppState.start -> MCP / Skills -> 接受 turn
+启动：bootstrap -> ApplicationRuntime.start -> MCP / Skills -> 接受 invocation
 
-关闭：TaskSupervisor -> AgentRunFactory -> SkillRuntime
-      -> McpRuntime -> ProviderRuntime
+关闭：foreground interaction -> TaskSupervisor -> AgentRunFactory
+      -> SkillRuntime -> McpRuntime -> ProviderRuntime -> Observer
 ```
 
-Session replace 会同时重建 ContextRuntime。Provider switch 原子更新前台连接和新 lease 的来源，但不改写 Session facts，也不影响已创建 child lease。
+Session switch 先构造完整候选，再一次发布 `ActiveSessionBinding`，因此 Session、SessionContextCache、Run ID 与 effective permission policy 始终成对替换。Provider switch 原子更新前台连接和新 lease 的来源，但不改写 Session facts，也不影响已创建 child lease。
 
 ## 继续阅读
 

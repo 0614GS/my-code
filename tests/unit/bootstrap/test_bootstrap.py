@@ -12,8 +12,8 @@ import pytest
 import my_code.bootstrap as bootstrap_module
 from my_code.auth.credentials import CredentialSource, CredentialStore
 from my_code.bootstrap import (
-    ApplicationAssembly,
     _assemble_agent,
+    _BootstrapComponents,
     initialize_user_storage,
     main,
 )
@@ -62,14 +62,13 @@ def test_agent_assembly_exposes_named_component_identities(tmp_path: Path) -> No
         "11111111-1111-1111-1111-111111111111",
     )
 
-    assert isinstance(assembly, ApplicationAssembly)
+    assert isinstance(assembly, _BootstrapComponents)
     assert not isinstance(assembly, tuple)
-    assert assembly.tool_executor.tools == assembly.initial_tools
-    assert assembly.tool_catalog.snapshot() == assembly.initial_tools
-    assert assembly.tool_executor.policy is assembly.permissions
-    assert assembly.tool_executor.context is assembly.tool_context
-    assert assembly.provider_runtime.router is assembly.provider
-    assert assembly.session.session_id == "11111111-1111-1111-1111-111111111111"
+    tools = assembly.runtime.tools.snapshot()
+    assert assembly.tool_executor.tools == tools
+    assert assembly.tool_executor.policy is assembly.runtime.permissions.policy
+    assert assembly.runtime.provider.router.connection.id == "anthropic"
+    assert assembly.runtime.session.session_id == "11111111-1111-1111-1111-111111111111"
 
 
 def test_subagent_tool_registration_is_feature_gated(tmp_path: Path) -> None:
@@ -98,16 +97,17 @@ def test_subagent_tool_registration_is_feature_gated(tmp_path: Path) -> None:
         "44444444-4444-4444-4444-444444444444",
     )
 
-    assert disabled.initial_tools.get("Subagent") is None
-    tool = enabled.initial_tools.get("Subagent")
+    assert disabled.runtime.tools.snapshot().get("Subagent") is None
+    tool = enabled.runtime.tools.snapshot().get("Subagent")
     assert tool is not None
     assert tool.definition.name == "Subagent"
-    assert enabled.initial_tools.source_for("Subagent") is not None
+    assert enabled.runtime.tools.snapshot().source_for("Subagent") is not None
     properties = tool.definition.input_schema["properties"]
     assert isinstance(properties, dict)
     assert "background" not in properties
     assert tuple(
-        definition.name for definition in background.initial_tools.definitions
+        definition.name
+        for definition in background.runtime.tools.snapshot().definitions
     ) == (
         "Bash",
         "Edit",
@@ -176,8 +176,9 @@ def test_headless_ignores_background_task_configuration(tmp_path: Path) -> None:
         "55555555-5555-5555-5555-555555555555",
     )
 
-    names = tuple(item.name for item in assembled.initial_tools.definitions)
-    subagent = assembled.initial_tools.get("Subagent")
+    tools = assembled.runtime.tools.snapshot()
+    names = tuple(item.name for item in tools.definitions)
+    subagent = tools.get("Subagent")
 
     assert subagent is not None
     properties = subagent.definition.input_schema["properties"]
@@ -199,8 +200,9 @@ def test_background_bash_does_not_require_subagents(tmp_path: Path) -> None:
         "56565656-5656-5656-5656-565656565656",
     )
 
-    names = {item.name for item in assembled.initial_tools.definitions}
-    bash = assembled.initial_tools.get("Bash")
+    tools = assembled.runtime.tools.snapshot()
+    names = {item.name for item in tools.definitions}
+    bash = tools.get("Bash")
     assert bash is not None
     properties = bash.definition.input_schema["properties"]
     assert isinstance(properties, dict)
@@ -231,13 +233,13 @@ async def test_mcp_registration_is_feature_gated_and_starts_before_turns(
         mcp_transport_factory=factory,
     )
 
-    assert assembly.initial_tools.get("mcp__fake__lookup") is None
-    await assembly.mcp.start()
-    assert assembly.tool_catalog.snapshot().get("mcp__fake__lookup") is not None
+    assert assembly.runtime.tools.snapshot().get("mcp__fake__lookup") is None
+    await assembly.runtime.mcp.start()
+    assert assembly.runtime.tools.snapshot().get("mcp__fake__lookup") is not None
 
-    await assembly.mcp.close()
+    await assembly.runtime.mcp.close()
     assert transport.closed is True
-    assert assembly.tool_catalog.snapshot().get("mcp__fake__lookup") is None
+    assert assembly.runtime.tools.snapshot().get("mcp__fake__lookup") is None
 
 
 @pytest.mark.asyncio
@@ -258,13 +260,13 @@ async def test_skill_registration_is_feature_gated_and_lazy(tmp_path: Path) -> N
         "77777777-7777-7777-7777-777777777777",
     )
 
-    await disabled.skills.start()
-    await enabled.skills.start()
+    await disabled.runtime.skills.start()
+    await enabled.runtime.skills.start()
 
-    assert disabled.tool_catalog.snapshot().get("Skill") is None
-    assert enabled.tool_catalog.snapshot().get("Skill") is not None
-    await disabled.skills.close()
-    await enabled.skills.close()
+    assert disabled.runtime.tools.snapshot().get("Skill") is None
+    assert enabled.runtime.tools.snapshot().get("Skill") is not None
+    await disabled.runtime.skills.close()
+    await enabled.runtime.skills.close()
 
 
 def test_bootstrap_creates_required_user_layout_only(tmp_path: Path) -> None:

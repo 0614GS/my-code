@@ -20,7 +20,7 @@ my-code 是模块化单体。类型放在哪里由它维护的语义、不变量
 | `tasks` | 进程内任务状态机、取消树和终态快照 |
 | `agent` | 无活动会话状态的 turn/step 循环 |
 | `mcp` / `skills` | 各自的发现、runtime 与标准 Tool adapter |
-| `runtime` | AppState、ProviderRuntime、ToolState 和 AgentRunFactory |
+| `runtime` | ApplicationRuntime、ActiveSessionBinding、ProviderRuntime 和 AgentRunFactory |
 | `features.background_tasks` | 用户级后台任务 owner、投递、唤醒和结果展示 |
 | `features.subagents` | child Agent 生命周期、策略、activity 与 View |
 | `features.todos` | Todo 模型、投影、提醒和工具 |
@@ -29,7 +29,7 @@ my-code 是模块化单体。类型放在哪里由它维护的语义、不变量
 | `application.sessions` | list/restore/handoff 与 history/transcript 投影 |
 | `application.configuration` | Provider、permission、collaboration 与 display mode 用例 |
 | `application.activity` | owner-scoped background/Subagent activity 与监听 |
-| `application` | 基于 AppState 的窄 façade、operation lock 与跨用例发布 |
+| `application` | 基于 ApplicationRuntime 的窄 façade、operation lock 与跨用例发布 |
 | `cli` / `tui` | Host 输入输出 |
 | `bootstrap` | 唯一对象组装入口 |
 
@@ -76,11 +76,11 @@ from my_code.permissions.models import PermissionDecision
 
 ## 状态与安全边界
 
-- `AppState` 只能由 `application.service`、`runtime.state` 和 `bootstrap` 导入；应用子包仅接收 Session、ContextRuntime 或公开窄状态胶囊。
+- `ApplicationRuntime` 只能由 `application.service`、`runtime.application` 和 `bootstrap` 导入；应用子包仅接收 Session、SessionContextCache 或公开窄状态胶囊。
 - operation lock 只由 `ApplicationService` 获取；用例组件不嵌套获取锁。
 - 应用子包不得依赖 façade；兄弟用例默认互不依赖，共享 host 类型进入 `contracts`。
 - Session 是 canonical conversation、派生 context entries、工具结果和 replay 的唯一公开边界。
-- Agent、Context、ToolExecutor 和 Provider adapter 不持有 AppState 或第二份 conversation。
+- Agent、Context、ToolExecutor 和 Provider adapter 不持有 ApplicationRuntime 或第二份 conversation。
 - Provider SDK 类型只存在于 `providers`；prompt_toolkit/Rich 只存在于 `tui`。
 - Session record、codec 和路径只存在于 `sessions` 私有实现。
 - 所有完整对象图和 Tool source 注册都从 `bootstrap.py` 开始。
@@ -93,7 +93,7 @@ Tach 以 `exact = true` 检查声明与实际导入一致，并检查循环、TY
 
 - 跨模块 import 是否来自公开语义模块；
 - 私有导入、wildcard、未声明符号和跨所有者 re-export；
-- Provider SDK、TUI 库、Session 私有实现、AppState 和 bootstrap 是否泄漏；
+- Provider SDK、TUI 库、Session 私有实现、ApplicationRuntime 和 bootstrap 是否泄漏；
 - Claude Code 参考快照是否可能进入打包输入。
 
 架构守卫扫描生产代码；测试可以导入局部实现验证行为。静态守卫不替代权限、取消、恢复、compact 和工具失败路径测试。

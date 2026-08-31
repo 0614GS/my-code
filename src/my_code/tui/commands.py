@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from shlex import split as shell_split
 
-from my_code.application.contracts.status import RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus
 
 
 class SlashCommandAction(StrEnum):
@@ -164,7 +164,9 @@ class SlashCommandRegistry:
             )
         )
 
-    def dispatch(self, line: str, *, status: RuntimeStatus) -> CommandOutcome | None:
+    def dispatch(
+        self, line: str, *, status: ApplicationStatus
+    ) -> CommandOutcome | None:
         """模型输入返回 ``None``，slash 输入返回本地执行结果。"""
 
         stripped = line.strip()

@@ -6,7 +6,7 @@ from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolExecutionError,
     ToolOutput,
 )
@@ -45,7 +45,9 @@ class EditFileTool(Tool):
     def get_activity_description(self, tool_input: JsonObject) -> str:
         return f"Editing {required_string(tool_input, 'path')}"
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return False
 
@@ -75,7 +77,9 @@ class EditFileTool(Tool):
         required_string(tool_input, "new_string", allow_empty=True)
         optional_bool(tool_input, "replace_all", False)
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         path = resolve_workspace_path(
             context.cwd,
             required_string(tool_input, "path"),

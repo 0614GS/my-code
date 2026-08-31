@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from my_code.agent.engine import AgentEngine
-from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentTurnInput
 from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.context.compaction import ContextCompactor
@@ -184,8 +184,8 @@ async def test_two_agent_runs_can_stream_concurrently(tmp_path: Path) -> None:
     release.set()
     first_result, second_result = await asyncio.gather(first_task, second_task)
 
-    assert isinstance(first_result, AgentTurnSucceeded)
-    assert isinstance(second_result, AgentTurnSucceeded)
+    assert isinstance(first_result, AgentInvocationSucceeded)
+    assert isinstance(second_result, AgentInvocationSucceeded)
     assert {first_result.text, second_result.text} == {
         "done:test-1",
         "done:test-2",

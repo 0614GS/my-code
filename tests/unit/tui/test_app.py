@@ -47,7 +47,7 @@ from my_code.application.contracts.permissions import (
     PermissionModeView,
     PermissionRequest,
 )
-from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
 from my_code.application.contracts.views import (
     CapabilitiesView,
     SessionView,
@@ -139,8 +139,8 @@ class FakeRuntime:
             "manual", TokenUsage(4, 2, provider_reported=True), status
         )
 
-    def status(self) -> RuntimeStatus:
-        return RuntimeStatus(
+    def status(self) -> ApplicationStatus:
+        return ApplicationStatus(
             session_id="session-id",
             cwd="/workspace",
             provider_id="anthropic",
@@ -155,8 +155,8 @@ class FakeRuntime:
             skill_count=1,
         )
 
-    def context_status(self) -> ContextStatus:
-        return ContextStatus(
+    def context_status(self) -> ContextUsageView:
+        return ContextUsageView(
             reported_base_tokens=None,
             estimated_delta_tokens=100,
             projected_tokens=100,
@@ -202,12 +202,12 @@ class FakeRuntime:
 
     async def configure_provider(
         self, update: ProviderUpdate, probe_result=None
-    ) -> RuntimeStatus:
+    ) -> ApplicationStatus:
         del probe_result
         self.provider_updates.append(update)
         return self.status()
 
-    async def select_provider(self, provider_id: str) -> RuntimeStatus:
+    async def select_provider(self, provider_id: str) -> ApplicationStatus:
         self.provider_selections.append(provider_id)
         return self.status()
 
@@ -221,7 +221,7 @@ class FakeRuntime:
             base_url=request.base_url,
         )
 
-    async def remove_provider_credential(self, provider_id: str) -> RuntimeStatus:
+    async def remove_provider_credential(self, provider_id: str) -> ApplicationStatus:
         self.removed_credentials.append(provider_id)
         self.has_stored_key = False
         if self.credential_source is CredentialSource.STORED:
@@ -529,7 +529,7 @@ def test_refresh_status_isolates_context_failure() -> None:
     previous = runtime.context_status()
     app._context_status = previous
 
-    def fail_context() -> ContextStatus:
+    def fail_context() -> ContextUsageView:
         raise RuntimeError("unresolved tool use")
 
     runtime.context_status = fail_context  # type: ignore[method-assign]
@@ -647,7 +647,7 @@ async def test_enter_executes_the_default_selected_slash_command() -> None:
 @pytest.mark.asyncio
 async def test_status_command_uses_cached_context_during_an_open_tool_pair() -> None:
     class InFlightRuntime(FakeRuntime):
-        def context_status(self) -> ContextStatus:
+        def context_status(self) -> ContextUsageView:
             raise ValueError("Unresolved tool use in model input: call_01")
 
     runtime = InFlightRuntime()
@@ -670,7 +670,7 @@ async def test_status_command_uses_cached_context_during_an_open_tool_pair() -> 
 
 def test_status_render_uses_cached_context_during_an_in_flight_tool_call() -> None:
     class InFlightRuntime(FakeRuntime):
-        def context_status(self) -> ContextStatus:
+        def context_status(self) -> ContextUsageView:
             raise ValueError("Unresolved tool use in model input: call_01")
 
     runtime = InFlightRuntime()
@@ -1185,7 +1185,7 @@ async def test_manual_compaction_shows_progress_then_commits_status() -> None:
             self.release = asyncio.Event()
             self.compact_count = 0
 
-        def context_status(self) -> ContextStatus:
+        def context_status(self) -> ContextUsageView:
             return replace(super().context_status(), compact_count=self.compact_count)
 
         async def stream_compaction(self) -> AsyncIterator[TurnEvent]:

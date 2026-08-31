@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 from my_code.agent.engine import AgentEngine
-from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentTurnInput
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.models import AssistantMessage, ToolResultBatch
 from my_code.model.events import (
     ModelStreamEvent,
@@ -110,10 +110,10 @@ async def test_foreground_turn_persists_closed_tool_round_before_next_step(
     engine, session, catalog = build_runtime(tmp_path, model)
 
     outcome = await engine.submit(
-        session, ContextRuntime(), AgentTurnInput("read hello.txt")
+        session, SessionContextCache(), AgentTurnInput("read hello.txt")
     )
 
-    assert outcome == AgentTurnSucceeded(
+    assert outcome == AgentInvocationSucceeded(
         "finished", 2, TokenUsage(8, 2, provider_reported=True)
     )
     assert len(model.requests) == 2

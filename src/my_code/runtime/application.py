@@ -1,11 +1,10 @@
 """Explicit ownership graph for mutable runtime state."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.mcp.runtime import McpRuntime
 from my_code.model.capabilities import ActiveModelEnvironment
 from my_code.permissions.models import PermissionMode
@@ -16,21 +15,12 @@ from my_code.runtime.runs import AgentRunFactory
 from my_code.sessions.session import Session
 from my_code.skills.runtime import SkillRuntime
 from my_code.tasks.supervisor import TaskSupervisor
-from my_code.tools.catalog import ToolCatalog, ToolCatalogSnapshot
+from my_code.tools.catalog import ToolCatalog
 from my_code.workspace.local import Workspace
 
 
-@dataclass(frozen=True, slots=True)
-class WorkspaceState:
-    workspace: Workspace
-
-    @property
-    def root(self) -> Path:
-        return self.workspace.root
-
-
 @dataclass(slots=True)
-class PermissionState:
+class PermissionRuntime:
     """The sole runtime permission state, including process-local UI consent."""
 
     policy: PermissionPolicy
@@ -120,13 +110,21 @@ class PermissionState:
 
 
 @dataclass(frozen=True, slots=True)
-class ToolState:
-    """The application-lifetime dynamic Tool catalog."""
+class ActiveSessionBinding:
+    """一次原子发布的前台 Session、Cache、Run 与权限绑定。"""
 
-    catalog: ToolCatalog
+    session: Session
+    context_cache: SessionContextCache
+    permission_policy: PermissionPolicy
+    run_id: str
 
-    def snapshot(self) -> ToolCatalogSnapshot:
-        return self.catalog.snapshot()
+    @classmethod
+    def build(
+        cls,
+        session: Session,
+        permission_policy: PermissionPolicy,
+    ) -> "ActiveSessionBinding":
+        return cls(session, SessionContextCache(), permission_policy, session.run_id)
 
 
 @dataclass(slots=True)
@@ -179,66 +177,93 @@ class ProviderRuntime:
             raise lease_error
 
 
-class AppState:
+class ApplicationRuntime:
     """Single runtime entry for workspace, Session, permissions, and Provider."""
 
     def __init__(
         self,
         *,
-        workspace: WorkspaceState,
+        workspace: Workspace,
         session: Session,
-        permissions: PermissionState,
+        permissions: PermissionRuntime,
         provider: ProviderRuntime,
-        tools: ToolState,
+        tools: ToolCatalog,
         tasks: TaskSupervisor,
         runs: AgentRunFactory,
         mcp: McpRuntime,
         skills: SkillRuntime,
+        shutdown_observability: Callable[[], None] | None = None,
     ) -> None:
         self.workspace = workspace
-        self._session = session
-        self._context_runtime = ContextRuntime()
         self.permissions = permissions
+        self._foreground = ActiveSessionBinding.build(session, permissions.policy)
         self.provider = provider
         self.tools = tools
         self.tasks = tasks
         self.runs = runs
         self.mcp = mcp
         self.skills = skills
+        self._shutdown_observability = shutdown_observability or (lambda: None)
+        self._close_foreground: Callable[[], Awaitable[None]] | None = None
         self._operation_lock = asyncio.Lock()
+        self._closed = False
 
     @property
     def session(self) -> Session:
-        return self._session
+        return self._foreground.session
 
     @property
-    def context_runtime(self) -> ContextRuntime:
-        return self._context_runtime
+    def context_cache(self) -> SessionContextCache:
+        return self._foreground.context_cache
 
-    def replace_session(
+    @property
+    def foreground(self) -> ActiveSessionBinding:
+        return self._foreground
+
+    def publish_foreground(self, candidate: ActiveSessionBinding) -> None:
+        """完整恢复权限后，一次替换所有 session-scoped 身份与 cache。"""
+
+        self.permissions.policy = candidate.permission_policy
+        self.permissions.restore_mode(candidate.permission_policy.mode)
+        self._foreground = candidate
+
+    def build_foreground(
         self,
-        candidate: Session,
-        *,
-        permission_policy: PermissionPolicy | None = None,
-    ) -> None:
-        if permission_policy is not None:
-            self.permissions.restore_policy(permission_policy)
-        self._session = candidate
-        self._context_runtime = ContextRuntime()
+        session: Session,
+        permission_policy: PermissionPolicy,
+    ) -> ActiveSessionBinding:
+        return ActiveSessionBinding.build(session, permission_policy)
 
     def operation_lock(self) -> asyncio.Lock:
         return self._operation_lock
 
+    def bind_foreground_closer(self, close: Callable[[], Awaitable[None]]) -> None:
+        """由 composition root 一次绑定前台交互资源的关闭入口。"""
+
+        if self._close_foreground is not None:
+            raise RuntimeError("Foreground closer is already bound")
+        self._close_foreground = close
+
     async def start(self) -> None:
         """Lazily initialize optional application capabilities before a turn."""
 
+        if self._closed:
+            raise RuntimeError("Application runtime is closed")
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(self.mcp.start())
             tasks.create_task(self.skills.start())
 
     async def close(self) -> None:
         async with self._operation_lock:
+            if self._closed:
+                return
+            self._closed = True
             errors: list[Exception] = []
+            if self._close_foreground is not None:
+                try:
+                    await self._close_foreground()
+                except Exception as error:
+                    errors.append(error)
             for close in (
                 self.tasks.close,
                 self.runs.close,
@@ -250,14 +275,17 @@ class AppState:
                     await close()
                 except Exception as error:
                     errors.append(error)
+            try:
+                self._shutdown_observability()
+            except Exception as error:
+                errors.append(error)
             if errors:
                 raise ExceptionGroup("Failed to close application runtime", errors)
 
 
 __all__ = [
-    "AppState",
-    "PermissionState",
+    "ApplicationRuntime",
+    "ActiveSessionBinding",
+    "PermissionRuntime",
     "ProviderRuntime",
-    "ToolState",
-    "WorkspaceState",
 ]

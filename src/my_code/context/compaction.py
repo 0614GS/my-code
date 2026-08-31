@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from my_code.context.models import CompactionOutcome, ContextBudget
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextPlanningState
+from my_code.context.session_cache import ContextPlanningInput
 from my_code.conversation.attachments import is_durable_attachment
 from my_code.conversation.models import (
     AttachmentMessage,
@@ -221,7 +221,7 @@ class ContextCompactor:
     async def compact(
         self,
         planner: ContextPlanner,
-        state: ContextPlanningState,
+        state: ContextPlanningInput,
         trigger: CompactTrigger,
         recorder: ModelInvocationRecorder | None = None,
         pre_compact_budget: ContextBudget | None = None,

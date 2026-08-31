@@ -35,7 +35,7 @@ class PendingInputSource(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class AgentTurnSucceeded:
+class AgentInvocationSucceeded:
     """一次用户提示正常完成后的终态数据。"""
 
     text: str
@@ -52,14 +52,14 @@ class AgentMaxStepsReached:
     usage: TokenUsage
 
 
-type AgentTurnOutcome = AgentTurnSucceeded | AgentMaxStepsReached
+type AgentInvocationOutcome = AgentInvocationSucceeded | AgentMaxStepsReached
 
 
 __all__ = [
     "AgentMaxStepsReached",
     "AgentTurnInput",
-    "AgentTurnOutcome",
-    "AgentTurnSucceeded",
+    "AgentInvocationOutcome",
+    "AgentInvocationSucceeded",
     "PendingInputSource",
     "UserTurnInput",
 ]

@@ -4,17 +4,17 @@
 
 ## 所有权
 
-`application.service.ApplicationService` 协调用户级用例，只持有一个 `runtime.state.AppState`。`AppState` 的 operation lock 串行化 submit、stream、compact、resume、模型切换和其他会改变活动状态的操作。
+`application.service.ApplicationService` 协调用户级用例，只持有一个 `runtime.application.ApplicationRuntime`。`ApplicationRuntime` 的 operation lock 串行化 submit、stream、compact、resume、模型切换和其他会改变活动状态的操作。
 
-`agent.engine.AgentEngine` 是不持有活动会话的 turn 执行器。Session、`ContextRuntime`、工具快照和输入由调用方显式传入；session catalog、resume、历史展示和 provider 配置不属于 Agent。
+`agent.engine.AgentEngine` 是不持有活动会话的 turn 执行器。Session、`SessionContextCache`、工具快照和输入由调用方显式传入；session catalog、resume、历史展示和 provider 配置不属于 Agent。
 
-首次交互前，AppState 并行启动可选的 MCP 与 Skill runtime。成功发现的能力只更新 application-lifetime `ToolCatalog`，不会把连接或扫描状态放进 Agent loop。
+首次交互前，ApplicationRuntime 并行启动可选的 MCP 与 Skill runtime。成功发现的能力只更新 application-lifetime `ToolCatalog`，不会把连接或扫描状态放进 Agent loop。
 
 ## 一次 Invocation 与 step-boundary steering
 
 ```text
 ApplicationService.stream_interactive()
-  -> 获取 AppState operation lock
+  -> 获取 ApplicationRuntime operation lock
   -> PendingInputController 并行准备 attachment
   -> AgentEngine.stream_continuation(..., pending_source)
      -> 首次请求前 drain 全部 ready input
@@ -48,7 +48,7 @@ Headless `submit/stream` 不提供 pending source，保留单输入行为。前�
 
 每个 step 只捕获一次工具目录、曝光视图和权限策略。请求中的 definitions、ToolCall 校验和后续 ToolRound 使用同一工具快照；运行中切换 permission mode 会立即持久化并更新 UI，但当前 step 继续使用已捕获的 mode/rules，下一 step 才重新捕获。MCP refresh、Skill reload 或其他目录更新也只影响下一个 step。
 
-Foreground Subagent 由标准 Tool 启动。`SubagentController` 只传递显式 prompt 和 attachments，不复制父 transcript；child 使用独立 Session、`ContextRuntime`、Agent 组件和 provider lease，最终只向父 ToolCall 返回一个结构化结果。
+Foreground Subagent 由标准 Tool 启动。`SubagentController` 只传递显式 prompt 和 attachments，不复制父 transcript；child 使用独立 Session、`SessionContextCache`、Agent 组件和 provider lease，最终只向父 ToolCall 返回一个结构化结果。
 
 启用后台任务后，Bash 或 Subagent 可以先返回 task ID。`TaskSupervisor` 管理终态和取消树，完成通知在安全的后续 step 作为 durable attachment 交付；进度事件和运行中状态不写 Conversation。
 
@@ -65,22 +65,23 @@ Foreground Subagent 由标准 Tool 启动。`SubagentController` 只传递显式
 ## 启动与关闭
 
 ```text
-bootstrap 组装 -> AppState.start() -> MCP / Skills -> 接受 turn
+bootstrap 组装 -> ApplicationRuntime.start() -> MCP / Skills -> 接受 turn
 
-AppState.close():
-TaskSupervisor -> AgentRunFactory -> SkillRuntime -> McpRuntime -> ProviderRuntime
+ApplicationRuntime.close():
+foreground -> TaskSupervisor -> AgentRunFactory -> SkillRuntime
+-> McpRuntime -> ProviderRuntime -> Observer
 ```
 
 关闭会继续尝试回收后续资源，并汇总各阶段异常。运行期 Provider 切换只影响前台 router 和之后创建的 lease；已运行的 child 保持创建时捕获的 binding。
 
 ## 必须保持的不变量
 
-- Agent 不拥有活动 Session、AppState 或第二份 conversation。
+- Agent 不拥有活动 Session、ApplicationRuntime 或第二份 conversation。
 - `AssistantMessage` 必须在工具执行前提交。
 - 同一 step 的请求和 ToolRound 使用同一 `ToolExposureSnapshot`。
 - 用户 steering 只能在首次 plan 前、无工具响应提交后或完整 ToolRound 提交后进入 canonical Conversation。
 - 每个 ToolCall 最终都有一个 ToolResult，完成顺序不改变结果顺序。
-- 同一 AppState 同时只运行一个会改变活动状态的 application operation。
+- 同一 ApplicationRuntime 同时只运行一个会改变活动状态的 application operation。
 - runtime 关闭先停止任务和 child run，再关闭扩展 transport 与 provider client。
 
-主要源码入口：`src/my_code/application/service.py`、`src/my_code/application/turns/coordinator.py`、`src/my_code/runtime/state.py`、`src/my_code/agent/engine.py`、`src/my_code/tools/round_executor.py`。
+主要源码入口：`src/my_code/application/service.py`、`src/my_code/application/turns/coordinator.py`、`src/my_code/runtime/application.py`、`src/my_code/agent/engine.py`、`src/my_code/tools/round_executor.py`。

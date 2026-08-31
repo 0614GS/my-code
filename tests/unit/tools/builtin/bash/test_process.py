@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from my_code.tools.base import ToolContext, ToolExecutionError
+from my_code.tools.base import ToolExecutionContext, ToolExecutionError
 from my_code.tools.builtin.bash.process import execute_bash, subprocess_environment
 
 
@@ -34,7 +34,7 @@ async def test_executor_uses_exact_bash_argv(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    output = await execute_bash("printf ok", ToolContext(tmp_path), 5)
+    output = await execute_bash("printf ok", ToolExecutionContext(tmp_path), 5)
 
     assert output.is_error is False
     assert captured[0][0] == ("/bin/bash", "-c", "printf ok")
@@ -53,7 +53,7 @@ async def test_missing_bash_executable_is_explicit_tool_error(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", missing)
 
     with pytest.raises(ToolExecutionError, match="/bin/bash.*unavailable"):
-        await execute_bash("pwd", ToolContext(tmp_path), 5)
+        await execute_bash("pwd", ToolExecutionContext(tmp_path), 5)
 
 
 def test_subprocess_environment_removes_secrets_and_bash_injection_variables(
@@ -82,7 +82,9 @@ def test_subprocess_environment_removes_secrets_and_bash_injection_variables(
 
 @pytest.mark.asyncio
 async def test_nonzero_exit_is_a_structured_error(tmp_path: Path) -> None:
-    output = await execute_bash("printf failure; exit 7", ToolContext(tmp_path), 5)
+    output = await execute_bash(
+        "printf failure; exit 7", ToolExecutionContext(tmp_path), 5
+    )
 
     assert output.is_error is True
     assert output.metadata["exit_code"] == 7
@@ -92,12 +94,14 @@ async def test_nonzero_exit_is_a_structured_error(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_timeout_terminates_bash_process_group(tmp_path: Path) -> None:
     with pytest.raises(ToolExecutionError, match="timed out"):
-        await execute_bash("sleep 10", ToolContext(tmp_path), 1)
+        await execute_bash("sleep 10", ToolExecutionContext(tmp_path), 1)
 
 
 @pytest.mark.asyncio
 async def test_cancellation_terminates_bash_process_group(tmp_path: Path) -> None:
-    task = asyncio.create_task(execute_bash("sleep 10", ToolContext(tmp_path), 30))
+    task = asyncio.create_task(
+        execute_bash("sleep 10", ToolExecutionContext(tmp_path), 30)
+    )
     await asyncio.sleep(0.05)
     task.cancel()
 
@@ -107,7 +111,7 @@ async def test_cancellation_terminates_bash_process_group(tmp_path: Path) -> Non
 
 @pytest.mark.asyncio
 async def test_output_limit_terminates_command(tmp_path: Path) -> None:
-    context = ToolContext(tmp_path, max_command_output_bytes=8)
+    context = ToolExecutionContext(tmp_path, max_command_output_bytes=8)
 
     with pytest.raises(ToolExecutionError, match="output exceeded"):
         await execute_bash("printf 123456789", context, 5)

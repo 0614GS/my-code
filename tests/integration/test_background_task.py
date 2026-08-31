@@ -8,14 +8,14 @@ from pathlib import Path
 import pytest
 
 from my_code.agent.engine import AgentEngine
-from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentTurnInput
 from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.models import HumanMessage, ToolResultBatch
 from my_code.features.background_tasks.notifications import (
     BackgroundTaskNotificationSource,
@@ -252,7 +252,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
         max_steps=3,
     )
     parent_session = Session(tmp_path / "sessions", parent_id)
-    parent_runtime = ContextRuntime()
+    parent_runtime = SessionContextCache()
 
     first_turn = asyncio.create_task(
         parent.submit(
@@ -262,7 +262,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
     await child_model.entered.wait()
     first = await asyncio.wait_for(first_turn, timeout=1)
 
-    assert isinstance(first, AgentTurnSucceeded)
+    assert isinstance(first, AgentInvocationSucceeded)
     assert first.text == "parent kept going"
     assert child_model.release.is_set() is False
     batch = parent_session.conversation[2]
@@ -282,7 +282,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
         event
         async for event in parent.stream_continuation(parent_session, parent_runtime)
     ]
-    assert isinstance(second_events[-1], AgentTurnSucceeded)
+    assert isinstance(second_events[-1], AgentInvocationSucceeded)
     assert "Background task completed" in request_text(parent_model.requests[2])
     assert task_id in request_text(parent_model.requests[2])
     delivered = tuple(
@@ -302,7 +302,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
     third = await parent.submit(
         parent_session, parent_runtime, AgentTurnInput("check again")
     )
-    assert isinstance(third, AgentTurnSucceeded)
+    assert isinstance(third, AgentInvocationSucceeded)
     delivered_after_next_turn = tuple(
         message
         for message in parent_session.conversation

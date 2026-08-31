@@ -26,7 +26,7 @@ from my_code.model.events import (
 )
 from my_code.model.primitives import (
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ReasoningPresentation,
     TokenUsage,
 )
@@ -327,7 +327,7 @@ class OpenAIResponsesProvider(ModelClient):
             item_type = payload.get("type")
             if item_type in {"reasoning", "function_call", "message"}:
                 _validate_openai_payload(payload)
-            continuation = ProviderContinuationState(
+            continuation = ProviderContinuation(
                 self.binding, "working_context", payload
             )
             if item_type == "reasoning":
@@ -427,7 +427,7 @@ def _message_text(payload: JsonObject) -> str:
     return "\n".join(texts)
 
 
-def _openai_item(state: ProviderContinuationState) -> JsonObject:
+def _openai_item(state: ProviderContinuation) -> JsonObject:
     payload = state.payload
     _validate_openai_payload(payload)
     return to_json_object(payload)

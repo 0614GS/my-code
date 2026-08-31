@@ -10,7 +10,7 @@ from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolInputError,
     ToolOutput,
 )
@@ -66,7 +66,9 @@ class GrepTool(Tool):
     def get_activity_description(self, tool_input: JsonObject) -> str:
         return f"Searching for {required_string(tool_input, 'pattern')}"
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return True
 
@@ -99,7 +101,9 @@ class GrepTool(Tool):
         optional_string(tool_input, "glob", "*")
         optional_int(tool_input, "max_results", 100, minimum=1, maximum=500)
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         base = resolve_workspace_path(
             context.cwd,
             optional_string(tool_input, "path", "."),

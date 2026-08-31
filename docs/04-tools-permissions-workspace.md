@@ -4,7 +4,7 @@
 
 ## Catalog 与 step 快照
 
-`AppState.tools` 持有 application-lifetime `ToolCatalog`。每个来源通过稳定 `ToolSourceId` 原子注册、替换或撤销一组工具；重名或非法更新整体失败，不静默覆盖其他来源。
+`ApplicationRuntime.tools` 持有 application-lifetime `ToolCatalog`。每个来源通过稳定 `ToolSourceId` 原子注册、替换或撤销一组工具；重名或非法更新整体失败，不静默覆盖其他来源。
 
 Agent 在每个 step 开始时捕获完整 `ToolCatalogSnapshot`，再结合 Session discovery state 生成 `ToolExposureSnapshot`：
 
@@ -28,7 +28,7 @@ ToolCall
   -> PermissionPolicy 合并 rules 与 mode
   -> 必要时 PermissionPrompter 确认
   -> audit / hook
-  -> ToolContext 中执行
+  -> ToolExecutionContext 中执行
   -> ToolResult(content, is_error, presentation)
   -> Session 提交完整 ToolResultBatch
 ```
@@ -60,7 +60,7 @@ ToolCall
 
 显式 deny 始终优先；ask 触发 host 确认；allow 只授权匹配范围。Full access/bypass 仍不能绕过工具自身不可变的安全限制，例如 Explore 的只读代理。无 permission handler 时请求默认拒绝。
 
-一次 pending approval 属于当前调用，完成、拒绝、异常或取消后必须释放。Runtime permission mode/rules 的唯一可写来源是 `AppState.permissions.policy`；UI 只能通过 `/permissions` Picker 调用 Application 的稳定 mode-key 选择用例更新。Session mode 变更先由 `Session` 原子写入 transcript，再发布到 policy；resume 恢复目标 Session 的最后模式，包括 `bypassPermissions`。
+一次 pending approval 属于当前调用，完成、拒绝、异常或取消后必须释放。Runtime permission mode/rules 的唯一可写来源是 `ApplicationRuntime.permissions.policy`；UI 只能通过 `/permissions` Picker 调用 Application 的稳定 mode-key 选择用例更新。Session mode 变更先由 `Session` 原子写入 transcript，再发布到 policy；resume 恢复目标 Session 的最后模式，包括 `bypassPermissions`。
 
 权限提示由 application-lifetime prompter 跨 Agent 串行处理；runtime 关闭会取消正在展示和排队的请求。Sandbox 越界提示属于独立类别，展示请求 Agent/run、完整命令、justification 和宿主权限风险，只允许单次批准或拒绝，不产生可记忆规则。
 

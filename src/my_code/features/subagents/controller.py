@@ -8,9 +8,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from my_code.agent.models import (
+    AgentInvocationSucceeded,
     AgentMaxStepsReached,
     AgentTurnInput,
-    AgentTurnSucceeded,
 )
 from my_code.features.background_tasks.registry import (
     BackgroundTask,
@@ -99,20 +99,23 @@ class SubagentController:
             )
 
         run_id = str(uuid4())
+        session_id = str(uuid4())
         task_id = str(uuid4())
         active.add(task_id)
         child_policy = PermissionPolicy(parent_policy.mode, parent_policy.rules)
         definition = self.definitions[spec.agent_type]
         child_parent = SubagentParentContext(
-            run_id,
-            child_depth,
-            task_id,
-            parent.owner_run_id,
+            run_id=run_id,
+            depth=child_depth,
+            task_id=task_id,
+            root_run_id=parent.owner_run_id,
+            session_id=session_id,
+            root_session_id=parent.owner_session_id,
         )
         activity = SubagentActivityRecord(
             task_id,
             run_id,
-            parent.owner_run_id,
+            parent.owner_session_id,
             spec.agent_type,
             spec.description,
             background,
@@ -129,15 +132,17 @@ class SubagentController:
             run_spec = AgentRunSpec(
                 session=Session(
                     self.project_state_dir,
-                    run_id,
+                    session_id,
                     tool_results_dir=(
-                        self.tool_results_dir(run_id)
+                        self.tool_results_dir(session_id)
                         if self.tool_results_dir is not None
                         else None
                     ),
                 ),
                 name=spec.description,
                 parent_run_id=parent.run_id,
+                parent_session_id=parent.owner_session_id,
+                root_session_id=parent.owner_session_id,
                 run_id=run_id,
                 tool_catalog=child_catalog,
                 permission_policy=child_policy,
@@ -166,7 +171,7 @@ class SubagentController:
                         activity.consume(event)
                         self._publish_activity()
                         if isinstance(
-                            event, (AgentTurnSucceeded, AgentMaxStepsReached)
+                            event, (AgentInvocationSucceeded, AgentMaxStepsReached)
                         ):
                             outcome = event
                 if outcome is None:
@@ -184,7 +189,7 @@ class SubagentController:
             self.background_registry.register(
                 BackgroundTask(
                     task_id,
-                    parent.owner_run_id,
+                    parent.owner_session_id,
                     "subagent",
                     spec.description,
                     {
@@ -198,7 +203,7 @@ class SubagentController:
         def on_terminal(snapshot: TaskSnapshot) -> None:
             if background:
                 self.background_registry.terminal(snapshot)
-            self._prune_terminal_activity(parent.owner_run_id)
+            self._prune_terminal_activity(parent.owner_session_id)
             self._publish_activity()
 
         try:
@@ -295,7 +300,7 @@ class SubagentController:
             snapshot.result
             if isinstance(
                 snapshot.result,
-                (AgentTurnSucceeded, AgentMaxStepsReached),
+                (AgentInvocationSucceeded, AgentMaxStepsReached),
             )
             else None
         )

@@ -28,7 +28,7 @@ from my_code.skills.catalog import SkillCatalogSnapshot
 from my_code.skills.models import SkillDefinition, SkillLoadError
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolExecutionError,
     ToolOutput,
 )
@@ -86,7 +86,9 @@ class SkillTool(Tool):
     def get_activity_description(self, tool_input: JsonObject) -> str:
         return f"Loading Skill {tool_input.get('skill', '<invalid>')}"
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return True
 
@@ -123,7 +125,9 @@ class SkillTool(Tool):
         if self.snapshot.get(name) is None:
             raise ValueError(f"Unknown Skill: {name}")
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del context
         name = required_string(tool_input, "skill")
         try:

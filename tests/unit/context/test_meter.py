@@ -5,7 +5,7 @@ import pytest
 
 from my_code.context.meter import DOCUMENT_TOKENS, IMAGE_TOKENS, ContextMeter
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextPlanningState, ContextRuntime
+from my_code.context.session_cache import ContextPlanningInput, SessionContextCache
 from my_code.conversation.models import AssistantMessage, HumanMessage, TextContent
 from my_code.model.primitives import ContextFootprint, ProviderBinding, TokenUsage
 from my_code.model.request import (
@@ -132,7 +132,7 @@ def test_reported_anchor_includes_output_once_and_delta_only(tmp_path: Path) -> 
     )
     first = HumanMessage("first")
     first_plan = planner.plan(
-        ContextPlanningState((first,)), ContextRuntime(), tools=()
+        ContextPlanningInput((first,)), SessionContextCache(), tools=()
     )
     assert first_plan.request_footprint is not None
     response = AssistantMessage(
@@ -147,7 +147,7 @@ def test_reported_anchor_includes_output_once_and_delta_only(tmp_path: Path) -> 
     )
 
     anchored = planner.plan(
-        ContextPlanningState((first, response)), ContextRuntime(), tools=()
+        ContextPlanningInput((first, response)), SessionContextCache(), tools=()
     )
     assert anchored.budget is not None
     assert anchored.budget.reported_base_tokens == 120
@@ -157,7 +157,9 @@ def test_reported_anchor_includes_output_once_and_delta_only(tmp_path: Path) -> 
 
     next_user = HumanMessage("more", parent_uuid=response.uuid)
     grown = planner.plan(
-        ContextPlanningState((first, response, next_user)), ContextRuntime(), tools=()
+        ContextPlanningInput((first, response, next_user)),
+        SessionContextCache(),
+        tools=(),
     )
     assert grown.budget is not None
     assert grown.budget.projected_tokens > 120

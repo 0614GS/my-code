@@ -3,10 +3,10 @@
 from my_code.context.compaction import ContextCompactor
 from my_code.context.models import CompactionOutcome, ContextBudget, ContextPlan
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import (
-    AttachmentDerivationState,
-    ContextPlanningState,
-    ContextRuntime,
+from my_code.context.session_cache import (
+    AttachmentProjectionInput,
+    ContextPlanningInput,
+    SessionContextCache,
 )
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.state import CompactTrigger
@@ -28,8 +28,8 @@ class ContextEngine:
 
     def plan(
         self,
-        state: ContextPlanningState,
-        runtime: ContextRuntime,
+        state: ContextPlanningInput,
+        runtime: SessionContextCache,
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextPlan:
@@ -41,8 +41,8 @@ class ContextEngine:
 
     def inspect(
         self,
-        state: ContextPlanningState,
-        runtime: ContextRuntime,
+        state: ContextPlanningInput,
+        runtime: SessionContextCache,
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextBudget:
@@ -64,13 +64,13 @@ class ContextEngine:
         return self._planner.record_response(plan, response, usage)
 
     def derive_attachments(
-        self, state: AttachmentDerivationState
+        self, state: AttachmentProjectionInput
     ) -> tuple[AttachmentPayload, ...]:
         return self._planner.derive_attachments(state)
 
     async def compact(
         self,
-        state: ContextPlanningState,
+        state: ContextPlanningInput,
         trigger: CompactTrigger,
         recorder: ModelInvocationRecorder | None = None,
         pre_compact_budget: ContextBudget | None = None,

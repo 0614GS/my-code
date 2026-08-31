@@ -1,6 +1,6 @@
 """Stable model-visible projection of background Subagent state."""
 
-from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentMaxStepsReached
 from my_code.features.subagents.models import BackgroundSubagent
 from my_code.foundation.json import JsonObject
 
@@ -17,7 +17,7 @@ def background_subagent_payload(item: BackgroundSubagent) -> JsonObject:
     if task.failure is not None:
         payload["error_kind"] = task.failure.kind
         payload["error"] = task.failure.message
-    if isinstance(task.result, AgentTurnSucceeded):
+    if isinstance(task.result, AgentInvocationSucceeded):
         payload["result"] = task.result.text
         payload["completed_steps"] = task.result.completed_steps
     elif isinstance(task.result, AgentMaxStepsReached):

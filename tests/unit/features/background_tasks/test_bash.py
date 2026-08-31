@@ -9,7 +9,7 @@ from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.tasks.models import TaskStatus
 from my_code.tasks.supervisor import TaskSupervisor
-from my_code.tools.base import ToolContext
+from my_code.tools.base import ToolExecutionContext
 from my_code.tools.builtin.bash import BashTool
 
 
@@ -21,7 +21,7 @@ def build_tool(
     controller = BashBackgroundController(
         tasks,
         registry,
-        tmp_path / "runtime" / "session" / "tasks",
+        lambda session_id: tmp_path / "runtime" / session_id / "tasks",
         "owner",
     )
     tool = BashTool(
@@ -55,14 +55,15 @@ async def test_supervised_foreground_uses_and_removes_private_output(
     tool, tasks, _ = build_tool(tmp_path)
 
     output = await tool.execute(
-        {"command": "printf 'out\\n'; printf 'err\\n' >&2"}, ToolContext(tmp_path)
+        {"command": "printf 'out\\n'; printf 'err\\n' >&2"},
+        ToolExecutionContext(tmp_path),
     )
 
     assert output.content == "exit_code: 0\nout\nerr\n"
     assert list((tmp_path / "runtime").rglob("*.output")) == []
 
     failed = await tool.execute(
-        {"command": "printf failure; exit 9"}, ToolContext(tmp_path)
+        {"command": "printf failure; exit 9"}, ToolExecutionContext(tmp_path)
     )
     assert failed.is_error is True
     assert failed.metadata["exit_code"] == 9
@@ -80,7 +81,7 @@ async def test_explicit_background_retains_output_and_pulses_once(
 
     output = await tool.execute(
         {"command": "printf background", "background": True},
-        ToolContext(tmp_path, run_id="owner"),
+        ToolExecutionContext(tmp_path, run_id="owner"),
     )
     payload = json.loads(output.content)
     output_file = Path(payload["output_file"])
@@ -102,11 +103,35 @@ async def test_explicit_background_retains_output_and_pulses_once(
 
 
 @pytest.mark.asyncio
+async def test_background_output_uses_execution_session_directory(
+    tmp_path: Path,
+) -> None:
+    tool, tasks, _ = build_tool(tmp_path)
+    target_session = "22222222-2222-2222-2222-222222222222"
+
+    output = await tool.execute(
+        {"command": "printf resumed", "background": True},
+        ToolExecutionContext(
+            tmp_path,
+            run_id="live-run",
+            session_id=target_session,
+            root_session_id=target_session,
+        ),
+    )
+    payload = json.loads(output.content)
+
+    assert Path(payload["output_file"]).parent == (
+        tmp_path / "runtime" / target_session / "tasks"
+    )
+    await tasks.close()
+
+
+@pytest.mark.asyncio
 async def test_foreground_budget_hands_same_process_to_background(
     tmp_path: Path,
 ) -> None:
     tool, tasks, registry = build_tool(tmp_path)
-    context = ToolContext(tmp_path, run_id="owner")
+    context = ToolExecutionContext(tmp_path, run_id="owner")
 
     assert tool.background_executor is not None
     output = await tool.background_executor.execute(
@@ -132,7 +157,7 @@ async def test_background_nonzero_is_failed_and_cancel_is_cancelled(
     tmp_path: Path,
 ) -> None:
     tool, tasks, registry = build_tool(tmp_path)
-    context = ToolContext(tmp_path, run_id="owner")
+    context = ToolExecutionContext(tmp_path, run_id="owner")
     failed = json.loads(
         (
             await tool.execute(
@@ -160,7 +185,7 @@ async def test_output_cap_and_runtime_shutdown_are_terminal_failures(
     tmp_path: Path,
 ) -> None:
     tool, tasks, registry = build_tool(tmp_path)
-    context = ToolContext(tmp_path, max_command_output_bytes=8, run_id="owner")
+    context = ToolExecutionContext(tmp_path, max_command_output_bytes=8, run_id="owner")
     capped = json.loads(
         (
             await tool.execute(

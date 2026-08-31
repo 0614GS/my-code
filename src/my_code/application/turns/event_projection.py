@@ -23,7 +23,7 @@ from my_code.agent.events import (
     AgentToolFinished,
     AgentToolStarted,
 )
-from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentMaxStepsReached
 from my_code.application.contracts.events import (
     CompactionCompleted,
     CompactionStarted,
@@ -49,7 +49,7 @@ from my_code.application.contracts.events import (
     TurnInputFailed,
     TurnSucceeded,
 )
-from my_code.application.contracts.status import ContextStatus
+from my_code.application.contracts.status import ContextUsageView
 from my_code.features.todos.projection import project_todos
 from my_code.sessions.session import Session
 
@@ -57,7 +57,7 @@ from my_code.sessions.session import Session
 async def project_agent_events(
     session: Session,
     events: AsyncIterator[AgentEvent],
-    context_status: Callable[[], ContextStatus],
+    context_status: Callable[[], ContextUsageView],
 ) -> AsyncIterator[TurnEvent]:
     previous_todo_write_id = project_todos(session.conversation).latest_write_id
     last_input_context_counts: tuple[int, int] | None = None
@@ -122,7 +122,7 @@ async def project_agent_events(
                 if todo_projection.latest_write_todos is not None:
                     yield TodoListUpdated(todo_projection.latest_write_todos)
             yield ContextUpdated(context_status())
-        elif isinstance(event, AgentTurnSucceeded):
+        elif isinstance(event, AgentInvocationSucceeded):
             yield TurnSucceeded(
                 event.text,
                 event.completed_steps,

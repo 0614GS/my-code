@@ -7,10 +7,10 @@ from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.documents import ContextInstruction, UserContextDocument
 from my_code.context.normalization import ModelInputNormalizer
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import (
-    AttachmentDerivationState,
-    ContextPlanningState,
-    ContextRuntime,
+from my_code.context.session_cache import (
+    AttachmentProjectionInput,
+    ContextPlanningInput,
+    SessionContextCache,
 )
 from my_code.context.xml import render_context_instruction
 from my_code.conversation.attachments import (
@@ -99,14 +99,14 @@ def test_attachment_resolver_runs_sources_in_order() -> None:
     first = TodoReminderAttachment("one")
     second = TodoReminderAttachment("two")
 
-    def first_source(_: AttachmentDerivationState) -> Iterable[TodoReminderAttachment]:
+    def first_source(_: AttachmentProjectionInput) -> Iterable[TodoReminderAttachment]:
         return (first,)
 
-    def second_source(_: AttachmentDerivationState) -> Iterable[TodoReminderAttachment]:
+    def second_source(_: AttachmentProjectionInput) -> Iterable[TodoReminderAttachment]:
         return (second,)
 
     assert DerivedAttachmentResolver((first_source, second_source)).resolve(
-        AttachmentDerivationState("session", (), ())
+        AttachmentProjectionInput("session", (), ())
     ) == (first, second)
 
 
@@ -116,16 +116,16 @@ def test_attachment_resolver_discards_partial_failed_source(
     partial = TodoReminderAttachment("discarded")
     healthy = TodoReminderAttachment("kept")
 
-    def broken(_: AttachmentDerivationState) -> Iterable[TodoReminderAttachment]:
+    def broken(_: AttachmentProjectionInput) -> Iterable[TodoReminderAttachment]:
         yield partial
         raise RuntimeError("failed")
 
-    def good(_: AttachmentDerivationState) -> Iterable[TodoReminderAttachment]:
+    def good(_: AttachmentProjectionInput) -> Iterable[TodoReminderAttachment]:
         return (healthy,)
 
     with caplog.at_level(logging.ERROR):
         result = DerivedAttachmentResolver((broken, good)).resolve(
-            AttachmentDerivationState("session", (), ())
+            AttachmentProjectionInput("session", (), ())
         )
     assert result == (healthy,)
 
@@ -136,7 +136,7 @@ def test_budget_includes_text_attachment_in_one_footprint() -> None:
         FileMentionAttachment("a.txt", "old"), parent_uuid=human.uuid
     )
     plan = _planner().plan(
-        ContextPlanningState((human, attachment)), ContextRuntime(), tools=()
+        ContextPlanningInput((human, attachment)), SessionContextCache(), tools=()
     )
     assert plan.budget is not None
     assert plan.request_footprint is not None
@@ -157,7 +157,7 @@ def test_attachment_uses_the_same_token_budget_as_other_input() -> None:
         max_output_tokens=10,
     )
     plan = planner.plan(
-        ContextPlanningState((human, attachment)), ContextRuntime(), tools=()
+        ContextPlanningInput((human, attachment)), SessionContextCache(), tools=()
     )
 
     assert plan.budget is not None

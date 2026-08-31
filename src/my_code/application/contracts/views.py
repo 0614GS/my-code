@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from my_code.application.contracts.history import HistoryEntry
-from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
 from my_code.model.primitives import ReasoningPresentation
 from my_code.sessions.request_audit import ResolvedAuditRequest
 
@@ -85,7 +85,7 @@ class TranscriptView:
 
 @dataclass(frozen=True, slots=True)
 class SessionView:
-    status: RuntimeStatus
+    status: ApplicationStatus
     history: tuple[HistoryEntry, ...]
 
 
@@ -96,7 +96,7 @@ class SessionUsageView:
     cache_creation_input_tokens: int
     cache_read_input_tokens: int
     output_tokens: int
-    context: ContextStatus
+    context: ContextUsageView
 
     @property
     def total_input_tokens(self) -> int:

@@ -5,8 +5,8 @@
 ## 从事实到请求
 
 ```text
-ContextPlanningState
-  + ContextRuntime cache
+ContextPlanningInput
+  + SessionContextCache cache
   + PromptRegistry
   + Tool definitions
   + ActiveModelEnvironment
@@ -37,7 +37,7 @@ ContextPlanningState
 
 Anthropic adapter 才负责相邻 role 归一化和 tool result 的 user-role 包装；OpenAI adapter 直接输出顶层 function items。两者都用 provider-neutral `call_id` 配对调用和结果，Provider 自身的 response item ID 只存在于 replay payload。
 
-Provider adapter 只消费 `ModelRequest`，不读取 Session 或 AppState。绑定不匹配时保留 canonical content，但不重放 opaque continuation；compact 后已离开工作集的 replay 也不会进入请求。
+Provider adapter 只消费 `ModelRequest`，不读取 Session 或 ApplicationRuntime。绑定不匹配时保留 canonical content，但不重放 opaque continuation；compact 后已离开工作集的 replay 也不会进入请求。
 
 主 Agent 的 `ModelRequest.session_cache_identity` 固定为 Session ID。OpenAI Responses 将其映射为 `prompt_cache_key`；同一 Session 切换 collaboration mode 时 direct tool definitions 和 cache identity 不变，mode、Question discovery 或 invalidation 只作为尾部追加输入进入下一请求。Compaction 若移除了当前 mode world-state，下一次安全用户输入边界会精确补发一次。
 
@@ -45,12 +45,12 @@ Provider adapter 只消费 `ModelRequest`，不读取 Session 或 AppState。绑
 
 `prompts` 拥有 system prompt section 的内容、顺序和稳定性声明。`PromptRegistry` 把 section 解析为 `SystemPrompt`；Provider 根据能力映射 cache control，但 prompt 模块不依赖具体 SDK。
 
-`ContextRuntime` 的生命周期与一个活动 Session 或 child run 完全一致，只缓存：
+`SessionContextCache` 的生命周期与一个活动 Session 或 child run 完全一致，只缓存：
 
 - session-stable prompt section；
 - 首次解析后的 AGENTS 用户上下文。
 
-替换 Session 或创建 child run 会创建新的 ContextRuntime；Provider/模型切换不会自动丢弃与 Session 绑定的 cache。
+替换 Session 或创建 child run 会创建新的 SessionContextCache；Provider/模型切换不会自动丢弃与 Session 绑定的 cache。
 
 显式 `@path`、Todo reminder、Skill 信息和后台完成结果先成为有序 `AttachmentMessage`，再由纯 projector 原位转换为 `UserInput`。已激活 Skill 不修改 system prompt。用户上下文是请求时可信输入，不写入 Conversation，也不作为恢复历史展示。
 
@@ -96,4 +96,4 @@ Compact 请求显式关闭 reasoning，并使用受模型上限约束的独立�
 - compact proposal 只有经 Session 原子提交后才能成为后续请求事实。
 - 字符规模可以触发局部 content replacement，但不能越过 token budget 独立触发 full compact。
 
-主要源码入口：`src/my_code/context/engine.py`、`src/my_code/context/planner.py`、`src/my_code/context/session.py`、`src/my_code/model/request.py`、`src/my_code/prompts/registry.py`。
+主要源码入口：`src/my_code/context/engine.py`、`src/my_code/context/planner.py`、`src/my_code/context/session_cache.py`、`src/my_code/model/request.py`、`src/my_code/prompts/registry.py`。

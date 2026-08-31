@@ -5,29 +5,29 @@ from collections.abc import AsyncIterator, Callable
 
 from my_code.agent.events import AgentEvent
 from my_code.agent.models import (
+    AgentInvocationSucceeded,
     AgentMaxStepsReached,
     AgentTurnInput,
-    AgentTurnSucceeded,
 )
 from my_code.agent.runner import InteractiveAgentRunner
 from my_code.application.contracts.events import (
     AttachmentLoaded,
+    InvocationOutcome,
     MaxStepsReached,
     TurnEvent,
     TurnInputFailed,
-    TurnOutcome,
     TurnSucceeded,
 )
 from my_code.application.contracts.inputs import QueuedInputView
 from my_code.application.contracts.permissions import PermissionHandler
 from my_code.application.contracts.questions import QuestionHandler
-from my_code.application.contracts.status import ContextStatus
+from my_code.application.contracts.status import ContextUsageView
 from my_code.application.turns.event_projection import project_agent_events
 from my_code.application.turns.mentions.loader import AttachmentLoader
 from my_code.application.turns.pending_inputs import PendingInputController
 from my_code.application.turns.permission_prompt import DeferredPermissionPrompter
 from my_code.application.turns.questions import DeferredQuestionBroker
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.sessions.session import Session
 
@@ -68,13 +68,13 @@ class TurnCoordinator:
         self._pending = PendingInputController(session_id, self._attachment_loader)
 
     async def submit(
-        self, session: Session, runtime: ContextRuntime, prompt: str
-    ) -> TurnOutcome:
+        self, session: Session, runtime: SessionContextCache, prompt: str
+    ) -> InvocationOutcome:
         attachments = await self._load_attachments(prompt)
         result = await self._agent.submit(
             session, runtime, AgentTurnInput(prompt, attachments)
         )
-        if isinstance(result, AgentTurnSucceeded):
+        if isinstance(result, AgentInvocationSucceeded):
             return TurnSucceeded(
                 result.text,
                 result.completed_steps,
@@ -92,9 +92,9 @@ class TurnCoordinator:
     async def stream(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         prompt: str,
-        context_status: Callable[[], ContextStatus],
+        context_status: Callable[[], ContextUsageView],
     ) -> AsyncIterator[TurnEvent]:
         loaded = (
             await self._attachment_loader.load(prompt)
@@ -114,8 +114,8 @@ class TurnCoordinator:
     async def stream_interactive(
         self,
         session: Session,
-        runtime: ContextRuntime,
-        context_status: Callable[[], ContextStatus],
+        runtime: SessionContextCache,
+        context_status: Callable[[], ContextUsageView],
     ) -> AsyncIterator[TurnEvent]:
         self._interactive_task = asyncio.current_task()
         try:
@@ -148,8 +148,8 @@ class TurnCoordinator:
     async def stream_continuation(
         self,
         session: Session,
-        runtime: ContextRuntime,
-        context_status: Callable[[], ContextStatus],
+        runtime: SessionContextCache,
+        context_status: Callable[[], ContextUsageView],
     ) -> AsyncIterator[TurnEvent]:
         events = self._agent.stream_continuation(
             session, runtime, pending_source=self._pending
@@ -161,7 +161,7 @@ class TurnCoordinator:
         self,
         session: Session,
         events: AsyncIterator[AgentEvent],
-        context_status: Callable[[], ContextStatus],
+        context_status: Callable[[], ContextUsageView],
     ) -> AsyncIterator[TurnEvent]:
         try:
             async for event in project_agent_events(session, events, context_status):

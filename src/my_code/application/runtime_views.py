@@ -1,6 +1,6 @@
 """Pure projections from explicit runtime snapshots to host-safe contracts."""
 
-from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
 from my_code.application.contracts.views import (
     CapabilitiesView,
     CapabilityDiagnosticView,
@@ -11,7 +11,7 @@ from my_code.application.contracts.views import (
 )
 from my_code.config.settings import AgentSettings
 from my_code.context.engine import ContextEngine
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.models import AssistantMessage
 from my_code.features.todos.projection import project_todos
 from my_code.mcp.models import McpServerSnapshot
@@ -26,13 +26,13 @@ from my_code.tools.discovery import ToolExposureSnapshot, restored_discoveries
 def project_context_status(
     context: ContextEngine,
     session: Session,
-    runtime: ContextRuntime,
+    runtime: SessionContextCache,
     tools: ToolCatalogSnapshot,
-) -> ContextStatus:
+) -> ContextUsageView:
     budget = context.inspect(
         session.context_planning_state(), runtime, tools=tools.definitions
     )
-    return ContextStatus(
+    return ContextUsageView(
         reported_base_tokens=budget.reported_base_tokens,
         estimated_delta_tokens=budget.estimated_delta_tokens,
         projected_tokens=budget.projected_tokens,
@@ -129,8 +129,8 @@ def project_runtime_status(
     permission_mode: str,
     execution_environment: str,
     capabilities: CapabilitiesView,
-) -> RuntimeStatus:
-    return RuntimeStatus(
+) -> ApplicationStatus:
+    return ApplicationStatus(
         session_id=session.session_id,
         cwd=str(settings.cwd),
         provider_id=connection.id,
@@ -153,7 +153,7 @@ def project_runtime_status(
 
 
 def project_session_usage(
-    session: Session, context_status: ContextStatus
+    session: Session, context_status: ContextUsageView
 ) -> SessionUsageView:
     usages = (
         message.usage

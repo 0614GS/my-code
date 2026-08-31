@@ -6,7 +6,7 @@ from typing import Literal
 
 from my_code.foundation.json import JsonObject, to_json_object
 from my_code.model.primitives import (
-    ProviderContinuationState,
+    ProviderContinuation,
     ReasoningPresentation,
     TokenUsage,
 )
@@ -101,7 +101,7 @@ class InputDocument:
 @dataclass(frozen=True, slots=True)
 class ModelTextBlock:
     text: str
-    continuation: ProviderContinuationState | None = None
+    continuation: ProviderContinuation | None = None
     type: Literal["text"] = field(default="text", init=False)
 
 
@@ -110,7 +110,7 @@ class ModelToolUseBlock:
     id: str
     name: str
     input: JsonObject
-    continuation: ProviderContinuationState | None = None
+    continuation: ProviderContinuation | None = None
     type: Literal["tool_use"] = field(default="tool_use", init=False)
 
     def __post_init__(self) -> None:
@@ -158,7 +158,7 @@ class ToolOutputDocument:
 class ModelReasoningBlock:
     id: str
     presentation: ReasoningPresentation
-    continuation: ProviderContinuationState | None = None
+    continuation: ProviderContinuation | None = None
     type: Literal["reasoning"] = field(default="reasoning", init=False)
 
     def __post_init__(self) -> None:

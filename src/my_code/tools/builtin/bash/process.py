@@ -8,7 +8,7 @@ import signal
 from dataclasses import dataclass
 from pathlib import Path
 
-from my_code.tools.base import ToolContext, ToolExecutionError, ToolOutput
+from my_code.tools.base import ToolExecutionContext, ToolExecutionError, ToolOutput
 from my_code.workspace.launcher import (
     BASH_EXECUTABLE,
     CommandAuthority,
@@ -44,7 +44,7 @@ class BashTaskFailed(ToolExecutionError):
 
 async def execute_bash_to_file(
     command: str,
-    context: ToolContext,
+    context: ToolExecutionContext,
     output_file: Path,
     *,
     authority: CommandAuthority | str = CommandAuthority.USE_DEFAULT,
@@ -123,7 +123,7 @@ async def execute_bash_to_file(
 
 async def execute_bash(
     command: str,
-    context: ToolContext,
+    context: ToolExecutionContext,
     timeout_seconds: int,
     *,
     authority: CommandAuthority = CommandAuthority.USE_DEFAULT,

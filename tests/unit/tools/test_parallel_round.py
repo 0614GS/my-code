@@ -20,7 +20,7 @@ from my_code.permissions.models import (
 )
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
-from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.base import Tool, ToolExecutionContext, ToolOutput
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.round_executor import ToolCallFinished, ToolRoundExecutor
@@ -54,7 +54,9 @@ class BarrierTool(Tool):
     def is_concurrency_safe(self, tool_input: JsonObject) -> bool:
         return tool_input.get("safe") is True
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del context
         return self.is_concurrency_safe(tool_input)
 
@@ -81,7 +83,7 @@ class BarrierTool(Tool):
     async def execute(
         self,
         tool_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> ToolOutput:
         del context
         label = tool_input["label"]
@@ -114,7 +116,7 @@ class LimitedTool(BarrierTool):
     async def execute(
         self,
         tool_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> ToolOutput:
         del context
         label = tool_input["label"]
@@ -154,7 +156,7 @@ class AskingTool(BarrierTool):
     async def execute(
         self,
         tool_input: JsonObject,
-        context: ToolContext,
+        context: ToolExecutionContext,
     ) -> ToolOutput:
         del context
         label = tool_input["label"]

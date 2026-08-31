@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentTurnInput
 from my_code.conversation.models import ToolCall
 from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.features.subagents.controller import SubagentController
@@ -45,11 +45,13 @@ class ControlledRun:
         self.closed = False
         self.turn_input: AgentTurnInput | None = None
 
-    async def submit(self, turn_input: AgentTurnInput) -> AgentTurnSucceeded:
+    async def submit(self, turn_input: AgentTurnInput) -> AgentInvocationSucceeded:
         self.turn_input = turn_input
         self.entered.set()
         await self.release.wait()
-        return AgentTurnSucceeded("done", 1, TokenUsage(1, 1, provider_reported=True))
+        return AgentInvocationSucceeded(
+            "done", 1, TokenUsage(1, 1, provider_reported=True)
+        )
 
     async def close(self) -> None:
         self.closed = True
@@ -70,7 +72,7 @@ class ControlledRunFactory:
 
 
 class FailingRun(ControlledRun):
-    async def submit(self, turn_input: AgentTurnInput) -> AgentTurnSucceeded:
+    async def submit(self, turn_input: AgentTurnInput) -> AgentInvocationSucceeded:
         self.turn_input = turn_input
         self.entered.set()
         raise RuntimeError("child failed")

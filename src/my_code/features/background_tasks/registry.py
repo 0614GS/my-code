@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from my_code.agent.models import AgentMaxStepsReached, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentMaxStepsReached
 from my_code.foundation.json import JsonObject
 from my_code.tasks.models import TaskSnapshot
 from my_code.tasks.supervisor import TaskSupervisor
@@ -115,7 +115,7 @@ class BackgroundTaskRegistry:
         if task.failure is not None:
             payload.setdefault("error_kind", task.failure.kind)
             payload.setdefault("error", task.failure.message)
-        if isinstance(task.result, AgentTurnSucceeded):
+        if isinstance(task.result, AgentInvocationSucceeded):
             payload["result"] = task.result.text
             payload["completed_steps"] = task.result.completed_steps
         elif isinstance(task.result, AgentMaxStepsReached):

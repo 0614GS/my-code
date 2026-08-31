@@ -14,7 +14,7 @@ from my_code.permissions.models import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from my_code.tools.base import Tool, ToolContext, ToolExposure, ToolOutput
+from my_code.tools.base import Tool, ToolExecutionContext, ToolExposure, ToolOutput
 
 
 class McpToolCaller(Protocol):
@@ -61,7 +61,9 @@ class McpTool(Tool):
         del tool_input
         return f"Calling MCP server {self.server_name}"
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return False
 
@@ -80,7 +82,9 @@ class McpTool(Tool):
     def validate_input(self, tool_input: JsonObject) -> None:
         validate_tool_input(self.remote.input_schema, tool_input)
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del context
         result = await self._caller.call_tool(
             self.server_name,

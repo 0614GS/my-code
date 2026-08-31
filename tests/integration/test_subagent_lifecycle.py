@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 
 from my_code.agent.engine import AgentEngine
-from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
+from my_code.agent.models import AgentInvocationSucceeded, AgentTurnInput
 from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.context.user_context import AgentsUserContextResolver
 from my_code.conversation.models import HumanMessage, ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
@@ -213,10 +213,10 @@ async def test_foreground_subagent_uses_child_session_and_returns_one_result(
     )
 
     result = await parent.submit(
-        parent_session, ContextRuntime(), AgentTurnInput("delegate this")
+        parent_session, SessionContextCache(), AgentTurnInput("delegate this")
     )
 
-    assert isinstance(result, AgentTurnSucceeded)
+    assert isinstance(result, AgentInvocationSucceeded)
     assert result.text == "parent final"
     parent_history = parent_session.conversation
     assert [entry.kind for entry in parent_history] == [
@@ -231,7 +231,9 @@ async def test_foreground_subagent_uses_child_session_and_returns_one_result(
     payload = json.loads(batch.content[0].content)
     assert payload["status"] == "succeeded"
     assert payload["result"] == "child answer"
-    child_session = Session(tmp_path / "sessions", payload["run_id"])
+    child_session = controller.session_for_task(payload["task_id"])
+    assert child_session is not None
+    assert child_session.session_id != payload["run_id"]
     child_history = child_session.conversation
     assert [entry.kind for entry in child_history] == ["human", "assistant"]
     assert isinstance(child_history[0], HumanMessage)

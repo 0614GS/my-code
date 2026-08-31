@@ -12,15 +12,15 @@ from uuid import uuid4
 
 from my_code.agent.events import AgentEvent
 from my_code.agent.models import (
+    AgentInvocationOutcome,
+    AgentInvocationSucceeded,
     AgentMaxStepsReached,
     AgentTurnInput,
-    AgentTurnOutcome,
-    AgentTurnSucceeded,
     PendingInputSource,
     UserTurnInput,
 )
 from my_code.agent.runner import AgentRunner, InteractiveAgentRunner
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.models import ToolCall, ToolResult
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.client import ModelClient
@@ -45,7 +45,7 @@ from my_code.permissions.models import (
     PermissionUpdate,
 )
 from my_code.permissions.policy import PermissionPolicy
-from my_code.sessions.models import TurnFinished, TurnStarted
+from my_code.sessions.models import InvocationFinished, InvocationStarted
 from my_code.sessions.session import Session
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.discovery import ToolExposureSnapshot
@@ -54,7 +54,7 @@ from my_code.tools.invocation import ToolInvocation, ToolInvocationAudit
 from my_code.tools.presentation import ToolUsePresentation
 
 logger = logging.getLogger(__name__)
-_JournalRecord = TypeVar("_JournalRecord", TurnStarted, TurnFinished)
+_JournalRecord = TypeVar("_JournalRecord", InvocationStarted, InvocationFinished)
 
 
 class InstrumentedAgentRunner:
@@ -80,15 +80,15 @@ class InstrumentedAgentRunner:
     async def submit(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput | Sequence[UserTurnInput],
         pending_source: PendingInputSource | None = None,
-    ) -> AgentTurnOutcome:
-        outcome: AgentTurnOutcome | None = None
+    ) -> AgentInvocationOutcome:
+        outcome: AgentInvocationOutcome | None = None
         async for event in self.stream(
             session, runtime, turn_input, pending_source=pending_source
         ):
-            if isinstance(event, (AgentTurnSucceeded, AgentMaxStepsReached)):
+            if isinstance(event, (AgentInvocationSucceeded, AgentMaxStepsReached)):
                 outcome = event
         if outcome is None:
             raise RuntimeError("Agent stream ended without a completed turn")
@@ -97,7 +97,7 @@ class InstrumentedAgentRunner:
     def stream(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput | Sequence[UserTurnInput],
         pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]:
@@ -112,7 +112,7 @@ class InstrumentedAgentRunner:
     def stream_continuation(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         pending_source: PendingInputSource | None = None,
     ) -> AsyncIterator[AgentEvent]:
         return self._stream(
@@ -126,17 +126,17 @@ class InstrumentedAgentRunner:
     async def _stream(
         self,
         session: Session,
-        runtime: ContextRuntime,
+        runtime: SessionContextCache,
         turn_input: AgentTurnInput | Sequence[UserTurnInput] | None,
         *,
         continuation: bool,
         pending_source: PendingInputSource | None,
     ) -> AsyncIterator[AgentEvent]:
-        turn_id = str(uuid4())
-        run_id = self._run_id or session.session_id
+        invocation_id = str(uuid4())
+        run_id = self._run_id or session.run_id
         evaluation = self._evaluation
-        started = TurnStarted(
-            turn_id,
+        started = InvocationStarted(
+            invocation_id,
             run_id,
             self._parent_run_id,
             self._agent_name,
@@ -149,7 +149,7 @@ class InstrumentedAgentRunner:
         context = RunObservationContext(
             session.session_id,
             run_id,
-            turn_id,
+            invocation_id,
             self._agent_name,
             self._parent_run_id,
             evaluation,
@@ -164,15 +164,17 @@ class InstrumentedAgentRunner:
                     "gen_ai.agent.name": self._agent_name,
                     "gen_ai.conversation.id": session.session_id,
                     "my_code.run.id": run_id,
-                    "my_code.turn.id": turn_id,
-                    "my_code.turn.continuation": continuation,
+                    "my_code.invocation.id": invocation_id,
+                    "my_code.invocation.continuation": continuation,
                 },
             ) as span:
                 self._write_journal(
-                    session.append_turn_started, started, "turn_started"
+                    session.append_invocation_started, started, "invocation_started"
                 )
                 _safe_record(
-                    self._observer, "turn.started", {"continuation": continuation}
+                    self._observer,
+                    "invocation.started",
+                    {"continuation": continuation},
                 )
                 if pending_source is not None:
                     interactive = cast(InteractiveAgentRunner, self._runner)
@@ -200,28 +202,30 @@ class InstrumentedAgentRunner:
                     )
                 try:
                     async for event in source:
-                        if isinstance(event, AgentTurnSucceeded):
+                        if isinstance(event, AgentInvocationSucceeded):
                             terminal_written = True
-                            finished = TurnFinished(
-                                turn_id,
+                            finished = InvocationFinished(
+                                invocation_id,
                                 self._clock().isoformat(),
                                 "succeeded",
                                 completed_steps=event.completed_steps,
                                 usage=event.usage,
                             )
                             self._write_journal(
-                                session.append_turn_finished, finished, "turn_finished"
+                                session.append_invocation_finished,
+                                finished,
+                                "invocation_finished",
                             )
                             span.set_attributes(_usage_attributes(event))
                             _safe_record(
                                 self._observer,
-                                "turn.completed",
+                                "invocation.completed",
                                 {"outcome": "succeeded"},
                             )
                         elif isinstance(event, AgentMaxStepsReached):
                             terminal_written = True
-                            finished = TurnFinished(
-                                turn_id,
+                            finished = InvocationFinished(
+                                invocation_id,
                                 self._clock().isoformat(),
                                 "max_steps",
                                 completed_steps=event.completed_steps,
@@ -229,13 +233,15 @@ class InstrumentedAgentRunner:
                                 usage=event.usage,
                             )
                             self._write_journal(
-                                session.append_turn_finished, finished, "turn_finished"
+                                session.append_invocation_finished,
+                                finished,
+                                "invocation_finished",
                             )
                             span.set_attributes(_usage_attributes(event))
                             span.finish(ObservationOutcome.LIMIT)
                             _safe_record(
                                 self._observer,
-                                "turn.completed",
+                                "invocation.completed",
                                 {"outcome": "max_steps"},
                             )
                         yield event
@@ -243,35 +249,35 @@ class InstrumentedAgentRunner:
                     if not terminal_written:
                         terminal_written = True
                         self._write_journal(
-                            session.append_turn_finished,
-                            TurnFinished(
-                                turn_id,
+                            session.append_invocation_finished,
+                            InvocationFinished(
+                                invocation_id,
                                 self._clock().isoformat(),
                                 "cancelled",
                             ),
-                            "turn_finished",
+                            "invocation_finished",
                         )
                     span.finish(ObservationOutcome.CANCELLED)
-                    _safe_record(self._observer, "turn.cancelled", {})
+                    _safe_record(self._observer, "invocation.cancelled", {})
                     raise
                 except Exception as error:
                     if not terminal_written:
                         terminal_written = True
                         self._write_journal(
-                            session.append_turn_finished,
-                            TurnFinished(
-                                turn_id,
+                            session.append_invocation_finished,
+                            InvocationFinished(
+                                invocation_id,
                                 self._clock().isoformat(),
                                 "failed",
                                 error_type=type(error).__name__,
                             ),
-                            "turn_finished",
+                            "invocation_finished",
                         )
                     span.set_attributes({"error.type": type(error).__name__})
                     span.finish(ObservationOutcome.ERROR)
                     _safe_record(
                         self._observer,
-                        "turn.failed",
+                        "invocation.failed",
                         {"error_type": type(error).__name__},
                     )
                     raise
@@ -285,7 +291,9 @@ class InstrumentedAgentRunner:
         try:
             writer(record)
         except Exception as error:
-            logger.exception("Session turn journal write failed: type=%s", event_type)
+            logger.exception(
+                "Session invocation journal write failed: type=%s", event_type
+            )
             _safe_record(
                 self._observer,
                 "journal.write_failed",
@@ -405,6 +413,8 @@ class InstrumentedToolExecutor:
         tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
         permission_policy: PermissionPolicy | None = None,
         run_id: str | None = None,
+        session_id: str | None = None,
+        root_session_id: str | None = None,
     ) -> ToolExecutionOutcome:
         with _safe_span(
             self._observer,
@@ -421,6 +431,8 @@ class InstrumentedToolExecutor:
                     tools=tools,
                     permission_policy=permission_policy,
                     run_id=run_id,
+                    session_id=session_id,
+                    root_session_id=root_session_id,
                 )
             except asyncio.CancelledError:
                 span.finish(ObservationOutcome.CANCELLED)
@@ -512,7 +524,7 @@ class InstrumentedPermissionPrompter:
 
 
 def _usage_attributes(
-    outcome: AgentTurnSucceeded | AgentMaxStepsReached,
+    outcome: AgentInvocationSucceeded | AgentMaxStepsReached,
 ) -> dict[str, object]:
     return {
         "my_code.agent.steps": outcome.completed_steps,

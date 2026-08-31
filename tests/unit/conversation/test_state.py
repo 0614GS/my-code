@@ -21,7 +21,7 @@ from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.primitives import (
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ProviderReplayRecord,
     ReasoningPresentation,
     TokenUsage,
@@ -147,7 +147,7 @@ def test_failed_tool_result_commit_rolls_back_externalized_file_and_memory(
 def test_restore_repairs_trailing_tool_calls_before_returning(tmp_path: Path) -> None:
     target = _store(tmp_path, "3")
     human = HumanMessage("read")
-    continuation = ProviderContinuationState(
+    continuation = ProviderContinuation(
         ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
         "active_trajectory",
         {"type": "thinking", "thinking": "hidden", "signature": "signed"},
@@ -277,7 +277,7 @@ def test_compaction_prunes_replay_from_context_but_preserves_recoverable_sidecar
     replay = ProviderReplayRecord(
         assistant.uuid,
         replay_content_id(0),
-        ProviderContinuationState(
+        ProviderContinuation(
             ProviderBinding("openai-responses", "openai", "gpt-test"),
             "working_context",
             {"type": "message", "id": "msg", "role": "assistant", "content": []},

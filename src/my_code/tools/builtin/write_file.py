@@ -4,7 +4,7 @@ from my_code.conversation.presentation import ToolResultPresentation
 from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
-from my_code.tools.base import Tool, ToolContext, ToolOutput
+from my_code.tools.base import Tool, ToolExecutionContext, ToolOutput
 from my_code.tools.builtin.file_diff import (
     build_file_diff,
     file_diff_from_json,
@@ -38,7 +38,9 @@ class WriteFileTool(Tool):
     def get_activity_description(self, tool_input: JsonObject) -> str:
         return f"Writing {required_string(tool_input, 'path')}"
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return False
 
@@ -66,7 +68,9 @@ class WriteFileTool(Tool):
         required_string(tool_input, "path")
         required_string(tool_input, "content", allow_empty=True)
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         path = resolve_workspace_path(
             context.cwd, required_string(tool_input, "path"), writable=True
         )

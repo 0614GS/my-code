@@ -20,7 +20,7 @@ from my_code.permissions.updates import permission_rule_for_destination
 from my_code.tools.base import (
     ReadOnlyAssessment,
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolOutput,
 )
 from my_code.tools.builtin.bash.permissions import (
@@ -47,7 +47,7 @@ class BashBackgroundExecutor(Protocol):
     async def execute(
         self,
         command: str,
-        context: ToolContext,
+        context: ToolExecutionContext,
         foreground_budget: float,
         *,
         background: bool,
@@ -166,12 +166,14 @@ class BashTool(Tool):
             )
         return super().present_result({}, output)
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         command = required_string(tool_input, "command")
         return analyze_bash_command(command, context.cwd).is_read_only
 
     def assess_read_only(
-        self, tool_input: JsonObject, context: ToolContext
+        self, tool_input: JsonObject, context: ToolExecutionContext
     ) -> ReadOnlyAssessment:
         command = required_string(tool_input, "command")
         analysis = analyze_bash_command(command, context.cwd)
@@ -355,7 +357,9 @@ class BashTool(Tool):
         elif "justification" in tool_input:
             raise ValueError("'justification' is only valid with require_escalated")
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         command = required_string(tool_input, "command")
         timeout = optional_int(
             tool_input,

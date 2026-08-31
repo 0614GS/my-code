@@ -12,21 +12,21 @@ from my_code.prompts.registry import PromptRegistry
 
 
 @dataclass(frozen=True, slots=True)
-class ContextPlanningState:
+class ContextPlanningInput:
     context_entries: tuple[ConversationEntry, ...]
     content_replacements: tuple[ContentReplacement, ...] = ()
     replay_records: tuple[ProviderReplayRecord, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
-class AttachmentDerivationState:
+class AttachmentProjectionInput:
     session_id: str
     conversation: tuple[ConversationEntry, ...]
     context_entries: tuple[ConversationEntry, ...]
 
 
 @dataclass(slots=True)
-class ContextRuntime:
+class SessionContextCache:
     """Non-persistent caches whose lifetime matches exactly one session or run."""
 
     _prompt_cache: dict[str, ResolvedPromptSection] = field(default_factory=dict)
@@ -45,7 +45,7 @@ class ContextRuntime:
 
 
 __all__ = [
-    "AttachmentDerivationState",
-    "ContextPlanningState",
-    "ContextRuntime",
+    "AttachmentProjectionInput",
+    "ContextPlanningInput",
+    "SessionContextCache",
 ]

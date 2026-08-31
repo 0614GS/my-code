@@ -19,7 +19,7 @@ from my_code.permissions.models import (
 )
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import TerminalPrompter
-from my_code.tools.base import Tool, ToolContext
+from my_code.tools.base import Tool, ToolExecutionContext
 from my_code.tools.builtin.bash import BashTool
 from my_code.tools.builtin.read_file import ReadFileTool
 from my_code.tools.builtin.write_file import WriteFileTool
@@ -33,7 +33,7 @@ async def decide(
     policy: PermissionPolicy,
     tool: Tool,
     tool_input: JsonObject,
-    context: ToolContext,
+    context: ToolExecutionContext,
 ) -> PermissionDecision:
     local = await tool.check_permissions(
         tool_input,
@@ -69,7 +69,7 @@ async def test_explicit_deny_precedes_bypass_mode(tmp_path: Path) -> None:
     )
 
     decision = await decide(
-        policy, BashTool(), {"command": "pwd"}, ToolContext(tmp_path)
+        policy, BashTool(), {"command": "pwd"}, ToolExecutionContext(tmp_path)
     )
 
     assert decision.behavior is PermissionBehavior.DENY
@@ -83,7 +83,7 @@ async def test_explicit_ask_precedes_bypass_mode(tmp_path: Path) -> None:
     )
 
     decision = await decide(
-        policy, BashTool(), {"command": "pwd"}, ToolContext(tmp_path)
+        policy, BashTool(), {"command": "pwd"}, ToolExecutionContext(tmp_path)
     )
 
     assert decision.behavior is PermissionBehavior.ASK
@@ -118,7 +118,7 @@ async def test_local_bash_remembered_allow_overrides_ask_rule(
         policy,
         BashTool(),
         {"command": "git push origin main"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert decision.behavior is PermissionBehavior.ALLOW
@@ -141,13 +141,13 @@ async def test_local_bash_remembered_allow_cannot_override_deny_or_plan(
         ),
         BashTool(),
         {"command": "git push origin main"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
     planned = await decide(
         PermissionPolicy(PermissionMode.PLAN, [remembered]),
         BashTool(),
         {"command": "git push origin main"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert denied.behavior is PermissionBehavior.DENY
@@ -174,7 +174,7 @@ async def test_non_bash_allow_does_not_override_whole_tool_ask(
         policy,
         WriteFileTool(),
         {"path": "notes.txt", "content": "x"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert decision.behavior is PermissionBehavior.ASK
@@ -187,8 +187,12 @@ async def test_default_allows_reads_and_asks_for_writes(tmp_path: Path) -> None:
 
     read_input: JsonObject = {"path": "README.md"}
     write_input: JsonObject = {"path": "README.md", "content": "replacement"}
-    read = await decide(policy, ReadFileTool(), read_input, ToolContext(tmp_path))
-    write = await decide(policy, WriteFileTool(), write_input, ToolContext(tmp_path))
+    read = await decide(
+        policy, ReadFileTool(), read_input, ToolExecutionContext(tmp_path)
+    )
+    write = await decide(
+        policy, WriteFileTool(), write_input, ToolExecutionContext(tmp_path)
+    )
 
     assert read.behavior is PermissionBehavior.ALLOW
     assert write.behavior is PermissionBehavior.ASK
@@ -215,13 +219,16 @@ async def test_file_content_rules_are_interpreted_by_the_tool(tmp_path: Path) ->
     policy = PermissionPolicy(rules=rules)
 
     read = await decide(
-        policy, ReadFileTool(), {"path": "src/readme.txt"}, ToolContext(tmp_path)
+        policy,
+        ReadFileTool(),
+        {"path": "src/readme.txt"},
+        ToolExecutionContext(tmp_path),
     )
     write = await decide(
         policy,
         WriteFileTool(),
         {"path": "src/generated.txt", "content": "ok"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert read.behavior is PermissionBehavior.DENY
@@ -248,13 +255,13 @@ async def test_file_ask_and_safety_checks_precede_bypass(tmp_path: Path) -> None
         policy,
         WriteFileTool(),
         {"path": "release/build.txt", "content": "x"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
     sensitive = await decide(
         policy,
         WriteFileTool(),
         {"path": ".git/config", "content": "x"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert explicit_ask.behavior is PermissionBehavior.ASK
@@ -273,13 +280,13 @@ async def test_write_tool_interprets_accept_edits_and_plan_modes(
         PermissionPolicy(PermissionMode.ACCEPT_EDITS),
         WriteFileTool(),
         tool_input,
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
     planned = await decide(
         PermissionPolicy(PermissionMode.PLAN),
         WriteFileTool(),
         tool_input,
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert accepted.behavior is PermissionBehavior.ALLOW
@@ -295,10 +302,10 @@ async def test_plan_mode_allows_read_only_bash_and_denies_mutation(
     policy = PermissionPolicy(PermissionMode.PLAN)
 
     read = await decide(
-        policy, BashTool(), {"command": "git status"}, ToolContext(tmp_path)
+        policy, BashTool(), {"command": "git status"}, ToolExecutionContext(tmp_path)
     )
     mutation = await decide(
-        policy, BashTool(), {"command": "git add ."}, ToolContext(tmp_path)
+        policy, BashTool(), {"command": "git add ."}, ToolExecutionContext(tmp_path)
     )
 
     assert read.behavior is PermissionBehavior.ALLOW
@@ -313,7 +320,7 @@ async def test_active_sandbox_auto_allows_unclassified_default_command(
         PermissionPolicy(),
         BashTool(sandboxed=True, escalation_enabled=True),
         {"command": "python - <<'PY'\nopen('generated', 'w').write('x')\nPY"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert decision.behavior is PermissionBehavior.ALLOW
@@ -331,13 +338,13 @@ async def test_sandbox_auto_allow_does_not_override_ask_or_plan(
         ),
         tool,
         {"command": "git status"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
     planned = await decide(
         PermissionPolicy(PermissionMode.PLAN),
         tool,
         {"command": "touch generated"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert asked.behavior is PermissionBehavior.ASK
@@ -366,7 +373,7 @@ async def test_escalation_always_asks_in_permissive_modes(
         ),
         tool,
         tool_input,
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert decision.behavior is PermissionBehavior.ASK
@@ -387,7 +394,7 @@ async def test_escalation_is_denied_when_confirmation_is_forbidden(
             "sandbox_permissions": "require_escalated",
             "justification": "test",
         },
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert decision.behavior is PermissionBehavior.DENY
@@ -435,7 +442,7 @@ async def test_content_deny_rule_precedes_read_only_auto_allow(tmp_path: Path) -
     )
 
     decision = await decide(
-        policy, BashTool(), {"command": "git status"}, ToolContext(tmp_path)
+        policy, BashTool(), {"command": "git status"}, ToolExecutionContext(tmp_path)
     )
 
     assert decision.behavior is PermissionBehavior.DENY
@@ -458,7 +465,9 @@ async def test_content_allow_rule_can_approve_one_mutating_command(
         ]
     )
 
-    decision = await decide(policy, BashTool(), tool_input, ToolContext(tmp_path))
+    decision = await decide(
+        policy, BashTool(), tool_input, ToolExecutionContext(tmp_path)
+    )
 
     assert decision.behavior is PermissionBehavior.ALLOW
     assert decision.updated_input == tool_input
@@ -482,7 +491,7 @@ async def test_prefix_allow_must_cover_every_compound_subcommand(
         policy,
         BashTool(),
         {"command": "git status && rm README.md"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert decision.behavior is PermissionBehavior.ASK
@@ -506,7 +515,7 @@ async def test_wildcard_allow_must_cover_every_compound_subcommand(
         policy,
         BashTool(),
         {"command": "git status && rm README.md"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     assert decision.behavior is PermissionBehavior.ASK
@@ -527,7 +536,7 @@ async def test_terminal_bash_option_two_uses_generated_local_rule(
         PermissionPolicy(),
         BashTool(),
         {"command": "git push origin main"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     confirmation = await confirm(
@@ -573,7 +582,7 @@ async def test_terminal_bash_option_three_denies_without_feedback(
         PermissionPolicy(),
         BashTool(),
         {"command": "rm generated.txt"},
-        ToolContext(tmp_path),
+        ToolExecutionContext(tmp_path),
     )
 
     confirmation = await confirm(

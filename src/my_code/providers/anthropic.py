@@ -34,7 +34,7 @@ from my_code.model.events import (
 )
 from my_code.model.primitives import (
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ReasoningPresentation,
     TokenUsage,
 )
@@ -329,7 +329,7 @@ class AnthropicProvider(ModelClient):
                             if block.thinking
                             else ReasoningPresentation("hidden")
                         ),
-                        ProviderContinuationState(
+                        ProviderContinuation(
                             self.binding, "active_trajectory", payload
                         ),
                     )
@@ -339,7 +339,7 @@ class AnthropicProvider(ModelClient):
                     ModelReasoningBlock(
                         str(uuid4()),
                         ReasoningPresentation("redacted"),
-                        ProviderContinuationState(
+                        ProviderContinuation(
                             self.binding,
                             "active_trajectory",
                             {"type": "redacted_thinking", "data": block.data},
@@ -419,7 +419,7 @@ def _anthropic_tool_output_content(
     return document
 
 
-def _anthropic_payload(state: ProviderContinuationState) -> dict[str, object]:
+def _anthropic_payload(state: ProviderContinuation) -> dict[str, object]:
     payload = state.payload
     kind = payload.get("type")
     if kind == "thinking":

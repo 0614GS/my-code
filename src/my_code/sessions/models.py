@@ -10,7 +10,7 @@ from uuid import UUID
 from my_code.model.capabilities import ModelLimits
 from my_code.model.primitives import TokenUsage
 
-type TurnOutcome = Literal["succeeded", "max_steps", "failed", "cancelled"]
+type InvocationOutcome = Literal["succeeded", "max_steps", "failed", "cancelled"]
 
 
 class CollaborationMode(StrEnum):
@@ -18,6 +18,13 @@ class CollaborationMode(StrEnum):
 
     DEFAULT = "default"
     PLAN = "plan"
+
+
+class SessionKind(StrEnum):
+    """决定会话目录与恢复策略的持久化产品分类。"""
+
+    FOREGROUND = "foreground"
+    SUBAGENT = "subagent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +42,10 @@ class SessionStart:
     compact_trigger_tokens: int | None = None
     provider_protocol: str | None = None
     collaboration_mode: str = CollaborationMode.DEFAULT.value
+    session_kind: str = SessionKind.FOREGROUND.value
+    parent_session_id: str | None = None
+    created_by_run_id: str | None = None
+    agent_name: str | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -52,6 +63,32 @@ class SessionStart:
             CollaborationMode(self.collaboration_mode)
         except ValueError as error:
             raise ValueError("Unsupported collaboration mode") from error
+        try:
+            kind = SessionKind(self.session_kind)
+        except ValueError as error:
+            raise ValueError("Unsupported session kind") from error
+        for name, value in (
+            ("parent_session_id", self.parent_session_id),
+            ("created_by_run_id", self.created_by_run_id),
+        ):
+            if value is not None:
+                try:
+                    parsed = UUID(value)
+                except ValueError as error:
+                    raise ValueError(f"{name} must be a UUID or null") from error
+                if str(parsed) != value.lower():
+                    raise ValueError(f"{name} must use canonical UUID syntax")
+        if self.agent_name is not None and not self.agent_name.strip():
+            raise ValueError("agent_name must be non-empty or null")
+        lineage = (
+            self.parent_session_id,
+            self.created_by_run_id,
+            self.agent_name,
+        )
+        if kind is SessionKind.FOREGROUND and any(item is not None for item in lineage):
+            raise ValueError("Foreground sessions cannot declare child lineage")
+        if kind is SessionKind.SUBAGENT and any(item is None for item in lineage):
+            raise ValueError("Subagent sessions require complete child lineage")
         if self.provider_protocol is not None and not self.provider_protocol.strip():
             raise ValueError("provider_protocol must be non-empty or null")
         if self.max_steps is not None and self.max_steps < 1:
@@ -80,8 +117,8 @@ class SessionMetadata:
 
 
 @dataclass(frozen=True, slots=True)
-class TurnStarted:
-    turn_id: str
+class InvocationStarted:
+    invocation_id: str
     run_id: str
     parent_run_id: str | None
     agent_name: str
@@ -93,7 +130,7 @@ class TurnStarted:
 
     def __post_init__(self) -> None:
         for name, value in (
-            ("turn_id", self.turn_id),
+            ("invocation_id", self.invocation_id),
             ("run_id", self.run_id),
             ("agent_name", self.agent_name),
         ):
@@ -111,21 +148,21 @@ class TurnStarted:
 
 
 @dataclass(frozen=True, slots=True)
-class TurnFinished:
-    turn_id: str
+class InvocationFinished:
+    invocation_id: str
     finished_at: str
-    outcome: TurnOutcome
+    outcome: InvocationOutcome
     completed_steps: int | None = None
     max_steps: int | None = None
     usage: TokenUsage | None = None
     error_type: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.turn_id.strip():
-            raise ValueError("turn_id must not be empty")
+        if not self.invocation_id.strip():
+            raise ValueError("invocation_id must not be empty")
         _timestamp(self.finished_at, "finished_at")
         if self.outcome not in {"succeeded", "max_steps", "failed", "cancelled"}:
-            raise ValueError("Unsupported turn outcome")
+            raise ValueError("Unsupported invocation outcome")
         if self.completed_steps is not None and self.completed_steps < 0:
             raise ValueError("completed_steps must not be negative")
         if self.max_steps is not None and self.max_steps < 1:
@@ -134,9 +171,11 @@ class TurnFinished:
             raise ValueError("error_type must be non-empty or null")
         if self.outcome == "succeeded":
             if self.completed_steps is None or self.usage is None:
-                raise ValueError("Succeeded turn requires completed_steps and usage")
+                raise ValueError(
+                    "Succeeded invocation requires completed_steps and usage"
+                )
             if self.max_steps is not None or self.error_type is not None:
-                raise ValueError("Succeeded turn has incompatible fields")
+                raise ValueError("Succeeded invocation has incompatible fields")
         elif self.outcome == "max_steps":
             if (
                 self.completed_steps is None
@@ -144,23 +183,24 @@ class TurnFinished:
                 or self.usage is None
             ):
                 raise ValueError(
-                    "Max-steps turn requires completed_steps, max_steps, and usage"
+                    "Max-steps invocation requires completed_steps, max_steps, "
+                    "and usage"
                 )
             if self.error_type is not None:
-                raise ValueError("Max-steps turn cannot include error_type")
+                raise ValueError("Max-steps invocation cannot include error_type")
         elif self.outcome == "failed":
             if self.error_type is None:
-                raise ValueError("Failed turn requires error_type")
+                raise ValueError("Failed invocation requires error_type")
             if self.max_steps is not None or self.usage is not None:
-                raise ValueError("Failed turn has incompatible fields")
+                raise ValueError("Failed invocation has incompatible fields")
         elif self.max_steps is not None or self.usage is not None or self.error_type:
-            raise ValueError("Cancelled turn has incompatible fields")
+            raise ValueError("Cancelled invocation has incompatible fields")
 
 
 @dataclass(frozen=True, slots=True)
-class TurnHistoryEntry:
-    started: TurnStarted
-    finished: TurnFinished | None = None
+class InvocationHistoryEntry:
+    started: InvocationStarted
+    finished: InvocationFinished | None = None
 
 
 def _timestamp(value: str, name: str) -> datetime:
@@ -176,9 +216,10 @@ def _timestamp(value: str, name: str) -> datetime:
 __all__ = [
     "CollaborationMode",
     "SessionMetadata",
+    "SessionKind",
     "SessionStart",
-    "TurnFinished",
-    "TurnHistoryEntry",
-    "TurnOutcome",
-    "TurnStarted",
+    "InvocationFinished",
+    "InvocationHistoryEntry",
+    "InvocationOutcome",
+    "InvocationStarted",
 ]

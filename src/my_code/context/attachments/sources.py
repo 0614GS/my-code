@@ -4,13 +4,13 @@ import logging
 from collections.abc import Callable, Iterable
 from typing import Protocol, runtime_checkable
 
-from my_code.context.session import AttachmentDerivationState
+from my_code.context.session_cache import AttachmentProjectionInput
 from my_code.conversation.attachments import AttachmentPayload
 
 logger = logging.getLogger(__name__)
 
 type DerivedAttachmentSource = Callable[
-    [AttachmentDerivationState], Iterable[AttachmentPayload]
+    [AttachmentProjectionInput], Iterable[AttachmentPayload]
 ]
 
 
@@ -26,7 +26,7 @@ class DerivedAttachmentResolver:
         self._sources = tuple(sources)
 
     def resolve(
-        self, state: AttachmentDerivationState
+        self, state: AttachmentProjectionInput
     ) -> tuple[AttachmentPayload, ...]:
         """在不保留 resolver 内部状态的前提下解析一次快照。"""
 

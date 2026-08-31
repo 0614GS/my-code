@@ -23,7 +23,7 @@ from my_code.conversation.presentation import (
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.primitives import (
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ProviderReplayRecord,
     ReasoningPresentation,
     TokenUsage,
@@ -37,7 +37,13 @@ from my_code.sessions._codec import (
 )
 from my_code.sessions._store import SessionStore
 from my_code.sessions.catalog import SessionCatalog
-from my_code.sessions.models import TurnFinished, TurnStarted
+from my_code.sessions.models import (
+    InvocationFinished,
+    InvocationHistoryEntry,
+    InvocationStarted,
+    SessionKind,
+    SessionStart,
+)
 from my_code.sessions.session import Session
 
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
@@ -63,9 +69,9 @@ def _chain():
     return human, assistant, results, summary
 
 
-def _turn_started(turn_id: str = "turn") -> TurnStarted:
-    return TurnStarted(
-        turn_id,
+def _invocation_started(invocation_id: str = "turn") -> InvocationStarted:
+    return InvocationStarted(
+        invocation_id,
         "run",
         None,
         "main",
@@ -76,8 +82,8 @@ def _turn_started(turn_id: str = "turn") -> TurnStarted:
 
 def test_turn_journal_round_trips_and_starts_transcript(tmp_path: Path) -> None:
     session = Session(tmp_path, SESSION_ID)
-    started = _turn_started()
-    finished = TurnFinished(
+    started = _invocation_started()
+    finished = InvocationFinished(
         "turn",
         "2026-01-01T00:00:01+00:00",
         "succeeded",
@@ -85,8 +91,8 @@ def test_turn_journal_round_trips_and_starts_transcript(tmp_path: Path) -> None:
         usage=TokenUsage(2, 3, provider_reported=True),
     )
 
-    session.append_turn_started(started)
-    session.append_turn_finished(finished)
+    session.append_invocation_started(started)
+    session.append_invocation_finished(finished)
 
     records = [
         json.loads(line)
@@ -94,10 +100,12 @@ def test_turn_journal_round_trips_and_starts_transcript(tmp_path: Path) -> None:
     ]
     assert [record["type"] for record in records] == [
         "session_started",
-        "turn_started",
-        "turn_finished",
+        "invocation_started",
+        "invocation_finished",
     ]
-    assert Session(tmp_path, SESSION_ID).turn_history == ((session.turn_history[0]),)
+    assert Session(tmp_path, SESSION_ID).invocation_history == (
+        (session.invocation_history[0]),
+    )
 
 
 def test_turn_journal_keeps_unfinished_turn_and_old_transcript_compatible(
@@ -105,20 +113,20 @@ def test_turn_journal_keeps_unfinished_turn_and_old_transcript_compatible(
 ) -> None:
     store = _store(tmp_path)
     store.append(HumanMessage("legacy"))
-    assert Session(tmp_path, SESSION_ID).turn_history == ()
+    assert Session(tmp_path, SESSION_ID).invocation_history == ()
 
     session = Session(tmp_path, SESSION_ID)
-    session.append_turn_started(_turn_started())
+    session.append_invocation_started(_invocation_started())
     restored = Session(tmp_path, SESSION_ID)
-    assert restored.turn_history[0].finished is None
+    assert restored.invocation_history[0].finished is None
 
 
 @pytest.mark.parametrize("kind", ["duplicate", "dangling"])
 def test_turn_journal_rejects_invalid_finish_pairing(tmp_path: Path, kind: str) -> None:
     session = Session(tmp_path, SESSION_ID)
-    session.append_turn_started(_turn_started())
-    session.append_turn_finished(
-        TurnFinished(
+    session.append_invocation_started(_invocation_started())
+    session.append_invocation_finished(
+        InvocationFinished(
             "turn",
             "2026-01-01T00:00:01+00:00",
             "cancelled",
@@ -126,15 +134,17 @@ def test_turn_journal_rejects_invalid_finish_pairing(tmp_path: Path, kind: str) 
     )
     path = tmp_path / f"{SESSION_ID}.jsonl"
     records = [json.loads(line) for line in path.read_text().splitlines()]
-    finish = next(record for record in records if record["type"] == "turn_finished")
+    finish = next(
+        record for record in records if record["type"] == "invocation_finished"
+    )
     if kind == "dangling":
-        finish = {**finish, "turn_id": "missing"}
+        finish = {**finish, "invocation_id": "missing"}
     path.write_text(
         path.read_text() + json.dumps(finish) + "\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="turn_finished|Duplicate"):
+    with pytest.raises(ValueError, match="invocation_finished|Duplicate"):
         Session(tmp_path, SESSION_ID)
 
 
@@ -148,11 +158,11 @@ def test_turn_journal_rejects_invalid_finish_pairing(tmp_path: Path, kind: str) 
         ({"outcome": "cancelled", "error_type": "Error"}, "incompatible"),
     ],
 )
-def test_turn_finished_enforces_outcome_fields(
+def test_invocation_finished_enforces_outcome_fields(
     kwargs: dict[str, object], match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
-        TurnFinished(
+        InvocationFinished(
             "turn",
             "2026-01-01T00:00:01+00:00",
             **kwargs,  # type: ignore[arg-type]
@@ -178,7 +188,7 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
         "conversation_summary_message",
         "session_metadata",
     ]
-    assert all(entry["schema_version"] == 6 for entry in entries)
+    assert all(entry["schema_version"] == 7 for entry in entries)
     assert entries[0]["max_steps"] is None
     assert "max_turns" not in entries[0]
     assert all("role" not in entry and "origin" not in entry for entry in entries)
@@ -287,7 +297,7 @@ def test_legacy_tool_results_message_decodes_as_tool_result_batch() -> None:
 def test_reasoning_assistant_content_round_trips_v6(tmp_path: Path) -> None:
     store = _store(tmp_path)
     human = HumanMessage("hello")
-    continuation = ProviderContinuationState(
+    continuation = ProviderContinuation(
         ProviderBinding("anthropic-messages", "anthropic", "claude-test"),
         "active_trajectory",
         {"type": "thinking", "thinking": "hidden", "signature": "signed"},
@@ -404,7 +414,7 @@ def test_restore_rejects_invalid_replay_association(
     replay = ProviderReplayRecord(
         assistant.uuid,
         replay_content_id(0),
-        ProviderContinuationState(
+        ProviderContinuation(
             ProviderBinding("openai-responses", "openai", "gpt-test"),
             "working_context",
             {"type": "message", "id": "msg", "role": "assistant", "content": []},
@@ -454,7 +464,7 @@ def test_tool_presentation_is_embedded_in_the_conversation_result(
     assert result_record["content"][0]["presentation"]["summary"] == "Read x"
 
 
-def test_file_diff_presentation_round_trips_in_v6_and_is_strict(
+def test_file_diff_presentation_round_trips_in_v7_and_is_strict(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -497,7 +507,7 @@ def test_file_diff_presentation_round_trips_in_v6_and_is_strict(
     assert restored.content[0].presentation == presentation
     documents = [json.loads(line) for line in store.path.read_text().splitlines()]
     record = next(item for item in documents if item["type"] == "tool_result_batch")
-    assert record["schema_version"] == 6
+    assert record["schema_version"] == 7
     record["content"][0]["presentation"]["file_diff"]["unexpected"] = True
     store.path.write_text(
         "".join(json.dumps(item) + "\n" for item in documents), encoding="utf-8"
@@ -670,6 +680,102 @@ def test_catalog_skips_legacy_transcript(
     assert SessionCatalog(tmp_path).list() == ()
     with pytest.raises(ValueError, match=f"schema v{version} is incompatible"):
         _store(tmp_path).load()
+
+
+def test_catalog_lists_only_foreground_sessions(tmp_path: Path) -> None:
+    foreground_id = "22222222-2222-2222-2222-222222222222"
+    child_id = "33333333-3333-3333-3333-333333333333"
+    parent_run_id = "44444444-4444-4444-4444-444444444444"
+    foreground = Session(tmp_path, foreground_id)
+    foreground.append_human_message(HumanMessage("foreground"))
+    child_start = SessionStart(
+        session_id=child_id,
+        created_at="2026-01-01T00:00:00+00:00",
+        cwd=str(tmp_path.resolve()),
+        provider_id="anthropic",
+        model="test",
+        permission_mode="default",
+        max_steps=None,
+        max_output_tokens=100,
+        session_kind=SessionKind.SUBAGENT.value,
+        parent_session_id=foreground_id,
+        created_by_run_id=parent_run_id,
+        agent_name="explore",
+    )
+    child = Session(tmp_path, child_id, start=child_start)
+    child.append_human_message(HumanMessage("child"))
+
+    summaries = SessionCatalog(tmp_path).list()
+
+    assert [item.session_id for item in summaries] == [foreground_id]
+
+
+def test_v6_header_is_compatibly_read_as_foreground(tmp_path: Path) -> None:
+    session = Session(tmp_path, SESSION_ID)
+    session.append_human_message(HumanMessage("legacy v6"))
+    path = tmp_path / f"{SESSION_ID}.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    for record in records:
+        record["schema_version"] = 6
+    for field in (
+        "session_kind",
+        "parent_session_id",
+        "created_by_run_id",
+        "agent_name",
+    ):
+        records[0].pop(field)
+    path.write_text("".join(json.dumps(item) + "\n" for item in records))
+
+    restored = Session.restore(tmp_path, SESSION_ID)
+
+    assert restored.start.session_kind == SessionKind.FOREGROUND.value
+    assert SessionCatalog(tmp_path).list()[0].session_id == SESSION_ID
+
+
+def test_v6_turn_journal_is_mapped_to_legacy_invocation(tmp_path: Path) -> None:
+    session = Session(tmp_path, SESSION_ID)
+    started = _invocation_started()
+    finished = InvocationFinished(
+        started.invocation_id,
+        "2026-01-01T00:00:01+00:00",
+        "succeeded",
+        completed_steps=1,
+        usage=TokenUsage(),
+    )
+    session.append_invocation_started(started)
+    session.append_invocation_finished(finished)
+    path = tmp_path / f"{SESSION_ID}.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    for record in records:
+        record["schema_version"] = 6
+        if record["type"] in {"invocation_started", "invocation_finished"}:
+            record["type"] = record["type"].replace("invocation", "turn", 1)
+            record["turn_id"] = record.pop("invocation_id")
+    for field in (
+        "session_kind",
+        "parent_session_id",
+        "created_by_run_id",
+        "agent_name",
+    ):
+        records[0].pop(field)
+    path.write_text("".join(json.dumps(item) + "\n" for item in records))
+
+    restored = Session(tmp_path, SESSION_ID)
+
+    assert restored.invocation_history == (InvocationHistoryEntry(started, finished),)
+
+
+def test_unknown_session_kind_fails_closed(tmp_path: Path) -> None:
+    session = Session(tmp_path, SESSION_ID)
+    session.append_human_message(HumanMessage("invalid kind"))
+    path = tmp_path / f"{SESSION_ID}.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    records[0]["session_kind"] = "future"
+    path.write_text("".join(json.dumps(item) + "\n" for item in records))
+
+    assert SessionCatalog(tmp_path).list() == ()
+    with pytest.raises(ValueError, match="Unsupported session_kind"):
+        Session.restore(tmp_path, SESSION_ID)
 
 
 def test_failed_append_does_not_update_idempotency_index(

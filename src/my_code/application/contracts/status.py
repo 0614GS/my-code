@@ -6,7 +6,7 @@ from my_code.features.todos.models import TodoItem
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeStatus:
+class ApplicationStatus:
     session_id: str
     cwd: str
     provider_id: str
@@ -26,7 +26,7 @@ class RuntimeStatus:
 
 
 @dataclass(frozen=True, slots=True)
-class ContextStatus:
+class ContextUsageView:
     reported_base_tokens: int | None
     estimated_delta_tokens: int
     projected_tokens: int
@@ -45,6 +45,6 @@ class ContextStatus:
 
 
 __all__ = [
-    "ContextStatus",
-    "RuntimeStatus",
+    "ContextUsageView",
+    "ApplicationStatus",
 ]

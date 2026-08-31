@@ -15,7 +15,7 @@ from my_code.model.events import (
 )
 from my_code.model.primitives import (
     ProviderBinding,
-    ProviderContinuationState,
+    ProviderContinuation,
     ReasoningPresentation,
 )
 from my_code.model.request import (
@@ -272,7 +272,7 @@ def test_anthropic_thinking_round_trips_only_for_matching_model() -> None:
     thinking = ModelReasoningBlock(
         "thinking",
         ReasoningPresentation("verbatim", ("hidden",)),
-        ProviderContinuationState(
+        ProviderContinuation(
             binding,
             "active_trajectory",
             {"type": "thinking", "thinking": "hidden", "signature": "signed"},
@@ -281,7 +281,7 @@ def test_anthropic_thinking_round_trips_only_for_matching_model() -> None:
     redacted = ModelReasoningBlock(
         "redacted",
         ReasoningPresentation("redacted"),
-        ProviderContinuationState(
+        ProviderContinuation(
             binding,
             "active_trajectory",
             {"type": "redacted_thinking", "data": "ciphertext"},

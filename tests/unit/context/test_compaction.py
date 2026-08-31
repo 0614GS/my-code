@@ -6,7 +6,7 @@ import pytest
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.session import ContextPlanningState
+from my_code.context.session_cache import ContextPlanningInput
 from my_code.conversation.models import AssistantMessage, HumanMessage, TextContent
 from my_code.model.capabilities import (
     ActiveModelEnvironment,
@@ -296,7 +296,7 @@ async def test_compaction_stops_after_three_input_cropping_retries() -> None:
 
 
 class _Context:
-    def compaction_view(self, state: ContextPlanningState):  # type: ignore[no-untyped-def]
+    def compaction_view(self, state: ContextPlanningInput):  # type: ignore[no-untyped-def]
         return (UserInput((InputText("model view"),)),), ()
 
     def measure(self, messages):  # type: ignore[no-untyped-def]
@@ -315,7 +315,7 @@ async def test_context_engine_appends_recent_real_user_messages_verbatim() -> No
         "Correction: preserve this wording exactly.",
         parent_uuid=assistant.uuid,
     )
-    state = ContextPlanningState((first, assistant, latest))
+    state = ContextPlanningInput((first, assistant, latest))
     model = _CompletionModel(
         "<analyze>complete</analyze><summary>Generated operational state.</summary>"
     )

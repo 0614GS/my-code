@@ -24,7 +24,7 @@ from my_code.permissions.models import (
 )
 from my_code.tools.base import (
     Tool,
-    ToolContext,
+    ToolExecutionContext,
     ToolExecutionError,
     ToolExposure,
     ToolInputError,
@@ -93,14 +93,8 @@ class DeferredQuestionBroker:
 class QuestionTool(Tool):
     """Searchable root-session interaction tool available only in Plan mode."""
 
-    def __init__(
-        self,
-        broker: DeferredQuestionBroker,
-        *,
-        root_session_id: str | None = None,
-    ) -> None:
+    def __init__(self, broker: DeferredQuestionBroker) -> None:
         self.broker = broker
-        self.root_session_id = root_session_id
 
     @property
     def exposure(self) -> ToolExposure:
@@ -160,7 +154,9 @@ class QuestionTool(Tool):
     def validate_input(self, tool_input: JsonObject) -> None:
         _parse_request(tool_input)
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         del tool_input, context
         return True
 
@@ -182,10 +178,14 @@ class QuestionTool(Tool):
             ),
         )
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         if context.tool_use_id is None:
             raise ToolExecutionError("Question invocation has no tool-use identity.")
-        if self.root_session_id is not None and context.run_id != self.root_session_id:
+        current_session = context.session_id or context.run_id
+        current_root = context.root_session_id or current_session
+        if current_session != current_root:
             raise ToolExecutionError(
                 "Question is available only to the root foreground session."
             )

@@ -11,8 +11,8 @@ from my_code.bootstrap import bootstrap_application
 from my_code.config.paths import MyCodePaths
 from my_code.config.settings import AgentSettings
 from my_code.permissions.models import PermissionMode
+from my_code.runtime.application import ProviderRuntime
 from my_code.runtime.runs import AgentRunSpec
-from my_code.runtime.state import ProviderRuntime
 from my_code.sessions.session import Session
 from my_code.tasks.models import TaskStatus
 
@@ -48,7 +48,7 @@ async def test_runtime_shutdown_cancels_tasks_before_closing_run_leases(
         runtime.settings.paths.project_state_dir,
         "22222222-2222-2222-2222-222222222222",
     )
-    run = await runtime.state.runs.create(AgentRunSpec(child_session, "child"))
+    run = await runtime.runtime.runs.create(AgentRunSpec(child_session, "child"))
     started = asyncio.Event()
     cancellation_observation: list[tuple[bool, bool]] = []
 
@@ -59,7 +59,7 @@ async def test_runtime_shutdown_cancels_tasks_before_closing_run_leases(
         finally:
             cancellation_observation.append((run.closed, run.provider.closed))
 
-    handle = await runtime.state.tasks.submit(blocked, name="child-task")
+    handle = await runtime.runtime.tasks.submit(blocked, name="child-task")
     await started.wait()
 
     await runtime.close()
@@ -70,8 +70,8 @@ async def test_runtime_shutdown_cancels_tasks_before_closing_run_leases(
     assert task_snapshot.failure is not None
     assert task_snapshot.failure.kind == "shutdown"
     assert run.closed is True
-    assert runtime.state.runs.active_count == 0
-    assert runtime.state.provider.leases.active_count == 0
+    assert runtime.runtime.runs.active_count == 0
+    assert runtime.runtime.provider.leases.active_count == 0
     assert not any(
         not task.done() and task.get_name().startswith("my-code:")
         for task in asyncio.all_tasks()
@@ -99,26 +99,26 @@ async def test_runtime_shutdown_order_is_tasks_runs_skills_mcp_then_provider(
         return wrapped
 
     monkeypatch.setattr(
-        runtime.state.tasks,
+        runtime.runtime.tasks,
         "close",
-        observing("tasks", runtime.state.tasks.close),
+        observing("tasks", runtime.runtime.tasks.close),
     )
     monkeypatch.setattr(
-        runtime.state.runs,
+        runtime.runtime.runs,
         "close",
-        observing("runs", runtime.state.runs.close),
+        observing("runs", runtime.runtime.runs.close),
     )
     monkeypatch.setattr(
-        runtime.state.skills,
+        runtime.runtime.skills,
         "close",
-        observing("skills", runtime.state.skills.close),
+        observing("skills", runtime.runtime.skills.close),
     )
     monkeypatch.setattr(
-        runtime.state.mcp,
+        runtime.runtime.mcp,
         "close",
-        observing("mcp", runtime.state.mcp.close),
+        observing("mcp", runtime.runtime.mcp.close),
     )
-    provider = runtime.state.provider
+    provider = runtime.runtime.provider
     original_provider_close = ProviderRuntime.close
 
     async def close_provider(candidate: ProviderRuntime) -> None:

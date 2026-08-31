@@ -19,7 +19,7 @@ from my_code.providers.manager import (
     ProviderView,
 )
 from my_code.providers.router import ProviderConnection
-from my_code.runtime.state import ProviderRuntime
+from my_code.runtime.application import ProviderRuntime
 
 
 def _identity(connection: ProviderConnection) -> tuple[str, object, str, str | None]:

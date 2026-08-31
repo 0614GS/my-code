@@ -10,7 +10,7 @@ import my_code.sessions.models as session_models
 import my_code.tools as tool_adapter
 from my_code.agent.engine import AgentEngine
 from my_code.application.contracts.inputs import FileMention, PathSuggestion
-from my_code.application.contracts.status import RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus
 from my_code.application.service import ApplicationService
 from my_code.context.engine import ContextEngine
 from my_code.context.models import CompactionOutcome, ContextPlan
@@ -190,7 +190,7 @@ def _imported_modules(source_path: Path) -> tuple[str, ...]:
 
 def test_application_owns_frontend_neutral_contracts_without_runtime_protocol() -> None:
     assert ApplicationService.__module__ == "my_code.application.service"
-    assert RuntimeStatus.__module__ == "my_code.application.contracts.status"
+    assert ApplicationStatus.__module__ == "my_code.application.contracts.status"
     assert not hasattr(
         __import__("my_code.application", fromlist=["ChatRuntime"]), "ChatRuntime"
     )
@@ -213,7 +213,7 @@ def test_production_code_does_not_depend_on_legacy_chat_owners() -> None:
         imports = _imported_modules(source_path)
         assert not any(name.startswith(forbidden) for name in imports), source_path
 
-    assert (_PACKAGE_ROOT / "runtime" / "state.py").exists()
+    assert (_PACKAGE_ROOT / "runtime" / "application.py").exists()
 
 
 def test_file_mentions_are_owned_by_turns_not_a_top_level_or_tui_domain() -> None:

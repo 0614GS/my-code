@@ -8,7 +8,7 @@ from pathlib import Path
 from my_code.conversation.models import HumanMessage
 from my_code.sessions._codec import decode_entry
 from my_code.sessions._store import is_session_id
-from my_code.sessions.models import SessionMetadata, SessionStart
+from my_code.sessions.models import SessionKind, SessionMetadata, SessionStart
 
 _MAX_HEAD_BYTES = 128 * 1024
 _MAX_TAIL_BYTES = 128 * 1024
@@ -24,6 +24,8 @@ class SessionSummary:
     created_at: datetime = datetime.min.replace(tzinfo=UTC)
     provider_id: str = ""
     model: str = ""
+    session_kind: SessionKind = SessionKind.FOREGROUND
+    parent_session_id: str | None = None
 
 
 class SessionCatalog:
@@ -53,7 +55,7 @@ class SessionCatalog:
                 summary = _read_summary(path)
             except (OSError, UnicodeError, ValueError, TypeError):
                 continue
-            if summary is not None:
+            if summary is not None and summary.session_kind is SessionKind.FOREGROUND:
                 summaries.append(summary)
         summaries.sort(
             key=lambda item: (item.updated_at, item.session_id), reverse=True
@@ -115,6 +117,8 @@ def _read_summary(path: Path) -> SessionSummary | None:
         updated_at=updated,
         provider_id=start.provider_id,
         model=start.model,
+        session_kind=SessionKind(start.session_kind),
+        parent_session_id=start.parent_session_id,
     )
 
 

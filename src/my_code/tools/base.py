@@ -37,7 +37,7 @@ class ToolExposure(StrEnum):
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class ToolContext:
+class ToolExecutionContext:
     """内置工具可用的运行时依赖。"""
 
     workspace: Workspace
@@ -47,6 +47,8 @@ class ToolContext:
     available_tools: Mapping[str, Tool]
     tool_snapshot_version: int | None
     run_id: str | None
+    session_id: str | None
+    root_session_id: str | None
     tool_use_id: str | None
     internal_read_root: Path | None
     searched_fingerprints: Mapping[str, str]
@@ -59,6 +61,8 @@ class ToolContext:
         available_tools: Mapping[str, Tool] = _EMPTY_TOOLS,
         tool_snapshot_version: int | None = None,
         run_id: str | None = None,
+        session_id: str | None = None,
+        root_session_id: str | None = None,
         tool_use_id: str | None = None,
         internal_read_root: Path | None = None,
         searched_fingerprints: Mapping[str, str] = MappingProxyType({}),
@@ -82,6 +86,8 @@ class ToolContext:
         )
         object.__setattr__(self, "tool_snapshot_version", tool_snapshot_version)
         object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "root_session_id", root_session_id)
         object.__setattr__(self, "tool_use_id", tool_use_id)
         object.__setattr__(
             self,
@@ -106,16 +112,20 @@ class ToolContext:
         *,
         version: int,
         run_id: str | None = None,
+        session_id: str | None = None,
+        root_session_id: str | None = None,
         tool_use_id: str | None = None,
         searched_fingerprints: Mapping[str, str] = MappingProxyType({}),
-    ) -> ToolContext:
-        return ToolContext(
+    ) -> ToolExecutionContext:
+        return ToolExecutionContext(
             self.workspace,
             self.command_timeout_seconds,
             self.max_command_output_bytes,
             tools,
             version,
             run_id,
+            session_id,
+            root_session_id,
             tool_use_id,
             self.internal_read_root,
             searched_fingerprints,
@@ -246,7 +256,9 @@ class Tool(ABC):
         return output.content
 
     @abstractmethod
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         """描述当前具体调用的副作用语义。
 
         Bash 等动态工具会覆盖此方法。该元数据服务于权限、调度和 UI 代码，
@@ -256,7 +268,7 @@ class Tool(ABC):
         raise NotImplementedError
 
     def assess_read_only(
-        self, tool_input: JsonObject, context: ToolContext
+        self, tool_input: JsonObject, context: ToolExecutionContext
     ) -> ReadOnlyAssessment:
         read_only = self.is_read_only(tool_input, context)
         return ReadOnlyAssessment(
@@ -279,14 +291,16 @@ class Tool(ABC):
         """错误输入应在权限评估前抛出 ``ToolInputError``。"""
 
     @abstractmethod
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         """执行已校验并获准的调用。"""
 
 
 __all__ = [
     "ReadOnlyAssessment",
     "Tool",
-    "ToolContext",
+    "ToolExecutionContext",
     "ToolExecutionError",
     "ToolInputError",
     "ToolOutput",

@@ -14,11 +14,11 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from my_code.agent.events import AgentEvent, AgentTextStarted
 from my_code.agent.models import (
+    AgentInvocationSucceeded,
     AgentMaxStepsReached,
     AgentTurnInput,
-    AgentTurnSucceeded,
 )
-from my_code.context.session import ContextRuntime
+from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.models import ToolCall, ToolResult
 from my_code.conversation.presentation import generic_tool_result_presentation
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
@@ -58,10 +58,12 @@ class _SuccessfulRunner:
         raise AssertionError
 
     async def stream(self, session, runtime, turn_input) -> AsyncIterator[AgentEvent]:
-        yield AgentTurnSucceeded("answer", 1, TokenUsage(2, 3, provider_reported=True))
+        yield AgentInvocationSucceeded(
+            "answer", 1, TokenUsage(2, 3, provider_reported=True)
+        )
 
     async def stream_continuation(self, session, runtime) -> AsyncIterator[AgentEvent]:
-        yield AgentTurnSucceeded(
+        yield AgentInvocationSucceeded(
             "continued", 1, TokenUsage(1, 1, provider_reported=True)
         )
 
@@ -70,7 +72,7 @@ class _FailingRunner(_SuccessfulRunner):
     async def stream(self, session, runtime, turn_input):
         del session, runtime, turn_input
         if False:
-            yield AgentTurnSucceeded("", 0, TokenUsage())
+            yield AgentInvocationSucceeded("", 0, TokenUsage())
         raise LookupError("private failure text")
 
 
@@ -92,7 +94,7 @@ class _StreamingRunner(_SuccessfulRunner):
     async def stream(self, session, runtime, turn_input):
         del session, runtime, turn_input
         yield AgentTextStarted()
-        yield AgentTurnSucceeded("answer", 1, TokenUsage())
+        yield AgentInvocationSucceeded("answer", 1, TokenUsage())
 
 
 class _ModelClient:
@@ -158,14 +160,14 @@ async def test_agent_adapter_writes_finish_before_terminal_event(tmp_path) -> No
 
     stream = cast(
         AsyncGenerator[AgentEvent, None],
-        runner.stream(session, ContextRuntime(), AgentTurnInput("hello")),
+        runner.stream(session, SessionContextCache(), AgentTurnInput("hello")),
     )
     event = await anext(stream)
 
-    assert isinstance(event, AgentTurnSucceeded)
-    assert len(session.turn_history) == 1
-    assert session.turn_history[0].finished is not None
-    assert session.turn_history[0].finished.outcome == "succeeded"
+    assert isinstance(event, AgentInvocationSucceeded)
+    assert len(session.invocation_history) == 1
+    assert session.invocation_history[0].finished is not None
+    assert session.invocation_history[0].finished.outcome == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -175,9 +177,11 @@ async def test_agent_adapter_records_error_type_without_text(tmp_path) -> None:
     runner = InstrumentedAgentRunner(_FailingRunner(), observer)
 
     with pytest.raises(LookupError, match="private failure text"):
-        await anext(runner.stream(session, ContextRuntime(), AgentTurnInput("hello")))
+        await anext(
+            runner.stream(session, SessionContextCache(), AgentTurnInput("hello"))
+        )
 
-    finished = session.turn_history[0].finished
+    finished = session.invocation_history[0].finished
     assert finished is not None
     assert finished.outcome == "failed"
     assert finished.error_type == "LookupError"
@@ -191,17 +195,19 @@ async def test_agent_adapter_records_max_steps_and_continuation(tmp_path) -> Non
     session = Session(tmp_path, SESSION_ID)
     max_runner = InstrumentedAgentRunner(_MaxStepsRunner(), observer)
 
-    await max_runner.submit(session, ContextRuntime(), AgentTurnInput("hello"))
+    await max_runner.submit(session, SessionContextCache(), AgentTurnInput("hello"))
     continuation = InstrumentedAgentRunner(_SuccessfulRunner(), observer)
     events = [
         event
-        async for event in continuation.stream_continuation(session, ContextRuntime())
+        async for event in continuation.stream_continuation(
+            session, SessionContextCache()
+        )
     ]
 
-    assert isinstance(events[-1], AgentTurnSucceeded)
-    assert session.turn_history[0].finished is not None
-    assert session.turn_history[0].finished.outcome == "max_steps"
-    assert session.turn_history[1].started.continuation is True
+    assert isinstance(events[-1], AgentInvocationSucceeded)
+    assert session.invocation_history[0].finished is not None
+    assert session.invocation_history[0].finished.outcome == "max_steps"
+    assert session.invocation_history[1].started.continuation is True
 
 
 @pytest.mark.asyncio
@@ -211,10 +217,12 @@ async def test_agent_adapter_records_cancellation(tmp_path) -> None:
     runner = InstrumentedAgentRunner(_CancelledRunner(), observer)
 
     with pytest.raises(asyncio.CancelledError):
-        await anext(runner.stream(session, ContextRuntime(), AgentTurnInput("hello")))
+        await anext(
+            runner.stream(session, SessionContextCache(), AgentTurnInput("hello"))
+        )
 
-    assert session.turn_history[0].finished is not None
-    assert session.turn_history[0].finished.outcome == "cancelled"
+    assert session.invocation_history[0].finished is not None
+    assert session.invocation_history[0].finished.outcome == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -228,10 +236,12 @@ async def test_journal_failure_does_not_change_agent_result(
     def fail(_record) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(session, "append_turn_finished", fail)
-    outcome = await runner.submit(session, ContextRuntime(), AgentTurnInput("hello"))
+    monkeypatch.setattr(session, "append_invocation_finished", fail)
+    outcome = await runner.submit(
+        session, SessionContextCache(), AgentTurnInput("hello")
+    )
 
-    assert isinstance(outcome, AgentTurnSucceeded)
+    assert isinstance(outcome, AgentInvocationSucceeded)
 
 
 @pytest.mark.asyncio
@@ -241,14 +251,14 @@ async def test_agent_adapter_early_close_finishes_span_and_journal(tmp_path) -> 
     runner = InstrumentedAgentRunner(_StreamingRunner(), observer)
     stream = cast(
         AsyncGenerator[AgentEvent, None],
-        runner.stream(session, ContextRuntime(), AgentTurnInput("hello")),
+        runner.stream(session, SessionContextCache(), AgentTurnInput("hello")),
     )
 
     await anext(stream)
     await stream.aclose()
 
-    assert session.turn_history[0].finished is not None
-    assert session.turn_history[0].finished.outcome == "cancelled"
+    assert session.invocation_history[0].finished is not None
+    assert session.invocation_history[0].finished.outcome == "cancelled"
     assert exporter.get_finished_spans()[0].name == "invoke_agent main"
 
 

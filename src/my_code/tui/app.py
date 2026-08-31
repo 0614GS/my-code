@@ -45,7 +45,7 @@ from my_code.application.contracts.history import (
 from my_code.application.contracts.inputs import PathSuggestion
 from my_code.application.contracts.permissions import PermissionRequest
 from my_code.application.contracts.questions import QuestionAnswer, QuestionRequest
-from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
 from my_code.application.contracts.views import SubagentTaskView, TranscriptView
 from my_code.application.service import ApplicationService
 from my_code.model.display import DisplayDensity
@@ -185,8 +185,8 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._todos = ()
         self._tool_activity: ToolActivityGroup | None = None
         self._blocks = TurnBlockCoordinator()
-        self._status: RuntimeStatus | None = None
-        self._context_status: ContextStatus | None = None
+        self._status: ApplicationStatus | None = None
+        self._context_status: ContextUsageView | None = None
         self._status_warning = ""
         self._agents: tuple[SubagentTaskView, ...] = ()
         self._agent_scroll = 0
@@ -1033,7 +1033,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             f"{requested.view_mode} · session re-rendered"
         )
 
-    def _command_context_status(self) -> ContextStatus:
+    def _command_context_status(self) -> ContextUsageView:
         """Prefer a fresh snapshot, but remain readable during an open tool pair."""
 
         try:
@@ -1043,7 +1043,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                 raise
             return self._context_status
 
-    def _refresh_context_status_if_visible(self) -> ContextStatus | None:
+    def _refresh_context_status_if_visible(self) -> ContextUsageView | None:
         """Recalculate only after a user action has exposed context usage."""
 
         if self._context_status is None:

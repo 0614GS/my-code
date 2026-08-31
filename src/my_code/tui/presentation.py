@@ -7,7 +7,7 @@ from rich.console import Console, RenderableType
 from rich.text import Text
 
 from my_code.application.contracts.events import CompactionTrigger
-from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
 from my_code.application.contracts.views import (
     BackgroundTaskView,
     CapabilitiesView,
@@ -24,7 +24,9 @@ from my_code.tui.widgets import (
 from my_code.version import __version__
 
 
-def render_status_card(status: RuntimeStatus, context: ContextStatus) -> RenderableType:
+def render_status_card(
+    status: ApplicationStatus, context: ContextUsageView
+) -> RenderableType:
     used = context.projected_tokens
     remaining = max(0, context.input_limit_tokens - used)
     percent = (
@@ -68,7 +70,7 @@ def render_status_card(status: RuntimeStatus, context: ContextStatus) -> Rendera
     return information_card(f"my-code v{__version__} · Status", field_table(rows))
 
 
-def render_context_card(status: ContextStatus) -> RenderableType:
+def render_context_card(status: ContextUsageView) -> RenderableType:
     measured = (
         "reported + estimated delta"
         if status.measurement == "reported"
@@ -94,7 +96,7 @@ def render_context_card(status: ContextStatus) -> RenderableType:
     return information_card("Context", field_table(tuple(rows)))
 
 
-def render_context_status(status: ContextStatus) -> str:
+def render_context_status(status: ContextUsageView) -> str:
     measured = (
         "reported + estimated delta"
         if status.measurement == "reported"
@@ -115,7 +117,7 @@ def render_context_status(status: ContextStatus) -> str:
     return "\n".join(lines)
 
 
-def format_context_usage(status: ContextStatus) -> str:
+def format_context_usage(status: ContextUsageView) -> str:
     used = status.projected_tokens
     return f"{format_token_k(used)} / {format_token_k(status.input_limit_tokens)}"
 
@@ -129,7 +131,7 @@ def compaction_activity_label(trigger: CompactionTrigger) -> str:
 
 
 def compaction_completed_message(
-    trigger: CompactionTrigger, status: ContextStatus
+    trigger: CompactionTrigger, status: ContextUsageView
 ) -> str:
     source = {
         "manual": "manual",

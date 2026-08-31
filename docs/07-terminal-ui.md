@@ -61,6 +61,6 @@ Permission、Full Access、Provider 和 Resume 共用 composer 下方的 interac
 
 ## 生命周期
 
-首次启动缺少有效 Provider 时，先完成 Provider 向导再组装聊天 runtime。退出时 TUI 关闭 transcript、取消 UI watcher、清除底部动态布局并交还光标；外层随后按 AppState 顺序关闭任务、扩展和 Provider。
+首次启动缺少有效 Provider 时，先完成 Provider 向导再组装聊天 runtime。退出时 TUI 关闭 transcript、取消 UI watcher、清除底部动态布局并交还光标；外层随后按 ApplicationRuntime 顺序关闭任务、扩展和 Provider。
 
 主要源码入口：`src/my_code/tui/app.py`、`src/my_code/tui/turns.py`、`src/my_code/tui/layout.py`、`src/my_code/tui/key_bindings.py`、`src/my_code/application/service.py`。

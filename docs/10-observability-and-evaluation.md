@@ -4,21 +4,21 @@ my-code 只有一个可靠的执行事实源：Session transcript。OpenTelemetr
 可丢失的运行观测面，用于时间线、错误类型、重试、耗时与指标，不能用于恢复，也不是
 Harness 的数据依赖。
 
-## Turn Journal
+## Invocation Journal
 
 Session transcript 在完整对话事实之外保存两种最小辅助记录：
 
-- `turn_started` 保存 turn/run/parent run/agent 身份、开始时间、是否 continuation，
+- `invocation_started` 保存 invocation/run/parent run/agent 身份、开始时间、是否 continuation，
   以及可选的 evaluation run、test case 和 attempt 标识。
-- `turn_finished` 保存结束时间、`succeeded | max_steps | failed | cancelled` outcome，
+- `invocation_finished` 保存结束时间、`succeeded | max_steps | failed | cancelled` outcome，
   以及适用于该 outcome 的 step、usage、limit 或异常类型。
 
 Journal 不复制 prompt、模型响应、工具输入或结果；这些内容已经存在于 canonical
 conversation 和外置工具结果中。异常只保存类型，不保存异常文本。没有匹配 finish 的
-start 表示进程中断或 journal 写入失败，Harness 应将其判定为 incomplete。旧 transcript
-不需要迁移，读取时得到空的 `turn_history`。
+start 表示进程中断或 journal 写入失败，Harness 应将其判定为 incomplete。v6 的
+`turn_started/turn_finished` 在读取时映射为 legacy invocation，不改写原文件。
 
-Harness 以 transcript、外置工具结果和 `Session.turn_history` 为权威输入，并在自己的
+Harness 以 transcript、外置工具结果和 `Session.invocation_history` 为权威输入，并在自己的
 存储中保存评分。运行评测不要求启动 Collector。
 
 ## Runtime 观测边界
@@ -37,7 +37,7 @@ InstrumentedModelClient(purpose=compaction) -> chat <model>
 ```
 
 `observability/` 是唯一允许导入 OpenTelemetry SDK 的生产包。runtime adapter 只依赖
-`Observer` Protocol，并负责把领域对象映射为 telemetry 语义。所有 telemetry 和 Turn
+`Observer` Protocol，并负责把领域对象映射为 telemetry 语义。所有 telemetry 和 Invocation
 Journal 写入故障都只记录日志/事件，不改变 Agent、模型或工具的成功、失败和取消语义。
 
 ## OTLP 配置

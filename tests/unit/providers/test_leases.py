@@ -23,7 +23,7 @@ from my_code.model.request import (
 )
 from my_code.providers.leases import ProviderLeaseRegistry
 from my_code.providers.router import ProviderConnection, ProviderRouter
-from my_code.runtime.state import ProviderRuntime
+from my_code.runtime.application import ProviderRuntime
 
 
 class FakeProvider:

@@ -106,7 +106,7 @@ class ProviderBinding:
 
 
 @dataclass(frozen=True, slots=True)
-class ProviderContinuationState:
+class ProviderContinuation:
     """Opaque provider payload replayed only through a matching binding."""
 
     binding: ProviderBinding
@@ -123,12 +123,12 @@ class ProviderReplayRecord:
 
     entry_id: str
     content_id: str
-    state: ProviderContinuationState
+    state: ProviderContinuation
 
     def __post_init__(self) -> None:
         if not self.entry_id.strip() or not self.content_id.strip():
             raise ValueError("Provider replay entry and content IDs must not be empty")
-        if not isinstance(self.state, ProviderContinuationState):
+        if not isinstance(self.state, ProviderContinuation):
             raise TypeError("Provider replay state is required")
 
 
@@ -141,7 +141,7 @@ def replay_content_id(index: int) -> str:
 __all__ = [
     "ContextFootprint",
     "ProviderBinding",
-    "ProviderContinuationState",
+    "ProviderContinuation",
     "ProviderReplayRecord",
     "replay_content_id",
     "ReasoningDisclosure",

@@ -6,19 +6,19 @@
 
 | 状态 | 唯一所有者 | 生命周期 | 持久化 |
 | --- | --- | --- | --- |
-| workspace 与安全边界 | `AppState.workspace` | runtime | 配置单独落盘 |
-| 活动 Session 引用 | `AppState` | runtime | 由 Session 负责 |
+| workspace 与安全边界 | `ApplicationRuntime.workspace` | runtime | 配置单独落盘 |
+| 活动 Session binding | `ApplicationRuntime` | runtime | Session 由自身负责 |
 | conversation、context entries、compact state | `Session` | session | 是 |
 | 工具结果、展示与 provider replay | `Session` 私有实现 | session | 是或受控外置 |
-| prompt/user-context cache | 配对的 `ContextRuntime` | live session/run | 否 |
-| runtime permission policy | `AppState.permissions` | runtime | mode 由 Session 写入，规则由配置或 durable facts 恢复 |
-| ToolCatalog、task tree、MCP/Skill runtime | 对应 AppState 状态胶囊 | runtime | 只持久化配置或对话产物 |
-| turn 身份与终态 journal | `Session` | session | 是（不复制正文） |
+| prompt/user-context cache | 配对的 `SessionContextCache` | live session/run | 否 |
+| runtime permission policy | `ApplicationRuntime.permissions` | runtime | mode 由 Session 写入，规则由配置或 durable facts 恢复 |
+| ToolCatalog、task tree、MCP/Skill runtime | 对应 ApplicationRuntime 状态胶囊 | runtime | 只持久化配置或对话产物 |
+| invocation 身份与终态 journal | `Session` | session | 是（不复制正文） |
 | provider-neutral request audit | `Session` 私有 sidecar | session | 是（不进入 Conversation） |
 | step、stream、tool progress | 调用栈 | 单次操作 | 否 |
 | pending user input、附件准备状态 | host/runtime 内存 | 当前进程与活动 Session | 否 |
 
-`AppState` 是运行时状态图的唯一入口，不是进程全局 singleton。只有 application service、host 和 bootstrap 可以持有完整 AppState；Agent、Context、Tool 和 Provider adapter 只接收完成任务所需的最小对象或快照。
+`ApplicationRuntime` 是运行时状态图的唯一入口，不是进程全局 singleton。只有 application service、host 和 bootstrap 可以持有完整 ApplicationRuntime；Agent、Context、Tool 和 Provider adapter 只接收完成任务所需的最小对象或快照。
 
 ## Canonical conversation
 
@@ -72,27 +72,27 @@ sidecar 不保存 API key、认证头、Provider wire role 归一化或 opaque c
 
 旧 Session 没有 sidecar 仍可恢复，Transcript 明确显示历史审计缺口。sidecar 一旦存在，哈希不符、悬空引用、重复终态或 manifest 序号损坏都会使 Session 恢复失败关闭；不会用当前 prompt/tool schema 伪造历史请求。
 
-每个 Agent turn 在处理前提交 `turn_started`，并在发布终态事件前提交
-`turn_finished`。`Session.turn_history` 按开始顺序返回只读聚合；未闭合 start 保持可见，
+每个 Agent invocation 在处理前提交 `invocation_started`，并在发布终态事件前提交
+`invocation_finished`。`Session.invocation_history` 按开始顺序返回只读聚合；未闭合 start 保持可见，
 供恢复和 Harness 判断 incomplete。Journal 写入故障不会覆盖 Agent 本身的执行语义。
 
 ## 恢复与切换
 
-`ApplicationService.resume_session()` 完整验证候选后，在 AppState operation lock 中原子发布；存在未接受 pending input 时拒绝切换，避免把临时输入错误绑定到另一 Session：
+`ApplicationService.resume_session()` 完整验证候选后，在 ApplicationRuntime operation lock 中原子发布；存在未接受 pending input 时拒绝切换，避免把临时输入错误绑定到另一 Session：
 
 1. 完整加载、校验并按需修复候选 Session。
 2. 校验父链、tool pairing、compact boundary、presentation 和 replay 关联。
 3. 从候选 facts 构造安全历史投影。
 4. 恢复候选 Session 最后持久化的 permission mode。
-5. 仅在全部成功后调用 `AppState.replace_session()`。
+5. 构造完整 `ActiveSessionBinding`，仅在全部成功后一次发布。
 
-替换 Session 会同时创建新的 `ContextRuntime` 并发布恢复后的 permission mode。任何一步失败都保留旧 Session、mode 与 cache，不会出现旧 conversation 配新 context、工具结果或 replay 的混合状态。当前 provider、permission rules 和 workspace 不从 transcript 的 mode 记录恢复。
+替换 Session 会同时创建新的 `SessionContextCache` 并发布恢复后的 permission mode。任何一步失败都保留旧 Session、mode 与 cache，不会出现旧 conversation 配新 context、工具结果或 replay 的混合状态。当前 provider、permission rules 和 workspace 不从 transcript 的 mode 记录恢复。
 
 Permission mode 使用 last-wins 的 session record；旧 transcript 没有该记录时回退到 `session_started.permission_mode`。运行中切换遵循 persistence-first，写入失败时 runtime policy 不改变。显式 CLI override 优先于保存值并成为该 Session 的新值。
 
 Collaboration mode 是独立的 last-wins Session 状态，仅有 `default` 与 `plan`。基础 `permission_mode` 始终保存用户进入 Plan 前的选择；Plan 恢复时运行期 policy 临时使用 `plan`，退出时再从 Session 恢复基础权限。旧 transcript 缺少 collaboration 字段时按 Default 恢复。模式切换本身不改写 Conversation；下一次用户提交才在同一 batch 中按 mode/discovery prelude、HumanMessage、请求附件的顺序追加事实。
 
-Transcript 当前 schema 为 v6；v5 及更早 session 明确拒绝恢复。兼容逻辑只存在于 `sessions` 私有 codec，未知或冲突 schema 必须失败关闭，而不是静默丢弃事实。assistant fact 保存 Provider usage 与响应后的 context footprint；compact boundary 保存 `pre_compact_tokens` 及其 `reported|estimated` 来源。
+Transcript 当前 schema 为 v7。v7 header 持久化 `session_kind`、`parent_session_id`、`created_by_run_id` 和 `agent_name`；foreground 不允许 child lineage，subagent 必须提供完整 lineage。v6 缺少 kind 时兼容解释为 foreground，旧 `turn_started/turn_finished` 映射为 legacy invocation；v5 及更早明确拒绝恢复。未知 kind、冲突字段或未知 schema 必须失败关闭。
 
 ## Compact 与模型工作集
 
@@ -103,11 +103,11 @@ Provider replay 与 canonical assistant content 分离，通过 entry/content ID
 ## 状态准入规则
 
 - 新的长生命周期状态必须说明所有者、创建、更新、失效、销毁和持久化策略。
-- request、turn、step、tool round、stream delta 和 pending approval 不得提升到 AppState 或 Session。
+- request、turn、step、tool round、stream delta 和 pending approval 不得提升到 ApplicationRuntime 或 Session。
 - request manifest 是 Session 持久化的审计事实，但不是 `ConversationEntry`，不得被 Context 当作模型历史重放。
 - pending input queue 不是 canonical Session；只有 `commit_user_inputs()` 成功后，独立的 HumanMessage 与 durable attachment 才进入 JSONL 和内存 Conversation。
 - 同一边界的多条用户输入先在候选 aggregate 中完整验证，再通过一次 message batch append 持久化；成功后才发布内存状态和 accepted 事件。
 - 派生状态优先从 canonical facts 和不可变 snapshot 重算，不建立第二份可写权威来源。
-- 跨状态胶囊的变更由明确 application use case 协调，不让 AppState 退化为任意服务查询容器。
+- 跨状态胶囊的变更由明确 application use case 协调，不让 ApplicationRuntime 退化为任意服务查询容器。
 
-主要源码入口：`src/my_code/runtime/state.py`、`src/my_code/conversation/models.py`、`src/my_code/sessions/session.py`。私有持久化实现在 `src/my_code/sessions/_*.py`，其他生产模块不得依赖它。
+主要源码入口：`src/my_code/runtime/application.py`、`src/my_code/conversation/models.py`、`src/my_code/sessions/session.py`。私有持久化实现在 `src/my_code/sessions/_*.py`，其他生产模块不得依赖它。

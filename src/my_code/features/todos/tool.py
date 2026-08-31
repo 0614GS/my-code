@@ -11,7 +11,7 @@ from my_code.permissions.models import (
     ToolPermissionContext,
     ToolPermissionResult,
 )
-from my_code.tools.base import Tool, ToolContext, ToolExposure, ToolOutput
+from my_code.tools.base import Tool, ToolExecutionContext, ToolExposure, ToolOutput
 
 _DESCRIPTION = """Replace the session todo list for multi-step work; skip trivial
 tasks. Each item requires imperative content, present-continuous activeForm, and
@@ -78,7 +78,9 @@ class TodoWriteTool(Tool):
         del tool_input
         return "Updating todos"
 
-    def is_read_only(self, tool_input: JsonObject, context: ToolContext) -> bool:
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
         # Todo 只投影已持久化的 tool call，不修改工作区或外部系统。
         del tool_input, context
         return True
@@ -112,7 +114,9 @@ class TodoWriteTool(Tool):
     def validate_input(self, tool_input: JsonObject) -> None:
         parse_todo_input(tool_input)
 
-    async def execute(self, tool_input: JsonObject, context: ToolContext) -> ToolOutput:
+    async def execute(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ToolOutput:
         del context
         todos = parse_todo_input(tool_input)
         return ToolOutput(

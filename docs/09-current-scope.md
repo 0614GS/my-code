@@ -50,9 +50,10 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 - request audit 是 Session 持久化审计事实，但不属于 canonical Conversation，也不参与 context planning。
 - Context 是单次请求投影，不保存第二份可写历史。
 - ToolCall 在执行前已经作为完整 AssistantMessage 提交，拒绝与取消仍产生闭合结果。
-- 活动 Session 与 `ContextRuntime` 原子配对，cache 不跨 resume 或 child run 混用。
+- 活动 foreground `ActiveSessionBinding` 原子配对 Session、Run ID、`SessionContextCache` 和 effective permission policy；cache 不跨 resume 或 child run 混用。
 - 动态能力只在 step 边界生效，并统一经过 Tool、权限和 Session 路径。
 - Subagent 只能收窄权限，child transcript 不合并进 parent Session。
+- foreground 与 subagent Session 由持久化 kind 区分；child Session 不进入默认 `/resume` catalog，Session ID 与 live Run ID 不复用。
 
 ## 与参考实现的有意差异
 

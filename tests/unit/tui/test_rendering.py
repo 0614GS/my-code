@@ -10,7 +10,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from my_code.application.contracts.history import HistoryContextItem
-from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
 from my_code.application.contracts.views import (
     TranscriptField,
     TranscriptReasoning,
@@ -65,7 +65,7 @@ def _ansi(renderable: object, *, width: int = 80) -> str:
 
 
 def test_welcome_uses_a_compact_terminal_wordmark() -> None:
-    status = RuntimeStatus(
+    status = ApplicationStatus(
         session_id="session-id",
         cwd="/workspace",
         provider_id="provider",
@@ -95,7 +95,7 @@ def test_welcome_uses_a_compact_terminal_wordmark() -> None:
 
 
 def test_status_card_uses_aligned_fields_and_full_width_rounded_border() -> None:
-    status = RuntimeStatus(
+    status = ApplicationStatus(
         session_id="session-id",
         cwd="/workspace/a-project-with-a-long-name",
         provider_id="openai",
@@ -111,7 +111,7 @@ def test_status_card_uses_aligned_fields_and_full_width_rounded_border() -> None
         mcp_connected_count=1,
         mcp_server_count=2,
     )
-    context = ContextStatus(
+    context = ContextUsageView(
         reported_base_tokens=None,
         estimated_delta_tokens=50_000,
         projected_tokens=50_000,
