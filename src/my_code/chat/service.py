@@ -938,20 +938,14 @@ class ChatService:
             tools=tools.definitions,
         )
         return ContextStatus(
-            estimated_input_tokens=budget.estimated_input_tokens,
+            reported_base_tokens=budget.reported_base_tokens,
+            estimated_delta_tokens=budget.estimated_delta_tokens,
+            projected_tokens=budget.projected_tokens,
             reserved_output_tokens=budget.reserved_output_tokens,
-            estimated_total_tokens=budget.estimated_total_tokens,
-            message_chars=budget.message_chars,
-            system_chars=budget.system_chars,
-            tool_schema_chars=budget.tool_schema_chars,
-            user_context_chars=budget.user_context_chars,
-            attachment_chars=budget.attachment_chars,
-            message_limit_chars=budget.message_limit_chars,
             context_entry_count=session.context_entry_count,
             conversation_entry_count=session.conversation_entry_count,
             replacement_count=session.content_replacement_count,
             compact_count=session.compact_count,
-            input_tokens=budget.input_tokens,
             input_limit_tokens=budget.input_limit_tokens,
             compact_trigger_tokens=budget.compact_trigger_tokens,
             remaining_input_tokens=budget.remaining_input_tokens,
@@ -976,10 +970,17 @@ class ChatService:
         async with self.state.operation_lock():
             session = self.state.session
             yield CompactionStarted("manual")
+            tools = self.state.tools.snapshot()
+            pre_compact_budget = self.context.inspect(
+                session.context_planning_state(),
+                self.state.context_runtime,
+                tools=tools.definitions,
+            )
             outcome = await self.context.compact(
                 session.context_planning_state(),
                 "manual",
                 recorder=session,
+                pre_compact_budget=pre_compact_budget,
             )
             session.commit_compaction(
                 outcome.replacements,

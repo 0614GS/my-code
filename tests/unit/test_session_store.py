@@ -51,7 +51,7 @@ def _chain():
     human = HumanMessage("hello")
     assistant = AssistantMessage(
         (TextContent("answer"), ToolCall("call", "Read", {"path": "x"})),
-        TokenUsage(10, 2),
+        TokenUsage(10, 2, provider_reported=True),
         parent_uuid=human.uuid,
     )
     results = ToolResultBatch(
@@ -82,7 +82,7 @@ def test_turn_journal_round_trips_and_starts_transcript(tmp_path: Path) -> None:
         "2026-01-01T00:00:01+00:00",
         "succeeded",
         completed_steps=1,
-        usage=TokenUsage(2, 3),
+        usage=TokenUsage(2, 3, provider_reported=True),
     )
 
     session.append_turn_started(started)
@@ -178,7 +178,7 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
         "conversation_summary_message",
         "session_metadata",
     ]
-    assert all(entry["schema_version"] == 5 for entry in entries)
+    assert all(entry["schema_version"] == 6 for entry in entries)
     assert entries[0]["max_steps"] is None
     assert "max_turns" not in entries[0]
     assert all("role" not in entry and "origin" not in entry for entry in entries)
@@ -241,7 +241,7 @@ def test_permission_mode_record_rejects_unknown_mode() -> None:
         entry_from_json(
             {
                 "type": "session_permission_mode",
-                "schema_version": 5,
+                "schema_version": 6,
                 "permission_mode": "futureMode",
             }
         )
@@ -284,7 +284,7 @@ def test_legacy_tool_results_message_decodes_as_tool_result_batch() -> None:
     assert restored == batch
 
 
-def test_reasoning_assistant_content_round_trips_v5(tmp_path: Path) -> None:
+def test_reasoning_assistant_content_round_trips_v6(tmp_path: Path) -> None:
     store = _store(tmp_path)
     human = HumanMessage("hello")
     continuation = ProviderContinuationState(
@@ -454,7 +454,7 @@ def test_tool_presentation_is_embedded_in_the_conversation_result(
     assert result_record["content"][0]["presentation"]["summary"] == "Read x"
 
 
-def test_file_diff_presentation_round_trips_in_v5_and_is_strict(
+def test_file_diff_presentation_round_trips_in_v6_and_is_strict(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -497,7 +497,7 @@ def test_file_diff_presentation_round_trips_in_v5_and_is_strict(
     assert restored.content[0].presentation == presentation
     documents = [json.loads(line) for line in store.path.read_text().splitlines()]
     record = next(item for item in documents if item["type"] == "tool_result_batch")
-    assert record["schema_version"] == 5
+    assert record["schema_version"] == 6
     record["content"][0]["presentation"]["file_diff"]["unexpected"] = True
     store.path.write_text(
         "".join(json.dumps(item) + "\n" for item in documents), encoding="utf-8"
@@ -526,7 +526,7 @@ def test_legacy_tool_presentation_sidecar_is_hydrated_into_result(
         result_index,
         {
             "type": "tool_presentation",
-            "schema_version": 5,
+            "schema_version": 6,
             "tool_use_id": "call",
             "presentation": {
                 "summary": "legacy summary",
@@ -578,7 +578,7 @@ def test_conflicting_embedded_and_sidecar_tool_presentations_are_rejected(
         -1,
         {
             "type": "tool_presentation",
-            "schema_version": 5,
+            "schema_version": 6,
             "tool_use_id": "call",
             "presentation": {
                 "summary": "conflict",
@@ -639,7 +639,7 @@ def test_structured_records_and_compact_boundary_are_atomic(tmp_path: Path) -> N
     human = HumanMessage("hello")
     summary = ConversationSummaryMessage("state", parent_uuid=human.uuid)
     replacement = ContentReplacement("call", "Read", 100, "short")
-    boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 100)
+    boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 100, "estimated")
     store.append(human)
     store.append_content_replacement(replacement)
     store.append_compact_boundary(boundary)
@@ -659,6 +659,7 @@ def test_structured_records_and_compact_boundary_are_atomic(tmp_path: Path) -> N
         ({"type": "session_started", "schema_version": 2}, 2),
         ({"type": "session_started", "schema_version": 3}, 3),
         ({"type": "session_started", "schema_version": 4}, 4),
+        ({"type": "session_started", "schema_version": 5}, 5),
     ],
 )
 def test_catalog_skips_legacy_transcript(

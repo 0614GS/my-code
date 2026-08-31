@@ -58,10 +58,12 @@ class _SuccessfulRunner:
         raise AssertionError
 
     async def stream(self, session, runtime, turn_input) -> AsyncIterator[AgentEvent]:
-        yield AgentTurnSucceeded("answer", 1, TokenUsage(2, 3))
+        yield AgentTurnSucceeded("answer", 1, TokenUsage(2, 3, provider_reported=True))
 
     async def stream_continuation(self, session, runtime) -> AsyncIterator[AgentEvent]:
-        yield AgentTurnSucceeded("continued", 1, TokenUsage(1, 1))
+        yield AgentTurnSucceeded(
+            "continued", 1, TokenUsage(1, 1, provider_reported=True)
+        )
 
 
 class _FailingRunner(_SuccessfulRunner):
@@ -75,7 +77,7 @@ class _FailingRunner(_SuccessfulRunner):
 class _MaxStepsRunner(_SuccessfulRunner):
     async def stream(self, session, runtime, turn_input):
         del session, runtime, turn_input
-        yield AgentMaxStepsReached(2, 2, TokenUsage(4, 5))
+        yield AgentMaxStepsReached(2, 2, TokenUsage(4, 5, provider_reported=True))
 
 
 class _CancelledRunner(_SuccessfulRunner):
@@ -254,7 +256,9 @@ async def test_model_adapter_sets_metadata_and_omits_content_by_default() -> Non
     observer, exporter = _observer()
     binding = ProviderBinding("test", "provider", "model")
     output = ModelOutput(
-        (ModelTextBlock("secret answer"),), "end_turn", TokenUsage(2, 3)
+        (ModelTextBlock("secret answer"),),
+        "end_turn",
+        TokenUsage(2, 3, provider_reported=True),
     )
     client = InstrumentedModelClient(
         _ModelClient(output), observer, lambda: binding, purpose="compaction"
@@ -274,7 +278,11 @@ async def test_model_adapter_sets_metadata_and_omits_content_by_default() -> Non
 async def test_model_content_capture_is_explicit_and_truncated() -> None:
     observer, exporter = _observer(capture_content=True)
     binding = ProviderBinding("test", "provider", "model")
-    output = ModelOutput((ModelTextBlock("x" * 20_000),), "end_turn", TokenUsage(2, 3))
+    output = ModelOutput(
+        (ModelTextBlock("x" * 20_000),),
+        "end_turn",
+        TokenUsage(2, 3, provider_reported=True),
+    )
     client = InstrumentedModelClient(
         _ModelClient(output), observer, lambda: binding, purpose="agent"
     )

@@ -131,7 +131,9 @@ class FakeRuntime:
     async def stream_compaction(self) -> AsyncIterator[TurnEvent]:
         yield CompactionStarted("manual")
         status = replace(self.context_status(), compact_count=1)
-        yield CompactionCompleted("manual", TokenUsage(4, 2), status)
+        yield CompactionCompleted(
+            "manual", TokenUsage(4, 2, provider_reported=True), status
+        )
 
     def status(self) -> RuntimeStatus:
         return RuntimeStatus(
@@ -151,13 +153,10 @@ class FakeRuntime:
 
     def context_status(self) -> ContextStatus:
         return ContextStatus(
-            estimated_input_tokens=100,
+            reported_base_tokens=None,
+            estimated_delta_tokens=100,
+            projected_tokens=100,
             reserved_output_tokens=20,
-            estimated_total_tokens=120,
-            message_chars=300,
-            system_chars=100,
-            tool_schema_chars=200,
-            message_limit_chars=1000,
             context_entry_count=0,
             conversation_entry_count=0,
             replacement_count=1,
@@ -808,7 +807,7 @@ async def test_context_status_updates_between_model_steps() -> None:
     app._status = runtime.status()
     step_status = replace(
         runtime.context_status(),
-        input_tokens=4_400,
+        projected_tokens=4_400,
         context_entry_count=17,
         conversation_entry_count=19,
     )
@@ -1158,7 +1157,9 @@ async def test_manual_compaction_shows_progress_then_commits_status() -> None:
             await self.release.wait()
             self.compact_count = 1
             status = self.context_status()
-            yield CompactionCompleted("manual", TokenUsage(4, 2), status)
+            yield CompactionCompleted(
+                "manual", TokenUsage(4, 2, provider_reported=True), status
+            )
 
     runtime = BlockingCompactRuntime()
     stream = StringIO()
@@ -1791,7 +1792,7 @@ def test_context_usage_remains_compact() -> None:
     assert format_context_usage(status) == "0.1k / 200k"
     assert render_context_status(status).splitlines() == [
         "Context: 0.1k / 200k",
-        "Measured by: local estimate",
+        "Measured by: estimated",
         "Compact at: 180k (auto)",
         "Compactions: 1 micro · 0 full",
     ]

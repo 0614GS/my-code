@@ -112,13 +112,10 @@ def test_status_card_uses_aligned_fields_and_full_width_rounded_border() -> None
         mcp_server_count=2,
     )
     context = ContextStatus(
-        estimated_input_tokens=50_000,
+        reported_base_tokens=None,
+        estimated_delta_tokens=50_000,
+        projected_tokens=50_000,
         reserved_output_tokens=0,
-        estimated_total_tokens=50_000,
-        message_chars=0,
-        system_chars=0,
-        tool_schema_chars=0,
-        message_limit_chars=0,
         context_entry_count=7,
         conversation_entry_count=9,
         replacement_count=0,

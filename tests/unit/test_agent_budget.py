@@ -30,7 +30,7 @@ class CountingModel:
         response = ModelOutput(
             (ModelTextBlock("done"),),
             "end_turn",
-            TokenUsage(4, 2),
+            TokenUsage(4, 2, provider_reported=True),
         )
         yield ModelStreamSequencer().emit(ModelOutputCompleted(response))
 

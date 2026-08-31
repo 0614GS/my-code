@@ -65,6 +65,11 @@ def test_parser_rejects_removed_max_turns_flag() -> None:
         parse_args(["--max-turns", "3"])
 
 
+def test_parser_rejects_removed_context_chars_flag() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--context-chars", "1000"])
+
+
 @pytest.mark.parametrize(
     "arguments",
     (("-p", "hello"), ("--print", "hello"), ("hello",)),

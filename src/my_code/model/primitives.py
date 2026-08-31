@@ -48,6 +48,25 @@ class TokenUsage:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextFootprint:
+    """Stable provider-neutral request material used for context deltas."""
+
+    text: str
+    image_count: int = 0
+    document_count: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.text:
+            raise ValueError("Context footprint text must not be empty")
+        if self.image_count < 0 or self.document_count < 0:
+            raise ValueError("Context footprint media counts must not be negative")
+
+    @property
+    def has_media(self) -> bool:
+        return bool(self.image_count or self.document_count)
+
+
+@dataclass(frozen=True, slots=True)
 class ReasoningPresentation:
     """Provider-neutral reasoning content safe for conversation and UI projection."""
 
@@ -120,6 +139,7 @@ def replay_content_id(index: int) -> str:
 
 
 __all__ = [
+    "ContextFootprint",
     "ProviderBinding",
     "ProviderContinuationState",
     "ProviderReplayRecord",

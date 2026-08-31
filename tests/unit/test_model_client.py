@@ -3,7 +3,9 @@ from collections.abc import AsyncIterator
 import pytest
 
 from my_code.model.client import collect_model_output
+from my_code.model.errors import ModelProtocolError
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
+from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
     ModelOutput,
     ModelRequest,
@@ -29,7 +31,13 @@ class _StreamClient:
 def _completed(sequence_number: int = 0) -> ModelStreamEvent:
     return ModelStreamEvent(
         sequence_number,
-        ModelOutputCompleted(ModelOutput((ModelTextBlock("done"),), "end_turn")),
+        ModelOutputCompleted(
+            ModelOutput(
+                (ModelTextBlock("done"),),
+                "end_turn",
+                TokenUsage(1, 1, provider_reported=True),
+            )
+        ),
     )
 
 
@@ -52,3 +60,13 @@ async def test_collect_model_output_rejects_missing_or_duplicate_snapshots() -> 
             _StreamClient(_completed(), _completed(1)),
             _request(),
         )
+
+
+@pytest.mark.asyncio
+async def test_collect_model_output_rejects_missing_usage() -> None:
+    event = ModelStreamEvent(
+        0,
+        ModelOutputCompleted(ModelOutput((ModelTextBlock("done"),), "end_turn")),
+    )
+    with pytest.raises(ModelProtocolError, match="without valid token usage"):
+        await collect_model_output(_StreamClient(event), _request())

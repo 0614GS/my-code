@@ -35,7 +35,7 @@ class FakeProvider:
         output = ModelOutput(
             content=(ModelTextBlock(self.provider_id),),
             stop_reason="end_turn",
-            usage=TokenUsage(input_tokens=1, output_tokens=1),
+            usage=TokenUsage(input_tokens=1, output_tokens=1, provider_reported=True),
         )
         sequencer = ModelStreamSequencer()
         for payload in completed_output_payloads(output):

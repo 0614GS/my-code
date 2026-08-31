@@ -32,7 +32,12 @@ from my_code.agent.models import (
     UserTurnInput,
 )
 from my_code.context.engine import ContextEngine
-from my_code.context.models import CompactionOutcome, ContextOverflow, ContextPlan
+from my_code.context.models import (
+    CompactionOutcome,
+    ContextBudget,
+    ContextOverflow,
+    ContextPlan,
+)
 from my_code.context.session import ContextRuntime
 from my_code.conversation.attachments import (
     AttachmentPayload,
@@ -73,7 +78,12 @@ from my_code.model.primitives import (
     TokenUsage,
     replay_content_id,
 )
-from my_code.model.request import ModelOutput, ModelTextBlock, ModelToolUseBlock
+from my_code.model.request import (
+    AssistantOutput,
+    ModelOutput,
+    ModelTextBlock,
+    ModelToolUseBlock,
+)
 from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionUpdate
 from my_code.sessions.session import Session
@@ -248,9 +258,13 @@ class AgentEngine:
             tools = self._snapshot_tools(session)
             try:
                 request = await self._plan_request(session, runtime, tools)
-            except ContextOverflow:
+            except ContextOverflow as overflow:
+                for replacement in overflow.replacements:
+                    session.commit_content_replacement(replacement)
                 yield AgentCompactionStarted("auto")
-                outcome = await self._compact_for_retry(session, runtime, "auto")
+                outcome = await self._compact_for_retry(
+                    session, runtime, "auto", pre_budget=overflow.budget
+                )
                 yield AgentCompactionCompleted("auto", outcome.usage)
                 request = await self._plan_request(session, runtime, tools)
             reactive_attempted = False
@@ -303,7 +317,7 @@ class AgentEngine:
                     reactive_attempted = True
                     yield AgentCompactionStarted("reactive")
                     outcome = await self._compact_for_retry(
-                        session, runtime, "reactive"
+                        session, runtime, "reactive", pre_budget=request.budget
                     )
                     yield AgentCompactionCompleted("reactive", outcome.usage)
                     request = await self._plan_request(session, runtime, tools)
@@ -314,6 +328,9 @@ class AgentEngine:
 
             input_tokens += response.usage.total_input_tokens
             output_tokens += response.usage.output_tokens
+            response_footprint = self._context.record_response(
+                request, AssistantOutput(response.content), response.usage
+            )
             assistant_message = AssistantMessage(
                 content=tuple(
                     TextContent(block.text)
@@ -326,7 +343,7 @@ class AgentEngine:
                 parent_uuid=_last_uuid(session),
                 usage=response.usage,
                 provider_binding=request.request_binding,
-                request_input_tokens_estimate=request.request_input_tokens_estimate,
+                context_footprint=response_footprint,
             )
             replay_records = tuple(
                 ProviderReplayRecord(
@@ -357,7 +374,9 @@ class AgentEngine:
                     yield AgentTurnSucceeded(
                         text=final_text,
                         completed_steps=step_count,
-                        usage=TokenUsage(input_tokens, output_tokens),
+                        usage=TokenUsage(
+                            input_tokens, output_tokens, provider_reported=True
+                        ),
                     )
                     return
                 accepted = await self._accept_boundary(session, (), pending_source)
@@ -371,7 +390,9 @@ class AgentEngine:
                 yield AgentTurnSucceeded(
                     text=final_text,
                     completed_steps=step_count,
-                    usage=TokenUsage(input_tokens, output_tokens),
+                    usage=TokenUsage(
+                        input_tokens, output_tokens, provider_reported=True
+                    ),
                 )
                 return
 
@@ -386,7 +407,9 @@ class AgentEngine:
                 yield AgentMaxStepsReached(
                     max_steps=self.max_steps,
                     completed_steps=step_count,
-                    usage=TokenUsage(input_tokens, output_tokens),
+                    usage=TokenUsage(
+                        input_tokens, output_tokens, provider_reported=True
+                    ),
                 )
                 return
             accepted = await self._accept_boundary(session, (), pending_source)
@@ -531,11 +554,16 @@ class AgentEngine:
         session: Session,
         runtime: ContextRuntime,
         trigger: CompactTrigger,
+        *,
+        pre_budget: ContextBudget | None = None,
     ) -> CompactionOutcome:
         """在当前 turn 内生成并提交 auto/reactive compact。"""
 
         outcome = await self._context.compact(
-            session.context_planning_state(), trigger, recorder=session
+            session.context_planning_state(),
+            trigger,
+            recorder=session,
+            pre_compact_budget=pre_budget,
         )
         session.commit_compaction(
             outcome.replacements, outcome.summary, outcome.boundary
@@ -603,7 +631,7 @@ def _prepared_injections(
     *,
     origins: tuple[ModelInputOrigin, ...],
 ) -> tuple[PreparedContextItem, ...]:
-    from my_code.model.request import InputText, UserInput
+    from my_code.model.request import InputText, ToolOutputs, ToolOutputText, UserInput
 
     items: list[PreparedContextItem] = []
     for model_item, origin, audit_id in zip(
@@ -615,15 +643,21 @@ def _prepared_injections(
             ModelInputOriginKind.CONTENT_REPLACEMENT,
         }:
             continue
-        text = (
-            "\n".join(
+        if isinstance(model_item, UserInput):
+            text = "\n".join(
                 block.text
                 for block in model_item.content
                 if isinstance(block, InputText)
             )
-            if isinstance(model_item, UserInput)
-            else ""
-        )
+        elif isinstance(model_item, ToolOutputs):
+            text = "\n".join(
+                block.text
+                for result in model_item.results
+                for block in result.content
+                if isinstance(block, ToolOutputText)
+            )
+        else:
+            text = ""
         items.append(
             PreparedContextItem(
                 audit_id,

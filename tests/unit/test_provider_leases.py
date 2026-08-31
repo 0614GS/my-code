@@ -36,7 +36,7 @@ class FakeProvider:
         output = ModelOutput(
             (ModelTextBlock(self.provider_id),),
             "end_turn",
-            TokenUsage(1, 1),
+            TokenUsage(1, 1, provider_reported=True),
         )
         yield ModelStreamSequencer().emit(ModelOutputCompleted(output))
 

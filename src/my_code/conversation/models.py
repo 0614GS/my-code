@@ -7,7 +7,12 @@ from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.conversation.primitives import new_id, utc_now
 from my_code.foundation.json import JsonObject, to_json_object
-from my_code.model.primitives import ProviderBinding, ReasoningPresentation, TokenUsage
+from my_code.model.primitives import (
+    ContextFootprint,
+    ProviderBinding,
+    ReasoningPresentation,
+    TokenUsage,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +89,7 @@ class AssistantMessage:
     parent_uuid: str | None = None
     timestamp: str = field(default_factory=utc_now)
     provider_binding: ProviderBinding | None = None
-    request_input_tokens_estimate: int | None = None
+    context_footprint: ContextFootprint | None = None
     kind: Literal["assistant"] = field(default="assistant", init=False)
 
     def __post_init__(self) -> None:
@@ -106,11 +111,8 @@ class AssistantMessage:
             raise ValueError("Assistant message contained no actionable content")
         if not isinstance(self.usage, TokenUsage):
             raise TypeError("Assistant messages require token usage")
-        if (
-            self.request_input_tokens_estimate is not None
-            and self.request_input_tokens_estimate < 1
-        ):
-            raise ValueError("Assistant request token estimate must be positive")
+        if self.context_footprint is not None and not self.usage.provider_reported:
+            raise ValueError("A context footprint requires provider-reported usage")
         call_ids = [block.id for block in self.content if isinstance(block, ToolCall)]
         if len(call_ids) != len(set(call_ids)):
             raise ValueError("Assistant message contains duplicate tool call IDs")

@@ -90,7 +90,7 @@ sidecar 不保存 API key、认证头、Provider wire role 归一化或 opaque c
 
 Permission mode 使用 last-wins 的 session record；旧 transcript 没有该记录时回退到 `session_started.permission_mode`。运行中切换遵循 persistence-first，写入失败时 runtime policy 不改变。显式 CLI override 优先于保存值并成为该 Session 的新值。
 
-恢复可以读取受支持的旧 record 形态；兼容逻辑只存在于 `sessions` 私有 codec。未知或冲突 schema 必须失败关闭，而不是静默丢弃事实。
+Transcript 当前 schema 为 v6；v5 及更早 session 明确拒绝恢复。兼容逻辑只存在于 `sessions` 私有 codec，未知或冲突 schema 必须失败关闭，而不是静默丢弃事实。assistant fact 保存 Provider usage 与响应后的 context footprint；compact boundary 保存 `pre_compact_tokens` 及其 `reported|estimated` 来源。
 
 ## Compact 与模型工作集
 

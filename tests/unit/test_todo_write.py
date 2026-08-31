@@ -8,7 +8,6 @@ from my_code.context.session import (
     ContextPlanningState,
     ContextRuntime,
 )
-from my_code.context.window import ContextWindow
 from my_code.conversation.attachments import ToolDiscoveryAttachment
 from my_code.conversation.models import (
     AssistantMessage,
@@ -316,7 +315,6 @@ def test_context_planner_projects_reminder_from_conversation_for_compaction() ->
     history = _history_after_todo(10)
     tool = TodoWriteTool()
     planner = ContextPlanner(
-        window=ContextWindow(20_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
@@ -346,7 +344,6 @@ def test_delivered_reminder_stays_at_its_runtime_history_position() -> None:
     later = _assistant(TextContent("after reminder"))
     history = history10 + (reminder, later)
     planner = ContextPlanner(
-        window=ContextWindow(20_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),

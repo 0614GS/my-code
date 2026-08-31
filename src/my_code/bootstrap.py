@@ -33,9 +33,9 @@ from my_code.context.attachments.sources import (
 )
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
+from my_code.context.meter import ContextMeter
 from my_code.context.planner import ContextPlanner
 from my_code.context.user_context import AgentsUserContextResolver
-from my_code.context.window import ContextWindow
 from my_code.features.background_tasks.bash import BashBackgroundController
 from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.file_mentions.loader import AttachmentLoader
@@ -243,7 +243,6 @@ def _build_agent_components(
         requester_name=agent_name,
     )
     planner = ContextPlanner(
-        window=ContextWindow(settings.context_chars),
         prompt=prompt_registry or build_system_prompt_registry(settings.cwd),
         max_output_tokens=settings.max_output_tokens,
         user_context_resolver=AgentsUserContextResolver(settings.cwd),
@@ -255,6 +254,9 @@ def _build_agent_components(
         ),
         binding_resolver=binding,
         model_environment=environment,
+        meter=ContextMeter(
+            cache_path=settings.paths.config_home / ".token-estimates.json"
+        ),
     )
     agent_model = InstrumentedModelClient(
         model_call, observer, binding, purpose="agent"
@@ -322,7 +324,6 @@ def _assemble_agent(
             permission_mode=settings.permission_mode.value,
             max_steps=settings.max_steps,
             max_output_tokens=settings.max_output_tokens,
-            context_chars=settings.context_chars,
             model_limits=descriptor.limits,
             model_limit_source=descriptor.source.value,
             compact_trigger_tokens=model_environment.compact_trigger_tokens,
@@ -528,7 +529,6 @@ def _assemble_agent(
             ),
             max_steps=spec.max_steps,
             max_output_tokens=settings.max_output_tokens,
-            context_chars=settings.context_chars,
             model_limits=environment.descriptor.limits,
             model_limit_source=environment.descriptor.source.value,
             compact_trigger_tokens=environment.compact_trigger_tokens,

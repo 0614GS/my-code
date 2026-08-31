@@ -18,7 +18,7 @@ from my_code.permissions.rules import (
     validate_permission_rule,
 )
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _MCP_SERVER_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -48,7 +48,6 @@ class SandboxSettingsLayer:
 class AgentSettingsLayer:
     max_steps: int | None = None
     max_output_tokens: int | None = None
-    context_chars: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,7 +142,6 @@ class SettingsLayer:
         permission_ask_rules: tuple[str, ...] = (),
         max_steps: int | None = None,
         max_output_tokens: int | None = None,
-        context_chars: int | None = None,
         max_parallel_tool_calls: int | None = None,
         tool_search_mode: ToolSearchMode | None = None,
         subagents_enabled: bool | None = None,
@@ -159,7 +157,7 @@ class SettingsLayer:
         tui_view_mode: DisplayDensity | None = None,
     ) -> None:
         if agent is not None and any(
-            value is not None for value in (max_steps, max_output_tokens, context_chars)
+            value is not None for value in (max_steps, max_output_tokens)
         ):
             raise TypeError("agent and flattened agent values cannot be combined")
         if permissions is not None and (
@@ -204,7 +202,7 @@ class SettingsLayer:
         object.__setattr__(
             self,
             "agent",
-            agent or AgentSettingsLayer(max_steps, max_output_tokens, context_chars),
+            agent or AgentSettingsLayer(max_steps, max_output_tokens),
         )
         object.__setattr__(
             self,
@@ -264,10 +262,6 @@ class SettingsLayer:
     @property
     def max_output_tokens(self) -> int | None:
         return self.agent.max_output_tokens
-
-    @property
-    def context_chars(self) -> int | None:
-        return self.agent.context_chars
 
     @property
     def permission_mode(self) -> PermissionMode | None:
@@ -357,9 +351,6 @@ class SettingsLayer:
                 higher.max_output_tokens
                 if higher.max_output_tokens is not None
                 else self.max_output_tokens,
-                higher.context_chars
-                if higher.context_chars is not None
-                else self.context_chars,
             ),
             permissions=PermissionSettingsLayer(
                 higher.permission_mode or self.permission_mode,
@@ -540,10 +531,10 @@ class SettingsStore:
 def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> SettingsLayer:
     if not isinstance(raw, dict):
         raise SettingsFileError(f"Settings root must be an object: {path}")
-    if raw and raw.get("version") != _SCHEMA_VERSION:
+    if raw and raw.get("version") not in {3, _SCHEMA_VERSION}:
         raise SettingsFileError(
             f"Settings file uses an incompatible schema: {path}. "
-            "Recreate it using the v3 nested settings format."
+            "Recreate it using the v4 nested settings format."
         )
     if scope is not SettingsScope.USER:
         forbidden = sorted(
@@ -571,6 +562,10 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
         raise SettingsFileError(
             f"agent.maxTurns is no longer supported; use agent.maxSteps: {path}"
         )
+    if "contextChars" in agent:
+        raise SettingsFileError(
+            f"agent.contextChars is deprecated and no longer supported: {path}"
+        )
     permissions = _nested_mapping(raw, "permissions", path)
     tools = _nested_mapping(raw, "tools", path)
     subagents = _nested_mapping(raw, "subagents", path)
@@ -595,7 +590,6 @@ def _parse_settings(raw: object, *, path: Path, scope: SettingsScope) -> Setting
             _optional_positive_int(
                 agent, "maxOutputTokens", path, "agent.maxOutputTokens"
             ),
-            _optional_positive_int(agent, "contextChars", path, "agent.contextChars"),
         ),
         permissions=PermissionSettingsLayer(
             _permission_mode(permissions, path),
@@ -733,7 +727,6 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
         for key, value in (
             ("maxSteps", settings.max_steps),
             ("maxOutputTokens", settings.max_output_tokens),
-            ("contextChars", settings.context_chars),
         )
         if value is not None
     }

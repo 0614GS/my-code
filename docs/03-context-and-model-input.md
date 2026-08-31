@@ -54,11 +54,24 @@ Provider adapter 只消费 `ModelRequest`，不读取 Session 或 AppState。绑
 
 ## 预算与 Compact
 
-`ContextBudget` 综合字符规模、token 估算、Provider usage 校准、输出预留和当前模型限制。当前模型的 input-token budget 是 full compact 的唯一容量权威；`agent.contextChars` 只保留为旧工具结果 content replacement 的字符启发式目标和诊断值，不再形成第二个 full compact 门槛。这样状态展示、主动压缩与 Provider overflow recovery 不会分别依据互相冲突的单位。
+`ContextMeter` 是 context window 的唯一计量入口。Provider 成功响应中的
+`input + cache read + cache creation + output` 是最近一次上下文事实；下一请求在
+该事实之上叠加当前 request footprint 与响应后 anchor footprint 的估算差量。
+没有匹配 provider/model 的事实时，完整请求依次使用同步 `TokenCounter`、该
+provider/model 首次纯文本响应建立的持久化字符比例，最后回退到
+`4 chars/token`。图片和文档分别使用 6k/20k 固定额度，序列化 footprint 不展开
+base64。`ContextBudget` 只暴露 reported base、estimated delta、projected tokens
+及 `reported|estimated` 来源；累计计费 usage 与 context-window 判断彼此独立。
+
+Provider 成功响应必须携带有效 usage，否则按协议错误处理，不提交 assistant
+消息、tool pairing 或事实 anchor。模型 input-token budget 仍是 full compact 的
+唯一容量权威，不存在字符型 context window 或第二套压缩门槛。
 
 超限处理依次为：
 
-1. 对旧的大型工具结果建立 content replacement。
+1. 达到 full compact threshold 时执行至多一次 microcompact：只按 transcript
+   顺序处理至少 30 分钟前的成功 Read/Grep/Glob 结果，并始终保留最近 5 条可
+   回放结果；只有 replacement 确实减少估算 token 时才提交。
 2. 仍超限时生成 full compact proposal。
 3. Provider 返回 context overflow 时允许一次 reactive compact。
 4. 仍无法构造合法请求时返回明确错误。
@@ -76,6 +89,7 @@ Compact 请求显式关闭 reasoning，并使用受模型上限约束的独立�
 - Context 不提交 Session、不缓存第二份 history，也不解释 JSONL。
 - Attachment projector 只能产生 user input，不能制造 assistant 或 tool 协议项。
 - ToolCall 与 ToolOutput 的配对不能被预算或注入拆开。
+- assistant fact 的 anchor footprint 已包含本轮输出，下一请求不得重复增加 output。
 - Provider role/wire normalization 只存在于对应 adapter。
 - compact proposal 只有经 Session 原子提交后才能成为后续请求事实。
 - 字符规模可以触发局部 content replacement，但不能越过 token budget 独立触发 full compact。

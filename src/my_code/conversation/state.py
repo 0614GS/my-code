@@ -28,11 +28,7 @@ class ContentReplacement:
             tool_use_id=tool_use_id,
             tool_name=tool_name,
             original_chars=original_chars,
-            content=(
-                f"[Previous {tool_name} result removed from active context: "
-                f"{original_chars} chars. If exact content is still required, use "
-                "a targeted Read with offset/limit or a focused Grep.]"
-            ),
+            content=f"[Earlier {tool_name} result removed from active context.]",
         )
 
 
@@ -41,12 +37,13 @@ class CompactBoundary:
     parent_uuid: str
     summary_uuid: str
     trigger: CompactTrigger
-    pre_compact_chars: int
+    pre_compact_tokens: int
+    measurement: Literal["reported", "estimated"]
     id: str = field(default_factory=lambda: str(uuid4()))
 
     def __post_init__(self) -> None:
-        if self.pre_compact_chars < 1:
-            raise ValueError("pre_compact_chars must be positive")
+        if self.pre_compact_tokens < 1:
+            raise ValueError("pre_compact_tokens must be positive")
 
 
 __all__ = [

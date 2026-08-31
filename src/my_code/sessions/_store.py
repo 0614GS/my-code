@@ -101,7 +101,6 @@ class SessionStore:
             "default",
             None,
             8192,
-            160_000,
         )
         if self._start.session_id != session_id:
             raise ValueError("SessionStart session_id must match the store session_id")
@@ -193,7 +192,7 @@ class SessionStore:
                 if (
                     line_number == 1
                     and isinstance(legacy_version, int)
-                    and legacy_version != 5
+                    and legacy_version != 6
                 ):
                     raise ValueError(
                         f"Transcript schema v{legacy_version} is incompatible: "

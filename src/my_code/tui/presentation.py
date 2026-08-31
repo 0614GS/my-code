@@ -25,7 +25,7 @@ from my_code.tui.widgets import (
 
 
 def render_status_card(status: RuntimeStatus, context: ContextStatus) -> RenderableType:
-    used = context.input_tokens or context.estimated_input_tokens
+    used = context.projected_tokens
     remaining = max(0, context.input_limit_tokens - used)
     percent = (
         round(remaining * 100 / context.input_limit_tokens)
@@ -70,9 +70,9 @@ def render_status_card(status: RuntimeStatus, context: ContextStatus) -> Rendera
 
 def render_context_card(status: ContextStatus) -> RenderableType:
     measured = (
-        "provider calibrated"
-        if status.measurement == "reported_calibrated"
-        else "local estimate"
+        "reported + estimated delta"
+        if status.measurement == "reported"
+        else "estimated"
     )
     trigger_source = (
         "auto" if status.configured_compact_trigger_tokens is None else "configured"
@@ -96,9 +96,9 @@ def render_context_card(status: ContextStatus) -> RenderableType:
 
 def render_context_status(status: ContextStatus) -> str:
     measured = (
-        "provider calibrated"
-        if status.measurement == "reported_calibrated"
-        else "local estimate"
+        "reported + estimated delta"
+        if status.measurement == "reported"
+        else "estimated"
     )
     trigger_source = (
         "auto" if status.configured_compact_trigger_tokens is None else "configured"
@@ -116,7 +116,7 @@ def render_context_status(status: ContextStatus) -> str:
 
 
 def format_context_usage(status: ContextStatus) -> str:
-    used = status.input_tokens or status.estimated_input_tokens
+    used = status.projected_tokens
     return f"{format_token_k(used)} / {format_token_k(status.input_limit_tokens)}"
 
 

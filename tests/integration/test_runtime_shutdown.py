@@ -31,7 +31,6 @@ def settings(tmp_path: Path) -> AgentSettings:
         permission_mode=PermissionMode.DEFAULT,
         max_steps=3,
         max_output_tokens=100,
-        context_chars=10_000,
         interactive=False,
         credential_source=CredentialSource.NONE,
     )

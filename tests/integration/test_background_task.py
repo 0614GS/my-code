@@ -16,7 +16,6 @@ from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
-from my_code.context.window import ContextWindow
 from my_code.conversation.models import HumanMessage, ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
@@ -91,7 +90,7 @@ class BlockingChildModel:
         output = ModelOutput(
             (ModelTextBlock("background result"),),
             "end_turn",
-            TokenUsage(2, 1),
+            TokenUsage(2, 1, provider_reported=True),
         )
         yield ModelStreamSequencer().emit(ModelOutputCompleted(output))
 
@@ -102,7 +101,9 @@ def output(*blocks: ModelTextBlock | ModelToolUseBlock) -> ModelOutput:
         if any(isinstance(block, ModelToolUseBlock) for block in blocks)
         else "end_turn"
     )
-    return ModelOutput(tuple(blocks), stop_reason, TokenUsage(2, 1))
+    return ModelOutput(
+        tuple(blocks), stop_reason, TokenUsage(2, 1, provider_reported=True)
+    )
 
 
 def prompt_registry() -> PromptRegistry:
@@ -166,7 +167,6 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
         )
         context = ContextEngine(
             ContextPlanner(
-                window=ContextWindow(10_000),
                 prompt=spec.prompt_registry or prompt_registry(),
                 max_output_tokens=100,
                 attachment_resolver=attachment_resolver(),
@@ -236,7 +236,6 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
     )
     parent_context = ContextEngine(
         ContextPlanner(
-            window=ContextWindow(10_000),
             prompt=prompt_registry(),
             max_output_tokens=100,
             attachment_resolver=DerivedAttachmentResolver((notifications,)),

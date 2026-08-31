@@ -241,7 +241,7 @@ def test_compaction_is_persisted_before_conversation_changes(
     human = HumanMessage("hello")
     session.append_human_message(human)
     summary = ConversationSummaryMessage("summary", parent_uuid=human.uuid)
-    boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5)
+    boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5, "estimated")
     replacement = ContentReplacement("call", "Read", 10, "short")
 
     def fail(*_: object) -> None:
@@ -260,7 +260,7 @@ def test_compaction_updates_context_entries_without_reload(tmp_path: Path) -> No
     human = HumanMessage("hello")
     session.append_human_message(human)
     summary = ConversationSummaryMessage("summary", parent_uuid=human.uuid)
-    boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5)
+    boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5, "estimated")
     session.commit_compaction((), summary, boundary)
     assert session.conversation == (human, summary)
     assert session.context_entries == (summary,)
@@ -286,7 +286,7 @@ def test_compaction_prunes_replay_from_context_but_preserves_recoverable_sidecar
     session.append_human_message(human)
     session.append_assistant_message(assistant, replay_records=(replay,))
     summary = ConversationSummaryMessage("state", parent_uuid=assistant.uuid)
-    boundary = CompactBoundary(assistant.uuid, summary.uuid, "manual", 1)
+    boundary = CompactBoundary(assistant.uuid, summary.uuid, "manual", 1, "estimated")
 
     session.commit_compaction((), summary, boundary)
 

@@ -159,7 +159,7 @@ async def test_compaction_retries_truncation_and_accumulates_usage() -> None:
                 "max_tokens",
                 TokenUsage(10, 20, provider_reported=True),
             ),
-            _output("complete", "end_turn", TokenUsage(11, 5, provider_reported=False)),
+            _output("complete", "end_turn", TokenUsage(11, 5, provider_reported=True)),
         ]
     )
 
@@ -173,15 +173,23 @@ async def test_compaction_retries_truncation_and_accumulates_usage() -> None:
     retry = cast(UserInput, model.requests[1].input[-1]).content[-1]
     assert isinstance(retry, InputText)
     assert "16,000 tokens" in retry.text
-    assert usage == TokenUsage(21, 25, provider_reported=False)
+    assert usage == TokenUsage(21, 25, provider_reported=True)
 
 
 @pytest.mark.asyncio
 async def test_compaction_fails_after_two_truncated_outputs() -> None:
     model = _ScriptedModel(
         [
-            _output("partial", "max_output_tokens", TokenUsage(1, 20)),
-            _output("still partial", "max_output_tokens", TokenUsage(1, 20)),
+            _output(
+                "partial",
+                "max_output_tokens",
+                TokenUsage(1, 20, provider_reported=True),
+            ),
+            _output(
+                "still partial",
+                "max_output_tokens",
+                TokenUsage(1, 20, provider_reported=True),
+            ),
         ]
     )
 
@@ -292,7 +300,7 @@ class _Context:
         return (UserInput((InputText("model view"),)),), ()
 
     def measure(self, messages):  # type: ignore[no-untyped-def]
-        return 100
+        return 100, "estimated"
 
 
 @pytest.mark.asyncio

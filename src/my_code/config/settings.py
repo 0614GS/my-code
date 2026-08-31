@@ -36,7 +36,6 @@ from my_code.permissions.models import (
 from my_code.permissions.rules import validate_permission_rule
 
 DEFAULT_MAX_OUTPUT_TOKENS = 8192
-DEFAULT_CONTEXT_CHARS = 160_000
 DEFAULT_MAX_PARALLEL_TOOL_CALLS = 4
 DEFAULT_SUBAGENT_MAX_DEPTH = 3
 DEFAULT_SUBAGENT_MAX_ACTIVE_CHILDREN = 4
@@ -55,7 +54,6 @@ class SettingsOverrides:
     permission_mode: PermissionMode | None = None
     max_steps: int | None = None
     max_output_tokens: int | None = None
-    context_chars: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +66,6 @@ class AgentSettings:
     permission_mode: PermissionMode
     max_steps: int | None
     max_output_tokens: int
-    context_chars: int
     interactive: bool
     max_parallel_tool_calls: int = DEFAULT_MAX_PARALLEL_TOOL_CALLS
     tool_search_mode: ToolSearchMode = ToolSearchMode.DISPATCHER
@@ -109,7 +106,6 @@ class AgentSettings:
             raise ValueError("max_steps must be a positive integer")
         for name, value in (
             ("max_output_tokens", self.max_output_tokens),
-            ("context_chars", self.context_chars),
             ("max_parallel_tool_calls", self.max_parallel_tool_calls),
             ("subagent_max_depth", self.subagent_max_depth),
             ("subagent_max_active_children", self.subagent_max_active_children),
@@ -228,11 +224,6 @@ class SettingsResolver:
                 actual_overrides.max_output_tokens
                 if actual_overrides.max_output_tokens is not None
                 else stored.max_output_tokens or DEFAULT_MAX_OUTPUT_TOKENS
-            ),
-            context_chars=(
-                actual_overrides.context_chars
-                if actual_overrides.context_chars is not None
-                else stored.context_chars or DEFAULT_CONTEXT_CHARS
             ),
             interactive=interactive,
             max_parallel_tool_calls=(

@@ -215,7 +215,19 @@ def test_project_writes_cannot_overwrite_colliding_user_storage(
     paths = MyCodePaths(cwd=home, config_home=home / ".my-code")
 
     with pytest.raises(SettingsFileError, match="project config directory"):
-        SettingsStore(paths).write(scope, SettingsLayer(context_chars=1234))
+        SettingsStore(paths).write(scope, SettingsLayer(max_steps=12))
+
+
+def test_legacy_context_chars_is_rejected_explicitly(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    paths.user_settings_path.parent.mkdir()
+    paths.user_settings_path.write_text(
+        json.dumps({"version": 3, "agent": {"contextChars": 1000}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SettingsFileError, match="contextChars is deprecated"):
+        SettingsStore(paths).load()
 
 
 def test_unknown_keys_are_ignored_for_forward_compatibility(tmp_path: Path) -> None:
@@ -629,7 +641,7 @@ def test_write_merges_known_fields_and_preserves_unknown_keys(
     store.write(
         SettingsScope.USER,
         SettingsLayer(
-            context_chars=1000,
+            max_steps=10,
             permission_allow_rules=("Bash(git status)",),
         ),
     )
@@ -640,14 +652,14 @@ def test_write_merges_known_fields_and_preserves_unknown_keys(
     store.write(
         SettingsScope.USER,
         SettingsLayer(
-            context_chars=2000,
+            max_steps=20,
             permission_deny_rules=("Bash(rm:*)",),
         ),
     )
 
     document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
     assert document["futureSetting"] == {"enabled": True}
-    assert document["agent"]["contextChars"] == 2000
+    assert document["agent"]["maxSteps"] == 20
     assert document["permissions"] == {
         "allow": ["Bash(git status)"],
         "deny": ["Bash(rm:*)"],
@@ -726,9 +738,9 @@ def test_write_is_atomic_and_private(tmp_path: Path) -> None:
 
     store.write(
         SettingsScope.USER,
-        SettingsLayer(context_chars=1234),
+        SettingsLayer(max_output_tokens=1234),
     )
 
-    assert store.load_scope(SettingsScope.USER) == SettingsLayer(context_chars=1234)
+    assert store.load_scope(SettingsScope.USER) == SettingsLayer(max_output_tokens=1234)
     assert stat.S_IMODE(paths.user_settings_path.stat().st_mode) == 0o600
     assert list(paths.user_settings_path.parent.glob("*.tmp")) == []

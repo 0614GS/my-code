@@ -15,7 +15,6 @@ from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
 from my_code.context.user_context import AgentsUserContextResolver
-from my_code.context.window import ContextWindow
 from my_code.conversation.models import HumanMessage, ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
@@ -79,7 +78,9 @@ def output(*blocks: ModelTextBlock | ModelToolUseBlock) -> ModelOutput:
         if any(isinstance(block, ModelToolUseBlock) for block in blocks)
         else "end_turn"
     )
-    return ModelOutput(tuple(blocks), stop_reason, TokenUsage(2, 1))
+    return ModelOutput(
+        tuple(blocks), stop_reason, TokenUsage(2, 1, provider_reported=True)
+    )
 
 
 def prompt_registry() -> PromptRegistry:
@@ -131,7 +132,6 @@ async def test_foreground_subagent_uses_child_session_and_returns_one_result(
         )
         context = ContextEngine(
             ContextPlanner(
-                window=ContextWindow(10_000),
                 prompt=spec.prompt_registry or prompt_registry(),
                 max_output_tokens=100,
                 user_context_resolver=AgentsUserContextResolver(tmp_path),
@@ -195,7 +195,6 @@ async def test_foreground_subagent_uses_child_session_and_returns_one_result(
     )
     parent_context = ContextEngine(
         ContextPlanner(
-            window=ContextWindow(10_000),
             prompt=prompt_registry(),
             max_output_tokens=100,
         ),

@@ -49,7 +49,7 @@ class ControlledRun:
         self.turn_input = turn_input
         self.entered.set()
         await self.release.wait()
-        return AgentTurnSucceeded("done", 1, TokenUsage(1, 1))
+        return AgentTurnSucceeded("done", 1, TokenUsage(1, 1, provider_reported=True))
 
     async def close(self) -> None:
         self.closed = True

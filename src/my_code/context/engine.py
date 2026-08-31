@@ -11,7 +11,8 @@ from my_code.context.session import (
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.state import CompactTrigger
 from my_code.model.invocation import ModelInvocationRecorder
-from my_code.model.request import ModelToolDefinition
+from my_code.model.primitives import ContextFootprint, TokenUsage
+from my_code.model.request import AssistantOutput, ModelToolDefinition
 
 
 class ContextEngine:
@@ -57,6 +58,11 @@ class ContextEngine:
     ) -> None:
         self._planner.acknowledge_attachments(attachments)
 
+    def record_response(
+        self, plan: ContextPlan, response: AssistantOutput, usage: TokenUsage
+    ) -> ContextFootprint:
+        return self._planner.record_response(plan, response, usage)
+
     def derive_attachments(
         self, state: AttachmentDerivationState
     ) -> tuple[AttachmentPayload, ...]:
@@ -67,9 +73,14 @@ class ContextEngine:
         state: ContextPlanningState,
         trigger: CompactTrigger,
         recorder: ModelInvocationRecorder | None = None,
+        pre_compact_budget: ContextBudget | None = None,
     ) -> CompactionOutcome:
         return await self._compactor.compact(
-            self._planner, state, trigger, recorder=recorder
+            self._planner,
+            state,
+            trigger,
+            recorder=recorder,
+            pre_compact_budget=pre_compact_budget,
         )
 
 

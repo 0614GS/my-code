@@ -7,7 +7,7 @@ from my_code.conversation.models import ConversationSummaryMessage
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.capabilities import CapabilitySource, ModelLimits
 from my_code.model.invocation import ModelInputOrigin
-from my_code.model.primitives import ProviderBinding, TokenUsage
+from my_code.model.primitives import ContextFootprint, ProviderBinding, TokenUsage
 from my_code.model.request import ModelRequest
 
 
@@ -15,45 +15,25 @@ from my_code.model.request import ModelRequest
 class ContextBudget:
     """Observable budget for one projected model request."""
 
-    message_limit_chars: int
-    message_chars: int
-    system_chars: int
-    tool_schema_chars: int
+    reported_base_tokens: int | None
+    estimated_delta_tokens: int
+    projected_tokens: int
     reserved_output_tokens: int
-    last_actual_input_tokens: int | None
-    incremental_tokens: int
-    estimated_input_tokens: int
-    user_context_chars: int = 0
-    attachment_chars: int = 0
-    input_tokens: int = 0
     input_limit_tokens: int = 200_000
     compact_trigger_tokens: int = 180_000
-    last_reported_input_tokens: int | None = None
-    measurement: Literal["reported_calibrated", "tokenizer_estimate"] = (
-        "tokenizer_estimate"
-    )
+    measurement: Literal["reported", "estimated"] = "estimated"
     model_limits: ModelLimits = ModelLimits()
     model_limit_source: CapabilitySource = CapabilitySource.FALLBACK
     configured_compact_trigger_tokens: int | None = None
     warning: str | None = None
 
     @property
-    def estimated_input_chars(self) -> int:
-        return (
-            self.message_chars
-            + self.system_chars
-            + self.tool_schema_chars
-            + self.user_context_chars
-            + self.attachment_chars
-        )
-
-    @property
     def estimated_total_tokens(self) -> int:
-        return self.input_tokens + self.reserved_output_tokens
+        return self.projected_tokens + self.reserved_output_tokens
 
     @property
     def remaining_input_tokens(self) -> int:
-        return max(0, self.input_limit_tokens - self.input_tokens)
+        return max(0, self.input_limit_tokens - self.projected_tokens)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +47,7 @@ class ContextPlan:
         default_factory=tuple
     )
     request_binding: ProviderBinding | None = None
-    request_input_tokens_estimate: int | None = None
+    request_footprint: ContextFootprint | None = None
 
     def __post_init__(self) -> None:
         if self.provenance and len(self.provenance) != len(self.request.input):
@@ -87,9 +67,17 @@ class CompactionOutcome:
 class ContextOverflow(RuntimeError):
     """The context cannot construct a request within the active model limit."""
 
-    def __init__(self, current_size: int, maximum_size: int) -> None:
+    def __init__(
+        self,
+        current_size: int,
+        maximum_size: int,
+        replacements: tuple[ContentReplacement, ...] = (),
+        budget: ContextBudget | None = None,
+    ) -> None:
         self.current_size = current_size
         self.maximum_size = maximum_size
+        self.replacements = replacements
+        self.budget = budget
         super().__init__(
             f"Context requires {current_size} units but the limit is {maximum_size}"
         )

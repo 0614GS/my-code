@@ -128,7 +128,7 @@ def test_compact_rebuilds_latest_invoked_skills_and_restores_grants(
         )
     )
     summary = ConversationSummaryMessage("state", parent_uuid=latest.uuid)
-    boundary = CompactBoundary(latest.uuid, summary.uuid, "manual", 100)
+    boundary = CompactBoundary(latest.uuid, summary.uuid, "manual", 100, "estimated")
 
     session.commit_compaction((), summary, boundary)
 
@@ -161,7 +161,7 @@ def test_compact_and_restore_rebuild_valid_tool_discoveries(tmp_path: Path) -> N
         ToolDiscoveryInvalidationAttachment(("Removed",))
     )
     summary = ConversationSummaryMessage("state", parent_uuid=latest.uuid)
-    boundary = CompactBoundary(latest.uuid, summary.uuid, "manual", 100)
+    boundary = CompactBoundary(latest.uuid, summary.uuid, "manual", 100, "estimated")
 
     session.commit_compaction((), summary, boundary)
 

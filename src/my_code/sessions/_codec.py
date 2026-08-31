@@ -42,6 +42,7 @@ from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.foundation.json import JsonObject, to_json_object
 from my_code.model.capabilities import ModelLimits
 from my_code.model.primitives import (
+    ContextFootprint,
     ProviderBinding,
     ProviderContinuationState,
     ProviderReplayRecord,
@@ -114,7 +115,6 @@ def decode_entry(value: object) -> DecodedEntry:
             entry.permission_mode,
             entry.max_steps,
             entry.max_output_tokens,
-            entry.context_chars,
             entry.model_limits,
             entry.model_limit_source,
             entry.compact_trigger_tokens,
@@ -160,7 +160,8 @@ def decode_entry(value: object) -> DecodedEntry:
             entry.parent_uuid,
             entry.summary_uuid,
             entry.trigger,
-            entry.pre_compact_chars,
+            entry.pre_compact_tokens,
+            entry.measurement,
             entry.id,
         )
     if isinstance(entry, ToolPresentationRecord):
@@ -194,7 +195,8 @@ def encode_boundary(boundary: CompactBoundary) -> JsonObject:
             boundary.parent_uuid,
             boundary.summary_uuid,
             boundary.trigger,
-            boundary.pre_compact_chars,
+            boundary.pre_compact_tokens,
+            boundary.measurement,
         )
     )
 
@@ -210,7 +212,6 @@ def encode_start(start: SessionStart) -> JsonObject:
             start.permission_mode,
             start.max_steps,
             start.max_output_tokens,
-            start.context_chars,
             start.model_limits,
             start.model_limit_source,
             start.compact_trigger_tokens,
@@ -328,7 +329,7 @@ def message_to_record(message: ConversationEntry) -> MessageRecord:
             assistant_content,
             message.usage,
             message.provider_binding,
-            message.request_input_tokens_estimate,
+            message.context_footprint,
         )
     if isinstance(message, ToolResultBatch):
         result_content: tuple[ToolResultRecord, ...] = tuple(
@@ -377,7 +378,7 @@ def record_to_message(record: MessageRecord) -> ConversationEntry:
             record.parent_uuid,
             record.timestamp,
             record.provider_binding,
-            record.request_input_tokens_estimate,
+            record.context_footprint,
         )
     if isinstance(record, (LegacyToolResultBatchRecord, ToolResultBatchRecord)):
         result_content: tuple[ToolResult, ...] = tuple(
@@ -425,7 +426,6 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             permission_mode=entry.permission_mode,
             max_steps=entry.max_steps,
             max_output_tokens=entry.max_output_tokens,
-            context_chars=entry.context_chars,
             model_limits={
                 "context_window_tokens": entry.model_limits.context_window_tokens,
                 "max_input_tokens": entry.model_limits.max_input_tokens,
@@ -500,8 +500,11 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
         base["usage"] = _usage_json(entry.usage)
         if entry.provider_binding is not None:
             base["provider_binding"] = _binding_json(entry.provider_binding)
-        if entry.request_input_tokens_estimate is not None:
-            base["request_input_tokens_estimate"] = entry.request_input_tokens_estimate
+        base["context_footprint"] = (
+            None
+            if entry.context_footprint is None
+            else _footprint_json(entry.context_footprint)
+        )
     elif isinstance(entry, LegacyToolResultBatchRecord):
         base["content"] = [_result_json(b) for b in entry.content]
         base["source_assistant_uuid"] = entry.source_assistant_uuid
@@ -526,7 +529,8 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             parent_uuid=entry.parent_uuid,
             summary_uuid=entry.summary_uuid,
             trigger=entry.trigger,
-            pre_compact_chars=entry.pre_compact_chars,
+            pre_compact_tokens=entry.pre_compact_tokens,
+            measurement=entry.measurement,
         )
     else:
         base.update(
@@ -541,7 +545,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
         data = to_json_object(value)
     except TypeError as error:
         raise TranscriptDecodeError("Transcript entry must be an object") from error
-    if data.get("schema_version") != 5:
+    if data.get("schema_version") != 6:
         raise TranscriptDecodeError("Unsupported transcript schema version")
     kind = _string(data, "type")
     expected_fields = _ENTRY_FIELDS.get(kind)
@@ -549,7 +553,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
         raise TranscriptDecodeError(f"Unsupported transcript entry type: {kind}")
     actual_expected = expected_fields
     if kind == "assistant_message":
-        optional = {"provider_binding", "request_input_tokens_estimate"}
+        optional = {"provider_binding"}
         actual_expected = expected_fields | (frozenset(data) & optional)
     elif kind == "session_started":
         optional = {
@@ -579,7 +583,6 @@ def entry_from_json(value: object) -> TranscriptEntry:
             permission_mode,
             _optional_positive_int(data, "max_steps"),
             _positive_int(data, "max_output_tokens"),
-            _positive_int(data, "context_chars"),
             _model_limits(data.get("model_limits")),
             _optional_non_empty_string(data, "model_limit_source"),
             _optional_positive_int(data, "compact_trigger_tokens"),
@@ -667,7 +670,8 @@ def entry_from_json(value: object) -> TranscriptEntry:
             _string(data, "parent_uuid"),
             _string(data, "summary_uuid"),
             actual_trigger,
-            _positive_int(data, "pre_compact_chars"),
+            _positive_int(data, "pre_compact_tokens"),
+            _measurement(data.get("measurement")),
         )
     if kind == "tool_presentation":
         return ToolPresentationRecord(
@@ -719,11 +723,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
             assistant_content,
             _usage(data.get("usage")),
             _optional_binding(data.get("provider_binding")),
-            (
-                _positive_int(data, "request_input_tokens_estimate")
-                if "request_input_tokens_estimate" in data
-                else None
-            ),
+            _optional_footprint(data.get("context_footprint")),
         )
     if kind == "tool_results_message":
         raw = _list(data, "content")
@@ -983,6 +983,44 @@ def _skill_listing_entry(value: object) -> SkillListingEntry:
         _string(data, "description"),
         _string(data, "source"),
     )
+
+
+def _footprint_json(footprint: ContextFootprint) -> JsonObject:
+    return to_json_object(
+        {
+            "text": footprint.text,
+            "image_count": footprint.image_count,
+            "document_count": footprint.document_count,
+        }
+    )
+
+
+def _optional_footprint(value: object) -> ContextFootprint | None:
+    if value is None:
+        return None
+    try:
+        data = to_json_object(value)
+    except TypeError as error:
+        raise TranscriptDecodeError(
+            "context_footprint must be an object or null"
+        ) from error
+    _require_exact_fields(data, frozenset({"text", "image_count", "document_count"}))
+    try:
+        return ContextFootprint(
+            _string(data, "text"),
+            _non_negative_int(data, "image_count"),
+            _non_negative_int(data, "document_count"),
+        )
+    except ValueError as error:
+        raise TranscriptDecodeError(str(error)) from error
+
+
+def _measurement(value: object) -> Literal["reported", "estimated"]:
+    if value == "reported":
+        return "reported"
+    if value == "estimated":
+        return "estimated"
+    raise TranscriptDecodeError("measurement must be reported or estimated")
 
 
 def _tool_discovery_definition(
@@ -1473,7 +1511,6 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
             "permission_mode",
             "max_steps",
             "max_output_tokens",
-            "context_chars",
         }
     ),
     "session_metadata": frozenset(
@@ -1516,7 +1553,7 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
         }
     ),
     "human_message": _MESSAGE_COMMON,
-    "assistant_message": _MESSAGE_COMMON | {"usage"},
+    "assistant_message": _MESSAGE_COMMON | {"usage", "context_footprint"},
     "tool_results_message": _MESSAGE_COMMON | {"source_assistant_uuid"},
     "tool_result_batch": _MESSAGE_COMMON | {"source_assistant_id"},
     "conversation_summary_message": _MESSAGE_COMMON,
@@ -1539,7 +1576,8 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
             "parent_uuid",
             "summary_uuid",
             "trigger",
-            "pre_compact_chars",
+            "pre_compact_tokens",
+            "measurement",
         }
     ),
     "tool_presentation": frozenset(

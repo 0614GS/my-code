@@ -11,7 +11,7 @@ from typing import Literal
 from uuid import uuid4
 
 from my_code.model.client import ModelClient
-from my_code.model.errors import ModelContextOverflow
+from my_code.model.errors import ModelContextOverflow, ModelProtocolError
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
 from my_code.model.request import ModelRequest
 
@@ -126,6 +126,12 @@ class ModelInvocationCoordinator:
                             "Model stream emitted more than one completed output"
                         )
                 yield event
+                if isinstance(event.payload, ModelOutputCompleted):
+                    usage = event.payload.output.usage
+                    if not usage.provider_reported or usage.total_input_tokens < 1:
+                        raise ModelProtocolError(
+                            "Provider completed a response without valid token usage"
+                        )
             if completed_outputs != 1:
                 raise RuntimeError("Model stream ended without a final response")
         except asyncio.CancelledError:

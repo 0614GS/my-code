@@ -12,7 +12,6 @@ from my_code.context.session import (
     ContextPlanningState,
     ContextRuntime,
 )
-from my_code.context.window import ContextWindow
 from my_code.context.xml import render_context_instruction
 from my_code.conversation.attachments import (
     FileMentionAttachment,
@@ -35,7 +34,6 @@ from my_code.prompts.registry import PromptRegistry
 
 def _planner(*, attachment_resolver=None) -> ContextPlanner:
     return ContextPlanner(
-        window=ContextWindow(1_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
@@ -132,7 +130,7 @@ def test_attachment_resolver_discards_partial_failed_source(
     assert result == (healthy,)
 
 
-def test_budget_reports_attachment_chars_separately() -> None:
+def test_budget_includes_text_attachment_in_one_footprint() -> None:
     human = HumanMessage("prompt")
     attachment = AttachmentMessage(
         FileMentionAttachment("a.txt", "old"), parent_uuid=human.uuid
@@ -141,17 +139,18 @@ def test_budget_reports_attachment_chars_separately() -> None:
         ContextPlanningState((human, attachment)), ContextRuntime(), tools=()
     )
     assert plan.budget is not None
-    assert plan.budget.message_chars == len("prompt")
-    assert plan.budget.attachment_chars > len("old")
+    assert plan.request_footprint is not None
+    assert "prompt" in plan.request_footprint.text
+    assert "old" in plan.request_footprint.text
+    assert plan.budget.measurement == "estimated"
 
 
-def test_attachment_chars_do_not_create_a_second_full_compaction_limit() -> None:
+def test_attachment_uses_the_same_token_budget_as_other_input() -> None:
     human = HumanMessage("p")
     attachment = AttachmentMessage(
         FileMentionAttachment("a.txt", "x" * 30), parent_uuid=human.uuid
     )
     planner = ContextPlanner(
-        window=ContextWindow(10),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
@@ -162,4 +161,5 @@ def test_attachment_chars_do_not_create_a_second_full_compaction_limit() -> None
     )
 
     assert plan.budget is not None
-    assert plan.budget.attachment_chars > 30
+    assert plan.request_footprint is not None
+    assert "x" * 30 in plan.request_footprint.text

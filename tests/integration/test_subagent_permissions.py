@@ -11,7 +11,6 @@ from my_code.config.providers import ProviderProtocol
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.window import ContextWindow
 from my_code.conversation.models import ToolResultBatch
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
@@ -134,7 +133,9 @@ def output(*blocks: ModelTextBlock | ModelToolUseBlock) -> ModelOutput:
         if any(isinstance(block, ModelToolUseBlock) for block in blocks)
         else "end_turn"
     )
-    return ModelOutput(tuple(blocks), stop_reason, TokenUsage(2, 1))
+    return ModelOutput(
+        tuple(blocks), stop_reason, TokenUsage(2, 1, provider_reported=True)
+    )
 
 
 def build_controller(
@@ -174,7 +175,6 @@ def build_controller(
         )
         context = ContextEngine(
             ContextPlanner(
-                window=ContextWindow(10_000),
                 prompt=spec.prompt_registry
                 or PromptRegistry(
                     (

@@ -1,11 +1,11 @@
 """从会话快照生成完整 ModelRequest。"""
 
-import json
 from collections.abc import Callable
 from typing import Literal
 
 from my_code.context.attachments.sources import DerivedAttachmentResolver
 from my_code.context.documents import UserContextDocument
+from my_code.context.meter import ContextMeter
 from my_code.context.microcompact import (
     MicrocompactPolicy,
     apply_content_replacements,
@@ -17,10 +17,7 @@ from my_code.context.session import (
     ContextPlanningState,
     ContextRuntime,
 )
-from my_code.context.tokenizer import UnicodeTokenEstimator
 from my_code.context.user_context import EmptyUserContextResolver, UserContextResolver
-from my_code.context.window import ContextWindow
-from my_code.context.xml import render_context_instruction
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import (
     AssistantMessage,
@@ -28,8 +25,6 @@ from my_code.conversation.models import (
     ConversationEntry,
     ConversationSummaryMessage,
     HumanMessage,
-    TextContent,
-    ToolCall,
     ToolResultBatch,
 )
 from my_code.conversation.state import ContentReplacement
@@ -41,23 +36,17 @@ from my_code.model.capabilities import (
 )
 from my_code.model.invocation import ModelInputOrigin, ModelInputOriginKind
 from my_code.model.primitives import (
+    ContextFootprint,
     ProviderBinding,
-    ProviderContinuationState,
     ProviderReplayRecord,
+    TokenUsage,
 )
 from my_code.model.request import (
     AssistantOutput,
-    InputText,
     ModelInputItem,
-    ModelReasoningBlock,
     ModelRequest,
-    ModelTextBlock,
     ModelToolDefinition,
-    ModelToolUseBlock,
     SystemPrompt,
-    ToolOutputs,
-    ToolOutputText,
-    UserInput,
 )
 from my_code.prompts.registry import PromptRegistry
 
@@ -68,7 +57,6 @@ class ContextPlanner:
     def __init__(
         self,
         *,
-        window: ContextWindow,
         prompt: PromptRegistry,
         max_output_tokens: int,
         normalizer: ModelInputNormalizer | None = None,
@@ -77,17 +65,14 @@ class ContextPlanner:
         attachment_resolver: DerivedAttachmentResolver | None = None,
         binding_resolver: Callable[[], ProviderBinding] | None = None,
         model_environment: Callable[[], ActiveModelEnvironment] | None = None,
-        token_estimator: UnicodeTokenEstimator | None = None,
+        meter: ContextMeter | None = None,
     ) -> None:
         if max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
-        self.window = window
         self.prompt = prompt
         self.max_output_tokens = max_output_tokens
         self.normalizer = normalizer or ModelInputNormalizer()
-        self.microcompact = microcompact or MicrocompactPolicy.for_window(
-            window.max_chars
-        )
+        self.microcompact = microcompact or MicrocompactPolicy()
         self.user_context_resolver = user_context_resolver or EmptyUserContextResolver()
         self.attachment_resolver = attachment_resolver or DerivedAttachmentResolver()
         self.binding_resolver = binding_resolver
@@ -97,7 +82,7 @@ class ContextPlanner:
             configured_trigger_tokens=None,
         )
         self._model_environment = model_environment or (lambda: fallback_environment)
-        self.token_estimator = token_estimator or UnicodeTokenEstimator()
+        self.meter = meter or ContextMeter()
         self.attachment_projector = self.normalizer.attachment_projector
 
     def plan(
@@ -108,25 +93,14 @@ class ContextPlanner:
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextPlan:
         binding = self.binding_resolver() if self.binding_resolver is not None else None
-        existing_view = apply_content_replacements(
+        effective = apply_content_replacements(
             state.context_entries, state.content_replacements
         )
-        effective, proposed = self._effective_messages(
-            state,
-            additional_chars=_replayed_continuation_chars(
-                existing_view, state.replay_records, binding
-            ),
-        )
+        proposed: tuple[ContentReplacement, ...] = ()
         user_context = runtime.user_context(self.user_context_resolver.resolve)
-        selected = self.window.ensure_fits(
-            effective,
-            additional_chars=_replayed_continuation_chars(
-                effective, state.replay_records, binding
-            ),
-        )
         model_messages = self.normalizer.normalize(
             user_context,
-            selected,
+            effective,
             state.replay_records,
             active_binding=binding,
         )
@@ -134,16 +108,12 @@ class ContextPlanner:
         request = ModelRequest(
             system_prompt, model_messages, tools, self.max_output_tokens
         )
-        budget, local_estimate = self._budget(
-            selected,
-            request,
-            user_context,
-        )
-        if budget.input_tokens >= budget.compact_trigger_tokens:
-            token_proposed = self.microcompact.propose_tokens(
+        budget, footprint = self._budget(effective, request)
+        if budget.projected_tokens >= budget.compact_trigger_tokens:
+            proposed = self.microcompact.propose(
                 state.context_entries,
-                state.content_replacements + proposed,
-                current_tokens=budget.input_tokens,
+                state.content_replacements,
+                current_tokens=budget.projected_tokens,
                 trigger_tokens=budget.compact_trigger_tokens,
                 estimate=lambda view: self._projected_tokens_for(
                     view,
@@ -153,39 +123,39 @@ class ContextPlanner:
                     tools,
                 ),
             )
-            if token_proposed:
-                proposed += token_proposed
-                selected = apply_content_replacements(
+            if proposed:
+                effective = apply_content_replacements(
                     state.context_entries,
                     state.content_replacements + proposed,
                 )
                 model_messages = self.normalizer.normalize(
                     user_context,
-                    selected,
+                    effective,
                     state.replay_records,
                     active_binding=binding,
                 )
                 request = ModelRequest(
                     system_prompt, model_messages, tools, self.max_output_tokens
                 )
-                budget, local_estimate = self._budget(
-                    selected,
-                    request,
-                    user_context,
-                )
-        if budget.input_tokens >= budget.compact_trigger_tokens:
-            raise ContextOverflow(budget.input_tokens, budget.input_limit_tokens)
+                budget, footprint = self._budget(effective, request)
+        if budget.projected_tokens >= budget.compact_trigger_tokens:
+            raise ContextOverflow(
+                budget.projected_tokens,
+                budget.input_limit_tokens,
+                proposed,
+                budget,
+            )
         return ContextPlan(
             request=request,
             provenance=_request_provenance(
                 user_context,
-                selected,
+                effective,
                 state.content_replacements + proposed,
             ),
             budget=budget,
             new_content_replacements=proposed,
             request_binding=binding,
-            request_input_tokens_estimate=local_estimate,
+            request_footprint=footprint,
         )
 
     def inspect(
@@ -195,7 +165,9 @@ class ContextPlanner:
         *,
         tools: tuple[ModelToolDefinition, ...],
     ) -> ContextBudget:
-        effective, _ = self._effective_messages(state, propose=False)
+        effective = apply_content_replacements(
+            state.context_entries, state.content_replacements
+        )
         user_context = runtime.user_context(self.user_context_resolver.resolve)
         binding = self.binding_resolver() if self.binding_resolver is not None else None
         messages = self.normalizer.normalize(
@@ -211,24 +183,45 @@ class ContextPlanner:
             tools,
             self.max_output_tokens,
         )
-        budget, _ = self._budget(
-            effective,
-            request,
-            user_context,
-        )
+        budget, _ = self._budget(effective, request)
         return budget
 
     def compaction_view(
         self, state: ContextPlanningState
     ) -> tuple[tuple[ModelInputItem, ...], tuple[ContentReplacement, ...]]:
-        effective, proposed = self._effective_messages(state)
+        effective = apply_content_replacements(
+            state.context_entries, state.content_replacements
+        )
         return (
             self.normalizer.normalize_transcript(effective),
-            proposed,
+            (),
         )
 
-    def measure(self, messages: tuple[ConversationEntry, ...]) -> int:
-        return self.window.size(messages)
+    def measure(
+        self, messages: tuple[ConversationEntry, ...]
+    ) -> tuple[int, Literal["reported", "estimated"]]:
+        binding = self.binding_resolver() if self.binding_resolver is not None else None
+        anchor = _usage_anchor(messages, binding)
+        if anchor is not None:
+            return (
+                anchor.usage.total_input_tokens + anchor.usage.output_tokens,
+                "reported",
+            )
+        model = self.normalizer.normalize_transcript(messages)
+        request = ModelRequest(SystemPrompt.from_text("context"), model, (), 1)
+        tokens = self.meter.estimate(binding, self.meter.footprint(request)).tokens
+        return tokens, "estimated"
+
+    def record_response(
+        self,
+        plan: ContextPlan,
+        response: AssistantOutput,
+        usage: TokenUsage,
+    ) -> ContextFootprint:
+        if plan.request_footprint is None:
+            raise ValueError("Context plan is missing its request footprint")
+        self.meter.calibrate(plan.request_binding, plan.request_footprint, usage)
+        return self.meter.response_footprint(plan.request, response)
 
     def derive_attachments(
         self, state: AttachmentDerivationState
@@ -241,78 +234,41 @@ class ContextPlanner:
     ) -> None:
         self.attachment_resolver.acknowledge(attachments)
 
-    def _effective_messages(
-        self,
-        state: ContextPlanningState,
-        *,
-        propose: bool = True,
-        additional_chars: int = 0,
-    ) -> tuple[tuple[ConversationEntry, ...], tuple[ContentReplacement, ...]]:
-        proposed = (
-            self.microcompact.propose(
-                state.context_entries,
-                state.content_replacements,
-                additional_chars=additional_chars,
-            )
-            if propose
-            else ()
-        )
-        return apply_content_replacements(
-            state.context_entries, state.content_replacements + proposed
-        ), proposed
-
     def _budget(
         self,
         conversation: tuple[ConversationEntry, ...],
         request: ModelRequest,
-        user_context: tuple[UserContextDocument, ...],
-    ) -> tuple[ContextBudget, int]:
-        user_chars = _context_chars(user_context)
-        attachment_chars = self.attachment_projector.measure(
-            tuple(
-                message.payload
-                for message in conversation
-                if isinstance(message, AttachmentMessage)
-            )
-        )
-        local_estimate = self.token_estimator.count_request(request)
+    ):
+        footprint = self.meter.footprint(request)
         binding = self.binding_resolver() if self.binding_resolver is not None else None
         anchor = _usage_anchor(conversation, binding)
         if anchor is None:
-            actual = None
-            projected = local_estimate
-            measurement: Literal["reported_calibrated", "tokenizer_estimate"] = (
-                "tokenizer_estimate"
-            )
+            base = None
+            delta = self.meter.estimate(binding, footprint).tokens
+            projected = delta
+            measurement = "estimated"
         else:
-            actual = anchor.usage.total_input_tokens
-            projected = max(
-                1,
-                actual
-                + local_estimate
-                - (anchor.request_input_tokens_estimate or local_estimate),
-            )
-            measurement = "reported_calibrated"
+            assert anchor.context_footprint is not None
+            base = anchor.usage.total_input_tokens + anchor.usage.output_tokens
+            current_estimate = self.meter.estimate(binding, footprint).tokens
+            anchor_estimate = self.meter.estimate(
+                binding, anchor.context_footprint
+            ).tokens
+            delta = current_estimate - anchor_estimate
+            projected = max(1, base + delta)
+            measurement = "reported"
         environment = self._model_environment()
         input_limit = (
             environment.descriptor.limits.effective_input_limit(self.max_output_tokens)
             or FALLBACK_INPUT_TOKENS
         )
         budget = ContextBudget(
-            message_limit_chars=self.window.max_chars,
-            message_chars=_message_chars(request.input) - user_chars - attachment_chars,
-            system_chars=len(request.system_prompt.text),
-            tool_schema_chars=_tool_schema_chars(request.tools),
+            reported_base_tokens=base,
+            estimated_delta_tokens=delta,
+            projected_tokens=projected,
             reserved_output_tokens=self.max_output_tokens,
-            last_actual_input_tokens=actual,
-            incremental_tokens=(projected if actual is None else projected - actual),
-            estimated_input_tokens=projected,
-            user_context_chars=user_chars,
-            attachment_chars=attachment_chars,
-            input_tokens=projected,
             input_limit_tokens=input_limit,
             compact_trigger_tokens=environment.compact_trigger_tokens,
-            last_reported_input_tokens=actual,
             measurement=measurement,
             model_limits=environment.descriptor.limits,
             model_limit_source=environment.descriptor.source,
@@ -321,7 +277,7 @@ class ContextPlanner:
             ),
             warning=environment.warning or environment.discovery_error,
         )
-        return budget, local_estimate
+        return budget, footprint
 
     def _projected_tokens_for(
         self,
@@ -339,170 +295,8 @@ class ContextPlanner:
             active_binding=binding,
         )
         request = ModelRequest(prompt, messages, tools, self.max_output_tokens)
-        budget, _ = self._budget(conversation, request, user_context)
-        return budget.input_tokens
-
-
-def _message_chars(items: tuple[ModelInputItem, ...]) -> int:
-    size = 0
-    for item in items:
-        if isinstance(item, UserInput):
-            for block in item.content:
-                if isinstance(block, InputText):
-                    size += len(block.text)
-                else:
-                    size += len(block.data)
-        elif isinstance(item, AssistantOutput):
-            for block in item.content:
-                if isinstance(block, ModelTextBlock):
-                    size += (
-                        _continuation_chars(block.continuation)
-                        if block.continuation is not None
-                        else len(block.text)
-                    )
-                elif isinstance(block, ModelToolUseBlock):
-                    size += (
-                        _continuation_chars(block.continuation)
-                        if block.continuation is not None
-                        else len(block.name) + len(str(block.input))
-                    )
-                elif isinstance(block, ModelReasoningBlock):
-                    if block.continuation is not None:
-                        size += _continuation_chars(block.continuation)
-        elif isinstance(item, ToolOutputs):
-            for output in item.results:
-                size += sum(
-                    len(block.text)
-                    if isinstance(block, ToolOutputText)
-                    else len(block.data)
-                    for block in output.content
-                )
-    return size
-
-
-def _context_chars(items: tuple[UserContextDocument, ...]) -> int:
-    return sum(
-        len(
-            block.text
-            if isinstance(block, TextContent)
-            else render_context_instruction(block)
-        )
-        for item in items
-        for block in item.content
-    )
-
-
-def _replayed_continuation_chars(
-    conversation: tuple[ConversationEntry, ...],
-    replay_records: tuple[ProviderReplayRecord, ...],
-    binding: ProviderBinding | None,
-) -> int:
-    last_protocol_entry = next(
-        (
-            item
-            for item in reversed(conversation)
-            if not isinstance(item, AttachmentMessage)
-        ),
-        None,
-    )
-    source_uuid = (
-        last_protocol_entry.source_assistant_id
-        if isinstance(last_protocol_entry, ToolResultBatch)
-        else None
-    )
-    by_id = {message.uuid: message for message in conversation}
-    size = 0
-    for record in replay_records:
-        message = by_id.get(record.entry_id)
-        if not isinstance(message, AssistantMessage):
-            continue
-        try:
-            index = int(record.content_id.removeprefix("content:"))
-            block = message.content[index]
-        except (ValueError, IndexError):
-            continue
-        continuation = record.state
-        if binding is not None and continuation.binding != binding:
-            continue
-        if (
-            continuation.replay_scope != "working_context"
-            and message.uuid != source_uuid
-        ):
-            continue
-        size += max(
-            0,
-            _continuation_chars(continuation) - _fallback_block_chars(block),
-        )
-    return size
-
-
-def _fallback_block_chars(block: object) -> int:
-    if isinstance(block, TextContent):
-        return len(block.text)
-    if isinstance(block, ToolCall):
-        return len(block.name) + len(str(block.input))
-    return 0
-
-
-def _tool_schema_chars(tools: tuple[ModelToolDefinition, ...]) -> int:
-    return sum(
-        len(
-            json.dumps(
-                {
-                    "name": t.name,
-                    "description": t.description,
-                    "input_schema": t.input_schema,
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-        )
-        for t in tools
-    )
-
-
-def _conversation_chars(messages: tuple[ConversationEntry, ...]) -> int:
-    size = 0
-    for message in messages:
-        if isinstance(message, AttachmentMessage):
-            size += len(str(message.payload))
-        elif isinstance(message, (HumanMessage, ConversationSummaryMessage)):
-            size += len(message.content)
-        elif isinstance(message, AssistantMessage):
-            for block in message.content:
-                size += (
-                    len(block.text)
-                    if isinstance(block, TextContent)
-                    else len(block.name) + len(str(block.input))
-                    if isinstance(block, ToolCall)
-                    else 0
-                )
-        else:
-            size += sum(len(result.content) for result in message.content)
-    return size
-
-
-def _estimate(
-    conversation: tuple[ConversationEntry, ...],
-    model: tuple[ModelInputItem, ...],
-    system: str,
-    tools: tuple[ModelToolDefinition, ...],
-    attachment_chars: int,
-) -> tuple[int | None, int, int]:
-    for index in range(len(conversation) - 1, -1, -1):
-        message = conversation[index]
-        if not isinstance(message, AssistantMessage):
-            continue
-        incremental = _chars_to_tokens(
-            _conversation_chars(conversation[index + 1 :]) + attachment_chars
-        )
-        actual = message.usage.total_input_tokens
-        return actual, incremental, actual + message.usage.output_tokens + incremental
-    estimated = _chars_to_tokens(
-        len(system) + _tool_schema_chars(tools) + _message_chars(model)
-    )
-    return None, estimated, estimated
+        budget, _ = self._budget(conversation, request)
+        return budget.projected_tokens
 
 
 def _usage_anchor(
@@ -517,15 +311,11 @@ def _usage_anchor(
             for message in reversed(conversation)
             if isinstance(message, AssistantMessage)
             and message.provider_binding == binding
-            and message.request_input_tokens_estimate is not None
+            and message.context_footprint is not None
             and message.usage.provider_reported
         ),
         None,
     )
-
-
-def _chars_to_tokens(chars: int) -> int:
-    return (chars + 3) // 4
 
 
 def _request_provenance(
@@ -566,16 +356,6 @@ def _request_provenance(
             )
         )
     return tuple(origins)
-
-
-def _continuation_chars(state: ProviderContinuationState) -> int:
-    return len(
-        json.dumps(
-            state.payload,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    )
 
 
 __all__ = [

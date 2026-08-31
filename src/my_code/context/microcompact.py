@@ -1,95 +1,38 @@
-"""对旧工具结果生成稳定、可重放的轻量压缩决策。"""
+"""Age-gated token microcompaction of replayable tool results."""
 
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
-from my_code.context.attachments.projection import AttachmentProjector
 from my_code.conversation.models import (
     AssistantMessage,
-    AttachmentMessage,
     ConversationEntry,
-    ConversationSummaryMessage,
-    HumanMessage,
-    ReasoningContent,
-    TextContent,
     ToolCall,
     ToolResult,
     ToolResultBatch,
 )
 from my_code.conversation.state import ContentReplacement
 
-_ELIGIBLE_TOOLS = frozenset({"Bash", "Glob", "Grep", "Read"})
+_ELIGIBLE_TOOLS = frozenset({"Glob", "Grep", "Read"})
 
 
 class MicrocompactPolicy:
-    """只回收可重新执行的旧只读/输出型工具结果。"""
+    """Make one oldest-first pass immediately before full compaction."""
 
     def __init__(
         self,
         *,
-        trigger_chars: int,
-        target_chars: int,
-        min_result_chars: int = 2_000,
-        keep_recent_batches: int = 2,
+        minimum_age: timedelta = timedelta(minutes=30),
+        keep_recent_results: int = 5,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
-        if target_chars < 1 or trigger_chars < target_chars:
-            raise ValueError("Microcompact thresholds are invalid")
-        if min_result_chars < 1 or keep_recent_batches < 0:
+        if minimum_age < timedelta(0) or keep_recent_results < 0:
             raise ValueError("Microcompact limits are invalid")
-        self.trigger_chars = trigger_chars
-        self.target_chars = target_chars
-        self.min_result_chars = min_result_chars
-        self.keep_recent_batches = keep_recent_batches
-
-    @classmethod
-    def for_window(cls, max_chars: int) -> "MicrocompactPolicy":
-        return cls(
-            trigger_chars=max_chars,
-            target_chars=max(1, max_chars * 3 // 4),
-        )
+        self.minimum_age = minimum_age
+        self.keep_recent_results = keep_recent_results
+        self._now = now or (lambda: datetime.now(UTC))
 
     def propose(
-        self,
-        messages: tuple[ConversationEntry, ...],
-        existing: tuple[ContentReplacement, ...],
-        *,
-        additional_chars: int = 0,
-    ) -> tuple[ContentReplacement, ...]:
-        """按消息顺序返回达到目标预算所需的新决策。"""
-
-        replacements = {item.tool_use_id: item for item in existing}
-        if additional_chars < 0:
-            raise ValueError("additional_chars must not be negative")
-        current_chars = (
-            _effective_message_chars(messages, replacements) + additional_chars
-        )
-        if current_chars <= self.trigger_chars:
-            return ()
-
-        tool_names = {
-            block.id: block.name
-            for message in messages
-            if isinstance(message, AssistantMessage)
-            for block in message.content
-            if isinstance(block, ToolCall)
-        }
-        candidates = self._candidates(messages, replacements, tool_names)
-
-        proposed: list[ContentReplacement] = []
-        for block in candidates:
-            tool_name = tool_names[block.tool_use_id]
-            replacement = ContentReplacement.for_tool_result(
-                tool_use_id=block.tool_use_id,
-                tool_name=tool_name,
-                original_chars=len(block.content),
-            )
-            proposed.append(replacement)
-            current_chars -= len(block.content) - len(replacement.content)
-            if current_chars <= self.target_chars:
-                break
-        return tuple(proposed)
-
-    def propose_tokens(
         self,
         messages: tuple[ConversationEntry, ...],
         existing: tuple[ContentReplacement, ...],
@@ -98,11 +41,8 @@ class MicrocompactPolicy:
         trigger_tokens: int,
         estimate: Callable[[tuple[ConversationEntry, ...]], int],
     ) -> tuple[ContentReplacement, ...]:
-        """Replace oldest eligible results until the retokenized request is safe."""
-
         if current_tokens < trigger_tokens:
             return ()
-        target_tokens = max(1, trigger_tokens * 9 // 10)
         replacements = {item.tool_use_id: item for item in existing}
         tool_names = {
             block.id: block.name
@@ -113,15 +53,21 @@ class MicrocompactPolicy:
         }
         candidates = self._candidates(messages, replacements, tool_names)
         proposed: list[ContentReplacement] = []
-        for block in candidates:
+        effective_tokens = current_tokens
+        for result in candidates:
             replacement = ContentReplacement.for_tool_result(
-                tool_use_id=block.tool_use_id,
-                tool_name=tool_names[block.tool_use_id],
-                original_chars=len(block.content),
+                tool_use_id=result.tool_use_id,
+                tool_name=tool_names[result.tool_use_id],
+                original_chars=len(result.content),
             )
+            trial = tuple(proposed) + (replacement,)
+            view = apply_content_replacements(messages, existing + trial)
+            trial_tokens = estimate(view)
+            if trial_tokens >= effective_tokens:
+                continue
             proposed.append(replacement)
-            view = apply_content_replacements(messages, existing + tuple(proposed))
-            if estimate(view) <= target_tokens:
+            effective_tokens = trial_tokens
+            if effective_tokens < trigger_tokens:
                 break
         return tuple(proposed)
 
@@ -131,21 +77,24 @@ class MicrocompactPolicy:
         replacements: dict[str, ContentReplacement],
         tool_names: dict[str, str],
     ) -> list[ToolResult]:
-        batches = [
-            message for message in messages if isinstance(message, ToolResultBatch)
+        cutoff = self._now() - self.minimum_age
+        replayable = [
+            (batch, result)
+            for batch in messages
+            if isinstance(batch, ToolResultBatch)
+            for result in batch.content
+            if not result.is_error
+            and result.tool_use_id not in replacements
+            and tool_names.get(result.tool_use_id) in _ELIGIBLE_TOOLS
         ]
-        eligible_batches = (
-            batches[: -self.keep_recent_batches]
-            if self.keep_recent_batches
-            else batches
-        )
+        protected = {
+            result.tool_use_id for _, result in replayable[-self.keep_recent_results :]
+        }
         return [
-            block
-            for message in eligible_batches
-            for block in message.content
-            if block.tool_use_id not in replacements
-            and tool_names.get(block.tool_use_id) in _ELIGIBLE_TOOLS
-            and len(block.content) >= self.min_result_chars
+            result
+            for batch, result in replayable
+            if result.tool_use_id not in protected
+            and _timestamp(batch.timestamp) <= cutoff
         ]
 
 
@@ -153,48 +102,26 @@ def apply_content_replacements(
     messages: tuple[ConversationEntry, ...],
     replacements: tuple[ContentReplacement, ...],
 ) -> tuple[ConversationEntry, ...]:
-    """创建模型工作视图，不修改 Transcript 中的原始消息。"""
-
     by_id = {item.tool_use_id: item for item in replacements}
-    updated: list[ConversationEntry] = []
-    for message in messages:
-        if not isinstance(message, ToolResultBatch):
-            updated.append(message)
-            continue
-        content = tuple(
-            replace(block, content=by_id[block.tool_use_id].content)
-            if isinstance(block, ToolResult) and block.tool_use_id in by_id
-            else block
-            for block in message.content
+    return tuple(
+        replace(
+            message,
+            content=tuple(
+                replace(result, content=by_id[result.tool_use_id].content)
+                if result.tool_use_id in by_id
+                else result
+                for result in message.content
+            ),
         )
-        updated.append(replace(message, content=content))
-    return tuple(updated)
+        if isinstance(message, ToolResultBatch)
+        else message
+        for message in messages
+    )
 
 
-def _effective_message_chars(
-    messages: tuple[ConversationEntry, ...],
-    replacements: dict[str, ContentReplacement],
-) -> int:
-    size = 0
-    for message in messages:
-        if isinstance(message, AttachmentMessage):
-            size += AttachmentProjector().measure((message.payload,))
-            continue
-        if isinstance(message, (HumanMessage, ConversationSummaryMessage)):
-            size += len(message.content)
-            continue
-        for block in message.content:
-            if isinstance(block, ToolResult):
-                size += (
-                    len(replacements[block.tool_use_id].content)
-                    if block.tool_use_id in replacements
-                    else len(block.content)
-                )
-            elif isinstance(block, ToolCall):
-                size += len(block.name) + len(str(block.input))
-            else:
-                if isinstance(block, TextContent):
-                    size += len(block.text)
-                else:
-                    assert isinstance(block, ReasoningContent)
-    return size
+def _timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+__all__ = ["MicrocompactPolicy", "apply_content_replacements"]

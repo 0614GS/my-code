@@ -11,7 +11,6 @@ from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
-from my_code.context.window import ContextWindow
 from my_code.conversation.models import ToolResultBatch
 from my_code.foundation.json import JsonObject
 from my_code.model.events import (
@@ -111,13 +110,13 @@ class ReplacingModel:
             output = ModelOutput(
                 (ModelToolUseBlock("dynamic-1", "Dynamic", {}),),
                 "tool_use",
-                TokenUsage(2, 1),
+                TokenUsage(2, 1, provider_reported=True),
             )
         else:
             output = ModelOutput(
                 (ModelTextBlock("finished"),),
                 "end_turn",
-                TokenUsage(3, 1),
+                TokenUsage(3, 1, provider_reported=True),
             )
         sequencer = ModelStreamSequencer()
         for payload in completed_output_payloads(output):
@@ -143,7 +142,6 @@ async def test_catalog_update_during_step_waits_until_next_step(
     )
     context = ContextEngine(
         ContextPlanner(
-            window=ContextWindow(10_000),
             prompt=PromptRegistry(
                 (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
             ),
@@ -167,7 +165,9 @@ async def test_catalog_update_during_step_waits_until_next_step(
         session, ContextRuntime(), AgentTurnInput("use Dynamic")
     )
 
-    assert outcome == AgentTurnSucceeded("finished", 2, TokenUsage(5, 2))
+    assert outcome == AgentTurnSucceeded(
+        "finished", 2, TokenUsage(5, 2, provider_reported=True)
+    )
     assert original.executions == 1
     assert replacement.executions == 0
     assert model.requests[0].tools[0].description == "original definition"

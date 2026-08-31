@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
+from my_code.model.errors import ModelProtocolError
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
 from my_code.model.request import ModelOutput, ModelRequest
 
@@ -28,6 +29,10 @@ async def collect_model_output(
         output = event.payload.output
     if output is None:
         raise RuntimeError("Model stream ended without a completed output")
+    if not output.usage.provider_reported or output.usage.total_input_tokens < 1:
+        raise ModelProtocolError(
+            "Provider completed a response without valid token usage"
+        )
     return output
 
 

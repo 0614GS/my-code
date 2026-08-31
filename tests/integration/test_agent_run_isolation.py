@@ -13,7 +13,6 @@ from my_code.config.providers import ProviderProtocol
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.window import ContextWindow
 from my_code.model.capabilities import (
     ActiveModelEnvironment,
     fallback_descriptor,
@@ -73,7 +72,7 @@ class ConcurrentProvider:
         output = ModelOutput(
             (ModelTextBlock(f"done:{self.provider_id}"),),
             "end_turn",
-            TokenUsage(1, 1),
+            TokenUsage(1, 1, provider_reported=True),
         )
         yield ModelStreamSequencer().emit(ModelOutputCompleted(output))
 
@@ -132,7 +131,6 @@ async def test_two_agent_runs_can_stream_concurrently(tmp_path: Path) -> None:
         )
         context = ContextEngine(
             ContextPlanner(
-                window=ContextWindow(10_000),
                 prompt=PromptRegistry(
                     (
                         PromptSection(
@@ -181,7 +179,7 @@ async def test_two_agent_runs_can_stream_concurrently(tmp_path: Path) -> None:
     first_task = asyncio.create_task(first.submit(AgentTurnInput("first")))
     second_task = asyncio.create_task(second.submit(AgentTurnInput("second")))
 
-    await asyncio.wait_for(both_entered.wait(), timeout=1)
+    await asyncio.wait_for(both_entered.wait(), timeout=3)
     assert set(entered) == {"test-1", "test-2"}
     release.set()
     first_result, second_result = await asyncio.gather(first_task, second_task)

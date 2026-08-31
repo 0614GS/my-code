@@ -22,7 +22,6 @@ class SessionStart:
     permission_mode: str
     max_steps: int | None
     max_output_tokens: int
-    context_chars: int
     model_limits: ModelLimits = ModelLimits()
     model_limit_source: str | None = None
     compact_trigger_tokens: int | None = None
@@ -44,7 +43,7 @@ class SessionStart:
             raise ValueError("provider_protocol must be non-empty or null")
         if self.max_steps is not None and self.max_steps < 1:
             raise ValueError("max_steps must be positive or null")
-        if self.max_output_tokens < 1 or self.context_chars < 1:
+        if self.max_output_tokens < 1:
             raise ValueError("Session limits must be positive")
         if self.compact_trigger_tokens is not None and self.compact_trigger_tokens < 1:
             raise ValueError("Session compact trigger must be positive or null")

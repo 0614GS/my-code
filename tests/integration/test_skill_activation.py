@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,13 +15,13 @@ from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
-from my_code.context.window import ContextWindow
 from my_code.foundation.json import JsonObject
 from my_code.model.events import (
     ModelStreamEvent,
     ModelStreamSequencer,
     completed_output_payloads,
 )
+from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
     ModelOutput,
     ModelRequest,
@@ -105,7 +106,10 @@ class ScriptedModel:
         if self.on_request is not None:
             self.on_request(index)
         sequencer = ModelStreamSequencer()
-        for payload in completed_output_payloads(self.outputs[index]):
+        output = self.outputs[index]
+        if not output.usage.provider_reported:
+            output = replace(output, usage=TokenUsage(1, 1, provider_reported=True))
+        for payload in completed_output_payloads(output):
             yield sequencer.emit(payload)
 
 
@@ -158,7 +162,6 @@ async def _engine(
     )
     context = ContextEngine(
         ContextPlanner(
-            window=ContextWindow(20_000),
             prompt=PromptRegistry(
                 (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
             ),

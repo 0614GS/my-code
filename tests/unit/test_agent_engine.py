@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -30,7 +31,6 @@ from my_code.context.engine import ContextEngine
 from my_code.context.models import ContextOverflow
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
-from my_code.context.window import ContextWindow
 from my_code.conversation.attachments import FileMentionAttachment
 from my_code.conversation.models import (
     AssistantMessage,
@@ -43,7 +43,7 @@ from my_code.conversation.models import (
 )
 from my_code.features.todos.projection import project_todos
 from my_code.features.todos.tool import TodoWriteTool
-from my_code.model.errors import ModelContextOverflow
+from my_code.model.errors import ModelContextOverflow, ModelProtocolError
 from my_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
@@ -96,7 +96,10 @@ class FakeModel:
 
     async def complete(self, request: ModelRequest) -> ModelOutput:
         self.requests.append(request)
-        return self.outputs.pop(0)
+        output = self.outputs.pop(0)
+        if not output.usage.provider_reported:
+            return replace(output, usage=TokenUsage(1, 1, provider_reported=True))
+        return output
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         output = await self.complete(request)
@@ -199,7 +202,6 @@ def _engine(
     )
     model = model_type(outputs)
     planner = ContextPlanner(
-        window=ContextWindow(10_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
@@ -337,10 +339,42 @@ async def test_engine_rejects_invalid_model_stream_protocol(
 
 
 @pytest.mark.asyncio
+async def test_missing_provider_usage_does_not_commit_assistant_fact(
+    tmp_path: Path,
+) -> None:
+    engine, model, session, _ = _engine(
+        tmp_path,
+        [ModelOutput((ModelTextBlock("unused"),), "end_turn")],
+    )
+
+    async def missing_usage(
+        request: ModelRequest,
+    ) -> AsyncIterator[ModelStreamEvent]:
+        del request
+        yield ModelStreamEvent(
+            0,
+            ModelOutputCompleted(ModelOutput((ModelTextBlock("answer"),), "end_turn")),
+        )
+
+    model.stream = missing_usage  # type: ignore[method-assign]
+    with pytest.raises(ModelProtocolError, match="without valid token usage"):
+        _ = [event async for event in engine.stream(AgentTurnInput("hello"))]
+
+    assert len(session.conversation) == 1
+    assert isinstance(session.conversation[0], HumanMessage)
+
+
+@pytest.mark.asyncio
 async def test_engine_persists_human_and_assistant_messages(tmp_path: Path) -> None:
     engine, model, conversation, _ = _engine(
         tmp_path,
-        [ModelOutput((ModelTextBlock("done"),), "end_turn", TokenUsage(3, 1))],
+        [
+            ModelOutput(
+                (ModelTextBlock("done"),),
+                "end_turn",
+                TokenUsage(3, 1, provider_reported=True),
+            )
+        ],
     )
     result = await engine.submit(AgentTurnInput("hello"))
 
@@ -484,8 +518,16 @@ async def test_event_attachment_is_anchored_before_first_call_and_survives_turns
     engine, model, conversation, _ = _engine(
         tmp_path,
         [
-            ModelOutput((ModelTextBlock("first"),), "end_turn", TokenUsage(3, 1)),
-            ModelOutput((ModelTextBlock("second"),), "end_turn", TokenUsage(4, 1)),
+            ModelOutput(
+                (ModelTextBlock("first"),),
+                "end_turn",
+                TokenUsage(3, 1, provider_reported=True),
+            ),
+            ModelOutput(
+                (ModelTextBlock("second"),),
+                "end_turn",
+                TokenUsage(4, 1, provider_reported=True),
+            ),
         ],
     )
     attachment = FileMentionAttachment("notes.txt", "     1\thello")
@@ -515,7 +557,13 @@ async def test_replacement_session_does_not_inherit_attachment(
 ) -> None:
     engine, _, _, _ = _engine(
         tmp_path,
-        [ModelOutput((ModelTextBlock("first"),), "end_turn", TokenUsage(3, 1))],
+        [
+            ModelOutput(
+                (ModelTextBlock("first"),),
+                "end_turn",
+                TokenUsage(3, 1, provider_reported=True),
+            )
+        ],
     )
     attachment = FileMentionAttachment("notes.txt", "hello")
     await engine.submit(AgentTurnInput("inspect", (attachment,)))
@@ -549,9 +597,13 @@ async def test_one_human_turn_can_contain_multiple_steps_and_one_tool_round(
             ModelOutput(
                 (ModelToolUseBlock("read", "Read", {"path": "hello.txt"}),),
                 "tool_use",
-                TokenUsage(3, 1),
+                TokenUsage(3, 1, provider_reported=True),
             ),
-            ModelOutput((ModelTextBlock("finished"),), "end_turn", TokenUsage(5, 1)),
+            ModelOutput(
+                (ModelTextBlock("finished"),),
+                "end_turn",
+                TokenUsage(5, 1, provider_reported=True),
+            ),
         ],
     )
 
@@ -601,9 +653,13 @@ async def test_engine_hides_thinking_and_replays_it_during_tool_loop(
             ModelOutput(
                 (opaque, ModelToolUseBlock("read", "Read", {"path": "missing"})),
                 "tool_use",
-                TokenUsage(3, 2),
+                TokenUsage(3, 2, provider_reported=True),
             ),
-            ModelOutput((ModelTextBlock("finished"),), "end_turn", TokenUsage(5, 1)),
+            ModelOutput(
+                (ModelTextBlock("finished"),),
+                "end_turn",
+                TokenUsage(5, 1, provider_reported=True),
+            ),
         ],
     )
 
@@ -631,12 +687,16 @@ async def test_engine_has_no_default_step_limit(tmp_path: Path) -> None:
         ModelOutput(
             (ModelToolUseBlock(f"read-{step}", "Read", {"path": "missing.txt"}),),
             "tool_use",
-            TokenUsage(1, 1),
+            TokenUsage(1, 1, provider_reported=True),
         )
         for step in range(13)
     ]
     outputs.append(
-        ModelOutput((ModelTextBlock("finished"),), "end_turn", TokenUsage(1, 1))
+        ModelOutput(
+            (ModelTextBlock("finished"),),
+            "end_turn",
+            TokenUsage(1, 1, provider_reported=True),
+        )
     )
     engine, model, _, _ = _engine(tmp_path, outputs)
 
@@ -657,17 +717,17 @@ async def test_explicit_max_steps_returns_structured_terminal_outcome(
             ModelOutput(
                 (ModelToolUseBlock("read-1", "Read", {"path": "missing.txt"}),),
                 "tool_use",
-                TokenUsage(2, 1),
+                TokenUsage(2, 1, provider_reported=True),
             ),
             ModelOutput(
                 (ModelToolUseBlock("read-2", "Read", {"path": "missing.txt"}),),
                 "tool_use",
-                TokenUsage(3, 1),
+                TokenUsage(3, 1, provider_reported=True),
             ),
             ModelOutput(
                 (ModelTextBlock("continued"),),
                 "end_turn",
-                TokenUsage(4, 1),
+                TokenUsage(4, 1, provider_reported=True),
             ),
         ],
         max_steps=2,
@@ -678,7 +738,7 @@ async def test_explicit_max_steps_returns_structured_terminal_outcome(
     assert result == AgentMaxStepsReached(
         max_steps=2,
         completed_steps=2,
-        usage=TokenUsage(5, 2),
+        usage=TokenUsage(5, 2, provider_reported=True),
     )
     assert len(model.requests) == 2
     assert isinstance(conversation.conversation[-1], ToolResultBatch)
@@ -704,9 +764,13 @@ async def test_reactive_retry_does_not_increment_completed_steps(
                     ),
                 ),
                 "end_turn",
-                TokenUsage(2, 1),
+                TokenUsage(2, 1, provider_reported=True),
             ),
-            ModelOutput((ModelTextBlock("done"),), "end_turn", TokenUsage(3, 1)),
+            ModelOutput(
+                (ModelTextBlock("done"),),
+                "end_turn",
+                TokenUsage(3, 1, provider_reported=True),
+            ),
         ],
         model_type=OverflowOnceModel,
     )
@@ -724,7 +788,7 @@ async def test_reactive_retry_does_not_increment_completed_steps(
     ]
     assert lifecycle == [
         AgentCompactionStarted("reactive"),
-        AgentCompactionCompleted("reactive", TokenUsage(2, 1)),
+        AgentCompactionCompleted("reactive", TokenUsage(2, 1, provider_reported=True)),
     ]
 
 
@@ -735,8 +799,16 @@ async def test_proactive_compaction_events_surround_the_durable_commit(
     engine, _, session, _ = _engine(
         tmp_path,
         [
-            ModelOutput((ModelTextBlock("summary"),), "end_turn", TokenUsage(4, 2)),
-            ModelOutput((ModelTextBlock("done"),), "end_turn", TokenUsage(3, 1)),
+            ModelOutput(
+                (ModelTextBlock("summary"),),
+                "end_turn",
+                TokenUsage(4, 2, provider_reported=True),
+            ),
+            ModelOutput(
+                (ModelTextBlock("done"),),
+                "end_turn",
+                TokenUsage(3, 1, provider_reported=True),
+            ),
         ],
     )
     context = engine.engine._context
@@ -764,7 +836,9 @@ async def test_proactive_compaction_events_surround_the_durable_commit(
         if isinstance(event, AgentCompactionCompleted)
     )
     assert events[started] == AgentCompactionStarted("auto")
-    assert events[completed] == AgentCompactionCompleted("auto", TokenUsage(4, 2))
+    assert events[completed] == AgentCompactionCompleted(
+        "auto", TokenUsage(4, 2, provider_reported=True)
+    )
     assert started < completed
     assert session.compact_count == 1
 
@@ -823,9 +897,13 @@ async def test_engine_announces_conversation_only_after_tool_results_are_committ
                     ),
                 ),
                 "tool_use",
-                TokenUsage(3, 1),
+                TokenUsage(3, 1, provider_reported=True),
             ),
-            ModelOutput((ModelTextBlock("done"),), "end_turn", TokenUsage(3, 1)),
+            ModelOutput(
+                (ModelTextBlock("done"),),
+                "end_turn",
+                TokenUsage(3, 1, provider_reported=True),
+            ),
         ],
     )
 
@@ -849,9 +927,13 @@ async def test_failed_todo_write_commits_without_changing_todo_projection(
             ModelOutput(
                 (ModelToolUseBlock("todo-1", "TodoWrite", {"todos": "bad"}),),
                 "tool_use",
-                TokenUsage(3, 1),
+                TokenUsage(3, 1, provider_reported=True),
             ),
-            ModelOutput((ModelTextBlock("done"),), "end_turn", TokenUsage(3, 1)),
+            ModelOutput(
+                (ModelTextBlock("done"),),
+                "end_turn",
+                TokenUsage(3, 1, provider_reported=True),
+            ),
         ],
     )
 
@@ -890,7 +972,7 @@ async def test_cancelled_round_publishes_committed_todo_before_cancellation(
                     ModelToolUseBlock("read-1", "Read", {"path": "missing.txt"}),
                 ),
                 "tool_use",
-                TokenUsage(3, 1),
+                TokenUsage(3, 1, provider_reported=True),
             ),
         ],
     )

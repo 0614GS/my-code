@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable
 
-from my_code.context.models import CompactionOutcome
+from my_code.context.models import CompactionOutcome, ContextBudget
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextPlanningState
 from my_code.conversation.attachments import is_durable_attachment
@@ -217,6 +217,7 @@ class ContextCompactor:
         state: ContextPlanningState,
         trigger: CompactTrigger,
         recorder: ModelInvocationRecorder | None = None,
+        pre_compact_budget: ContextBudget | None = None,
     ) -> CompactionOutcome:
         if not state.context_entries:
             raise ValueError("Cannot compact an empty conversation")
@@ -243,11 +244,17 @@ class ContextCompactor:
             content=_build_continuation_context(summary_text, state.context_entries),
             parent_uuid=parent_uuid,
         )
+        if pre_compact_budget is None:
+            pre_compact_tokens, measurement = planner.measure(state.context_entries)
+        else:
+            pre_compact_tokens = pre_compact_budget.projected_tokens
+            measurement = pre_compact_budget.measurement
         boundary = CompactBoundary(
             parent_uuid=parent_uuid,
             summary_uuid=summary.uuid,
             trigger=trigger,
-            pre_compact_chars=max(1, planner.measure(state.context_entries)),
+            pre_compact_tokens=max(1, pre_compact_tokens),
+            measurement=measurement,
         )
         return CompactionOutcome(
             replacements=replacements,

@@ -51,7 +51,6 @@ def make_settings(tmp_path: Path) -> AgentSettings:
         permission_mode=PermissionMode.DEFAULT,
         max_steps=3,
         max_output_tokens=1024,
-        context_chars=10_000,
         interactive=False,
         credential_source=CredentialSource.NONE,
     )
@@ -276,7 +275,7 @@ def test_bootstrap_creates_required_user_layout_only(tmp_path: Path) -> None:
     assert result.created_providers is True
     assert result.created_credentials is True
     assert json.loads(paths.user_settings_path.read_text(encoding="utf-8")) == {
-        "version": 3,
+        "version": 4,
     }
     assert ProviderProfileStore(paths.providers_path).load() == {}
     assert CredentialStore(paths.credentials_path).load_api_key("anthropic") is None

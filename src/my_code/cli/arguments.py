@@ -32,7 +32,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--max-output-tokens", type=int)
-    parser.add_argument("--context-chars", type=int)
     parser.add_argument("--session", dest="session_id", help="resume a session ID")
     parser.add_argument("--version", action="version", version=__version__)
     return parser
@@ -56,7 +55,6 @@ def parse_cli(argv: list[str] | None = None) -> CliOptions:
             ),
             max_steps=namespace.max_steps,
             max_output_tokens=namespace.max_output_tokens,
-            context_chars=namespace.context_chars,
         ),
     )
 

@@ -141,7 +141,6 @@ def _bootstrap_runtime(
         permission_mode=permission_mode,
         max_steps=3,
         max_output_tokens=1024,
-        context_chars=10_000,
         interactive=True,
         sandbox_mode=SandboxMode.LOCAL,
         credential_source=CredentialSource.NONE,
@@ -440,7 +439,9 @@ async def test_background_watcher_runs_continuation_without_human_message(
                 sum(isinstance(item, HumanMessage) for item in session.conversation)
                 == 1
             )
-            yield AgentTurnSucceeded("handled", 1, TokenUsage(2, 1))
+            yield AgentTurnSucceeded(
+                "handled", 1, TokenUsage(2, 1, provider_reported=True)
+            )
 
     agent = ContinuationAgent()
     runtime.agent = agent  # type: ignore[assignment]
@@ -528,10 +529,13 @@ async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> 
         parent_uuid=user.uuid,
         summary_uuid=summary.uuid,
         trigger="manual",
-        pre_compact_chars=10,
+        pre_compact_tokens=10,
+        measurement="estimated",
     )
     compact = AsyncMock(
-        return_value=CompactionOutcome((), summary, boundary, TokenUsage(4, 2))
+        return_value=CompactionOutcome(
+            (), summary, boundary, TokenUsage(4, 2, provider_reported=True)
+        )
     )
     runtime.context.compact = compact  # type: ignore[method-assign]
 
@@ -563,10 +567,13 @@ async def test_manual_compaction_stream_exposes_committed_lifecycle(
         parent_uuid=user.uuid,
         summary_uuid=summary.uuid,
         trigger="manual",
-        pre_compact_chars=10,
+        pre_compact_tokens=10,
+        measurement="estimated",
     )
     runtime.context.compact = AsyncMock(  # type: ignore[method-assign]
-        return_value=CompactionOutcome((), summary, boundary, TokenUsage(4, 2))
+        return_value=CompactionOutcome(
+            (), summary, boundary, TokenUsage(4, 2, provider_reported=True)
+        )
     )
 
     events = [event async for event in runtime.stream_compaction()]
@@ -574,7 +581,7 @@ async def test_manual_compaction_stream_exposes_committed_lifecycle(
     assert events[0] == CompactionStarted("manual")
     assert isinstance(events[1], CompactionCompleted)
     assert events[1].trigger == "manual"
-    assert events[1].usage == TokenUsage(4, 2)
+    assert events[1].usage == TokenUsage(4, 2, provider_reported=True)
     assert events[1].status.compact_count == 1
     assert active.compact_count == 1
 
@@ -1247,7 +1254,7 @@ def test_complete_transcript_view_projects_persisted_content_only(
     assert parent is not None
     summary = ConversationSummaryMessage("durable summary", parent_uuid=parent)
     session.commit_compaction(
-        (), summary, CompactBoundary(parent, summary.uuid, "manual", 10)
+        (), summary, CompactBoundary(parent, summary.uuid, "manual", 10, "estimated")
     )
 
     view = runtime.current_transcript_view()

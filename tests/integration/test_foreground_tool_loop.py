@@ -11,7 +11,6 @@ from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.session import ContextRuntime
-from my_code.context.window import ContextWindow
 from my_code.conversation.models import AssistantMessage, ToolResultBatch
 from my_code.model.events import (
     ModelStreamEvent,
@@ -66,7 +65,6 @@ def build_runtime(
         workspace=Workspace(tmp_path),
     )
     planner = ContextPlanner(
-        window=ContextWindow(10_000),
         prompt=PromptRegistry(
             (PromptSection("core", PromptStability.STATIC, lambda: "system"),)
         ),
@@ -100,12 +98,12 @@ async def test_foreground_turn_persists_closed_tool_round_before_next_step(
             ModelOutput(
                 (ModelToolUseBlock("read-1", "Read", {"path": "hello.txt"}),),
                 "tool_use",
-                TokenUsage(3, 1),
+                TokenUsage(3, 1, provider_reported=True),
             ),
             ModelOutput(
                 (ModelTextBlock("finished"),),
                 "end_turn",
-                TokenUsage(5, 1),
+                TokenUsage(5, 1, provider_reported=True),
             ),
         ]
     )
@@ -115,7 +113,9 @@ async def test_foreground_turn_persists_closed_tool_round_before_next_step(
         session, ContextRuntime(), AgentTurnInput("read hello.txt")
     )
 
-    assert outcome == AgentTurnSucceeded("finished", 2, TokenUsage(8, 2))
+    assert outcome == AgentTurnSucceeded(
+        "finished", 2, TokenUsage(8, 2, provider_reported=True)
+    )
     assert len(model.requests) == 2
     assert model.requests[0].tools == catalog.snapshot().definitions
     assert model.requests[1].tools == catalog.snapshot().definitions
