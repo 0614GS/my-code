@@ -113,7 +113,7 @@ async def test_stdio_legacy_round_trip_cancellation_and_secret_minimization(
         transport.call_tool("block", {}, timeout_seconds=10.0)
     )
     await asyncio.sleep(0)
-    assert transport._pending  # noqa: SLF001 - assert wire cancellation timing
+    assert transport._pending  # 直接检查协议取消发生在请求仍待响应时。
     blocked.cancel()
     with pytest.raises(asyncio.CancelledError):
         await blocked

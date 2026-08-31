@@ -38,7 +38,7 @@ target-version = "py312"
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "ASYNC"]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF100"]
 
 [tool.pyright]
 pythonVersion = "3.12"
@@ -49,7 +49,7 @@ venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-addopts = "-q -p no:tach"
+addopts = "-q -p no:tach --import-mode=importlib"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 timeout = 30

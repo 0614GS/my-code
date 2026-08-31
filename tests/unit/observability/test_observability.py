@@ -181,7 +181,8 @@ async def test_agent_adapter_records_error_type_without_text(tmp_path) -> None:
     assert finished is not None
     assert finished.outcome == "failed"
     assert finished.error_type == "LookupError"
-    assert "private failure text" not in session._store.path.read_text()  # noqa: SLF001
+    # 直接检查私有存储，确保敏感失败信息没有绕过公开投影写入磁盘。
+    assert "private failure text" not in session._store.path.read_text()
 
 
 @pytest.mark.asyncio

@@ -11,25 +11,22 @@
 - `uv sync`：创建或更新项目的 `.venv`。
 - `uv run mycode --help`：检查 CLI 入口。
 - `uv run mycode`：启动交互式 TUI。
-- `uv run ruff format .`：格式化 Python 文件。
-- `uv run ruff check .`：执行代码规范检查。
-- `uv run tach check`：检查精确模块依赖、声明准确性和循环依赖。
-- `uv run pyright`：以 standard 模式执行静态类型检查。
-- `uv run pytest`：运行测试套件。
+- `uv run python scripts/check.py`：依次检查格式、代码规范、类型、模块依赖和测试。
+- `uv run pytest <path>`：开发期间运行与改动直接相关的目标测试。
 
 首次开发前运行 `uv sync --group dev`。真实模型请求需要已配置的 provider API key，也可用 `ANTHROPIC_API_KEY` 临时覆盖。
 
-## 代码风格与命名约定
+## 开发规范
 
-使用四空格缩进和完整类型标注，并通过 Pyright standard 获得静态类型保障。模块与函数使用 `snake_case`，类使用 `PascalCase`，常量使用 `UPPER_SNAKE_CASE`。避免职责含混的 `utils` 模块。单个代码文件一般不得超过 1,000 行；接近上限时，应先重新划分职责和目录结构。
+命名、注释、docstring、测试和 Commit 规范统一维护在 `CONTRIBUTING.md`。代码内注释与 docstring 使用中文，解释原因、约束和非显然行为，不复述代码。修改历史英文注释所在代码时渐进转换，不做无关的批量翻译。
 
 ## 测试规范
 
-使用 pytest 命名：文件为 `test_<subject>.py`，函数为 `test_<behavior>()`。单元测试应放在对应领域目录；每个缺陷修复都要增加回归测试。权限、上下文压缩、会话恢复和工具执行的改动必须覆盖失败与取消路径。目前不设硬性覆盖率指标，优先验证有意义的行为。
+单元测试按 `src/my_code/` 镜像到 `tests/unit/<module>/`，不得直接散落在 `tests/unit` 根目录。跨领域协作流程放在 `tests/integration/`，源码所有权守卫放在 `tests/architecture/`。临时实验不得进入测试套件。每个缺陷修复都要增加回归测试；权限、上下文压缩、会话恢复和工具执行的改动必须覆盖失败与取消路径。
 
-## 提交与 Pull Request 规范
+## Commit 规范
 
-当前没有既有提交规范。使用聚焦、祈使语气的 Conventional Commits，例如 `feat: add tool registry`。Pull Request 应说明动机与行为变化、列出验证命令并关联 issue；架构边界或不变量变化时同步更新文档。仅在 CLI 有实质变化时附终端输出。
+使用聚焦、祈使语气的 Conventional Commits，例如 `feat(context): 支持上下文快照`。Agent 仅在用户明确要求时创建 commit，并且不得包含任务范围外的文件。
 
 ## 安全与配置
 
@@ -38,3 +35,7 @@
 ## 参考源码工作流
 
 修改核心机制前，先查看被忽略的 `claude-code/` 源码快照及 `docs/` 中的说明。学习并保持架构不变量，不做机械翻译；有意保留的差异记录到 `docs/09-current-scope.md`。禁止暂存、打包或发布该源码快照。
+
+## Agent 工作约束
+
+修改前检查工作树并保留用户已有改动。先确认领域所有者，不创建含混的公共模块或跨所有者 re-export；不以顺手重构扩大任务范围。行为变化同步测试，架构不变量变化同步文档和 Tach 声明。完成前运行与改动匹配的目标检查，再运行完整本地质量门；不得声称未实际运行的检查已经通过。未经明确要求，不 commit、push、改写历史或删除用户文件。

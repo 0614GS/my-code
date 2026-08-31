@@ -73,10 +73,7 @@ my-code 仍处于早期开发阶段。它已经具备完整的交互式 Agent �
 
 ```bash
 uv sync --group dev
-uv run tach check
-uv run ruff check .
-uv run pyright
-uv run pytest
+uv run python scripts/check.py
 ```
 
-欢迎提交 Issue 和 Pull Request。
+命名、注释、测试组织与 Commit 约定见[本地开发规范](CONTRIBUTING.md)。
