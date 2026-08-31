@@ -250,6 +250,7 @@ class ToolExecutor:
             catalog.as_mapping(),
             version=catalog.version,
             run_id=run_id,
+            tool_use_id=call.id,
             searched_fingerprints=(
                 active_tools.searched_fingerprints()
                 if isinstance(active_tools, ToolExposureSnapshot)

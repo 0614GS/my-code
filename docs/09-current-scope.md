@@ -11,6 +11,7 @@
 - Read、Write、Edit、Glob、Grep、Bash、TodoWrite、ToolSearch 与动态 invoker。
 - allow/ask/deny、交互确认、dontAsk、Full Access 和工作区路径复验。
 - canonical Conversation、JSONL Session、session permission mode、resume、自动/手动/reactive compact。
+- Codex 风格 Default/Plan collaboration mode、追加式 mode prelude、Question 交互和 proposed-plan 实施交接；v1 不提供 `/plan`、多选问题或 headless Question 回答。
 - `@path` 文件/目录 Attachment、AGENTS 用户上下文和路径补全。
 - foreground/background Subagent、独立 child run/Session/provider lease 和权限收窄。
 - Bash/Subagent 统一后台任务、查询、取消和单次完成通知。

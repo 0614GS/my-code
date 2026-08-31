@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -10,6 +11,13 @@ from my_code.model.capabilities import ModelLimits
 from my_code.model.primitives import TokenUsage
 
 type TurnOutcome = Literal["succeeded", "max_steps", "failed", "cancelled"]
+
+
+class CollaborationMode(StrEnum):
+    """User-selected interaction contract, independent of base permissions."""
+
+    DEFAULT = "default"
+    PLAN = "plan"
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +34,7 @@ class SessionStart:
     model_limit_source: str | None = None
     compact_trigger_tokens: int | None = None
     provider_protocol: str | None = None
+    collaboration_mode: str = CollaborationMode.DEFAULT.value
 
     def __post_init__(self) -> None:
         try:
@@ -39,6 +48,10 @@ class SessionStart:
             raise ValueError("cwd must be an absolute path")
         if not self.provider_id or not self.model or not self.permission_mode:
             raise ValueError("Session start strings must not be empty")
+        try:
+            CollaborationMode(self.collaboration_mode)
+        except ValueError as error:
+            raise ValueError("Unsupported collaboration mode") from error
         if self.provider_protocol is not None and not self.provider_protocol.strip():
             raise ValueError("provider_protocol must be non-empty or null")
         if self.max_steps is not None and self.max_steps < 1:
@@ -161,6 +174,7 @@ def _timestamp(value: str, name: str) -> datetime:
 
 
 __all__ = [
+    "CollaborationMode",
     "SessionMetadata",
     "SessionStart",
     "TurnFinished",

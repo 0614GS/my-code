@@ -27,6 +27,8 @@ _NAVIGATION_PANELS = {
     "view_select",
     "permission_mode_select",
     "agents",
+    "question",
+    "plan_action",
 }
 _PROVIDER_PANELS = {
     "provider_actions",
@@ -89,6 +91,10 @@ class KeyBindingHost(Protocol):
 
     def _recall_pending_input(self) -> bool: ...
 
+    def _cycle_collaboration_mode(self) -> None: ...
+
+    def _cancel_question(self) -> None: ...
+
 
 def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
     bindings = KeyBindings()
@@ -126,6 +132,8 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
             host._provider_back()
         elif host._panel == "agents":
             host._close_panel()
+        elif host._panel == "question":
+            host._cancel_question()
         elif host._panel is not None:
             host._close_panel()
         elif host._foreground_task is not None:
@@ -159,6 +167,13 @@ def build_key_bindings(host: KeyBindingHost) -> KeyBindings:
         del event
         if host._panel == "provider_form":
             host._spawn(host._advance_provider(-1))
+        elif (
+            host._panel is None
+            and not host._busy
+            and not host._agent_active
+            and not host.buffer.text
+        ):
+            host._cycle_collaboration_mode()
 
     @bindings.add("up")
     def up(event: KeyPressEvent) -> None:

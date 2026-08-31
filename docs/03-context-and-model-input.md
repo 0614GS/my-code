@@ -39,6 +39,8 @@ Anthropic adapter 才负责相邻 role 归一化和 tool result 的 user-role �
 
 Provider adapter 只消费 `ModelRequest`，不读取 Session 或 AppState。绑定不匹配时保留 canonical content，但不重放 opaque continuation；compact 后已离开工作集的 replay 也不会进入请求。
 
+主 Agent 的 `ModelRequest.session_cache_identity` 固定为 Session ID。OpenAI Responses 将其映射为 `prompt_cache_key`；同一 Session 切换 collaboration mode 时 direct tool definitions 和 cache identity 不变，mode、Question discovery 或 invalidation 只作为尾部追加输入进入下一请求。Compaction 若移除了当前 mode world-state，下一次安全用户输入边界会精确补发一次。
+
 ## Prompt、用户上下文与 Attachment
 
 `prompts` 拥有 system prompt section 的内容、顺序和稳定性声明。`PromptRegistry` 把 section 解析为 `SystemPrompt`；Provider 根据能力映射 cache control，但 prompt 模块不依赖具体 SDK。

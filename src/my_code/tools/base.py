@@ -47,6 +47,7 @@ class ToolContext:
     available_tools: Mapping[str, Tool]
     tool_snapshot_version: int | None
     run_id: str | None
+    tool_use_id: str | None
     internal_read_root: Path | None
     searched_fingerprints: Mapping[str, str]
 
@@ -58,6 +59,7 @@ class ToolContext:
         available_tools: Mapping[str, Tool] = _EMPTY_TOOLS,
         tool_snapshot_version: int | None = None,
         run_id: str | None = None,
+        tool_use_id: str | None = None,
         internal_read_root: Path | None = None,
         searched_fingerprints: Mapping[str, str] = MappingProxyType({}),
         *,
@@ -80,6 +82,7 @@ class ToolContext:
         )
         object.__setattr__(self, "tool_snapshot_version", tool_snapshot_version)
         object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "tool_use_id", tool_use_id)
         object.__setattr__(
             self,
             "internal_read_root",
@@ -103,6 +106,7 @@ class ToolContext:
         *,
         version: int,
         run_id: str | None = None,
+        tool_use_id: str | None = None,
         searched_fingerprints: Mapping[str, str] = MappingProxyType({}),
     ) -> ToolContext:
         return ToolContext(
@@ -112,6 +116,7 @@ class ToolContext:
             tools,
             version,
             run_id,
+            tool_use_id,
             self.internal_read_root,
             searched_fingerprints,
             command_launcher=self.command_launcher,

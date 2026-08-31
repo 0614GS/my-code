@@ -65,6 +65,21 @@ class AgentTextCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentPlanStarted:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class AgentPlanDelta:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentPlanCompleted:
+    plan: str
+
+
+@dataclass(frozen=True, slots=True)
 class AgentReasoningStarted:
     disclosure: ReasoningDisclosure
 
@@ -136,6 +151,9 @@ type AgentEvent = (
     | AgentTextStarted
     | AgentTextDelta
     | AgentTextCompleted
+    | AgentPlanStarted
+    | AgentPlanDelta
+    | AgentPlanCompleted
     | AgentReasoningStarted
     | AgentReasoningDelta
     | AgentReasoningCompleted
@@ -156,6 +174,9 @@ __all__ = [
     "AgentInputFailed",
     "AgentModelStepCompleted",
     "AgentModelRequestPrepared",
+    "AgentPlanCompleted",
+    "AgentPlanDelta",
+    "AgentPlanStarted",
     "AgentEvent",
     "AgentReasoningCompleted",
     "AgentReasoningDelta",

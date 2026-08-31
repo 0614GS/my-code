@@ -273,6 +273,8 @@ class OpenAIResponsesProvider(ModelClient):
                 or request.max_output_tokens,
             ),
         }
+        if request.session_cache_identity is not None:
+            params["prompt_cache_key"] = request.session_cache_identity
         if request.reasoning_mode != "disabled":
             params["include"] = ["reasoning.encrypted_content"]
             if self.reasoning.enabled:

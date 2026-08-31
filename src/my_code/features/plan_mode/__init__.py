@@ -1,0 +1,1 @@
+"""Plan collaboration-mode adapters."""

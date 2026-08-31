@@ -28,6 +28,11 @@ class HistoryReasoning:
 
 
 @dataclass(frozen=True, slots=True)
+class HistoryPlan:
+    plan: str
+
+
+@dataclass(frozen=True, slots=True)
 class HistoryContextItem:
     source: str
     attachment_kind: str | None
@@ -54,7 +59,7 @@ class HistoryToolCall:
 
 
 type HistoryEntry = (
-    HistoryText | HistoryReasoning | HistoryContextGroup | HistoryToolCall
+    HistoryText | HistoryReasoning | HistoryPlan | HistoryContextGroup | HistoryToolCall
 )
 
 
@@ -68,6 +73,7 @@ __all__ = [
     "HistoryEntry",
     "HistoryContextGroup",
     "HistoryContextItem",
+    "HistoryPlan",
     "HistoryReasoning",
     "HistoryText",
     "HistoryTextRole",

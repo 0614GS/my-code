@@ -114,6 +114,7 @@ def test_subagent_tool_registration_is_feature_gated(tmp_path: Path) -> None:
         "Glob",
         "Grep",
         "InvokeSearchedTool",
+        "Question",
         "Read",
         "Subagent",
         "TaskCancel",

@@ -251,12 +251,18 @@ class ModelRequest:
     tools: tuple[ModelToolDefinition, ...]
     max_output_tokens: int
     reasoning_mode: Literal["inherit", "disabled"] = "inherit"
+    session_cache_identity: str | None = None
 
     def __post_init__(self) -> None:
         if self.max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
         if self.reasoning_mode not in {"inherit", "disabled"}:
             raise ValueError("reasoning_mode must be inherit or disabled")
+        if (
+            self.session_cache_identity is not None
+            and not self.session_cache_identity.strip()
+        ):
+            raise ValueError("session_cache_identity must be non-empty or null")
         validate_model_input(self.input)
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
+from typing import Any
 
 from prompt_toolkit.buffer import Buffer
 from rich.console import RenderableType
@@ -17,6 +18,9 @@ from my_code.chat.events import (
     MaxStepsReached,
     ModelRequestPrepared,
     ModelStepCompleted,
+    PlanCompleted,
+    PlanDelta,
+    PlanStarted,
     ReasoningCompleted,
     ReasoningDelta,
     ReasoningStarted,
@@ -63,6 +67,7 @@ class TurnFlowMixin:
     _busy: bool
     _agent_active: bool
     _stream_text: str
+    _stream_plan: str
     _reasoning_parts: list[str]
     _todos: tuple[TodoItem, ...]
     _tool_activity: ToolActivityGroup | None
@@ -70,6 +75,9 @@ class TurnFlowMixin:
     _context_status: ContextStatus | None
     _status: RuntimeStatus | None
     _display_density: DisplayDensity
+    _panel: str | None
+    _panel_picker: Any
+    _pending_plan: str | None
 
     async def _write(self, renderable: RenderableType, *, clear: bool = False) -> None:
         raise NotImplementedError
@@ -154,6 +162,18 @@ class TurnFlowMixin:
                 elif isinstance(event, TextCompleted):
                     await self._flush_tool_activity()
                     await self._commit_assistant_text(event.text)
+                elif isinstance(event, PlanStarted):
+                    await self._flush_tool_activity()
+                    self._stream_plan = ""
+                elif isinstance(event, PlanDelta):
+                    self._stream_plan += event.text
+                elif isinstance(event, PlanCompleted):
+                    self._stream_plan = ""
+                    if event.plan:
+                        self._pending_plan = event.plan
+                        await self._write(
+                            assistant_message("## Proposed plan\n\n" + event.plan)
+                        )
                 elif isinstance(event, ReasoningStarted):
                     await self._flush_tool_activity()
                     self._reasoning_parts = []
@@ -228,6 +248,12 @@ class TurnFlowMixin:
                         )
                     )
                     completed = True
+                    if (
+                        self._pending_plan
+                        and not getattr(self.runtime, "queued_inputs", lambda: ())()
+                    ):
+                        self._panel = "plan_action"
+                        self._panel_picker.reset()
                 elif isinstance(event, MaxStepsReached):
                     partial_text = self._retire_transient_content()
                     await self._flush_tool_activity()
@@ -290,6 +316,9 @@ class TurnFlowMixin:
         elif isinstance(event, TextCompleted):
             await self._flush_tool_activity()
             await self._commit_assistant_text(event.text)
+        elif isinstance(event, PlanCompleted) and event.plan:
+            self._stream_plan = ""
+            await self._write(assistant_message("## Proposed plan\n\n" + event.plan))
         elif isinstance(event, ReasoningDelta):
             await self._flush_tool_activity()
             while len(self._reasoning_parts) <= event.part_index:
@@ -400,6 +429,7 @@ class TurnFlowMixin:
         """Hold reasoning so its order with the step text remains stable."""
 
         self._reasoning_parts = []
+        self._stream_plan = ""
         self._blocks.add_reasoning(event.presentation)
 
     async def _commit_model_step(self, event: ModelStepCompleted) -> None:

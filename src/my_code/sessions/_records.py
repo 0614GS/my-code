@@ -29,6 +29,7 @@ class SessionStartedRecord:
     model_limit_source: str | None = None
     compact_trigger_tokens: int | None = None
     provider_protocol: str | None = None
+    collaboration_mode: str = "default"
     type: Literal["session_started"] = "session_started"
     schema_version: Literal[6] = 6
 
@@ -47,6 +48,13 @@ class SessionMetadataRecord:
 class SessionPermissionModeRecord:
     permission_mode: str
     type: Literal["session_permission_mode"] = "session_permission_mode"
+    schema_version: Literal[6] = 6
+
+
+@dataclass(frozen=True, slots=True)
+class SessionCollaborationModeRecord:
+    collaboration_mode: str
+    type: Literal["session_collaboration_mode"] = "session_collaboration_mode"
     schema_version: Literal[6] = 6
 
 
@@ -227,6 +235,7 @@ type TranscriptEntry = (
     SessionStartedRecord
     | SessionMetadataRecord
     | SessionPermissionModeRecord
+    | SessionCollaborationModeRecord
     | TurnStartedRecord
     | TurnFinishedRecord
     | MessageRecord

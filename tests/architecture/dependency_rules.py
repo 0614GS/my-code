@@ -93,7 +93,9 @@ ALLOWED_DEPENDENCIES: dict[str, frozenset[str]] = {
         }
     ),
     "features.background_tasks": frozenset({"agent", "foundation", "tasks", "tools"}),
-    "features.plan_mode": frozenset({"agent", "prompts", "tools"}),
+    "features.plan_mode": frozenset(
+        {"agent", "chat", "foundation", "model", "permissions", "prompts", "tools"}
+    ),
     "chat": frozenset(
         {
             "agent",

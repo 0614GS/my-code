@@ -4,10 +4,12 @@ import asyncio
 import hashlib
 from collections.abc import AsyncIterator, Callable
 from dataclasses import fields, is_dataclass, replace
+from datetime import UTC, datetime
 from inspect import signature
 from threading import Event as ThreadEvent
 from threading import Thread
 from typing import Protocol, cast
+from uuid import uuid4
 
 from my_code.agent.events import (
     AgentCompactionCompleted,
@@ -18,6 +20,9 @@ from my_code.agent.events import (
     AgentInputFailed,
     AgentModelRequestPrepared,
     AgentModelStepCompleted,
+    AgentPlanCompleted,
+    AgentPlanDelta,
+    AgentPlanStarted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
@@ -43,6 +48,9 @@ from my_code.chat.events import (
     MaxStepsReached,
     ModelRequestPrepared,
     ModelStepCompleted,
+    PlanCompleted,
+    PlanDelta,
+    PlanStarted,
     PreparedContext,
     ReasoningCompleted,
     ReasoningDelta,
@@ -63,6 +71,7 @@ from my_code.chat.history import (
     HistoryContextGroup,
     HistoryContextItem,
     HistoryEntry,
+    HistoryPlan,
     HistoryReasoning,
     HistoryText,
     HistoryToolCall,
@@ -76,6 +85,7 @@ from my_code.chat.permissions import (
     PermissionModeView,
     permission_mode_view,
 )
+from my_code.chat.questions import DeferredQuestionBroker, QuestionHandler
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import (
     BackgroundTaskView,
@@ -102,7 +112,11 @@ from my_code.config.paths import SettingsScope
 from my_code.config.settings import AgentSettings
 from my_code.config.store import SettingsStore
 from my_code.context.engine import ContextEngine
-from my_code.conversation.attachments import AttachmentPayload, is_durable_attachment
+from my_code.conversation.attachments import (
+    AttachmentPayload,
+    PlanHandoffAttachment,
+    is_durable_attachment,
+)
 from my_code.conversation.models import (
     AssistantMessage,
     AttachmentMessage,
@@ -115,6 +129,10 @@ from my_code.conversation.models import (
     ToolResultBatch,
 )
 from my_code.conversation.presentation import ToolResultPresentation
+from my_code.conversation.proposed_plan import (
+    extract_proposed_plan,
+    strip_proposed_plan,
+)
 from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.file_mentions.loader import AttachmentLoader
 from my_code.features.file_mentions.models import PathSuggestion
@@ -143,6 +161,7 @@ from my_code.providers.manager import (
 from my_code.providers.router import ProviderConnection
 from my_code.runtime.state import AppState
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
+from my_code.sessions.models import CollaborationMode
 from my_code.sessions.session import Session
 from my_code.skills.tool import restore_skill_permissions
 from my_code.tasks.models import (
@@ -277,6 +296,7 @@ class ChatService:
         tool_executor: ToolExecutor,
         settings: AgentSettings,
         permission_prompter: DeferredPermissionPrompter,
+        question_broker: DeferredQuestionBroker | None = None,
         provider_manager: ProviderManager,
         state: AppState,
         attachment_loader: AttachmentLoader | None = None,
@@ -292,6 +312,7 @@ class ChatService:
         self.tool_executor = tool_executor
         self.settings = settings
         self.permission_prompter = permission_prompter
+        self.question_broker = question_broker or DeferredQuestionBroker()
         self.provider_manager = provider_manager
         self.state = state
         self._project_state_dir = settings.paths.project_state_dir
@@ -861,6 +882,12 @@ class ChatService:
                 yield TextDelta(event.text)
             elif isinstance(event, AgentTextCompleted):
                 yield TextCompleted(event.text)
+            elif isinstance(event, AgentPlanStarted):
+                yield PlanStarted()
+            elif isinstance(event, AgentPlanDelta):
+                yield PlanDelta(event.text)
+            elif isinstance(event, AgentPlanCompleted):
+                yield PlanCompleted(event.plan)
             elif isinstance(event, AgentReasoningStarted):
                 yield ReasoningStarted(event.disclosure)
             elif isinstance(event, AgentReasoningDelta):
@@ -927,6 +954,7 @@ class ChatService:
             ),
             mcp_server_count=len(capabilities.mcp_servers),
             execution_environment=self.state.permissions.execution_environment,
+            collaboration_mode=session.collaboration_mode,
         )
 
     def context_status(self) -> ContextStatus:
@@ -992,9 +1020,83 @@ class ChatService:
     def set_permission_handler(self, handler: PermissionHandler) -> None:
         self.permission_prompter.set_handler(handler)
 
+    def set_question_handler(self, handler: QuestionHandler | None) -> None:
+        self.question_broker.set_handler(handler)
+
+    def current_collaboration_mode(self) -> CollaborationMode:
+        return CollaborationMode(self.state.session.collaboration_mode)
+
+    def cycle_collaboration_mode(self) -> CollaborationMode:
+        """Persist the target first, then publish its effective permission policy."""
+
+        if (
+            self.state.operation_lock().locked()
+            or self._interactive_task is not None
+            or self._pending_inputs.queued_inputs()
+        ):
+            raise RuntimeError("Collaboration mode can change only while input is idle")
+        if self.question_broker.is_active:
+            raise RuntimeError("Collaboration mode cannot change during Question")
+        current = self.current_collaboration_mode()
+        target = (
+            CollaborationMode.PLAN
+            if current is CollaborationMode.DEFAULT
+            else CollaborationMode.DEFAULT
+        )
+        self.state.session.set_collaboration_mode(target.value)
+        effective = (
+            PermissionMode.PLAN
+            if target is CollaborationMode.PLAN
+            else PermissionMode(self.state.session.permission_mode)
+        )
+        self.state.permissions.restore_mode(effective)
+        return target
+
+    def start_plan_implementation(self, *, fresh_context: bool) -> QueuedInputView:
+        """Leave Plan mode and queue the canonical implementation instruction."""
+
+        if self.current_collaboration_mode() is not CollaborationMode.PLAN:
+            raise RuntimeError("No Plan-mode handoff is active")
+        plan = _latest_proposed_plan(self.state.session.conversation)
+        if not plan:
+            raise RuntimeError("The session has no completed proposed plan")
+        if fresh_context:
+            previous = self.state.session
+            session_id = str(uuid4())
+            start = replace(
+                previous.start,
+                session_id=session_id,
+                created_at=datetime.now(UTC).isoformat(),
+                permission_mode=previous.permission_mode,
+                collaboration_mode=CollaborationMode.DEFAULT.value,
+            )
+            session = Session(
+                self._project_state_dir,
+                session_id,
+                tool_results_dir=self.settings.paths.tool_results_dir(session_id),
+                start=start,
+            )
+            session.append_attachment(PlanHandoffAttachment(plan))
+            policy = PermissionPolicy(
+                PermissionMode(previous.permission_mode),
+                self.state.permissions.policy.rules,
+            )
+            self.state.replace_session(session, permission_policy=policy)
+            self._pending_inputs = PendingInputController(
+                session_id, self.attachment_loader
+            )
+        else:
+            self.state.session.set_collaboration_mode(CollaborationMode.DEFAULT.value)
+            self.state.permissions.restore_mode(
+                PermissionMode(self.state.session.permission_mode)
+            )
+        return self.queue_input("Implement the approved plan.")
+
     def permission_modes(self) -> tuple[PermissionModeView, ...]:
         """Project process-local mode state without exposing the mutable policy."""
 
+        if self.current_collaboration_mode() is CollaborationMode.PLAN:
+            return ()
         state = self.state.permissions
         current = state.policy.mode
         return tuple(
@@ -1013,6 +1115,8 @@ class ChatService:
 
     def current_permission_mode(self) -> PermissionModeView:
         current = self.state.permissions.policy.mode
+        if current is PermissionMode.PLAN:
+            current = PermissionMode(self.state.session.permission_mode)
         return permission_mode_view(
             current,
             current=True,
@@ -1021,6 +1125,8 @@ class ChatService:
         )
 
     def cycle_permission_mode(self) -> PermissionModeSwitch:
+        if self.current_collaboration_mode() is CollaborationMode.PLAN:
+            raise RuntimeError("Permissions cannot change in Plan mode")
         target, needs_confirmation = self.state.permissions.request_cycle(
             self._persist_permission_mode
         )
@@ -1033,6 +1139,8 @@ class ChatService:
         return PermissionModeSwitch(view, not needs_confirmation, needs_confirmation)
 
     def select_permission_mode(self, value: str) -> PermissionModeSwitch:
+        if self.current_collaboration_mode() is CollaborationMode.PLAN:
+            raise RuntimeError("Permissions cannot change in Plan mode")
         try:
             requested = PermissionMode(value)
         except ValueError as error:
@@ -1232,7 +1340,12 @@ class ChatService:
                 )
             )
             history = await _offload_session_io(lambda: self._project_history(session))
-            permission_mode = PermissionMode(session.permission_mode)
+            permission_mode = (
+                PermissionMode.PLAN
+                if CollaborationMode(session.collaboration_mode)
+                is CollaborationMode.PLAN
+                else PermissionMode(session.permission_mode)
+            )
             permission_policy = PermissionPolicy(
                 permission_mode, self.state.permissions.policy.rules
             )
@@ -1252,6 +1365,7 @@ class ChatService:
         self._pending_inputs.clear()
         try:
             await self.permission_prompter.close()
+            await self.question_broker.close()
             await self.state.close()
         finally:
             self._shutdown_observability()
@@ -1290,13 +1404,18 @@ class ChatService:
                 ]
                 for block in message.content:
                     if isinstance(block, TextContent) and block.text:
-                        history.append(
-                            HistoryText(
-                                "assistant",
-                                block.text,
-                                is_final_answer=not tool_ids,
+                        visible = strip_proposed_plan(block.text)
+                        if visible.strip():
+                            history.append(
+                                HistoryText(
+                                    "assistant",
+                                    visible,
+                                    is_final_answer=not tool_ids,
+                                )
                             )
-                        )
+                        plan = extract_proposed_plan(block.text)
+                        if plan:
+                            history.append(HistoryPlan(plan))
                     elif isinstance(block, ReasoningContent):
                         history.append(HistoryReasoning(block.presentation))
                     elif isinstance(block, ToolCall):
@@ -1451,6 +1570,20 @@ def _project_turn_outcome(
         result.usage.input_tokens,
         result.usage.output_tokens,
     )
+
+
+def _latest_proposed_plan(
+    conversation: tuple[object, ...],
+) -> str | None:
+    for entry in reversed(conversation):
+        if not isinstance(entry, AssistantMessage):
+            continue
+        for block in reversed(entry.content):
+            if isinstance(block, TextContent):
+                plan = extract_proposed_plan(block.text)
+                if plan:
+                    return plan
+    return None
 
 
 __all__ = [

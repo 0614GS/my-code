@@ -8,8 +8,10 @@ from typing import Literal
 from my_code.conversation.attachments import (
     AttachmentPayload,
     BackgroundTaskCompletionAttachment,
+    CollaborationModeAttachment,
     FileMentionAttachment,
     InvokedSkillsAttachment,
+    PlanHandoffAttachment,
     SkillActivationAttachment,
     SkillListingAttachment,
     SkillListingEntry,
@@ -62,6 +64,7 @@ from my_code.sessions._records import (
     MessageRecord,
     ProviderReplaySidecarRecord,
     ReasoningContentRecord,
+    SessionCollaborationModeRecord,
     SessionMetadataRecord,
     SessionPermissionModeRecord,
     SessionStartedRecord,
@@ -75,6 +78,7 @@ from my_code.sessions._records import (
     TurnStartedRecord,
 )
 from my_code.sessions.models import (
+    CollaborationMode,
     SessionMetadata,
     SessionStart,
     TurnFinished,
@@ -94,6 +98,7 @@ type DecodedEntry = (
     | SessionStart
     | SessionMetadata
     | SessionPermissionModeRecord
+    | SessionCollaborationModeRecord
     | TurnStarted
     | TurnFinished
     | ToolPresentationRecord
@@ -119,12 +124,15 @@ def decode_entry(value: object) -> DecodedEntry:
             entry.model_limit_source,
             entry.compact_trigger_tokens,
             entry.provider_protocol,
+            entry.collaboration_mode,
         )
     if isinstance(entry, SessionMetadataRecord):
         return SessionMetadata(
             entry.created_at, entry.updated_at, entry.title, entry.last_prompt
         )
     if isinstance(entry, SessionPermissionModeRecord):
+        return entry
+    if isinstance(entry, SessionCollaborationModeRecord):
         return entry
     if isinstance(entry, TurnStartedRecord):
         return TurnStarted(
@@ -216,6 +224,7 @@ def encode_start(start: SessionStart) -> JsonObject:
             start.model_limit_source,
             start.compact_trigger_tokens,
             start.provider_protocol,
+            start.collaboration_mode,
         )
     )
 
@@ -234,6 +243,14 @@ def encode_metadata(metadata: SessionMetadata) -> JsonObject:
 def encode_permission_mode(permission_mode: str) -> JsonObject:
     _validate_permission_mode(permission_mode)
     return entry_to_json(SessionPermissionModeRecord(permission_mode))
+
+
+def encode_collaboration_mode(collaboration_mode: str) -> JsonObject:
+    try:
+        mode = CollaborationMode(collaboration_mode)
+    except ValueError as error:
+        raise ValueError("Unsupported collaboration mode") from error
+    return entry_to_json(SessionCollaborationModeRecord(mode.value))
 
 
 def encode_turn_started(turn: TurnStarted) -> JsonObject:
@@ -433,6 +450,8 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
             },
             model_limit_source=entry.model_limit_source,
             compact_trigger_tokens=entry.compact_trigger_tokens,
+            provider_protocol=entry.provider_protocol,
+            collaboration_mode=entry.collaboration_mode,
         )
         return base
     if isinstance(entry, SessionMetadataRecord):
@@ -445,6 +464,9 @@ def entry_to_json(entry: TranscriptEntry) -> JsonObject:
         return base
     if isinstance(entry, SessionPermissionModeRecord):
         base["permission_mode"] = entry.permission_mode
+        return base
+    if isinstance(entry, SessionCollaborationModeRecord):
+        base["collaboration_mode"] = entry.collaboration_mode
         return base
     if isinstance(entry, TurnStartedRecord):
         base.update(
@@ -561,6 +583,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
             "model_limit_source",
             "compact_trigger_tokens",
             "provider_protocol",
+            "collaboration_mode",
         }
         actual_expected = expected_fields | (frozenset(data) & optional)
     _require_exact_fields(data, actual_expected)
@@ -587,6 +610,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
             _optional_non_empty_string(data, "model_limit_source"),
             _optional_positive_int(data, "compact_trigger_tokens"),
             _optional_non_empty_string(data, "provider_protocol"),
+            _collaboration_mode(data.get("collaboration_mode", "default")),
         )
     if kind == "session_metadata":
         return SessionMetadataRecord(
@@ -598,6 +622,10 @@ def entry_from_json(value: object) -> TranscriptEntry:
     if kind == "session_permission_mode":
         return SessionPermissionModeRecord(
             _validate_permission_mode(_string(data, "permission_mode"))
+        )
+    if kind == "session_collaboration_mode":
+        return SessionCollaborationModeRecord(
+            _collaboration_mode(_string(data, "collaboration_mode"))
         )
     if kind == "turn_started":
         continuation = data.get("continuation")
@@ -835,6 +863,10 @@ def _skill_activation_json(payload: SkillActivationAttachment) -> JsonObject:
 
 
 def _attachment_to_json(payload: AttachmentPayload) -> JsonObject:
+    if isinstance(payload, CollaborationModeAttachment):
+        return {"kind": payload.kind, "mode": payload.mode}
+    if isinstance(payload, PlanHandoffAttachment):
+        return {"kind": payload.kind, "plan": payload.plan}
     if isinstance(payload, FileMentionAttachment):
         return {
             "kind": payload.kind,
@@ -894,6 +926,15 @@ def _attachment_from_json(value: object) -> AttachmentPayload:
     data = _object(value)
     kind = _string(data, "kind")
     try:
+        if kind == "collaboration_mode":
+            _require_exact_fields(data, frozenset({"kind", "mode"}))
+            mode = _string(data, "mode")
+            if mode not in {"default", "plan"}:
+                raise TranscriptDecodeError("Unsupported collaboration mode attachment")
+            return CollaborationModeAttachment(mode)  # type: ignore[arg-type]
+        if kind == "plan_handoff":
+            _require_exact_fields(data, frozenset({"kind", "plan"}))
+            return PlanHandoffAttachment(_string(data, "plan"))
         if kind == "file_mention":
             _require_exact_fields(
                 data, frozenset({"kind", "path", "body", "is_directory"})
@@ -1114,6 +1155,15 @@ def _validate_permission_mode(value: str) -> str:
     }:
         raise TranscriptDecodeError("Unsupported permission_mode")
     return value
+
+
+def _collaboration_mode(value: object) -> str:
+    if not isinstance(value, str):
+        raise TranscriptDecodeError("collaboration_mode must be a string")
+    try:
+        return CollaborationMode(value).value
+    except ValueError as error:
+        raise TranscriptDecodeError("Unsupported collaboration_mode") from error
 
 
 def _optional_string(data: Mapping[str, object], key: str) -> str | None:
@@ -1524,6 +1574,9 @@ _ENTRY_FIELDS: dict[str, frozenset[str]] = {
         }
     ),
     "session_permission_mode": frozenset({"type", "schema_version", "permission_mode"}),
+    "session_collaboration_mode": frozenset(
+        {"type", "schema_version", "collaboration_mode"}
+    ),
     "turn_started": frozenset(
         {
             "type",

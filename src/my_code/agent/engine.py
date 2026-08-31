@@ -2,9 +2,10 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
+from my_code.agent.collaboration import resolve_mode_prelude
 from my_code.agent.events import (
     AgentCompactionCompleted,
     AgentCompactionStarted,
@@ -13,6 +14,9 @@ from my_code.agent.events import (
     AgentInputAccepted,
     AgentModelRequestPrepared,
     AgentModelStepCompleted,
+    AgentPlanCompleted,
+    AgentPlanDelta,
+    AgentPlanStarted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentReasoningStarted,
@@ -52,6 +56,10 @@ from my_code.conversation.models import (
     ToolResult,
     ToolResultBatch,
 )
+from my_code.conversation.proposed_plan import (
+    PlanSegmentKind,
+    ProposedPlanParser,
+)
 from my_code.conversation.state import CompactTrigger
 from my_code.model.client import ModelClient
 from my_code.model.errors import ModelContextOverflow
@@ -85,7 +93,8 @@ from my_code.model.request import (
     ModelToolUseBlock,
 )
 from my_code.model.tool_search import ToolSearchMode
-from my_code.permissions.models import PermissionUpdate
+from my_code.permissions.models import PermissionUpdate, PermissionUpdateType
+from my_code.sessions.models import CollaborationMode
 from my_code.sessions.session import Session
 from my_code.tools.base import ToolExposure
 from my_code.tools.catalog import ToolCatalog, ToolCatalogSnapshot
@@ -309,8 +318,21 @@ class AgentEngine:
                     )
                     async for model_event in coordinator.stream(invocation):
                         event = projector.project(model_event)
-                        if event is not None:
-                            yield event
+                        if event is None:
+                            continue
+                        if (
+                            CollaborationMode(session.collaboration_mode)
+                            is CollaborationMode.PLAN
+                        ):
+                            if isinstance(event, AgentTextDelta):
+                                continue
+                            if isinstance(event, AgentTextStarted):
+                                continue
+                            if isinstance(event, AgentTextCompleted):
+                                for plan_event in _plan_display_events(event.text):
+                                    yield plan_event
+                                continue
+                        yield event
                 except ModelContextOverflow:
                     if reactive_attempted:
                         raise
@@ -430,7 +452,20 @@ class AgentEngine:
         inputs = (*initial, *pending)
         if not inputs:
             return ()
-        session.commit_user_inputs((item.prompt, item.attachments) for item in inputs)
+        catalog = self._tool_catalog.snapshot()
+        prelude = resolve_mode_prelude(
+            mode=CollaborationMode(session.collaboration_mode),
+            context_entries=session.context_entries,
+            catalog=catalog,
+            discovery_mode=(
+                self._tool_search_mode.value
+                if self._tool_search_mode is not None
+                else "native"
+            ),
+        )
+        session.commit_user_inputs(
+            ((item.prompt, item.attachments) for item in inputs), prelude=prelude
+        )
         pending_ids = tuple(
             item.input_id for item in pending if item.input_id is not None
         )
@@ -521,8 +556,11 @@ class AgentEngine:
                 )
             session.commit_tool_round(result_message, round_attachments)
             if round_permission_updates:
+                applicable_updates = _applicable_permission_updates(
+                    session, round_permission_updates
+                )
                 self._tool_round.apply_permission_updates(
-                    round_permission_updates,
+                    applicable_updates,
                     lambda mode: session.set_permission_mode(mode.value),
                 )
             yield AgentConversationUpdated()
@@ -540,8 +578,11 @@ class AgentEngine:
                 )
             session.commit_tool_round(result_message, round_attachments)
             if round_permission_updates:
+                applicable_updates = _applicable_permission_updates(
+                    session, round_permission_updates
+                )
                 self._tool_round.apply_permission_updates(
-                    round_permission_updates,
+                    applicable_updates,
                     lambda mode: session.set_permission_mode(mode.value),
                 )
             yield AgentConversationUpdated()
@@ -587,6 +628,10 @@ class AgentEngine:
             runtime,
             tools=tools.definitions,
         )
+        request = replace(
+            request,
+            request=replace(request.request, session_cache_identity=session.session_id),
+        )
         for replacement in request.new_content_replacements:
             session.commit_content_replacement(replacement)
         return request
@@ -607,6 +652,38 @@ def _cancelled_results(
         result = tool_round.executor.cancelled_result(call, tools=tools)
         results.append(result)
     return results
+
+
+def _applicable_permission_updates(
+    session: Session, updates: tuple[PermissionUpdate, ...]
+) -> tuple[PermissionUpdate, ...]:
+    if CollaborationMode(session.collaboration_mode) is not CollaborationMode.PLAN:
+        return updates
+    return tuple(
+        update for update in updates if update.type is not PermissionUpdateType.SET_MODE
+    )
+
+
+def _plan_display_events(text: str) -> tuple[AgentEvent, ...]:
+    parser = ProposedPlanParser()
+    segments = (*parser.feed(text), *parser.finish())
+    visible = "".join(
+        item.text for item in segments if item.kind is PlanSegmentKind.TEXT
+    )
+    events: list[AgentEvent] = []
+    if visible:
+        events.extend((AgentTextStarted(), AgentTextCompleted(visible)))
+    plan = ""
+    for item in segments:
+        if item.kind is PlanSegmentKind.START:
+            plan = ""
+            events.append(AgentPlanStarted())
+        elif item.kind is PlanSegmentKind.DELTA:
+            plan += item.text
+            events.append(AgentPlanDelta(item.text))
+        elif item.kind is PlanSegmentKind.COMPLETED:
+            events.append(AgentPlanCompleted(plan.strip()))
+    return tuple(events)
 
 
 def _last_uuid(session: Session) -> str | None:

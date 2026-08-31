@@ -69,6 +69,21 @@ class TextCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanStarted:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class PlanDelta:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class PlanCompleted:
+    plan: str
+
+
+@dataclass(frozen=True, slots=True)
 class ReasoningStarted:
     disclosure: ReasoningDisclosure
 
@@ -180,6 +195,9 @@ type TurnEvent = (
     | TextStarted
     | TextDelta
     | TextCompleted
+    | PlanStarted
+    | PlanDelta
+    | PlanCompleted
     | ReasoningStarted
     | ReasoningDelta
     | ReasoningCompleted
@@ -204,6 +222,9 @@ __all__ = [
     "MaxStepsReached",
     "ModelStepCompleted",
     "ModelRequestPrepared",
+    "PlanCompleted",
+    "PlanDelta",
+    "PlanStarted",
     "PreparedContext",
     "ReasoningCompleted",
     "ReasoningDelta",

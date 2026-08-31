@@ -316,6 +316,19 @@ def test_request_can_disable_reasoning_without_changing_provider_profile() -> No
     assert "include" not in params
 
 
+def test_request_maps_stable_session_cache_identity() -> None:
+    provider = _provider()
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (UserInput((InputText("hello"),)),),
+        (),
+        100,
+        session_cache_identity="session-123",
+    )
+
+    assert provider._request_params(request)["prompt_cache_key"] == "session-123"
+
+
 def test_incomplete_response_preserves_provider_reason() -> None:
     provider = _provider()
     response = SimpleNamespace(

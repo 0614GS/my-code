@@ -149,6 +149,22 @@ class ToolSearchListingAttachment:
             raise ValueError("Tool search listing names must be sorted and unique")
 
 
+@dataclass(frozen=True, slots=True)
+class CollaborationModeAttachment:
+    mode: Literal["default", "plan"]
+    kind: Literal["collaboration_mode"] = "collaboration_mode"
+
+
+@dataclass(frozen=True, slots=True)
+class PlanHandoffAttachment:
+    plan: str
+    kind: Literal["plan_handoff"] = "plan_handoff"
+
+    def __post_init__(self) -> None:
+        if not self.plan.strip():
+            raise ValueError("Plan handoff must not be empty")
+
+
 type AttachmentPayload = (
     FileMentionAttachment
     | TodoReminderAttachment
@@ -159,6 +175,8 @@ type AttachmentPayload = (
     | ToolDiscoveryAttachment
     | ToolDiscoveryInvalidationAttachment
     | ToolSearchListingAttachment
+    | CollaborationModeAttachment
+    | PlanHandoffAttachment
 )
 
 
@@ -174,6 +192,8 @@ def is_durable_attachment(payload: AttachmentPayload) -> bool:
             InvokedSkillsAttachment,
             ToolDiscoveryAttachment,
             ToolDiscoveryInvalidationAttachment,
+            CollaborationModeAttachment,
+            PlanHandoffAttachment,
         ),
     )
 
@@ -181,8 +201,10 @@ def is_durable_attachment(payload: AttachmentPayload) -> bool:
 __all__ = [
     "AttachmentPayload",
     "BackgroundTaskCompletionAttachment",
+    "CollaborationModeAttachment",
     "FileMentionAttachment",
     "InvokedSkillsAttachment",
+    "PlanHandoffAttachment",
     "SkillActivationAttachment",
     "SkillListingAttachment",
     "SkillListingEntry",

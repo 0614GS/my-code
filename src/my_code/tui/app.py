@@ -42,6 +42,7 @@ from my_code.chat.history import (
     HistoryToolCall,
 )
 from my_code.chat.permissions import PermissionRequest
+from my_code.chat.questions import QuestionAnswer, QuestionRequest
 from my_code.chat.service import ChatService
 from my_code.chat.status import ContextStatus, RuntimeStatus
 from my_code.chat.views import SubagentTaskView, TranscriptView
@@ -53,6 +54,7 @@ from my_code.permissions.models import (
 )
 from my_code.providers.manager import ModelView, ProviderView
 from my_code.sessions.catalog import SessionSummary
+from my_code.tools.base import ToolExecutionError
 from my_code.tui.activity import ToolActivityGroup
 from my_code.tui.activity_flow import ActivityFlowMixin
 from my_code.tui.activity_indicator import ActivityOwner
@@ -86,7 +88,7 @@ from my_code.tui.panels import (
     resume_panel,
     view_mode_panel,
 )
-from my_code.tui.picker import PickerState, PickerView
+from my_code.tui.picker import PickerRow, PickerState, PickerView
 from my_code.tui.presentation import (
     compaction_activity_label,
     compaction_completed_message,
@@ -170,6 +172,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._initialize_activity_flow()
         self._startup_activity_owner: ActivityOwner | None = None
         self._stream_text = ""
+        self._stream_plan = ""
         self._stream_frame = FormattedText()
         self._stream_frame_revision = 0
         self._stream_projector = StreamingMarkdownProjector()
@@ -202,6 +205,12 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._permission_request: PermissionRequest | None = None
         self._permission_future: asyncio.Future[PermissionConfirmation] | None = None
         self._permission_mode = "select"
+        self._question_request: QuestionRequest | None = None
+        self._question_answers: list[QuestionAnswer] = []
+        self._question_index = 0
+        self._question_other = False
+        self._question_future: asyncio.Future[tuple[QuestionAnswer, ...]] | None = None
+        self._pending_plan: str | None = None
         self._full_access_resolved: asyncio.Event | None = None
         self._saved_draft = ""
         self._path_suggestions: tuple[PathSuggestion, ...] = ()
@@ -259,6 +268,9 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self.interaction_menu = terminal_layout.interaction_menu
         self.slash_menu = terminal_layout.slash_menu
         self.runtime.set_permission_handler(self._ask_permission)
+        set_question_handler = getattr(self.runtime, "set_question_handler", None)
+        if set_question_handler is not None:
+            set_question_handler(self._ask_question)
 
     @property
     def _panel_index(self) -> int:
@@ -631,6 +643,8 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             return FormattedText([("class:secondary", "Starting my-code…")])
         context = self._context_status
         left = f"{status.model} · {status.context_entry_count} context entries"
+        if status.collaboration_mode == "plan":
+            left = "Plan · " + left
         if context is not None:
             left += f"    {format_context_usage(context)}"
         if self._status_warning:
@@ -701,6 +715,33 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             return view_mode_panel(self._display_density)
         if self._panel == "permission_mode_select":
             return permission_mode_panel(self.runtime.permission_modes())
+        if (
+            self._panel == "question"
+            and self._question_request is not None
+            and not self._question_other
+        ):
+            question = self._question_request.questions[self._question_index]
+            return PickerView(
+                f"{question.header} · {question.question}",
+                tuple(
+                    PickerRow(option.label, f"{option.label} — {option.description}")
+                    for option in question.options
+                )
+                + (PickerRow("__other__", "Other — enter a custom answer"),),
+                f"Question {self._question_index + 1}/"
+                f"{len(self._question_request.questions)} · "
+                "Enter select · Esc cancel",
+            )
+        if self._panel == "plan_action":
+            return PickerView(
+                "Implement proposed plan",
+                (
+                    PickerRow("current", "Implement in current context"),
+                    PickerRow("fresh", "Implement in a fresh context"),
+                    PickerRow("stay", "Stay in Plan mode"),
+                ),
+                "Enter select · Esc stay in Plan",
+            )
         if self._panel == "agents" and self._agent_task_id is None:
             return agent_select_panel(self._agents)
         return None
@@ -713,6 +754,18 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             return cast(
                 AnyFormattedText,
                 permission_panel(self._permission_request, self._permission_mode),
+            )
+        if (
+            self._panel == "question"
+            and self._question_other
+            and self._question_request is not None
+        ):
+            question = self._question_request.questions[self._question_index]
+            return FormattedText(
+                [
+                    ("class:heading", f"{question.header} · Other"),
+                    ("", "\nEnter a custom answer, then press Enter · Esc cancel"),
+                ]
             )
         if self._panel == "resume":
             return cast(AnyFormattedText, resume_panel(self._sessions))
@@ -1107,6 +1160,52 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             )
             self._invalidate()
 
+    async def _ask_question(
+        self, request: QuestionRequest
+    ) -> tuple[QuestionAnswer, ...]:
+        if self._question_future is not None or self._panel is not None:
+            raise ToolExecutionError("Another exclusive TUI panel is active.")
+        self._question_request = request
+        self._question_answers = []
+        self._question_index = 0
+        self._question_other = False
+        self._panel = "question"
+        self._panel_picker.reset()
+        self._question_future = asyncio.get_running_loop().create_future()
+        self._invalidate()
+        try:
+            return await self._question_future
+        finally:
+            self._question_future = None
+            self._question_request = None
+            self._question_answers = []
+            self._question_other = False
+            self._panel = None
+            self.buffer.set_document(Document(""), bypass_readonly=True)
+            self._invalidate()
+
+    def _answer_question(self, answer: str) -> None:
+        request = self._question_request
+        future = self._question_future
+        if request is None or future is None or future.done():
+            return
+        question = request.questions[self._question_index]
+        self._question_answers.append(QuestionAnswer(question.id, answer))
+        self._question_index += 1
+        self._question_other = False
+        self.buffer.set_document(Document(""), bypass_readonly=True)
+        self._panel_picker.reset()
+        if self._question_index == len(request.questions):
+            future.set_result(tuple(self._question_answers))
+        self._invalidate()
+
+    def _cancel_question(self) -> None:
+        future = self._question_future
+        if future is not None and not future.done():
+            future.set_exception(
+                ToolExecutionError("Question was cancelled by the user.")
+            )
+
     def _choose_permission(self, choice: str) -> None:
         request = self._permission_request
         if choice == "allow":
@@ -1301,6 +1400,19 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                 warnings.append(f"context: {type(error).__name__}")
         self._status_warning = ", ".join(warnings)
         self._invalidate()
+
+    def _cycle_collaboration_mode(self) -> None:
+        cycle = getattr(self.runtime, "cycle_collaboration_mode", None)
+        if cycle is None:
+            return
+        try:
+            mode = cycle()
+        except RuntimeError:
+            return
+        self._refresh_status()
+        self._spawn(
+            self._write(system_message(f"Collaboration mode: {mode.value.title()}"))
+        )
 
 
 class MyCodeTui:

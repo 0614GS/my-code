@@ -25,6 +25,7 @@ from my_code.model.primitives import ProviderReplayRecord, replay_content_id
 from my_code.sessions._codec import (
     decode_entry,
     encode_boundary,
+    encode_collaboration_mode,
     encode_message,
     encode_metadata,
     encode_permission_mode,
@@ -37,6 +38,7 @@ from my_code.sessions._codec import (
     replay_from_json,
 )
 from my_code.sessions._records import (
+    SessionCollaborationModeRecord,
     SessionPermissionModeRecord,
     ToolPresentationRecord,
 )
@@ -106,6 +108,7 @@ class SessionStore:
             raise ValueError("SessionStart session_id must match the store session_id")
         self._metadata: SessionMetadata | None = None
         self._permission_mode = self._start.permission_mode
+        self._collaboration_mode = self._start.collaboration_mode
 
         # 这些索引只在显式 load 时从磁盘 hydration，之后随追加增量维护。
         # Session 只在打开时 hydration；之后这些索引随成功追加增量维护。
@@ -129,6 +132,10 @@ class SessionStore:
     def permission_mode(self) -> str:
         return self._permission_mode
 
+    @property
+    def collaboration_mode(self) -> str:
+        return self._collaboration_mode
+
     def configure_start(self, start: SessionStart) -> None:
         """Replace an unpersisted placeholder before the first message is written."""
 
@@ -138,6 +145,7 @@ class SessionStore:
             raise RuntimeError("SessionStart cannot change after persistence begins")
         self._start = start
         self._permission_mode = start.permission_mode
+        self._collaboration_mode = start.collaboration_mode
 
     def load(self) -> _HydratedSession:
         """从 Transcript 完整恢复一次会话。
@@ -170,6 +178,7 @@ class SessionStore:
         start: SessionStart | None = None
         metadata: SessionMetadata | None = None
         permission_mode: str | None = None
+        collaboration_mode = "default"
         for line_number, encoded_line in enumerate(lines, start=1):
             terminated = encoded_line.endswith((b"\n", b"\r"))
             try:
@@ -231,6 +240,7 @@ class SessionStore:
                     start = entry
                     self._start = entry
                     permission_mode = entry.permission_mode
+                    collaboration_mode = entry.collaboration_mode
                     continue
                 if isinstance(entry, SessionStart):
                     raise ValueError("session_started may only be the first entry")
@@ -249,6 +259,9 @@ class SessionStore:
                     continue
                 if isinstance(entry, SessionPermissionModeRecord):
                     permission_mode = entry.permission_mode
+                    continue
+                if isinstance(entry, SessionCollaborationModeRecord):
+                    collaboration_mode = entry.collaboration_mode
                     continue
                 if isinstance(entry, TurnStarted):
                     previous_start = turn_starts.get(entry.turn_id)
@@ -377,6 +390,7 @@ class SessionStore:
         self._metadata = metadata
         assert permission_mode is not None
         self._permission_mode = permission_mode
+        self._collaboration_mode = collaboration_mode
         active = _active_parent_chain(messages, by_id)
         active_boundaries = _active_boundaries(boundaries, active)
         return _HydratedSession(
@@ -619,6 +633,20 @@ class SessionStore:
         else:
             self._append_record(record)
         self._permission_mode = permission_mode
+        return True
+
+    def set_collaboration_mode(self, collaboration_mode: str) -> bool:
+        """Persistence-first last-wins collaboration-mode update."""
+
+        self._ensure_loaded()
+        if self._collaboration_mode == collaboration_mode:
+            return False
+        record = encode_collaboration_mode(collaboration_mode)
+        if not self.path.exists():
+            self._start = replace(self._start, collaboration_mode=collaboration_mode)
+        else:
+            self._append_record(record)
+        self._collaboration_mode = collaboration_mode
         return True
 
     def append_content_replacement(self, replacement: ContentReplacement) -> bool:

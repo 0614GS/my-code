@@ -22,6 +22,7 @@ class RuntimeStatus:
     mcp_connected_count: int = 0
     mcp_server_count: int = 0
     execution_environment: str = "local"
+    collaboration_mode: str = "default"
 
 
 @dataclass(frozen=True, slots=True)

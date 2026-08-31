@@ -6,7 +6,9 @@ from my_code.context.xml import wrap_xml
 from my_code.conversation.attachments import (
     AttachmentPayload,
     BackgroundTaskCompletionAttachment,
+    CollaborationModeAttachment,
     FileMentionAttachment,
+    PlanHandoffAttachment,
     SkillActivationAttachment,
     SkillListingAttachment,
     TodoReminderAttachment,
@@ -40,6 +42,16 @@ class AttachmentProjector:
 
 
 def _render(attachment: AttachmentPayload) -> str:
+    if isinstance(attachment, CollaborationModeAttachment):
+        return _collaboration_mode_instructions(attachment.mode)
+    if isinstance(attachment, PlanHandoffAttachment):
+        return wrap_xml(
+            "system-reminder",
+            "<approved_plan>\n"
+            "Implement this approved plan in the new session:\n\n"
+            + attachment.plan
+            + "\n</approved_plan>",
+        )
     if isinstance(attachment, FileMentionAttachment):
         title = (
             ("Directory" if attachment.is_directory else "File")
@@ -112,6 +124,24 @@ def _render(attachment: AttachmentPayload) -> str:
         "these guidelines:\n\n"
         + "\n\n".join(_render_skill(skill) for skill in attachment.skills),
     )
+
+
+def _collaboration_mode_instructions(mode: str) -> str:
+    if mode == "default":
+        body = (
+            "You are now in Default mode. Earlier Plan mode instructions no longer "
+            "apply. Execute user requests normally within the active permissions."
+        )
+    else:
+        body = (
+            "You are in Plan mode. Do not mutate repository-tracked state. Explore "
+            "the repository before asking questions. Use Question only for material "
+            "decisions that cannot be discovered locally. Deliver one "
+            "decision-complete "
+            "final plan inside an exclusive <proposed_plan> block whose opening and "
+            "closing tags are each on their own line."
+        )
+    return f'<collaboration_mode mode="{mode}">\n{body}\n</collaboration_mode>'
 
 
 def _render_skill(skill: SkillActivationAttachment) -> str:

@@ -47,6 +47,8 @@ class PanelFlowMixin:
 
     def _open_permission_picker(self) -> None:
         modes = self.runtime.permission_modes()
+        if not modes:
+            return
         self._panel_index = next(
             (index for index, mode in enumerate(modes) if mode.current), 0
         )
@@ -100,6 +102,8 @@ class PanelFlowMixin:
     def _close_panel(self) -> None:
         if self._panel == "agents":
             self._agent_task_id = None
+        if self._panel == "plan_action":
+            self._pending_plan = None
         self._panel = None
         if self._provider_wizard is not None:
             self._provider_wizard.clear_sensitive()
@@ -122,6 +126,36 @@ class PanelFlowMixin:
         action = row.key if row is not None else None
         if self._panel == "full_access":
             self._resolve_full_access(action == "allow")
+        elif self._panel == "question":
+            value = self.buffer.text.strip()
+            if self._question_other:
+                if value:
+                    self._answer_question(value)
+            elif action == "__other__":
+                self._question_other = True
+                self.buffer.set_document(Document(""), bypass_readonly=True)
+                self._invalidate()
+            elif action is not None:
+                self._answer_question(action)
+        elif self._panel == "plan_action" and action is not None:
+            if action == "stay":
+                self._pending_plan = None
+                self._close_panel()
+            else:
+                try:
+                    self.runtime.start_plan_implementation(
+                        fresh_context=action == "fresh"
+                    )
+                except Exception as error:
+                    await self._write(
+                        system_message(f"Plan handoff failed: {error}", error=True)
+                    )
+                    return
+                self._pending_plan = None
+                self._close_panel()
+                self._refresh_status()
+                if self._foreground_task is None or self._foreground_task.done():
+                    self._foreground_task = self._spawn(self._run_interactive_inputs())
         elif self._panel == "permission":
             value = self.buffer.text.strip()
             if self._permission_mode == "select" and action is not None:

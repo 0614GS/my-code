@@ -147,6 +147,13 @@ class ContextCompactor:
                 tools=(),
                 max_output_tokens=output_budget,
                 reasoning_mode="disabled",
+                session_cache_identity=(
+                    session_id
+                    if isinstance(
+                        session_id := getattr(recorder, "session_id", None), str
+                    )
+                    else None
+                ),
             )
             try:
                 if recorder is None:

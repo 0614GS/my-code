@@ -16,6 +16,7 @@ from my_code.agent.engine import AgentEngine
 from my_code.agent.runner import AgentRunner
 from my_code.auth.credentials import CredentialStore
 from my_code.chat.permissions import DeferredPermissionPrompter
+from my_code.chat.questions import DeferredQuestionBroker
 from my_code.chat.service import ChatService
 from my_code.cli.arguments import CliOptions, parse_cli
 from my_code.config.paths import MyCodePaths, SettingsScope
@@ -41,6 +42,7 @@ from my_code.features.background_tasks.registry import BackgroundTaskRegistry
 from my_code.features.file_mentions.loader import AttachmentLoader
 from my_code.features.file_mentions.reader import WorkspaceAttachmentReader
 from my_code.features.file_mentions.suggestions import WorkspacePathSuggester
+from my_code.features.plan_mode.question import QuestionTool
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import SubagentLimits, SubagentParentContext
@@ -95,7 +97,7 @@ from my_code.runtime.state import (
     ToolState,
     WorkspaceState,
 )
-from my_code.sessions.models import SessionStart
+from my_code.sessions.models import CollaborationMode, SessionStart
 from my_code.sessions.session import Session
 from my_code.skills.attachments import SkillListingAttachmentSource
 from my_code.skills.discovery import SkillSearchRoot
@@ -144,6 +146,7 @@ class ApplicationAssembly:
     skills: SkillRuntime
     session: Session
     observer: Observer
+    question_broker: DeferredQuestionBroker
     bypass_confirmed: bool = False
     background_notifications: BackgroundTaskNotificationSource | None = None
     background_wake_signal: BackgroundTaskWakeSignal | None = None
@@ -331,7 +334,7 @@ def _assemble_agent(
         ),
     )
     restored_session = bool(session.conversation)
-    effective_permission_mode = (
+    base_permission_mode = (
         permission_mode_override
         if permission_mode_override is not None
         else PermissionMode(session.permission_mode)
@@ -340,7 +343,13 @@ def _assemble_agent(
     )
     if restored_session and permission_mode_override is not None:
         session.set_permission_mode(permission_mode_override.value)
-    bypass_confirmed = effective_permission_mode is PermissionMode.BYPASS and (
+    collaboration_mode = CollaborationMode(session.collaboration_mode)
+    effective_permission_mode = (
+        PermissionMode.PLAN
+        if collaboration_mode is CollaborationMode.PLAN
+        else base_permission_mode
+    )
+    bypass_confirmed = base_permission_mode is PermissionMode.BYPASS and (
         restored_session
         or (session_id is not None and permission_mode_override is not None)
     )
@@ -393,6 +402,11 @@ def _assemble_agent(
         ),
     )
     tool_catalog.register_source(ToolSourceId("feature", "todos"), (TodoWriteTool(),))
+    question_broker = DeferredQuestionBroker()
+    tool_catalog.register_source(
+        ToolSourceId("feature", "plan-mode"),
+        (QuestionTool(question_broker, root_session_id=actual_session_id),),
+    )
     search_tools: tuple[Tool, ...] = (ToolSearch(settings.tool_search_mode),)
     if settings.tool_search_mode is ToolSearchMode.DISPATCHER:
         search_tools = (*search_tools, InvokeSearchedTool())
@@ -616,6 +630,7 @@ def _assemble_agent(
         skills=skills,
         session=session,
         observer=observer,
+        question_broker=question_broker,
         bypass_confirmed=bypass_confirmed,
         background_notifications=background_notifications,
         background_wake_signal=background_wake_signal,
@@ -645,6 +660,7 @@ def bootstrap_chat(
         tool_executor=assembled.tool_executor,
         settings=settings,
         permission_prompter=prompter,
+        question_broker=assembled.question_broker,
         provider_manager=ProviderManager(settings.paths),
         state=AppState(
             workspace=WorkspaceState(assembled.tool_executor.workspace),

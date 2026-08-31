@@ -7,6 +7,7 @@ from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
     PermissionDecisionKind,
     PermissionDecisionReason,
+    PermissionMode,
     ToolPermissionContext,
     ToolPermissionResult,
 )
@@ -85,7 +86,13 @@ class TodoWriteTool(Tool):
     async def check_permissions(
         self, tool_input: JsonObject, context: ToolPermissionContext
     ) -> ToolPermissionResult:
-        del context
+        if context.mode is PermissionMode.PLAN:
+            return ToolPermissionResult.deny(
+                message="TodoWrite is unavailable in plan mode.",
+                reason=PermissionDecisionReason(
+                    PermissionDecisionKind.SAFETY, "plan-mode-todos"
+                ),
+            )
         return ToolPermissionResult.allow(
             tool_input,
             message="Session todo state is allowed.",

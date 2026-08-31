@@ -34,6 +34,7 @@ from my_code import __version__
 from my_code.chat.history import (
     HistoryContextGroup,
     HistoryEntry,
+    HistoryPlan,
     HistoryReasoning,
     HistoryText,
     HistoryToolCall,
@@ -652,6 +653,10 @@ def history_message(
         return system_message(entry.text)
     if isinstance(entry, HistoryReasoning):
         return reasoning_message(entry.presentation)
+    if isinstance(entry, HistoryPlan):
+        return Group(
+            Text("Proposed plan", style="bold cyan"), assistant_message(entry.plan)
+        )
     if isinstance(entry, HistoryContextGroup):
         return injected_context_message(entry.request_number, entry.items)
     assert isinstance(entry, HistoryToolCall)

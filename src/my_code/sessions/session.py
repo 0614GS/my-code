@@ -10,6 +10,7 @@ from pathlib import Path
 from my_code.context.session import AttachmentDerivationState, ContextPlanningState
 from my_code.conversation.attachments import (
     AttachmentPayload,
+    CollaborationModeAttachment,
     InvokedSkillsAttachment,
     SkillActivationAttachment,
     ToolDiscoveryAttachment,
@@ -135,6 +136,10 @@ class Session(ModelInvocationRecorder):
         return self._store.permission_mode
 
     @property
+    def collaboration_mode(self) -> str:
+        return self._store.collaboration_mode
+
+    @property
     def turn_history(self) -> tuple[TurnHistoryEntry, ...]:
         """Return journal entries in turn start order."""
 
@@ -162,6 +167,9 @@ class Session(ModelInvocationRecorder):
 
     def set_permission_mode(self, permission_mode: str) -> bool:
         return self._store.set_permission_mode(permission_mode)
+
+    def set_collaboration_mode(self, collaboration_mode: str) -> bool:
+        return self._store.set_collaboration_mode(collaboration_mode)
 
     @property
     def conversation(self) -> tuple[ConversationEntry, ...]:
@@ -229,6 +237,8 @@ class Session(ModelInvocationRecorder):
     def commit_user_inputs(
         self,
         inputs: Iterable[tuple[str, tuple[AttachmentPayload, ...]]],
+        *,
+        prelude: tuple[AttachmentPayload, ...] = (),
     ) -> tuple[HumanMessage, ...]:
         """Atomically commit adjacent user messages and durable attachments.
 
@@ -242,6 +252,13 @@ class Session(ModelInvocationRecorder):
         candidate = self._conversation.clone()
         durable: list[ConversationEntry] = []
         humans: list[HumanMessage] = []
+        for payload in prelude:
+            attachment = AttachmentMessage(
+                payload, parent_uuid=_causal_head(candidate.conversation)
+            )
+            candidate.append(attachment)
+            if is_durable_attachment(payload):
+                durable.append(attachment)
         for prompt, attachments in values:
             human = HumanMessage(
                 prompt, parent_uuid=_causal_head(candidate.conversation)
@@ -413,8 +430,14 @@ class Session(ModelInvocationRecorder):
         candidate.append(summary)
         invoked = _latest_invoked_skills(candidate.conversation[:-1])
         discovered = _latest_tool_discoveries(candidate.conversation[:-1])
+        collaboration = _latest_collaboration_mode(candidate.conversation[:-1])
         attachments_list: list[AttachmentMessage] = []
         parent_uuid = summary.uuid
+        if collaboration is not None:
+            attachment = AttachmentMessage(collaboration, parent_uuid=parent_uuid)
+            candidate.append(attachment)
+            attachments_list.append(attachment)
+            parent_uuid = attachment.uuid
         if invoked is not None:
             attachment = AttachmentMessage(invoked, parent_uuid=parent_uuid)
             candidate.append(attachment)
@@ -490,6 +513,17 @@ def _latest_invoked_skills(
     if not by_name:
         return None
     return InvokedSkillsAttachment(tuple(by_name.values()))
+
+
+def _latest_collaboration_mode(
+    history: tuple[ConversationEntry, ...],
+) -> CollaborationModeAttachment | None:
+    for entry in reversed(history):
+        if isinstance(entry, AttachmentMessage) and isinstance(
+            entry.payload, CollaborationModeAttachment
+        ):
+            return entry.payload
+    return None
 
 
 def _latest_tool_discoveries(
