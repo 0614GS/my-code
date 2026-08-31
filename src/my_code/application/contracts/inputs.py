@@ -1,6 +1,7 @@
-"""Value objects owned by Chat's file mention capability."""
+"""Frontend-neutral input and file mention values."""
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 from my_code.conversation.attachments import FileMentionAttachment
 
@@ -40,8 +41,24 @@ class PathSuggestion:
     display: str
 
 
+class QueueInputState(StrEnum):
+    PREPARING = "preparing"
+    QUEUED = "queued"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedInputView:
+    input_id: str
+    prompt: str
+    state: QueueInputState
+    error: str | None = None
+
+
 __all__ = [
     "FileMention",
     "LoadedAttachment",
     "PathSuggestion",
+    "QueuedInputView",
+    "QueueInputState",
 ]

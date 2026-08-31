@@ -60,7 +60,7 @@ def test_foreign_reexport_guard_reports_the_exporting_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source_root = tmp_path / "src" / "my_code"
-    source = source_root / "chat" / "api.py"
+    source = source_root / "application" / "api.py"
     source.parent.mkdir(parents=True)
     source.write_text(
         "from my_code.permissions.models import PermissionMode as Mode\n"
@@ -73,7 +73,7 @@ def test_foreign_reexport_guard_reports_the_exporting_module(
     violations = dependency_rules.foreign_reexports()
 
     assert len(violations) == 1
-    assert violations[0].source == "my_code.chat"
+    assert violations[0].source == "my_code.application"
     assert violations[0].target == "my_code.permissions"
     assert violations[0].imported_names == ("PermissionMode",)
 
@@ -136,6 +136,22 @@ def test_owner_specific_technologies_do_not_leak() -> None:
     leaks = collect_technical_leaks()
     details = "\n".join(f"  - {leak.describe()}" for leak in leaks)
     assert not leaks, f"owner-specific technology leaks:\n{details}"
+
+
+def test_narrow_runtime_state_capsules_are_allowed_outside_app_state_owners(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_root = tmp_path / "src" / "my_code"
+    source = source_root / "application" / "configuration" / "modes.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "from my_code.runtime.state import PermissionState\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dependency_rules, "SOURCE_ROOT", source_root)
+    monkeypatch.setattr(dependency_rules, "REPOSITORY_ROOT", tmp_path)
+
+    assert not dependency_rules.collect_technical_leaks()
 
 
 def test_reference_snapshot_is_excluded_from_packaging_inputs() -> None:

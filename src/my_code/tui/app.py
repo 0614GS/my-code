@@ -29,25 +29,25 @@ from prompt_toolkit.utils import get_cwidth
 from rich.console import Console, RenderableType
 from rich.padding import Padding
 
-from my_code.chat.events import (
+from my_code.application.contracts.events import (
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
     CompactionCompleted,
     CompactionStarted,
     TurnEvent,
 )
-from my_code.chat.history import (
+from my_code.application.contracts.history import (
     HistoryContextGroup,
     HistoryEntry,
     HistoryText,
     HistoryToolCall,
 )
-from my_code.chat.mentions.models import PathSuggestion
-from my_code.chat.permissions import PermissionRequest
-from my_code.chat.questions import QuestionAnswer, QuestionRequest
-from my_code.chat.service import ChatService
-from my_code.chat.status import ContextStatus, RuntimeStatus
-from my_code.chat.views import SubagentTaskView, TranscriptView
+from my_code.application.contracts.inputs import PathSuggestion
+from my_code.application.contracts.permissions import PermissionRequest
+from my_code.application.contracts.questions import QuestionAnswer, QuestionRequest
+from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.views import SubagentTaskView, TranscriptView
+from my_code.application.service import ApplicationService
 from my_code.model.display import DisplayDensity
 from my_code.permissions.models import (
     PermissionConfirmation,
@@ -148,18 +148,18 @@ class _ChildTranscriptSource:
 
 
 class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
-    """Inline terminal application; canonical state stays in ChatService."""
+    """Inline terminal application; canonical state stays in ApplicationService."""
 
     def __init__(
         self,
-        runtime: ChatService,
+        application: ApplicationService,
         *,
         commands: SlashCommandRegistry | None = None,
         input: Input | None = None,
         output: Output | None = None,
         console: Console | None = None,
     ) -> None:
-        self.runtime = runtime
+        self.application = application
         self.commands = commands or SlashCommandRegistry.default()
         self.theme = TuiTheme.detect()
         self.console = console or Console(
@@ -225,7 +225,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._has_scrollback_output = False
         self._last_scrollback_was_user = False
         self._transcript_pager: TranscriptPager | None = None
-        view_mode = getattr(self.runtime, "view_mode", None)
+        view_mode = getattr(self.application, "view_mode", None)
         self._display_density = (
             view_mode() if view_mode is not None else DisplayDensity.CONCISE
         )
@@ -263,13 +263,13 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             output=output,
             theme=self.theme,
         )
-        self.application: Application[None] = terminal_layout.application
+        self.terminal_application: Application[None] = terminal_layout.application
         self.body = terminal_layout.body
         self.completions_menu = terminal_layout.completions_menu
         self.interaction_menu = terminal_layout.interaction_menu
         self.slash_menu = terminal_layout.slash_menu
-        self.runtime.set_permission_handler(self._ask_permission)
-        set_question_handler = getattr(self.runtime, "set_question_handler", None)
+        self.application.set_permission_handler(self._ask_permission)
+        set_question_handler = getattr(self.application, "set_question_handler", None)
         if set_question_handler is not None:
             set_question_handler(self._ask_question)
 
@@ -284,14 +284,14 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._panel_picker.reset(value)
 
     async def run_async(self) -> None:
-        view = self.runtime.current_session_view()
+        view = self.application.current_session_view()
         self._status = view.status
         self._todos = view.status.todos
         await self._write(welcome(view.status, self.theme))
         self._startup_activity_owner = self._begin_activity(
             "Initializing capabilities…"
         )
-        current_mode = getattr(self.runtime, "current_permission_mode", None)
+        current_mode = getattr(self.application, "current_permission_mode", None)
         if current_mode is not None and current_mode().requires_confirmation:
             self._open_full_access_confirmation()
         self._scrollback_writer.seed(
@@ -305,7 +305,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             self._spawn(self._initialize_capabilities())
 
         try:
-            await self.application.run_async(pre_run=start_background)
+            await self.terminal_application.run_async(pre_run=start_background)
         finally:
             self._running = False
             if self._transcript_pager is not None:
@@ -319,7 +319,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
 
     async def _initialize_capabilities(self) -> None:
         try:
-            view = await self.runtime.initialize()
+            view = await self.application.initialize()
             self._status = view.status
             self._todos = view.status.todos
             await self._history_ready.wait()
@@ -342,7 +342,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             await self._write(
                 system_message(f"Capability initialization failed: {error}", error=True)
             )
-            self.application.exit(exception=error)
+            self.terminal_application.exit(exception=error)
         finally:
             self._startup_ready.set()
             self._invalidate()
@@ -398,7 +398,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             await self._write(renderable)
 
     def _invalidate(self) -> None:
-        self.application.invalidate()
+        self.terminal_application.invalidate()
 
     def _invalidate_streaming(self) -> None:
         """Coalesce high-frequency streaming redraws to a bounded frame rate.
@@ -452,15 +452,15 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
     async def _open_transcript(self) -> None:
         if self._transcript_pager is not None:
             return
-        source: object = self.runtime
+        source: object = self.application
         if self._panel == "agents" and self._agent_task_id is not None:
-            child_view = getattr(self.runtime, "subagent_transcript_view", None)
+            child_view = getattr(self.application, "subagent_transcript_view", None)
             if child_view is not None:
                 source = _ChildTranscriptSource(child_view, self._agent_task_id)
         pager = TranscriptPager(
             cast(Any, source),
-            input=self.application.input,
-            output=self.application.output,
+            input=self.terminal_application.input,
+            output=self.terminal_application.output,
         )
         self._transcript_pager = pager
         try:
@@ -541,7 +541,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._invalidate()
 
     def _recall_pending_input(self) -> bool:
-        recall = getattr(self.runtime, "recall_latest_input", None)
+        recall = getattr(self.application, "recall_latest_input", None)
         if recall is None:
             return False
         prompt = recall()
@@ -607,7 +607,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         return self._activity_indicator.text()
 
     def _queue_text(self) -> FormattedText:
-        queued = getattr(self.runtime, "queued_inputs", lambda: ())()
+        queued = getattr(self.application, "queued_inputs", lambda: ())()
         if not queued:
             return FormattedText()
         fragments: list[tuple[str, str]] = []
@@ -720,7 +720,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         if self._panel == "view_select":
             return view_mode_panel(self._display_density)
         if self._panel == "permission_mode_select":
-            return permission_mode_panel(self.runtime.permission_modes())
+            return permission_mode_panel(self.application.permission_modes())
         if (
             self._panel == "question"
             and self._question_request is not None
@@ -821,7 +821,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
     def _resolve_full_access(self, allow: bool) -> None:
         if self._panel != "full_access":
             return
-        confirm = getattr(self.runtime, "confirm_full_access", None)
+        confirm = getattr(self.application, "confirm_full_access", None)
         if confirm is not None:
             confirm(allow)
         resolved = self._full_access_resolved
@@ -851,7 +851,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                 self._busy = False
                 if self._startup_error is not None:
                     return
-            outcome = self.commands.dispatch(line, status=self.runtime.status())
+            outcome = self.commands.dispatch(line, status=self.application.status())
             concurrency = self.commands.concurrency(line)
             if (
                 outcome is not None
@@ -872,13 +872,15 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                         system_message(f"Command failed: {error}", error=True)
                     )
             else:
-                queue = getattr(self.runtime, "queue_input", None)
-                interactive = getattr(self.runtime, "stream_interactive", None)
+                queue = getattr(self.application, "queue_input", None)
+                interactive = getattr(self.application, "stream_interactive", None)
                 if queue is None or interactive is None:
                     self._history.append_string(line)
                     self._foreground_task = asyncio.current_task()
                     try:
-                        await self._run_turn(line, self.runtime.stream(line), user=True)
+                        await self._run_turn(
+                            line, self.application.stream(line), user=True
+                        )
                     finally:
                         self._foreground_task = None
                 else:
@@ -896,10 +898,10 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
 
     async def _run_interactive_inputs(self) -> None:
         try:
-            await self._run_turn("", self.runtime.stream_interactive(), user=False)
+            await self._run_turn("", self.application.stream_interactive(), user=False)
         finally:
             self._foreground_task = None
-            queued = getattr(self.runtime, "queued_inputs", lambda: ())()
+            queued = getattr(self.application, "queued_inputs", lambda: ())()
             if queued and any(str(item.state) != "failed" for item in queued):
                 self._foreground_task = self._spawn(self._run_interactive_inputs())
             self._invalidate()
@@ -920,12 +922,14 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             await self._write_many(renderables)
 
         if outcome.clear_screen:
-            await self._write(welcome(self.runtime.status(), self.theme), clear=True)
+            await self._write(
+                welcome(self.application.status(), self.theme), clear=True
+            )
             echo_pending = False
         if outcome.message:
             await emit(system_message(outcome.message))
         if outcome.show_status:
-            status = self.runtime.status()
+            status = self.application.status()
             context = self._command_context_status()
             self._status = status
             self._context_status = context
@@ -940,11 +944,11 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                 echo_pending = False
             await self._run_compaction()
         if outcome.show_usage:
-            usage = self.runtime.session_usage()
+            usage = self.application.session_usage()
             self._context_status = usage.context
             await emit(render_usage_card(usage))
         if outcome.show_tools:
-            await emit(render_tools(self.runtime.capabilities()))
+            await emit(render_tools(self.application.capabilities()))
         if outcome.view_operation is not None:
             message = await self._change_view_mode(outcome.view_operation)
             await emit(system_message(message))
@@ -953,26 +957,26 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                 self._busy = True
                 activity_owner = self._begin_activity("Reloading skills…")
                 try:
-                    capabilities = await self.runtime.reload_skills()
+                    capabilities = await self.application.reload_skills()
                 finally:
                     self._busy = False
                     self._end_activity(activity_owner)
                     self._refresh_status()
             else:
-                capabilities = self.runtime.capabilities()
+                capabilities = self.application.capabilities()
             await emit(render_skills(capabilities))
         if outcome.mcp_operation is not None:
             operation, server = outcome.mcp_operation
             if operation == "list":
-                capabilities = self.runtime.capabilities()
+                capabilities = self.application.capabilities()
             else:
                 self._busy = True
                 activity_owner = self._begin_activity(f"MCP {operation} · {server}…")
                 try:
                     capabilities = (
-                        await self.runtime.refresh_mcp(server)
+                        await self.application.refresh_mcp(server)
                         if operation == "refresh"
-                        else await self.runtime.reconnect_mcp(server)
+                        else await self.application.reconnect_mcp(server)
                     )
                 finally:
                     self._busy = False
@@ -980,7 +984,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                     self._refresh_status()
             await emit(render_mcp(capabilities))
         if outcome.show_tasks:
-            await emit(render_tasks(self.runtime.background_tasks()))
+            await emit(render_tasks(self.application.background_tasks()))
         if echo_pending and (
             outcome.show_agents
             or outcome.open_session_picker
@@ -1004,7 +1008,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         if outcome.open_permission_picker:
             self._open_permission_picker()
         if outcome.should_exit:
-            self.application.exit()
+            self.terminal_application.exit()
 
     async def _change_view_mode(self, operation: str) -> str:
         requested = DisplayDensity.from_view_mode(operation)
@@ -1012,13 +1016,13 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             return f"View mode · {requested.view_mode}"
         await self._flush_tool_activity()
         await self._flush_unclassified_blocks()
-        setter = getattr(self.runtime, "set_view_mode", None)
+        setter = getattr(self.application, "set_view_mode", None)
         if setter is None:
             raise RuntimeError("Runtime does not support view preferences")
         setter(requested)
         previous = self._display_density
         self._display_density = requested
-        view = self.runtime.current_session_view()
+        view = self.application.current_session_view()
         self._status = view.status
         self._todos = view.status.todos
         self._blocks.reset_group()
@@ -1033,7 +1037,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         """Prefer a fresh snapshot, but remain readable during an open tool pair."""
 
         try:
-            return self.runtime.context_status()
+            return self.application.context_status()
         except Exception:
             if self._context_status is None:
                 raise
@@ -1044,11 +1048,11 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
 
         if self._context_status is None:
             return None
-        self._context_status = self.runtime.context_status()
+        self._context_status = self.application.context_status()
         return self._context_status
 
     async def _watch_background_notifications(self) -> None:
-        stream = getattr(self.runtime, "stream_background_notifications", None)
+        stream = getattr(self.application, "stream_background_notifications", None)
         if stream is None:
             return
         invocation: list[TurnEvent] = []
@@ -1095,7 +1099,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             self._end_agent_activity()
 
     async def _watch_subagent_activity(self) -> None:
-        stream = getattr(self.runtime, "stream_subagent_activity", None)
+        stream = getattr(self.application, "stream_subagent_activity", None)
         if stream is None:
             return
         try:
@@ -1112,7 +1116,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._busy = True
         activity_owner: ActivityOwner | None = None
         try:
-            async for event in self.runtime.stream_compaction():
+            async for event in self.application.stream_compaction():
                 if isinstance(event, CompactionStarted):
                     activity_owner = self._begin_activity(
                         compaction_activity_label(event.trigger)
@@ -1296,7 +1300,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
     async def _load_paths(
         self, revision: int, query: str, start: int, end: int
     ) -> None:
-        suggestions = await self.runtime.suggest_paths(query)
+        suggestions = await self.application.suggest_paths(query)
         if revision != self._suggestion_revision or self._mention_span != (start, end):
             return
         self._path_suggestions = suggestions
@@ -1393,13 +1397,13 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
     def _refresh_status(self) -> None:
         warnings: list[str] = []
         try:
-            self._status = self.runtime.status()
+            self._status = self.application.status()
             self._todos = self._status.todos
         except Exception as error:
             warnings.append(f"status: {type(error).__name__}")
         if self._context_status is not None:
             try:
-                self._context_status = self.runtime.context_status()
+                self._context_status = self.application.context_status()
                 if self._context_status.warning:
                     warnings.append(self._context_status.warning)
             except Exception as error:
@@ -1408,7 +1412,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._invalidate()
 
     def _cycle_collaboration_mode(self) -> None:
-        cycle = getattr(self.runtime, "cycle_collaboration_mode", None)
+        cycle = getattr(self.application, "cycle_collaboration_mode", None)
         if cycle is None:
             return
         try:
@@ -1422,8 +1426,8 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
 
 
 class MyCodeTui:
-    def __init__(self, runtime: ChatService) -> None:
-        self.app = MyCodeApp(runtime)
+    def __init__(self, application: ApplicationService) -> None:
+        self.app = MyCodeApp(application)
 
     async def run(self) -> None:
         await self.app.run_async()

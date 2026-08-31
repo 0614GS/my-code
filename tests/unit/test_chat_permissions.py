@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from my_code.chat.permissions import DeferredPermissionPrompter
+from my_code.application.turns.permission_prompt import DeferredPermissionPrompter
 from my_code.permissions.models import (
     PermissionBehavior,
     PermissionConfirmation,

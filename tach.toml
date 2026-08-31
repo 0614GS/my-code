@@ -103,8 +103,32 @@ path = "my_code.features.todos"
 depends_on = ["my_code.context", "my_code.conversation", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.tools"]
 
 [[modules]]
-path = "my_code.chat"
-depends_on = ["my_code.agent", "my_code.config", "my_code.context", "my_code.conversation", "my_code.features.background_tasks", "my_code.features.subagents", "my_code.features.todos", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.providers", "my_code.runtime", "my_code.sessions", "my_code.skills", "my_code.tools", "my_code.workspace"]
+path = "my_code.application.contracts"
+depends_on = ["my_code.conversation", "my_code.features.todos", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.sessions", "my_code.tools"]
+
+[[modules]]
+path = "my_code.application.runtime_views"
+depends_on = ["my_code.application.contracts", "my_code.config", "my_code.context", "my_code.conversation", "my_code.features.todos", "my_code.mcp", "my_code.model", "my_code.providers", "my_code.sessions", "my_code.skills", "my_code.tools"]
+
+[[modules]]
+path = "my_code.application.turns"
+depends_on = ["my_code.agent", "my_code.application.contracts", "my_code.context", "my_code.conversation", "my_code.features.todos", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.sessions", "my_code.tools", "my_code.workspace"]
+
+[[modules]]
+path = "my_code.application.sessions"
+depends_on = ["my_code.application.contracts", "my_code.config", "my_code.conversation", "my_code.features.todos", "my_code.model", "my_code.permissions", "my_code.sessions", "my_code.skills", "my_code.tools"]
+
+[[modules]]
+path = "my_code.application.configuration"
+depends_on = ["my_code.application.contracts", "my_code.config", "my_code.model", "my_code.permissions", "my_code.providers", "my_code.runtime", "my_code.sessions"]
+
+[[modules]]
+path = "my_code.application.activity"
+depends_on = ["my_code.application.contracts", "my_code.conversation", "my_code.features.background_tasks", "my_code.features.subagents", "my_code.model", "my_code.sessions", "my_code.tools"]
+
+[[modules]]
+path = "my_code.application"
+depends_on = ["my_code.agent", "my_code.application.activity", "my_code.application.configuration", "my_code.application.contracts", "my_code.application.runtime_views", "my_code.application.sessions", "my_code.application.turns", "my_code.config", "my_code.context", "my_code.conversation", "my_code.features.background_tasks", "my_code.model", "my_code.permissions", "my_code.providers", "my_code.runtime", "my_code.sessions", "my_code.tools"]
 
 [[modules]]
 path = "my_code.cli"
@@ -112,8 +136,8 @@ depends_on = ["my_code.config", "my_code.permissions", "my_code.version"]
 
 [[modules]]
 path = "my_code.tui"
-depends_on = ["my_code.chat", "my_code.config", "my_code.features.todos", "my_code.model", "my_code.permissions", "my_code.providers", "my_code.sessions", "my_code.tools", "my_code.version"]
+depends_on = ["my_code.application", "my_code.application.contracts", "my_code.config", "my_code.features.todos", "my_code.model", "my_code.permissions", "my_code.providers", "my_code.sessions", "my_code.tools", "my_code.version"]
 
 [[modules]]
 path = "my_code.bootstrap"
-depends_on = ["my_code.agent", "my_code.auth", "my_code.chat", "my_code.cli", "my_code.config", "my_code.context", "my_code.features.background_tasks", "my_code.features.subagents", "my_code.features.todos", "my_code.mcp", "my_code.model", "my_code.observability", "my_code.permissions", "my_code.prompts", "my_code.providers", "my_code.runtime", "my_code.sessions", "my_code.skills", "my_code.tasks", "my_code.tools", "my_code.tui", "my_code.workspace"]
+depends_on = ["my_code.agent", "my_code.application", "my_code.application.activity", "my_code.application.configuration", "my_code.application.sessions", "my_code.application.turns", "my_code.auth", "my_code.cli", "my_code.config", "my_code.context", "my_code.features.background_tasks", "my_code.features.subagents", "my_code.features.todos", "my_code.mcp", "my_code.model", "my_code.observability", "my_code.permissions", "my_code.prompts", "my_code.providers", "my_code.runtime", "my_code.sessions", "my_code.skills", "my_code.tasks", "my_code.tools", "my_code.tui", "my_code.workspace"]

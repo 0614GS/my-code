@@ -24,7 +24,12 @@ my-code 是模块化单体。类型放在哪里由它维护的语义、不变量
 | `features.background_tasks` | 用户级后台任务 owner、投递、唤醒和结果展示 |
 | `features.subagents` | child Agent 生命周期、策略、activity 与 View |
 | `features.todos` | Todo 模型、投影、提醒和工具 |
-| `chat` | 基于 AppState 的用户级用例、安全投影、Question 与 file mentions |
+| `application.contracts` | Host-safe DTO、事件和 handler 类型 |
+| `application.turns` | turn、steering、Question、permission bridge 与 file mentions |
+| `application.sessions` | list/restore/handoff 与 history/transcript 投影 |
+| `application.configuration` | Provider、permission、collaboration 与 display mode 用例 |
+| `application.activity` | owner-scoped background/Subagent activity 与监听 |
+| `application` | 基于 AppState 的窄 façade、operation lock 与跨用例发布 |
 | `cli` / `tui` | Host 输入输出 |
 | `bootstrap` | 唯一对象组装入口 |
 
@@ -41,21 +46,22 @@ foundation
   -> context / tools / sessions / providers / tasks
   -> agent / mcp / skills
   -> runtime / features
-  -> chat
+  -> application contracts / runtime views / use cases
+  -> application façade
   -> cli / tui
   -> bootstrap
 ```
 
 该图用于阅读，不是授权表。同层不自动互相依赖。`features` 不作为 umbrella 模块，当前只包含 background_tasks、subagents 与 todos 三个真正跨技术层的纵向能力。精确模块、依赖和循环规则只维护在 `tach.toml`，文档与测试不复制第二份允许表。
 
-`tasks` 与 `features.background_tasks` 有意分离：前者是无产品语义的通用进程内状态机，后者拥有 owner、投递、唤醒与结果展示。Chat 自己拥有 Question DTO/tool/broker，以及 file mention 的解析、读取、附件准备和路径建议；TUI 只消费 Chat 的安全类型。
+`tasks` 与 `features.background_tasks` 有意分离：前者是无产品语义的通用进程内状态机，后者拥有 owner、投递、唤醒与结果展示。Application 的 turns 用例拥有 Question tool/broker，以及 file mention 的解析、读取、附件准备和路径建议；对应 DTO 位于 `application.contracts`，TUI 只消费这些安全类型。
 
 ## 公开 API
 
 跨模块从语义子模块导入，并由目标模块的静态 `__all__` 声明能力：
 
 ```python
-from my_code.chat.service import ChatService
+from my_code.application.service import ApplicationService
 from my_code.model.request import ModelRequest
 from my_code.permissions.models import PermissionDecision
 ```
@@ -70,7 +76,9 @@ from my_code.permissions.models import PermissionDecision
 
 ## 状态与安全边界
 
-- `AppState` 只能由 application/host/bootstrap 边界持有，不得通过全局 getter 隐藏依赖。
+- `AppState` 只能由 `application.service`、`runtime.state` 和 `bootstrap` 导入；应用子包仅接收 Session、ContextRuntime 或公开窄状态胶囊。
+- operation lock 只由 `ApplicationService` 获取；用例组件不嵌套获取锁。
+- 应用子包不得依赖 façade；兄弟用例默认互不依赖，共享 host 类型进入 `contracts`。
 - Session 是 canonical conversation、派生 context entries、工具结果和 replay 的唯一公开边界。
 - Agent、Context、ToolExecutor 和 Provider adapter 不持有 AppState 或第二份 conversation。
 - Provider SDK 类型只存在于 `providers`；prompt_toolkit/Rich 只存在于 `tui`。

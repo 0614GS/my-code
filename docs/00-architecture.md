@@ -8,7 +8,7 @@ my-code 是一个 provider-neutral 的模块化单体。核心设计只有一条
 flowchart TB
     Bootstrap["bootstrap.py<br/>唯一 composition root"]
     Host["CLI / TUI"]
-    Chat["ChatService<br/>用户级用例"]
+    Application["ApplicationService<br/>用户级用例"]
 
     subgraph Runtime["AppState"]
         Session["active Session + ContextRuntime"]
@@ -37,9 +37,9 @@ flowchart TB
 
     Bootstrap -.构造.-> Host
     Bootstrap -.构造.-> Runtime
-    Host --> Chat
-    Chat --> Runtime
-    Chat --> Agent
+    Host --> Application
+    Application --> Runtime
+    Application --> Agent
 
     Sources -.原子发布.-> Tools
     Tools --> Snapshot
@@ -63,7 +63,15 @@ flowchart TB
 
 虚线表示组装、所有权或 Tool source 发布，实线表示主要调用/数据流。精确包依赖以 `tach.toml` 为唯一机器事实来源；源码级 API 与技术所有权规则位于 `tests/architecture/`。
 
-## 四个边界
+## 五个边界
+
+### Application：用例协调
+
+`application.service.ApplicationService` 是 TUI 唯一 façade，也是 `AppState`
+operation lock 的唯一应用层获取者。它把显式的 Session、ContextRuntime 和窄状态胶囊
+交给 `turns`、`sessions`、`configuration` 与 `activity` 用例组件；host-safe DTO 和事件
+只由 `application.contracts` 暴露，纯 runtime 投影位于 `application.runtime_views`。
+应用子包不读取完整 `AppState`，也不反向依赖 façade。
 
 ### AppState：runtime 所有权
 

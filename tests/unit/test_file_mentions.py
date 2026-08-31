@@ -3,13 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from my_code.chat.mentions.loader import AttachmentLoader
-from my_code.chat.mentions.parser import parse_file_mentions
-from my_code.chat.mentions.reader import (
+from my_code.application.turns.mentions.loader import AttachmentLoader
+from my_code.application.turns.mentions.parser import parse_file_mentions
+from my_code.application.turns.mentions.reader import (
     WorkspaceAttachment,
     WorkspaceAttachmentReader,
 )
-from my_code.chat.mentions.suggestions import WorkspacePathSuggester
+from my_code.application.turns.mentions.suggestions import WorkspacePathSuggester
 from my_code.permissions.models import PermissionBehavior, PermissionRule
 from my_code.permissions.policy import PermissionPolicy
 

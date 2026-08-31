@@ -2,7 +2,7 @@
 
 ## 项目结构与模块组织
 
-生产代码位于 `src/my_code/`。顶层领域包由 `tach.toml` 独立建模；`features/` 仅包含 `background_tasks`、`subagents` 和 `todos` 三个纵向能力，Question 与文件 mention 由 `chat/` 拥有。`cli/` 与 `tui/` 负责终端交互，内置工具放在 `tools/builtin/`。单元测试按领域镜像到 `tests/unit/`，跨组件流程放在 `tests/integration/`，源码级所有权守卫放在 `tests/architecture/`。架构文档位于 `docs/`，`claude-code/` 仅作为参考源码。
+生产代码位于 `src/my_code/`。顶层领域包由 `tach.toml` 独立建模；`application/` 由 `contracts`、`turns`、`sessions`、`configuration` 和 `activity` 组成，`ApplicationService` 是 TUI façade 与 operation-lock 所有者。`features/` 仅包含 `background_tasks`、`subagents` 和 `todos` 三个纵向能力，Question 与文件 mention 由 `application/turns` 拥有。`cli/` 与 `tui/` 负责终端交互，内置工具放在 `tools/builtin/`。单元测试按领域镜像到 `tests/unit/`，跨组件流程放在 `tests/integration/`，源码级所有权守卫放在 `tests/architecture/`。架构文档位于 `docs/`，`claude-code/` 仅作为参考源码。
 
 ## 构建、测试与开发命令
 

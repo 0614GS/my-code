@@ -54,7 +54,7 @@ uv tool install git+https://github.com/0614GS/my-code.git
 mycode
 ```
 
-首次启动会先打开 Provider 向导；完成或选择一个 profile 后才会创建聊天运行时。向导支持 Anthropic Messages 与 OpenAI Responses，使用模型目录接口检查连接并把安全模型目录保存到 profile，不发送推理请求。进入聊天后可用 `/provider` 再次打开同一配置流程，或用无参数 `/model` 从当前 Provider 的本地目录即时切换模型。
+首次启动会先打开 Provider 向导；完成或选择一个 profile 后才会创建应用运行时。向导支持 Anthropic Messages 与 OpenAI Responses，使用模型目录接口检查连接并把安全模型目录保存到 profile，不发送推理请求。进入交互界面后可用 `/provider` 再次打开同一配置流程，或用无参数 `/model` 从当前 Provider 的本地目录即时切换模型。
 
 Provider 的协议、Base URL、默认模型和模型目录只来自 `~/.my-code/providers.json`，API Key 只保存在私有的 `~/.my-code/.credentials.json`，当前 Provider 选择只保存在 `settings.json.activeProvider`。Provider 环境变量以及旧的 `--model`、`--base-url` 和 `agent.model` 均不再支持；v2/v3 profile 会在下一次 Provider/模型写入时升级为 v4。
 

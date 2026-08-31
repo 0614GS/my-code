@@ -9,6 +9,7 @@ import pytest
 
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
 from my_code.conversation.models import ToolCall
+from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import (
@@ -22,7 +23,6 @@ from my_code.features.subagents.task_tools import (
     TaskListTool,
 )
 from my_code.features.subagents.tool import SubagentTool
-from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.foundation.json import JsonObject
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode

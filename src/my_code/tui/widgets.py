@@ -30,7 +30,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
-from my_code.chat.history import (
+from my_code.application.contracts.history import (
     HistoryContextGroup,
     HistoryEntry,
     HistoryPlan,
@@ -38,7 +38,7 @@ from my_code.chat.history import (
     HistoryText,
     HistoryToolCall,
 )
-from my_code.chat.status import RuntimeStatus
+from my_code.application.contracts.status import RuntimeStatus
 from my_code.features.todos.models import TodoItem
 from my_code.model.primitives import ReasoningPresentation
 from my_code.tools.presentation import ToolUsePresentation

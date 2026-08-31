@@ -6,15 +6,15 @@
 
 主应用使用普通 terminal scrollback，而不是全屏 alternate buffer。已完成内容先在单 worker renderer 中离屏生成，再由唯一 UI owner 串行、短暂地写入 terminal；composer、队列预览、状态栏和临时交互保留在底部动态区。只有 `Ctrl+T` transcript pager 临时使用 alternate buffer。
 
-TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义模块读取安全 DTO。它不会直接访问 Session、Conversation、Context、ToolExecutor、ToolCatalog、TaskSupervisor、MCP/Skill runtime 或 Provider SDK。
+TUI 通过 `ApplicationService` 执行用户级操作，并从各领域的公开语义模块读取安全 DTO。它不会直接访问 Session、Conversation、Context、ToolExecutor、ToolCatalog、TaskSupervisor、MCP/Skill runtime 或 Provider SDK。
 
-`@path` 的解析、附件准备与路径建议由 Chat 的 mention 子模块拥有；TUI 只消费 Chat 提供的 frontend-neutral suggestion 与加载结果。
+`@path` 的解析、附件准备与路径建议由 Application 的 mention 子模块拥有；TUI 只消费 Application contracts 提供的 frontend-neutral suggestion 与加载结果。
 
 模块按 UI 职责拆分：`app.py` 负责编排，`turns.py` 消费事件，`layout.py` 和 `key_bindings.py` 管理动态区与按键，`picker.py`/`panels.py` 管理临时交互，`widgets.py`/`theme.py`/`terminal.py` 管理展示和终端能力。
 
 ## 事件与展示
 
-一次 prompt 调用 `ChatService.stream()`，TUI 消费 text/reasoning started、delta、completed，显式 model-step completed、完整 compact started/completed、attachment、tool started/finished、Todo/context 更新和 turn 终态。
+一次 prompt 调用 `ApplicationService.stream()`，TUI 消费 text/reasoning started、delta、completed，显式 model-step completed、完整 compact started/completed、attachment、tool started/finished、Todo/context 更新和 turn 终态。
 
 - delta 只存在于动态区；completed 到达后先清除预览，再把最终 Rich renderable 固化到 scrollback。
 - Markdown live projection 缓存稳定块，只重画不稳定尾块；Rich 输入上限 16 KiB、动态区最多 12 个视觉行，超长未闭合块退化为 8 KiB plain-text tail。最终 completed 内容仍完整渲染。
@@ -28,7 +28,7 @@ TUI 通过 `ChatService` 执行用户级操作，并从各领域的公开语义�
 - composer 上方的活动行由独立的 TUI state/controller 和独立单行 Window 管理，固定排列在 thinking、工具和流式模型内容之后。它使用单调时钟显示 spinner、阶段标题和整次 invocation 耗时；阶段切换只更新标题，不重置时钟。唯一 ticker 只触发廉价 `FormattedText` redraw，不进入 Rich/Markdown renderer，关闭时随 UI tasks 回收。
 - `/compact` 使用独立操作时钟；auto/reactive compact 保留当前 invocation 时钟。成功事件更新 context snapshot，并把触发来源与压缩后 usage 写入 scrollback；失败或取消只走既有终态错误路径。microcompact 保持静默，压缩进度不写 canonical Session。
 
-恢复历史和实时事件使用相同的安全投影。每次成功 TodoWrite 都携带稳定 call ID 和完整写入快照进入 frontend-neutral 事件，即使清单内容相同或已经全部 completed；“当前活跃 todo 状态”仍可在全部完成后为空。工具展示优先使用执行时持久化的 presentation；dispatcher 目标由 Chat/feature 投影解包，TUI 不重新解释原始 Conversation 或读取外置结果文件。
+恢复历史和实时事件使用相同的安全投影。每次成功 TodoWrite 都携带稳定 call ID 和完整写入快照进入 frontend-neutral 事件，即使清单内容相同或已经全部 completed；“当前活跃 todo 状态”仍可在全部完成后为空。工具展示优先使用执行时持久化的 presentation；dispatcher 目标由 Application/feature 投影解包，TUI 不重新解释原始 Conversation 或读取外置结果文件。
 
 内联 diff 使用固定旧/新行号 gutter、增删整行背景、按扩展名选择的语法着色，并对
 相邻的小范围增删做保留空白的词级加深。长行按终端宽度折行且续行不重复行号；Tab
@@ -55,7 +55,7 @@ Question 使用独占面板逐题展示 2–3 个单选项，并由 TUI 自动�
 
 `/view` 使用与 `/model`、`/provider`、`/resume` 相同的二级 Picker 选择主界面模式；`/view concise` 与 `/view detailed` 仍可直接原子写入用户级 `tui.viewMode`。默认 concise，偏好跨项目和 Session。切换会清屏并按新模式重新投影当前 Session，复用 resume 的历史渲染路径。Detailed 在每次请求前按 audit ID 去重展示新增/变化的 AGENTS、Attachment、Todo/Skill、工具发现与后台通知正文；恢复历史时从 request audit 投影相同内容。单项限制为 60 行和 8 KiB，并完整格式化 canonical ToolCall input。工具结果继续使用安全摘要/diff。Concise 保持原有展示；完整历史使用 Ctrl+T。
 
-Slash commands 在进入模型前本地解析。已执行命令先在 scrollback 回显；`/status`、`/context`、`/usage`、`/tools`、`/skills`、`/mcp` 和 `/tasks` 使用统一的圆角信息卡，命令与卡片作为一个串行输出批次提交。`/resume`、`/provider`、`/model`、`/permissions` 和 `/agents` 等仍只调用 ChatService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
+Slash commands 在进入模型前本地解析。已执行命令先在 scrollback 回显；`/status`、`/context`、`/usage`、`/tools`、`/skills`、`/mcp` 和 `/tasks` 使用统一的圆角信息卡，命令与卡片作为一个串行输出批次提交。`/resume`、`/provider`、`/model`、`/permissions` 和 `/agents` 等仍只调用 ApplicationService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
 
 Permission、Full Access、Provider 和 Resume 共用 composer 下方的 interaction host。工具权限默认安全拒绝；无 OS sandbox 时首次进入 Full Access 必须经过当前进程有效的危险确认。API key 输入使用密码处理，面板只显示是否已配置。
 
@@ -63,4 +63,4 @@ Permission、Full Access、Provider 和 Resume 共用 composer 下方的 interac
 
 首次启动缺少有效 Provider 时，先完成 Provider 向导再组装聊天 runtime。退出时 TUI 关闭 transcript、取消 UI watcher、清除底部动态布局并交还光标；外层随后按 AppState 顺序关闭任务、扩展和 Provider。
 
-主要源码入口：`src/my_code/tui/app.py`、`src/my_code/tui/turns.py`、`src/my_code/tui/layout.py`、`src/my_code/tui/key_bindings.py`、`src/my_code/chat/service.py`。
+主要源码入口：`src/my_code/tui/app.py`、`src/my_code/tui/turns.py`、`src/my_code/tui/layout.py`、`src/my_code/tui/key_bindings.py`、`src/my_code/application/service.py`。

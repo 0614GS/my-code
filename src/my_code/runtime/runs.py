@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from my_code.agent.events import AgentEvent
 from my_code.agent.models import AgentTurnInput, AgentTurnOutcome
-from my_code.agent.runner import AgentRunner
+from my_code.agent.runner import InteractiveAgentRunner
 from my_code.context.engine import ContextEngine
 from my_code.context.session import ContextRuntime
 from my_code.model.capabilities import ActiveModelEnvironment
@@ -54,7 +54,7 @@ class AgentRunSpec:
 
 @dataclass(frozen=True, slots=True)
 class AgentRunComponents:
-    agent: AgentRunner
+    agent: InteractiveAgentRunner
     context: ContextEngine
     tool_executor: ToolExecutor
 

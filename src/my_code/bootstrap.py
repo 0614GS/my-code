@@ -13,14 +13,21 @@ from uuid import uuid4
 
 from my_code.agent.budget import TokenBudgetModelClient
 from my_code.agent.engine import AgentEngine
-from my_code.agent.runner import AgentRunner
+from my_code.agent.runner import InteractiveAgentRunner
+from my_code.application.activity.monitor import ActivityMonitor
+from my_code.application.activity.projection import ActivityProjection
+from my_code.application.configuration.modes import ModeOperations
+from my_code.application.configuration.providers import ProviderOperations
+from my_code.application.service import ApplicationService
+from my_code.application.sessions.lifecycle import SessionLifecycle
+from my_code.application.sessions.transcript_projection import project_transcript
+from my_code.application.turns.coordinator import TurnCoordinator
+from my_code.application.turns.mentions.loader import AttachmentLoader
+from my_code.application.turns.mentions.reader import WorkspaceAttachmentReader
+from my_code.application.turns.mentions.suggestions import WorkspacePathSuggester
+from my_code.application.turns.permission_prompt import DeferredPermissionPrompter
+from my_code.application.turns.questions import DeferredQuestionBroker, QuestionTool
 from my_code.auth.credentials import CredentialStore
-from my_code.chat.mentions.loader import AttachmentLoader
-from my_code.chat.mentions.reader import WorkspaceAttachmentReader
-from my_code.chat.mentions.suggestions import WorkspacePathSuggester
-from my_code.chat.permissions import DeferredPermissionPrompter
-from my_code.chat.questions import DeferredQuestionBroker, QuestionTool
-from my_code.chat.service import ChatService
 from my_code.cli.arguments import CliOptions, parse_cli
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.permission_updates import PermissionUpdateApplier
@@ -45,6 +52,7 @@ from my_code.features.background_tasks.notifications import (
     BackgroundTaskNotificationSource,
 )
 from my_code.features.background_tasks.registry import BackgroundTaskRegistry
+from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import SubagentLimits, SubagentParentContext
@@ -53,7 +61,6 @@ from my_code.features.subagents.task_tools import (
     TaskListTool,
 )
 from my_code.features.subagents.tool import SubagentTool
-from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.features.todos.reminder import TodoReminderAttachmentSource
 from my_code.features.todos.tool import TodoWriteTool
 from my_code.mcp.models import McpServerScope, McpServerSpec
@@ -132,7 +139,7 @@ class StorageInitialization:
 class ApplicationAssembly:
     """Concrete components assembled once by the composition root."""
 
-    agent: AgentRunner
+    agent: InteractiveAgentRunner
     context: ContextEngine
     provider: ProviderRouter
     tool_catalog: ToolCatalog
@@ -640,13 +647,13 @@ def _assemble_agent(
     )
 
 
-def bootstrap_chat(
+def bootstrap_application(
     settings: AgentSettings,
     session_id: str | None = None,
     *,
     permission_mode_override: PermissionMode | None = None,
-) -> ChatService:
-    """Assemble the concrete Chat service used by every host."""
+) -> ApplicationService:
+    """Assemble the concrete application service used by every host."""
 
     prompter = DeferredPermissionPrompter()
     assembled = _assemble_agent(
@@ -655,40 +662,59 @@ def bootstrap_chat(
         permission_mode_override=permission_mode_override,
         permission_prompter=prompter,
     )
-    return ChatService(
-        agent=assembled.agent,
+    state = AppState(
+        workspace=WorkspaceState(assembled.tool_executor.workspace),
+        session=assembled.session,
+        permissions=PermissionState(
+            assembled.permissions,
+            sandbox_active=assembled.tool_context.command_launcher.status.sandboxed,
+            execution_environment=assembled.tool_context.command_launcher.status.display,
+            full_access_confirmed=assembled.bypass_confirmed,
+        ),
+        provider=assembled.provider_runtime,
+        tools=ToolState(assembled.tool_catalog),
+        tasks=assembled.tasks,
+        runs=assembled.run_factory,
+        mcp=assembled.mcp,
+        skills=assembled.skills,
+    )
+    attachment_loader = AttachmentLoader(
+        WorkspaceAttachmentReader(settings.cwd, assembled.permissions)
+    )
+    turns = TurnCoordinator(
+        assembled.agent,
+        assembled.session.session_id,
+        attachment_loader,
+        prompter,
+        assembled.question_broker,
+    )
+    sessions = SessionLifecycle(
+        settings.paths.project_state_dir,
+        settings.paths,
+        assembled.tool_executor,
+        settings.tool_search_mode,
+    )
+    activity = ActivityProjection(
+        assembled.background_tasks,
+        assembled.subagents,
+        project_transcript,
+    )
+    return ApplicationService(
         context=assembled.context,
         tool_executor=assembled.tool_executor,
         settings=settings,
-        permission_prompter=prompter,
-        question_broker=assembled.question_broker,
-        provider_manager=ProviderManager(settings.paths),
-        state=AppState(
-            workspace=WorkspaceState(assembled.tool_executor.workspace),
-            session=assembled.session,
-            permissions=PermissionState(
-                assembled.permissions,
-                sandbox_active=assembled.tool_context.command_launcher.status.sandboxed,
-                execution_environment=(
-                    assembled.tool_context.command_launcher.status.display
-                ),
-                full_access_confirmed=assembled.bypass_confirmed,
-            ),
-            provider=assembled.provider_runtime,
-            tools=ToolState(assembled.tool_catalog),
-            tasks=assembled.tasks,
-            runs=assembled.run_factory,
-            mcp=assembled.mcp,
-            skills=assembled.skills,
+        state=state,
+        turns=turns,
+        sessions=sessions,
+        provider_operations=ProviderOperations(
+            ProviderManager(settings.paths), state.provider, settings
         ),
-        attachment_loader=AttachmentLoader(
-            WorkspaceAttachmentReader(settings.cwd, assembled.permissions)
-        ),
+        mode_operations=ModeOperations(),
+        activity_projection=activity,
+        activity_monitor=ActivityMonitor(assembled.subagents),
         path_suggester=WorkspacePathSuggester(settings.cwd),
         background_notifications=assembled.background_notifications,
         background_wake_signal=assembled.background_wake_signal,
-        background_tasks=assembled.background_tasks,
-        subagents=assembled.subagents,
         shutdown_observability=assembled.observer.shutdown,
     )
 
@@ -705,15 +731,15 @@ async def run(options: CliOptions, resolver: SettingsResolver) -> int:
         if not configured:
             return 0
         settings = resolver.resolve(options.settings_overrides, interactive=True)
-    runtime = bootstrap_chat(
+    application = bootstrap_application(
         settings,
         options.session_id,
         permission_mode_override=options.settings_overrides.permission_mode,
     )
     try:
-        await MyCodeTui(runtime).run()
+        await MyCodeTui(application).run()
     finally:
-        await runtime.close()
+        await application.close()
     return 0
 
 

@@ -1,4 +1,4 @@
-"""Safe status snapshots owned by the chat use case."""
+"""Safe status snapshots owned by the application layer."""
 
 from dataclasses import dataclass
 

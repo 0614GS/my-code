@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from my_code.auth.credentials import CredentialSource
-from my_code.bootstrap import bootstrap_chat
+from my_code.bootstrap import bootstrap_application
 from my_code.config.paths import MyCodePaths
 from my_code.config.settings import AgentSettings
 from my_code.permissions.models import PermissionMode
@@ -40,7 +40,7 @@ def settings(tmp_path: Path) -> AgentSettings:
 async def test_runtime_shutdown_cancels_tasks_before_closing_run_leases(
     tmp_path: Path,
 ) -> None:
-    runtime = bootstrap_chat(
+    runtime = bootstrap_application(
         settings(tmp_path),
         "11111111-1111-1111-1111-111111111111",
     )
@@ -86,7 +86,7 @@ async def test_runtime_shutdown_order_is_tasks_runs_skills_mcp_then_provider(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = bootstrap_chat(settings(tmp_path))
+    runtime = bootstrap_application(settings(tmp_path))
     order: list[str] = []
 
     def observing(

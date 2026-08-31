@@ -1,4 +1,4 @@
-"""Payload-free wakeups for terminal background Subagent tasks."""
+"""Payload-free wakeups shared by all terminal background tasks."""
 
 import asyncio
 

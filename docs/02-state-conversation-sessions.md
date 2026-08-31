@@ -60,7 +60,7 @@ Attachment 是否持久化由 Session 根据 payload 类型统一决定。显式
   -> 写入成功后替换内存状态
 ```
 
-写入失败时 conversation、context entries、replay、工具结果索引和 compact boundary 都不推进。Agent、Chat、Context 和 Tool 不直接访问 JSONL codec、store、schema version、session 路径或工具结果目录。
+写入失败时 conversation、context entries、replay、工具结果索引和 compact boundary 都不推进。Agent、Application、Context 和 Tool 不直接访问 JSONL codec、store、schema version、session 路径或工具结果目录。
 
 进程运行期间，已打开 Session 的内存状态是读取权威；本地文件是跨进程恢复依据，不是 refresh API。
 
@@ -78,7 +78,7 @@ sidecar 不保存 API key、认证头、Provider wire role 归一化或 opaque c
 
 ## 恢复与切换
 
-`ChatService.resume_session()` 完整验证候选后，在 AppState operation lock 中原子发布；存在未接受 pending input 时拒绝切换，避免把临时输入错误绑定到另一 Session：
+`ApplicationService.resume_session()` 完整验证候选后，在 AppState operation lock 中原子发布；存在未接受 pending input 时拒绝切换，避免把临时输入错误绑定到另一 Session：
 
 1. 完整加载、校验并按需修复候选 Session。
 2. 校验父链、tool pairing、compact boundary、presentation 和 replay 关联。

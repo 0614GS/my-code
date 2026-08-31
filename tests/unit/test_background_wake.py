@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from my_code.features.subagents.wake import BackgroundTaskWakeSignal
+from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 
 
 @pytest.mark.asyncio

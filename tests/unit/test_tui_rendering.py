@@ -9,9 +9,9 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
-from my_code.chat.history import HistoryContextItem
-from my_code.chat.status import ContextStatus, RuntimeStatus
-from my_code.chat.views import (
+from my_code.application.contracts.history import HistoryContextItem
+from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.views import (
     TranscriptField,
     TranscriptReasoning,
     TranscriptText,

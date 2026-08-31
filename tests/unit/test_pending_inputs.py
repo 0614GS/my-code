@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from my_code.chat.pending_inputs import PendingInputController, QueueInputState
+from my_code.application.contracts.inputs import QueueInputState
+from my_code.application.turns.pending_inputs import PendingInputController
 from my_code.conversation.attachments import FileMentionAttachment
 from my_code.conversation.models import AttachmentMessage, HumanMessage
 from my_code.sessions.session import Session

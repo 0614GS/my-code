@@ -9,9 +9,9 @@ import my_code.sessions as session_adapter
 import my_code.sessions.models as session_models
 import my_code.tools as tool_adapter
 from my_code.agent.engine import AgentEngine
-from my_code.chat.mentions.models import FileMention, PathSuggestion
-from my_code.chat.service import ChatService
-from my_code.chat.status import RuntimeStatus
+from my_code.application.contracts.inputs import FileMention, PathSuggestion
+from my_code.application.contracts.status import RuntimeStatus
+from my_code.application.service import ApplicationService
 from my_code.context.engine import ContextEngine
 from my_code.context.models import CompactionOutcome, ContextPlan
 from my_code.conversation.models import AttachmentMessage, ConversationEntry, ToolResult
@@ -158,11 +158,13 @@ def test_root_bootstrap_is_the_only_full_application_composition_root() -> None:
     ):
         assert dependency in bootstrap
 
-    chat_runtime = (_PACKAGE_ROOT / "chat" / "service.py").read_text(encoding="utf-8")
-    assert "ContextEngine" in chat_runtime
-    assert "ToolExecutor" in chat_runtime
-    assert "ContextPlanner" not in chat_runtime
-    assert "ContextCompactor" not in chat_runtime
+    application_service = (_PACKAGE_ROOT / "application" / "service.py").read_text(
+        encoding="utf-8"
+    )
+    assert "ContextEngine" in application_service
+    assert "ToolExecutor" in application_service
+    assert "ContextPlanner" not in application_service
+    assert "ContextCompactor" not in application_service
     assert ContextEngine.__module__ == "my_code.context.engine"
 
     cli_arguments = (_PACKAGE_ROOT / "cli" / "arguments.py").read_text(encoding="utf-8")
@@ -186,11 +188,11 @@ def _imported_modules(source_path: Path) -> tuple[str, ...]:
     return tuple(modules)
 
 
-def test_chat_owns_frontend_neutral_contracts_without_runtime_protocol() -> None:
-    assert ChatService.__module__ == "my_code.chat.service"
-    assert RuntimeStatus.__module__ == "my_code.chat.status"
+def test_application_owns_frontend_neutral_contracts_without_runtime_protocol() -> None:
+    assert ApplicationService.__module__ == "my_code.application.service"
+    assert RuntimeStatus.__module__ == "my_code.application.contracts.status"
     assert not hasattr(
-        __import__("my_code.chat", fromlist=["ChatRuntime"]), "ChatRuntime"
+        __import__("my_code.application", fromlist=["ChatRuntime"]), "ChatRuntime"
     )
     assert ToolUsePresentation.__module__ == "my_code.tools.presentation"
 
@@ -214,12 +216,12 @@ def test_production_code_does_not_depend_on_legacy_chat_owners() -> None:
     assert (_PACKAGE_ROOT / "runtime" / "state.py").exists()
 
 
-def test_file_mentions_are_owned_by_chat_not_a_top_level_or_tui_domain() -> None:
-    assert FileMention.__module__ == "my_code.chat.mentions.models"
-    assert PathSuggestion.__module__ == "my_code.chat.mentions.models"
+def test_file_mentions_are_owned_by_turns_not_a_top_level_or_tui_domain() -> None:
+    assert FileMention.__module__ == "my_code.application.contracts.inputs"
+    assert PathSuggestion.__module__ == "my_code.application.contracts.inputs"
     assert not (_PACKAGE_ROOT / "attachments.py").exists()
 
-    feature_root = _PACKAGE_ROOT / "chat" / "mentions"
+    feature_root = _PACKAGE_ROOT / "application" / "turns" / "mentions"
     loader = (feature_root / "loader.py").read_text(encoding="utf-8")
     assert "ToolExecutor" not in loader
     assert "ToolCall" not in loader
@@ -228,7 +230,7 @@ def test_file_mentions_are_owned_by_chat_not_a_top_level_or_tui_domain() -> None
     assert "policy.decide" not in loader
 
     completion = (_PACKAGE_ROOT / "tui" / "completion.py").read_text(encoding="utf-8")
-    assert "chat.mentions" not in completion
+    assert "application.turns.mentions" not in completion
 
 
 def test_conversation_and_context_attachment_ownership() -> None:

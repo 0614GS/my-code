@@ -16,6 +16,7 @@ from my_code.features.background_tasks.registry import (
     BackgroundTask,
     BackgroundTaskRegistry,
 )
+from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.features.subagents.activity import SubagentActivityRecord
 from my_code.features.subagents.models import (
     BackgroundSubagent,
@@ -29,7 +30,6 @@ from my_code.features.subagents.models import (
 )
 from my_code.features.subagents.read_only import ReadOnlyToolProxy
 from my_code.features.subagents.views import SubagentActivityView
-from my_code.features.subagents.wake import BackgroundTaskWakeSignal
 from my_code.permissions.policy import PermissionPolicy
 from my_code.runtime.runs import AgentRunFactory, AgentRunSpec
 from my_code.sessions.session import Session

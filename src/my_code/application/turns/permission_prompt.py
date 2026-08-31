@@ -1,76 +1,13 @@
-"""Permission prompting bridge for interactive chat frontends."""
+"""Permission prompting bridge for interactive frontends."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 
-from my_code.foundation.json import JsonObject
-from my_code.permissions.models import (
-    PermissionConfirmation,
-    PermissionMode,
-    PermissionPrompt,
-    PermissionPromptCategory,
-    PermissionUpdate,
+from my_code.application.contracts.permissions import (
+    PermissionHandler,
+    PermissionRequest,
 )
+from my_code.permissions.models import PermissionConfirmation, PermissionPrompt
 from my_code.tools.presentation import ToolUsePresentation, tool_display_category
-
-
-@dataclass(frozen=True, slots=True)
-class PermissionRequest:
-    tool_name: str
-    tool_input: JsonObject
-    message: str
-    presentation: ToolUsePresentation
-    suggestions: tuple[PermissionUpdate, ...] = ()
-    category: PermissionPromptCategory = PermissionPromptCategory.TOOL
-    requester: str | None = None
-    run_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PermissionModeView:
-    value: str
-    display_name: str
-    current: bool
-    dangerous: bool
-    sandbox_active: bool
-    requires_confirmation: bool
-
-
-@dataclass(frozen=True, slots=True)
-class PermissionModeSwitch:
-    mode: PermissionModeView
-    changed: bool
-    requires_confirmation: bool
-
-
-_MODE_NAMES = {
-    PermissionMode.DEFAULT: "Ask for me",
-    PermissionMode.ACCEPT_EDITS: "Approve edits",
-    PermissionMode.BYPASS: "Full access",
-}
-
-
-def permission_mode_view(
-    mode: PermissionMode,
-    *,
-    current: bool,
-    sandbox_active: bool,
-    requires_confirmation: bool,
-) -> PermissionModeView:
-    return PermissionModeView(
-        mode.value,
-        _MODE_NAMES.get(mode, mode.value),
-        current,
-        mode is PermissionMode.BYPASS,
-        sandbox_active,
-        requires_confirmation,
-    )
-
-
-type PermissionHandler = Callable[
-    [PermissionRequest], Awaitable[PermissionConfirmation]
-]
 
 
 class DeferredPermissionPrompter:
@@ -133,9 +70,4 @@ class DeferredPermissionPrompter:
 
 __all__ = [
     "DeferredPermissionPrompter",
-    "PermissionHandler",
-    "PermissionRequest",
-    "PermissionModeSwitch",
-    "PermissionModeView",
-    "permission_mode_view",
 ]

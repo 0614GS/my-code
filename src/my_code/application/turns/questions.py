@@ -1,13 +1,18 @@
-"""Frontend-neutral deferred interaction values for planning questions."""
+"""Question tool and deferred answer broker."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import re
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 
+from my_code.application.contracts.questions import (
+    QuestionAnswer,
+    QuestionHandler,
+    QuestionOption,
+    QuestionPrompt,
+    QuestionRequest,
+)
 from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import (
@@ -28,42 +33,6 @@ from my_code.tools.base import (
 
 QUESTION_TOOL_NAME = "Question"
 _ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
-
-
-@dataclass(frozen=True, slots=True)
-class QuestionOption:
-    label: str
-    description: str
-
-
-@dataclass(frozen=True, slots=True)
-class QuestionPrompt:
-    question: str
-    header: str
-    id: str
-    options: tuple[QuestionOption, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class QuestionRequest:
-    questions: tuple[QuestionPrompt, ...]
-    tool_use_id: str
-    run_id: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class QuestionAnswer:
-    id: str
-    answer: str
-
-    def __post_init__(self) -> None:
-        if not self.id.strip() or not self.answer.strip():
-            raise ValueError("Question answer fields must not be empty")
-
-
-type QuestionHandler = Callable[
-    [QuestionRequest], Awaitable[tuple[QuestionAnswer, ...]]
-]
 
 
 class DeferredQuestionBroker:
@@ -303,10 +272,5 @@ def _parse_request(tool_input: JsonObject) -> tuple[QuestionPrompt, ...]:
 
 __all__ = [
     "DeferredQuestionBroker",
-    "QuestionAnswer",
-    "QuestionHandler",
-    "QuestionOption",
-    "QuestionPrompt",
-    "QuestionRequest",
     "QuestionTool",
 ]

@@ -5,26 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
 from my_code.agent.models import UserTurnInput
-from my_code.chat.mentions.loader import AttachmentLoader
-
-
-class QueueInputState(StrEnum):
-    PREPARING = "preparing"
-    QUEUED = "queued"
-    FAILED = "failed"
-
-
-@dataclass(frozen=True, slots=True)
-class QueuedInputView:
-    input_id: str
-    prompt: str
-    state: QueueInputState
-    error: str | None = None
+from my_code.application.contracts.inputs import QueuedInputView, QueueInputState
+from my_code.application.turns.mentions.loader import AttachmentLoader
 
 
 @dataclass(slots=True)
@@ -143,4 +129,4 @@ class PendingInputController:
         return QueuedInputView(item.input_id, item.prompt, item.state, item.error)
 
 
-__all__ = ["PendingInputController", "QueuedInputView", "QueueInputState"]
+__all__ = ["PendingInputController"]

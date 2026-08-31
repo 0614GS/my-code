@@ -17,8 +17,7 @@ from prompt_toolkit.utils import get_cwidth
 from rich.console import Console, RenderableType
 from rich.padding import Padding
 
-from my_code.auth.credentials import CredentialSource
-from my_code.chat.events import (
+from my_code.application.contracts.events import (
     CompactionCompleted,
     CompactionStarted,
     ContextUpdated,
@@ -36,20 +35,25 @@ from my_code.chat.events import (
     TurnEvent,
     TurnSucceeded,
 )
-from my_code.chat.history import (
+from my_code.application.contracts.history import (
     HistoryContextGroup,
     HistoryContextItem,
     HistoryEntry,
     HistoryText,
     HistoryToolCall,
 )
-from my_code.chat.permissions import (
+from my_code.application.contracts.permissions import (
     PermissionModeSwitch,
     PermissionModeView,
     PermissionRequest,
 )
-from my_code.chat.status import ContextStatus, RuntimeStatus
-from my_code.chat.views import CapabilitiesView, SessionView, SubagentTaskView
+from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.views import (
+    CapabilitiesView,
+    SessionView,
+    SubagentTaskView,
+)
+from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
@@ -323,7 +327,7 @@ async def wait_until(
 
 
 async def wait_until_running(app: MyCodeApp) -> None:
-    await wait_until(lambda: app.application.is_running)
+    await wait_until(lambda: app.terminal_application.is_running)
 
 
 async def wait_until_idle(app: MyCodeApp) -> None:
@@ -591,7 +595,7 @@ def test_composer_preserves_the_native_terminal_cursor() -> None:
         console=Console(file=StringIO(), force_terminal=False),
     )
 
-    shape = app.application.cursor.get_cursor_shape(app.application)
+    shape = app.terminal_application.cursor.get_cursor_shape(app.terminal_application)
     assert shape.value == "_NEVER_CHANGE"
 
 
@@ -765,7 +769,7 @@ def test_slash_menu_is_below_composer_and_uses_terminal_background() -> None:
     menu_index = app.body.children.index(app.slash_menu)
     assert menu_index > composer_index
 
-    style = app.application.style
+    style = app.terminal_application.style
     assert style is not None
     normal = style.get_attrs_for_style_str("class:completion-menu.meta.completion")
     selected = style.get_attrs_for_style_str("class:completion-menu.completion.current")

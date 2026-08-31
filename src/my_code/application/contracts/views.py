@@ -1,10 +1,10 @@
-"""Safe, frontend-neutral snapshots exposed by :mod:`my_code.chat`."""
+"""Safe, frontend-neutral snapshots exposed by the application layer."""
 
 from dataclasses import dataclass, field
 from typing import Literal
 
-from my_code.chat.history import HistoryEntry
-from my_code.chat.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.history import HistoryEntry
+from my_code.application.contracts.status import ContextStatus, RuntimeStatus
 from my_code.model.primitives import ReasoningPresentation
 from my_code.sessions.request_audit import ResolvedAuditRequest
 

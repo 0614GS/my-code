@@ -165,7 +165,7 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
     leaks: list[TechnicalLeak] = []
     app_state_owners = {
         "src/my_code/bootstrap.py",
-        "src/my_code/chat/service.py",
+        "src/my_code/application/service.py",
         "src/my_code/runtime/state.py",
     }
     for path in iter_python_files():
@@ -174,7 +174,7 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
         relative_path = path.relative_to(REPOSITORY_ROOT).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            for imported_module, _ in _import_records_from_node(
+            for imported_module, imported_names in _import_records_from_node(
                 node, module_name, is_package
             ):
                 top_level = imported_module.split(".", 1)[0]
@@ -222,6 +222,7 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
                     )
                 if (
                     imported_module == "my_code.runtime.state"
+                    and "AppState" in imported_names
                     and relative_path not in app_state_owners
                 ):
                     leaks.append(

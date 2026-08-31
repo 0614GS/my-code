@@ -22,7 +22,7 @@
 
 ```text
 CLI / TUI
-    -> ChatService
+    -> ApplicationService
         -> AppState
             ├── active Session + ContextRuntime
             ├── WorkspaceState / PermissionState
@@ -30,10 +30,15 @@ CLI / TUI
             ├── AgentRunFactory / ProviderRuntime
             └── McpRuntime / SkillRuntime
 
-ChatService
-    -> AgentEngine
-        -> ContextEngine -> provider-neutral ModelRequest -> ModelClient
-        -> ToolRoundExecutor -> ToolExecutor -> standard Tool
+ApplicationService
+    ├── turns -> AgentEngine
+    ├── sessions -> Session lifecycle / projections
+    ├── configuration -> Provider / mode operations
+    └── activity -> background / Subagent views
+
+AgentEngine
+    -> ContextEngine -> provider-neutral ModelRequest -> ModelClient
+    -> ToolRoundExecutor -> ToolExecutor -> standard Tool
 ```
 
 `AppState` 是活动 runtime 状态的唯一入口，但不是全局变量或 service locator。`Session` 是对话事实及其持久化的唯一公开边界；`ContextEngine` 只构造单次模型请求。内置工具、MCP、Skill、Subagent 和后台任务最终都复用标准 Tool、权限和 Session 提交路径。

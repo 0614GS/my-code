@@ -7,8 +7,11 @@ only turns safe frontend state into compact terminal text.
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.utils import get_cwidth
 
-from my_code.chat.permissions import PermissionModeView, PermissionRequest
-from my_code.chat.views import SubagentTaskView
+from my_code.application.contracts.permissions import (
+    PermissionModeView,
+    PermissionRequest,
+)
+from my_code.application.contracts.views import SubagentTaskView
 from my_code.config.providers import ANTHROPIC_API_BASE_URL, OPENAI_API_BASE_URL
 from my_code.model.display import DisplayDensity
 from my_code.permissions.models import PermissionPromptCategory

@@ -14,7 +14,7 @@ from prompt_toolkit.layout.processors import (
     TransformationInput,
 )
 
-from my_code.chat.mentions.models import PathSuggestion
+from my_code.application.contracts.inputs import PathSuggestion
 from my_code.tui.commands import SlashCommand, SlashCommandRegistry
 from my_code.tui.completion import format_path_mention, mention_at_cursor
 from my_code.tui.picker import PickerRow, PickerState

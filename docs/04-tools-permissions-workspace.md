@@ -16,7 +16,7 @@ Catalog 在模型流或工具执行期间更新时，当前 step 不漂移，下
 
 `tools.toolSearchMode` 支持 `dispatcher` 和 `native`。Dispatcher 模式让稳定的 invoker 转发已搜索工具，真实目标仍完整经过自己的 schema、权限、审计和执行；native 模式从后续 step 暴露命中的原始 definition。两者都不把 Provider 专用 tool-reference 类型带入公共模型。Canonical transcript 保留外层 dispatcher call 以维持 Provider replay 和 call/result pairing；feature 状态与 history presentation 通过 `tools` 的统一语义解包读取真实目标。例如经 `InvokeSearchedTool` 调用的 `TodoWrite` 仍会更新 Todo 投影、reminder 计数和 TUI 快照。
 
-`Question` 及其 DTO、deferred broker 由 Chat 拥有，并始终以 `SEARCHABLE` 注册。进入 Plan 后 prelude 自动追加其 schema 与 fingerprint；dispatcher 下它只能通过 `InvokeSearchedTool` 调用，并以外层 call ID 闭合结果。执行还要求有效权限为 Plan、discovery 未失效、调用来自 root foreground Session 且存在交互 handler；取消、关闭或 headless 均返回模型可见的错误结果。Question 非并发安全，因此 ToolRound 会在其前后建立串行屏障。Plan 同时拒绝 TodoWrite、文件写入、非只读 Bash 和 sandbox escalation。
+`Question` tool 与 deferred broker 由 `application.turns` 拥有，Host DTO 位于 `application.contracts`，并始终以 `SEARCHABLE` 注册。进入 Plan 后 prelude 自动追加其 schema 与 fingerprint；dispatcher 下它只能通过 `InvokeSearchedTool` 调用，并以外层 call ID 闭合结果。执行还要求有效权限为 Plan、discovery 未失效、调用来自 root foreground Session 且存在交互 handler；取消、关闭或 headless 均返回模型可见的错误结果。Question 非并发安全，因此 ToolRound 会在其前后建立串行屏障。Plan 同时拒绝 TodoWrite、文件写入、非只读 Bash 和 sandbox escalation。
 
 ## 单次执行管线
 
@@ -60,7 +60,7 @@ ToolCall
 
 显式 deny 始终优先；ask 触发 host 确认；allow 只授权匹配范围。Full access/bypass 仍不能绕过工具自身不可变的安全限制，例如 Explore 的只读代理。无 permission handler 时请求默认拒绝。
 
-一次 pending approval 属于当前调用，完成、拒绝、异常或取消后必须释放。Runtime permission mode/rules 的唯一可写来源是 `AppState.permissions.policy`；UI 只能通过 `/permissions` Picker 调用 Chat 的稳定 mode-key 选择用例更新。Session mode 变更先由 `Session` 原子写入 transcript，再发布到 policy；resume 恢复目标 Session 的最后模式，包括 `bypassPermissions`。
+一次 pending approval 属于当前调用，完成、拒绝、异常或取消后必须释放。Runtime permission mode/rules 的唯一可写来源是 `AppState.permissions.policy`；UI 只能通过 `/permissions` Picker 调用 Application 的稳定 mode-key 选择用例更新。Session mode 变更先由 `Session` 原子写入 transcript，再发布到 policy；resume 恢复目标 Session 的最后模式，包括 `bypassPermissions`。
 
 权限提示由 application-lifetime prompter 跨 Agent 串行处理；runtime 关闭会取消正在展示和排队的请求。Sandbox 越界提示属于独立类别，展示请求 Agent/run、完整命令、justification 和宿主权限风险，只允许单次批准或拒绝，不产生可记忆规则。
 

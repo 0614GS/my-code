@@ -1,4 +1,4 @@
-"""Bounded workspace reads used only by explicit Chat file mentions."""
+"""Bounded workspace reads used only by explicit file mentions."""
 
 from __future__ import annotations
 

@@ -10,7 +10,7 @@ from typing import Any
 from prompt_toolkit.buffer import Buffer
 from rich.console import RenderableType
 
-from my_code.chat.events import (
+from my_code.application.contracts.events import (
     AttachmentLoaded,
     CompactionCompleted,
     CompactionStarted,
@@ -35,8 +35,8 @@ from my_code.chat.events import (
     TurnInputFailed,
     TurnSucceeded,
 )
-from my_code.chat.service import ChatService
-from my_code.chat.status import ContextStatus, RuntimeStatus
+from my_code.application.contracts.status import ContextStatus, RuntimeStatus
+from my_code.application.service import ApplicationService
 from my_code.features.todos.models import TodoItem
 from my_code.model.display import DisplayDensity
 from my_code.tui.activity import ToolActivityGroup
@@ -61,7 +61,7 @@ from my_code.tui.widgets import (
 class TurnFlowMixin:
     """Event consumer mixed into the application lifecycle controller."""
 
-    runtime: ChatService
+    application: ApplicationService
     buffer: Buffer
     theme: TuiTheme
     _busy: bool
@@ -250,7 +250,7 @@ class TurnFlowMixin:
                     completed = True
                     if (
                         self._pending_plan
-                        and not getattr(self.runtime, "queued_inputs", lambda: ())()
+                        and not getattr(self.application, "queued_inputs", lambda: ())()
                     ):
                         self._panel = "plan_action"
                         self._panel_picker.reset()

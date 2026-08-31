@@ -22,12 +22,12 @@ from my_code.tui.widgets import system_message, welcome
 
 class PanelFlowMixin:
     async def _open_resume(self) -> None:
-        self._sessions = await self.runtime.list_sessions()
+        self._sessions = await self.application.list_sessions()
         self._panel_index = 0
         self._open_panel("resume")
 
     def _open_provider(self) -> None:
-        self._providers = self.runtime.providers()
+        self._providers = self.application.providers()
         self._panel_index = next(
             (i for i, item in enumerate(self._providers) if item.active), 0
         )
@@ -35,7 +35,7 @@ class PanelFlowMixin:
         self._open_panel("provider_select")
 
     def _open_model_picker(self) -> None:
-        self._models = self.runtime.models()
+        self._models = self.application.models()
         self._panel_index = next(
             (index for index, item in enumerate(self._models) if item.current), 0
         )
@@ -46,7 +46,7 @@ class PanelFlowMixin:
         self._open_panel("view_select")
 
     def _open_permission_picker(self) -> None:
-        modes = self.runtime.permission_modes()
+        modes = self.application.permission_modes()
         if not modes:
             return
         self._panel_index = next(
@@ -55,7 +55,7 @@ class PanelFlowMixin:
         self._open_panel("permission_mode_select")
 
     def _open_agents(self) -> None:
-        self._agents = self.runtime.subagent_tasks()
+        self._agents = self.application.subagent_tasks()
         self._panel_index = 0
         self._agent_scroll = 0
         self._agent_task_id = None
@@ -64,7 +64,7 @@ class PanelFlowMixin:
     def _cycle_agent_view(self) -> None:
         if self._panel == "permission":
             return
-        self._agents = self.runtime.subagent_tasks()
+        self._agents = self.application.subagent_tasks()
         if self._panel != "agents":
             self._saved_draft = self.buffer.text
             self._panel = "agents"
@@ -143,7 +143,7 @@ class PanelFlowMixin:
                 self._close_panel()
             else:
                 try:
-                    self.runtime.start_plan_implementation(
+                    self.application.start_plan_implementation(
                         fresh_context=action == "fresh"
                     )
                 except Exception as error:
@@ -164,7 +164,7 @@ class PanelFlowMixin:
                 self._resolve_permission(PermissionConfirmation(False, value))
         elif self._panel == "resume" and action is not None:
             try:
-                resumed = await self.runtime.resume_session(action)
+                resumed = await self.application.resume_session(action)
                 self._status = resumed.status
                 self._context_status = None
                 self._status_warning = ""
@@ -182,7 +182,7 @@ class PanelFlowMixin:
                 self._close_panel()
         elif self._panel == "model_select" and action is not None:
             try:
-                status = await self.runtime.select_model(action)
+                status = await self.application.select_model(action)
             except Exception as error:
                 await self._write(
                     system_message(f"Model selection failed: {error}", error=True)
@@ -205,7 +205,7 @@ class PanelFlowMixin:
             await self._write(system_message(message))
         elif self._panel == "permission_mode_select" and action is not None:
             try:
-                switch = self.runtime.select_permission_mode(action)
+                switch = self.application.select_permission_mode(action)
             except Exception as error:
                 await self._write(
                     system_message(
@@ -398,7 +398,9 @@ class PanelFlowMixin:
             )
             return
         try:
-            view = await self.runtime.refresh_provider_models(form.provider_id.strip())
+            view = await self.application.refresh_provider_models(
+                form.provider_id.strip()
+            )
             self._provider_models = view.models
         except Exception as error:
             await self._write(
@@ -430,7 +432,7 @@ class PanelFlowMixin:
         self._provider_probe_task = cast(asyncio.Task[object], asyncio.current_task())
         self._invalidate()
         try:
-            result = await self.runtime.probe_provider(request)
+            result = await self.application.probe_provider(request)
         except asyncio.CancelledError:
             self._start_provider_connection_form()
             self._provider_field = len(self._provider_fields) - 1
@@ -486,7 +488,7 @@ class PanelFlowMixin:
                 and self._provider_wizard.connection_verified
                 else None
             )
-            status = await self.runtime.configure_provider(update, probe_result)
+            status = await self.application.configure_provider(update, probe_result)
         except Exception as error:
             await self._write(
                 system_message(f"Provider configuration failed: {error}", error=True)
@@ -510,7 +512,7 @@ class PanelFlowMixin:
 
     async def _select_provider(self, provider_id: str) -> None:
         try:
-            status = await self.runtime.select_provider(provider_id)
+            status = await self.application.select_provider(provider_id)
         except Exception as error:
             await self._write(
                 system_message(f"Provider selection failed: {error}", error=True)
@@ -527,8 +529,8 @@ class PanelFlowMixin:
     async def _remove_provider_credential(self) -> None:
         provider = self._providers[self._provider_selected_index]
         try:
-            status = await self.runtime.remove_provider_credential(provider.id)
-            providers = self.runtime.providers()
+            status = await self.application.remove_provider_credential(provider.id)
+            providers = self.application.providers()
         except Exception as error:
             await self._write(
                 system_message(f"Failed to remove saved API key: {error}", error=True)

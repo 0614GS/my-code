@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from my_code.chat.status import RuntimeStatus
+from my_code.application.contracts.status import RuntimeStatus
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
 from my_code.foundation.json import JsonObject

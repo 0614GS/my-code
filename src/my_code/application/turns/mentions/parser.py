@@ -1,6 +1,6 @@
 """Parse file mentions from submitted user prompts."""
 
-from my_code.chat.mentions.models import FileMention
+from my_code.application.contracts.inputs import FileMention
 
 
 def parse_file_mentions(prompt: str) -> tuple[FileMention, ...]:

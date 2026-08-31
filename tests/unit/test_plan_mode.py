@@ -4,11 +4,8 @@ from pathlib import Path
 import pytest
 
 from my_code.agent.collaboration import resolve_mode_prelude
-from my_code.chat.questions import (
-    DeferredQuestionBroker,
-    QuestionAnswer,
-    QuestionTool,
-)
+from my_code.application.contracts.questions import QuestionAnswer
+from my_code.application.turns.questions import DeferredQuestionBroker, QuestionTool
 from my_code.conversation.attachments import (
     CollaborationModeAttachment,
     FileMentionAttachment,

@@ -17,7 +17,7 @@ from prompt_toolkit.output import Output
 from rich.console import Console, Group, RenderableType
 from rich.text import Text
 
-from my_code.chat.views import (
+from my_code.application.contracts.views import (
     TranscriptAttachment,
     TranscriptReasoning,
     TranscriptSummary,

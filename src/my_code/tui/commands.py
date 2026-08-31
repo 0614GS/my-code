@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from shlex import split as shell_split
 
-from my_code.chat.status import RuntimeStatus
+from my_code.application.contracts.status import RuntimeStatus
 
 
 class SlashCommandAction(StrEnum):

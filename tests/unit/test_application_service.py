@@ -1,4 +1,4 @@
-"""Concrete ChatService orchestration and session-bundle tests."""
+"""Concrete ApplicationService orchestration and session-bundle tests."""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -14,9 +14,7 @@ from my_code.agent.events import (
     AgentInputAccepted,
 )
 from my_code.agent.models import AgentTurnInput, AgentTurnSucceeded
-from my_code.auth.credentials import CredentialSource, CredentialStore
-from my_code.bootstrap import bootstrap_chat
-from my_code.chat.events import (
+from my_code.application.contracts.events import (
     BackgroundInvocationFinished,
     BackgroundInvocationStarted,
     CompactionCompleted,
@@ -26,14 +24,13 @@ from my_code.chat.events import (
     TurnInputAccepted,
     TurnSucceeded,
 )
-from my_code.chat.history import (
+from my_code.application.contracts.history import (
     HistoryContextGroup,
     HistoryContextItem,
     HistoryText,
     HistoryToolCall,
 )
-from my_code.chat.service import ChatService
-from my_code.chat.views import (
+from my_code.application.contracts.views import (
     TranscriptAttachment,
     TranscriptReasoning,
     TranscriptSummary,
@@ -41,6 +38,10 @@ from my_code.chat.views import (
     TranscriptToolCall,
     TranscriptToolResult,
 )
+from my_code.application.service import ApplicationService
+from my_code.application.turns.event_projection import project_agent_events
+from my_code.auth.credentials import CredentialSource, CredentialStore
+from my_code.bootstrap import bootstrap_application
 from my_code.config.paths import MyCodePaths
 from my_code.config.providers import ProviderProtocol
 from my_code.config.settings import AgentSettings, SandboxMode
@@ -69,7 +70,7 @@ from my_code.conversation.presentation import (
 )
 from my_code.conversation.state import CompactBoundary
 from my_code.features.background_tasks.registry import BackgroundTask
-from my_code.features.subagents.wake import BackgroundTaskWakeSignal
+from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.foundation.json import JsonObject
 from my_code.model.capabilities import ModelDescriptor, ModelLimits
 from my_code.model.invocation import (
@@ -126,7 +127,7 @@ class InteractiveCapturingAgent:
 
 def _bootstrap_runtime(
     tmp_path: Path, permission_mode: PermissionMode = PermissionMode.DEFAULT
-) -> ChatService:
+) -> ApplicationService:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     paths = MyCodePaths.discover(
@@ -145,7 +146,7 @@ def _bootstrap_runtime(
         sandbox_mode=SandboxMode.LOCAL,
         credential_source=CredentialSource.NONE,
     )
-    return bootstrap_chat(settings, _CURRENT_SESSION_ID)
+    return bootstrap_application(settings, _CURRENT_SESSION_ID)
 
 
 def test_app_state_is_the_single_runtime_owner(tmp_path: Path) -> None:
@@ -194,8 +195,8 @@ async def test_committed_model_step_projects_a_context_snapshot(tmp_path: Path) 
 
     events = [
         event
-        async for event in runtime._project_agent_events(
-            runtime.state.session, agent_events()
+        async for event in project_agent_events(
+            runtime.state.session, agent_events(), runtime.context_status
         )
     ]
 
@@ -217,8 +218,8 @@ async def test_accepted_input_creates_the_first_context_snapshot(
 
     events = [
         event
-        async for event in runtime._project_agent_events(
-            runtime.state.session, agent_events()
+        async for event in project_agent_events(
+            runtime.state.session, agent_events(), runtime.context_status
         )
     ]
 
@@ -237,8 +238,8 @@ async def test_input_batch_creates_only_one_context_snapshot(tmp_path: Path) -> 
 
     events = [
         event
-        async for event in runtime._project_agent_events(
-            runtime.state.session, agent_events()
+        async for event in project_agent_events(
+            runtime.state.session, agent_events(), runtime.context_status
         )
     ]
 
@@ -292,7 +293,10 @@ async def test_dispatcher_todo_write_always_projects_its_completed_snapshot(
             yield AgentConversationUpdated()
 
     events = [
-        event async for event in runtime._project_agent_events(session, agent_events())
+        event
+        async for event in project_agent_events(
+            session, agent_events(), runtime.context_status
+        )
     ]
     updates = [event for event in events if isinstance(event, TodoListUpdated)]
 
@@ -430,9 +434,12 @@ async def test_background_watcher_runs_continuation_without_human_message(
         calls = 0
 
         async def stream_continuation(
-            self, session: Session, context_runtime: ContextRuntime
+            self,
+            session: Session,
+            context_runtime: ContextRuntime,
+            pending_source=None,
         ) -> AsyncIterator[AgentEvent]:
-            del context_runtime
+            del context_runtime, pending_source
             self.calls += 1
             source.pending = False
             assert (
@@ -471,9 +478,12 @@ async def test_failed_background_continuation_waits_for_a_new_revision(
 
     class FailingAgent:
         async def stream_continuation(
-            self, session: Session, context_runtime: ContextRuntime
+            self,
+            session: Session,
+            context_runtime: ContextRuntime,
+            pending_source=None,
         ) -> AsyncIterator[AgentEvent]:
-            del session, context_runtime
+            del session, context_runtime, pending_source
             raise RuntimeError("provider unavailable")
             yield  # pragma: no cover
 
@@ -674,7 +684,7 @@ async def test_local_model_switch_persists_and_updates_runtime(
 @pytest.mark.asyncio
 async def test_background_task_view_is_owner_scoped(tmp_path: Path) -> None:
     runtime = _bootstrap_runtime(tmp_path)
-    registry = runtime._background_tasks
+    registry = runtime.activity.background_registry
     assert registry is not None
     owned_id = str(uuid4())
     foreign_id = str(uuid4())
@@ -783,11 +793,11 @@ def test_startup_session_uses_saved_mode_and_cli_override_is_persisted(
     store.append(HumanMessage("resume at startup"))
     store.set_permission_mode("bypassPermissions")
 
-    restored = bootstrap_chat(initial.settings, _TARGET_SESSION_ID)
+    restored = bootstrap_application(initial.settings, _TARGET_SESSION_ID)
     assert restored.status().permission_mode == "bypassPermissions"
     assert restored.current_permission_mode().requires_confirmation is False
 
-    overridden = bootstrap_chat(
+    overridden = bootstrap_application(
         initial.settings,
         _TARGET_SESSION_ID,
         permission_mode_override=PermissionMode.PLAN,
@@ -800,7 +810,7 @@ def test_startup_session_uses_saved_mode_and_cli_override_is_persisted(
         == "plan"
     )
 
-    bypass_override = bootstrap_chat(
+    bypass_override = bootstrap_application(
         initial.settings,
         _TARGET_SESSION_ID,
         permission_mode_override=PermissionMode.BYPASS,

@@ -6,7 +6,7 @@ import pytest
 
 from my_code.features.background_tasks.bash import BashBackgroundController
 from my_code.features.background_tasks.registry import BackgroundTaskRegistry
-from my_code.features.subagents.wake import BackgroundTaskWakeSignal
+from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.tasks.models import TaskStatus
 from my_code.tasks.supervisor import TaskSupervisor
 from my_code.tools.base import ToolContext

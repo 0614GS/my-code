@@ -4,7 +4,7 @@
 
 ## 所有权
 
-`chat.service.ChatService` 协调用户级用例，只持有一个 `runtime.state.AppState`。`AppState` 的 operation lock 串行化 submit、stream、compact、resume、模型切换和其他会改变活动状态的操作。
+`application.service.ApplicationService` 协调用户级用例，只持有一个 `runtime.state.AppState`。`AppState` 的 operation lock 串行化 submit、stream、compact、resume、模型切换和其他会改变活动状态的操作。
 
 `agent.engine.AgentEngine` 是不持有活动会话的 turn 执行器。Session、`ContextRuntime`、工具快照和输入由调用方显式传入；session catalog、resume、历史展示和 provider 配置不属于 Agent。
 
@@ -13,7 +13,7 @@
 ## 一次 Invocation 与 step-boundary steering
 
 ```text
-ChatService.stream_interactive()
+ApplicationService.stream_interactive()
   -> 获取 AppState operation lock
   -> PendingInputController 并行准备 attachment
   -> AgentEngine.stream_continuation(..., pending_source)
@@ -33,14 +33,14 @@ ChatService.stream_interactive()
         -> 应用已验证的 session permission updates
      -> ToolResultBatch 与工具 attachment 原子闭合后形成 step boundary
      -> 未耗尽 max_steps 时 drain pending input，再从最新 Session 状态规划
-  -> ChatEvent 投影给 host
+  -> ApplicationEvent 投影给 host
 ```
 
 模型的 text、reasoning 和 tool call 只有形成完整最终响应后才成为对话事实。流式 delta 可以先展示，但不会写入 Session。一次 invocation 可在多个完整 step 边界接收多条独立用户 steering message；这些消息保持 FIFO，不会插入 ToolCall 与 ToolResultBatch 之间。`max_steps` 限制单次 invocation 的模型调用次数；预算耗尽后未接受的输入由 host 在新 invocation 中继续处理。
 
 Headless `submit/stream` 不提供 pending source，保留单输入行为。前台与后台 continuation 共用活动 Session 的 pending source，因此用户输入会优先进入任一当前运行 invocation 的下一个安全边界。
 
-完整 compact 具有显式 lifecycle。Agent 的 auto/reactive 路径在摘要请求前发出 started，在 `Session.commit_compaction()` 成功后发出 completed；Chat 的 `/compact` 路径通过 `stream_compaction()` 提供相同的 frontend-neutral 事件。失败和取消沿原调用异常传播，不伪造 completed。轻量 microcompact 不属于这一 lifecycle。
+完整 compact 具有显式 lifecycle。Agent 的 auto/reactive 路径在摘要请求前发出 started，在 `Session.commit_compaction()` 成功后发出 completed；Application 的 `/compact` 路径通过 `stream_compaction()` 提供相同的 frontend-neutral 事件。失败和取消沿原调用异常传播，不伪造 completed。轻量 microcompact 不属于这一 lifecycle。
 
 所有 session-bound 模型调用都遵守 audit-before-delivery：主 Agent、后台 continuation、child run 及 manual/auto/reactive compact 在 Provider 收到请求前，先持久化 provider-neutral 的 `ModelInvocation`。初始审计写入失败会阻止网络请求；Provider 终态随后追加到 sidecar。进程在 prepared 后中断时，恢复投影为 `delivery-unknown`，不会猜测 Provider 是否已接收。
 
@@ -83,4 +83,4 @@ TaskSupervisor -> AgentRunFactory -> SkillRuntime -> McpRuntime -> ProviderRunti
 - 同一 AppState 同时只运行一个会改变活动状态的 application operation。
 - runtime 关闭先停止任务和 child run，再关闭扩展 transport 与 provider client。
 
-主要源码入口：`src/my_code/chat/service.py`、`src/my_code/runtime/state.py`、`src/my_code/agent/engine.py`、`src/my_code/tools/round_executor.py`。
+主要源码入口：`src/my_code/application/service.py`、`src/my_code/application/turns/coordinator.py`、`src/my_code/runtime/state.py`、`src/my_code/agent/engine.py`、`src/my_code/tools/round_executor.py`。
