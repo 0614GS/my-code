@@ -35,6 +35,12 @@ MCP Tool adapter 只负责 schema 和调用协议转换，执行时仍是普通 
 
 `AgentRunFactory` 为 child 创建独立 Run ID、Session、Agent 组件、`SessionContextCache`、child-local ToolCatalog 和 provider lease。child Session header 持久化 subagent kind、parent Session、创建它的 parent Run 与 agent name；Session ID 不复用 Run ID。父级只传显式 prompt/attachments，child transcript 不合并到父 Session，Session catalog 也不会把它列入 `/resume`。
 
+Foreground 与 child 共享同一套 Session/Run 身份语义，但资源 capsule 不强行一致：每次
+foreground Session activation 生成独立 Run ID，并随 `ActiveSessionBinding` 发布；它不建立
+拥有 provider lease 的 `AgentRun`。Child 必须使用 `AgentRun` capsule，因为它需要独立
+Agent 组件、lease 和 close 行为。parent Session 表达持久化归属，parent Run 表达本次进程
+内执行来源，两者不得合并成一个含混字段。
+
 内置角色为 `explore` 与 `general`：
 
 - Explore 是只读叶子，只继承父 step 中的 Read、Glob、Grep 和 Bash，并在权限判断与执行前分别复验底层 `is_read_only()`。

@@ -18,6 +18,11 @@ conversation 和外置工具结果中。异常只保存类型，不保存异常�
 start 表示进程中断或 journal 写入失败，Harness 应将其判定为 incomplete。v6 的
 `turn_started/turn_finished` 在读取时映射为 legacy invocation，不改写原文件。
 
+Invocation 覆盖一次完整 Agent loop；interactive stream 可以在安全 step boundary 接受多条
+用户 steering，因此不能把这组 terminal record 解释成单个 Conversation Turn。Turn 仍由
+每条已接受 `HumanMessage` 的 causal boundary 推导；如果未来需要持久化 Turn metadata，
+必须新增独立 record，不能复用 Invocation journal。
+
 Harness 以 transcript、外置工具结果和 `Session.invocation_history` 为权威输入，并在自己的
 存储中保存评分。运行评测不要求启动 Collector。
 

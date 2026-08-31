@@ -77,6 +77,11 @@ operation lock 的唯一应用层获取者。它把显式的 Session、SessionCo
 
 `runtime.application.ApplicationRuntime` 持有原子替换的 `ActiveSessionBinding`、Workspace、PermissionRuntime、ToolCatalog、任务树、child run factory、MCP/Skill runtime、ProviderRuntime、前台关闭入口和 observer shutdown。它提供统一 operation lock 和关闭顺序，但不构造 Context、不执行 Agent loop，也不能被任意模块通过全局函数查找。
 
+`bootstrap.py` 是唯一 composition root。它在构造期使用私有 `_BootstrapComponents`
+连接 façade 所需的窄组件，但该对象不拥有 runtime 资源；所有长生命周期资源一经组装
+即由 `ApplicationRuntime` 唯一持有。`runtime.runs.AgentRunFactory` 则拥有 child run
+capsule 与 provider lease 的释放，避免 bootstrap、façade 和 runtime 重复表达同一资源。
+
 ### Session：事实与持久化
 
 `sessions.session.Session` 是 canonical `ConversationEntry[]`、context entries、compact state、工具结果和 provider replay 的唯一公开所有者。所有事实通过语义方法 persistence-first 提交；恢复先完整构造候选，再原子替换活动引用。

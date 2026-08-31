@@ -20,6 +20,10 @@
 
 `ApplicationRuntime` 是运行时状态图的唯一入口，不是进程全局 singleton。只有 application service、host 和 bootstrap 可以持有完整 ApplicationRuntime；Agent、Context、Tool 和 Provider adapter 只接收完成任务所需的最小对象或快照。
 
+磁盘 Session catalog、当前 foreground binding 和 live child run registry 是三个独立
+集合：catalog 描述可恢复的持久化会话，binding 描述唯一活动前台会话，registry 只描述
+当前进程的并发执行。它们不能通过“进程中存在多个 Session”互相替代或推导。
+
 ## Canonical conversation
 
 `Session` 私有持有有序、不可变的 `ConversationEntry`：
@@ -88,11 +92,22 @@ sidecar 不保存 API key、认证头、Provider wire role 归一化或 opaque c
 
 替换 Session 会同时创建新的 `SessionContextCache` 并发布恢复后的 permission mode。任何一步失败都保留旧 Session、mode 与 cache，不会出现旧 conversation 配新 context、工具结果或 replay 的混合状态。当前 provider、permission rules 和 workspace 不从 transcript 的 mode 记录恢复。
 
+Question 的 root identity、后台 Bash 输出目录、Subagent/Task 工具 lineage、activity view
+和 notification source 都从当前 `ToolExecutionContext` 或 binding 派生，不捕获启动 Session，
+也不各自维护 `rebind_session()`。切换后，旧 Session 已启动的后台任务继续保留原 owner，
+不会被迁移到新 foreground Session。候选加载、I/O 或取消失败时，这些消费者看到的仍是
+完整旧 binding。
+
 Permission mode 使用 last-wins 的 session record；旧 transcript 没有该记录时回退到 `session_started.permission_mode`。运行中切换遵循 persistence-first，写入失败时 runtime policy 不改变。显式 CLI override 优先于保存值并成为该 Session 的新值。
 
 Collaboration mode 是独立的 last-wins Session 状态，仅有 `default` 与 `plan`。基础 `permission_mode` 始终保存用户进入 Plan 前的选择；Plan 恢复时运行期 policy 临时使用 `plan`，退出时再从 Session 恢复基础权限。旧 transcript 缺少 collaboration 字段时按 Default 恢复。模式切换本身不改写 Conversation；下一次用户提交才在同一 batch 中按 mode/discovery prelude、HumanMessage、请求附件的顺序追加事实。
 
 Transcript 当前 schema 为 v7。v7 header 持久化 `session_kind`、`parent_session_id`、`created_by_run_id` 和 `agent_name`；foreground 不允许 child lineage，subagent 必须提供完整 lineage。v6 缺少 kind 时兼容解释为 foreground，旧 `turn_started/turn_finished` 映射为 legacy invocation；v5 及更早明确拒绝恢复。未知 kind、冲突字段或未知 schema 必须失败关闭。
+
+`session_kind` 是受控枚举，不从 title、prompt、路径或 lineage 猜测。Catalog 和 TUI
+`/resume` 默认只返回 foreground；child transcript 通过 Subagent activity/transcript 用例
+查看，不提供公共恢复入口。fresh-context plan handoff 创建新的 foreground Session，不引入
+额外 kind。
 
 ## Compact 与模型工作集
 

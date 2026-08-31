@@ -19,7 +19,6 @@
 - [包边界与架构守卫](08-package-boundaries.md)
 - [当前能力范围](09-current-scope.md)
 - [可观测性与评测](10-observability-and-evaluation.md)
-- [架构整理任务索引](refactor/todolist.md)
 
 ## 架构地图
 
@@ -48,7 +47,7 @@ AgentEngine
 
 ## 统一术语
 
-项目术语的规范定义统一维护在[生命周期与命名体系](11-lifecycle-and-naming.md)。专题文档可以解释领域内行为，但不应为 State、Context、Runtime、Session、Run、Invocation、Turn、Step、Request 或 Call 建立另一套定义。生命周期与命名迁移的决策记录和完成证据位于[架构整理任务索引](refactor/todolist.md)。
+项目术语的规范定义统一维护在[生命周期与命名体系](11-lifecycle-and-naming.md)。专题文档可以解释领域内行为，但不应为 State、Context、Runtime、Session、Run、Invocation、Turn、Step、Request 或 Call 建立另一套定义。具体所有权、Session 恢复、child Run 和 Invocation journal 分别由对应顶层专题维护。
 
 ## 文档维护原则
 

@@ -1,6 +1,6 @@
 # 生命周期与命名体系
 
-本文是项目状态、上下文和执行生命周期术语的权威定义。类型名首先表达语义角色，生命周期范围通过 `Application`、`Session`、`Run`、`Turn`、`Tool` 等前缀进一步限定。现有源码中不符合本文的名称属于待迁移项，不应作为新代码的命名先例。
+本文是项目状态、上下文和执行生命周期术语的权威定义。类型名首先表达语义角色，生命周期范围通过 `Application`、`Session`、`Run`、`Turn`、`Tool` 等前缀进一步限定。不符合本文的历史名称不应作为新代码的命名先例。
 
 ## 基础词汇
 
@@ -129,6 +129,20 @@ Context 必须绑定具体操作，例如：
 
 `ApplicationStatus` 不是 Runtime；它只是 Runtime 的状态 DTO。此类名称应使用 `ApplicationStatus`、`ProviderStatus`，或在确实需要强调来源时使用 `ApplicationStatusView`。
 
+## 当前生产命名
+
+当前实现用 `ApplicationRuntime` 表达进程资源 owner，用 `ActiveSessionBinding` 原子配对
+Session、Run ID、`SessionContextCache` 与权限策略。操作输入使用
+`ContextPlanningInput`、`AttachmentProjectionInput` 和 `ToolExecutionContext`；只读消费
+类型使用 `ContextUsageView`，简短展示摘要使用 `ApplicationStatus`，provider continuation
+值使用 `ProviderContinuation`。只协调 session 用例而不拥有完整生命周期的 façade 使用
+`SessionOperations`。
+
+`Workspace` 与 `ToolCatalog` 由 runtime 直接持有，不再套用含混的 `WorkspaceState` 或
+`ToolState`。`PickerState`、`SlashMenuState`、`QueueInputState` 和
+`McpConnectionState` 保留 `State` 后缀，因为它们各自拥有明确写入者、不变量与更新边界。
+旧名称不通过 `__all__` 或跨所有者 re-export 保留兼容入口；架构守卫负责阻止回退。
+
 ## 所有权与命名检查
 
 新增长生命周期类型前必须回答：
@@ -141,4 +155,4 @@ Context 必须绑定具体操作，例如：
 6. 它是否持久化，权威来源在哪里？
 7. 它属于 State、Cache、Runtime、Snapshot、View 还是 Context？
 
-如果一个类型同时符合多个类别，应先拆分所有权，而不是选择一个更宽泛的名字掩盖混合职责。现有类型的迁移计划见 [refactor/todolist.md](refactor/todolist.md)。
+如果一个类型同时符合多个类别，应先拆分所有权，而不是选择一个更宽泛的名字掩盖混合职责。
