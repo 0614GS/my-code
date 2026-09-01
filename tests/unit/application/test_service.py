@@ -49,6 +49,7 @@ from my_code.context.models import CompactionOutcome
 from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.attachments import (
     FileMentionAttachment,
+    PlanHandoffAttachment,
     TodoReminderAttachment,
 )
 from my_code.conversation.models import (
@@ -81,10 +82,15 @@ from my_code.model.invocation import (
 )
 from my_code.model.primitives import ReasoningPresentation, TokenUsage
 from my_code.model.request import InputText, ModelRequest, SystemPrompt, UserInput
-from my_code.permissions.models import PermissionMode
+from my_code.permissions.models import (
+    PermissionBehavior,
+    PermissionMode,
+    PermissionRule,
+)
 from my_code.providers.discovery import ModelDiscoveryService
 from my_code.providers.manager import ProviderManager, ProviderUpdate
 from my_code.sessions._store import SessionStore
+from my_code.sessions.models import CollaborationMode
 from my_code.sessions.session import Session
 from my_code.tools.presentation import ToolUsePresentation
 
@@ -731,6 +737,7 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     previous = runtime.runtime.session
     previous_binding = runtime.runtime.foreground
     previous_cache = runtime.runtime.context_cache
+    shared_policy = runtime.runtime.permissions.policy
     store = SessionStore(
         runtime.settings.paths.project_state_dir,
         _TARGET_SESSION_ID,
@@ -760,12 +767,93 @@ async def test_runtime_lists_and_atomically_switches_project_session(
     assert runtime.runtime.session is not previous
     assert runtime.runtime.foreground is not previous_binding
     assert runtime.runtime.context_cache is not previous_cache
+    assert runtime.runtime.permissions.policy is shared_policy
+    assert runtime.runtime.foreground.permission_policy is shared_policy
+    assert runtime.tool_executor.policy is shared_policy
     assert runtime.runtime.session.run_id != runtime.runtime.session.session_id
     assert not any(
         isinstance(message, AttachmentMessage)
         for message in runtime.runtime.session.context_entries
     )
     assert runtime.runtime.session.session_id == _TARGET_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_new_session_uses_fresh_binding_and_filters_session_rules(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path, PermissionMode.ACCEPT_EDITS)
+    previous = runtime.runtime.session
+    previous.append_human_message(HumanMessage("recover me"))
+    previous_cache = runtime.runtime.context_cache
+    shared_policy = runtime.runtime.permissions.policy
+    durable = PermissionRule("Read", PermissionBehavior.ALLOW, source="userSettings")
+    transient = PermissionRule("Write", PermissionBehavior.ALLOW, source="session")
+    shared_policy.rules = (durable, transient)
+    runtime.cycle_collaboration_mode()
+
+    view = await runtime.new_session()
+
+    assert view.status.session_id != previous.session_id
+    assert view.history == ()
+    assert runtime.runtime.session.conversation == ()
+    assert runtime.runtime.session.run_id != previous.run_id
+    assert runtime.runtime.context_cache is not previous_cache
+    assert runtime.current_collaboration_mode() is CollaborationMode.DEFAULT
+    assert runtime.runtime.permissions.policy is shared_policy
+    assert shared_policy.mode is PermissionMode.ACCEPT_EDITS
+    assert shared_policy.rules == (durable,)
+    assert [item.session_id for item in await runtime.list_sessions()] == [
+        previous.session_id
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fresh_plan_handoff_queues_complete_plan_as_first_human_message(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    previous = runtime.runtime.session
+    previous.append_human_message(HumanMessage("design it"))
+    previous.append_assistant_message(
+        AssistantMessage(
+            (TextContent("<proposed_plan>\n- implement lifecycle\n</proposed_plan>"),),
+            TokenUsage(),
+            parent_uuid=previous.causal_head_uuid,
+        )
+    )
+    runtime.cycle_collaboration_mode()
+
+    queued = await runtime.start_plan_implementation(fresh_context=True)
+    fresh = runtime.runtime.session
+
+    assert fresh is not previous
+    assert fresh.conversation == ()
+    assert "- implement lifecycle" in queued.prompt
+    assert queued.prompt.startswith("A previous agent produced the plan below")
+    assert not any(
+        isinstance(entry, AttachmentMessage)
+        and isinstance(entry.payload, PlanHandoffAttachment)
+        for entry in fresh.conversation
+    )
+
+    pending = runtime.turns._pending
+    await pending.prepare_pending()
+    await asyncio.sleep(0)
+    inputs = await pending.drain_pending()
+    fresh.commit_user_inputs((item.prompt, item.attachments) for item in inputs)
+    pending.accept_pending(
+        tuple(item.input_id for item in inputs if item.input_id is not None)
+    )
+
+    assert len(fresh.conversation) == 1
+    message = fresh.conversation[0]
+    assert isinstance(message, HumanMessage)
+    assert message.content == queued.prompt
+    restored = Session.restore(
+        runtime.settings.paths.project_state_dir, fresh.session_id
+    )
+    assert restored.conversation == fresh.conversation
 
 
 @pytest.mark.asyncio

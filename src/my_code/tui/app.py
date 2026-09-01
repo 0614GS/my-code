@@ -984,6 +984,11 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                 welcome(self.application.status(), self.theme), clear=True
             )
             echo_pending = False
+        if outcome.create_new_session:
+            view = await self.application.new_session()
+            self._reset_session_ui(view.status)
+            await self._write(welcome(view.status, self.theme), clear=True)
+            echo_pending = False
         if outcome.message:
             await emit(system_message(outcome.message))
         if outcome.show_status:
@@ -1050,6 +1055,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             or outcome.open_model_picker
             or outcome.open_view_picker
             or outcome.open_permission_picker
+            or outcome.create_new_session
         ):
             await self._write(command_echo(command_line))
             echo_pending = False
@@ -1100,6 +1106,25 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             if self._context_status is None:
                 raise
             return self._context_status
+
+    def _reset_session_ui(self, status: ApplicationStatus) -> None:
+        """丢弃属于旧前台 Session 的全部展示状态。"""
+
+        self._status = status
+        self._context_status = None
+        self._status_warning = ""
+        self._todos = status.todos
+        self._tool_activity = None
+        self._reasoning_parts.clear()
+        self._stream_text = ""
+        self._stream_plan = ""
+        self._stream_answer_started = False
+        self._reset_stream_projection()
+        self._blocks.reset_group()
+        self._agents = ()
+        self._agent_scroll = 0
+        self._agent_task_id = None
+        self._pending_plan = None
 
     def _refresh_context_status_if_visible(self) -> ContextUsageView | None:
         """Recalculate only after a user action has exposed context usage."""

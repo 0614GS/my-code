@@ -223,9 +223,13 @@ class ApplicationRuntime:
     def publish_foreground(self, candidate: ActiveSessionBinding) -> None:
         """完整恢复权限后，一次替换所有 session-scoped 身份与 cache。"""
 
-        self.permissions.policy = candidate.permission_policy
-        self.permissions.restore_mode(candidate.permission_policy.mode)
-        self._foreground = candidate
+        self.permissions.restore_policy(candidate.permission_policy)
+        self._foreground = ActiveSessionBinding(
+            candidate.session,
+            candidate.context_cache,
+            self.permissions.policy,
+            candidate.run_id,
+        )
 
     def build_foreground(
         self,

@@ -375,7 +375,6 @@ def _assemble_agent(
         tasks,
         background_registry,
         settings.paths.task_output_dir,
-        actual_session_id,
     )
     background_notifications = (
         BackgroundTaskNotificationSource(background_registry)

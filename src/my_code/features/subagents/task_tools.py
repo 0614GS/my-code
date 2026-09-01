@@ -172,8 +172,12 @@ class TaskCancelTool(Tool):
 
 
 def _owner(parent: SubagentParentContext, context: ToolExecutionContext) -> str:
-    run_id = context.run_id or parent.run_id
-    return run_id if parent.depth == 0 else parent.owner_run_id
+    owner = context.root_session_id or context.session_id
+    if owner is not None:
+        return owner
+    if context.run_id is not None:
+        return context.run_id if parent.depth == 0 else parent.owner_run_id
+    return parent.owner_session_id
 
 
 def _task_id(tool_input: JsonObject) -> str:

@@ -235,13 +235,17 @@ class SubagentTool(Tool):
     def _runtime_parent(self, context: ToolExecutionContext) -> SubagentParentContext:
         run_id = context.run_id or self.parent.run_id
         root_run_id = run_id if self.parent.depth == 0 else self.parent.owner_run_id
+        session_id = context.session_id or self.parent.session_id or run_id
+        root_session_id = (
+            context.root_session_id or self.parent.root_session_id or session_id
+        )
         return SubagentParentContext(
             run_id=run_id,
             depth=self.parent.depth,
             task_id=self.parent.task_id,
             root_run_id=root_run_id,
-            session_id=context.session_id or self.parent.session_id,
-            root_session_id=context.root_session_id or self.parent.root_session_id,
+            session_id=session_id,
+            root_session_id=root_session_id,
         )
 
     def get_activity_description(self, tool_input: JsonObject) -> str:

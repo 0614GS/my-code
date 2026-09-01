@@ -2,22 +2,19 @@
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Event as ThreadEvent
 from threading import Thread
-from uuid import uuid4
 
 from my_code.application.contracts.history import HistoryEntry
 from my_code.application.sessions.history_projection import project_history
 from my_code.config.paths import MyCodePaths
-from my_code.conversation.attachments import PlanHandoffAttachment
 from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionMode, PermissionRule
 from my_code.permissions.policy import PermissionPolicy
 from my_code.sessions.catalog import SessionCatalog, SessionSummary
-from my_code.sessions.models import CollaborationMode
+from my_code.sessions.models import CollaborationMode, SessionStart
 from my_code.sessions.session import Session
 from my_code.skills.tool import restore_skill_permissions
 from my_code.tools.catalog import ToolCatalogSnapshot
@@ -81,30 +78,23 @@ class SessionOperations:
         restore_skill_permissions(policy, session.conversation)
         return SessionRestoreCandidate(session, policy, history)
 
-    def create_plan_handoff(
+    def create_fresh(
         self,
-        previous: Session,
-        plan: str,
+        start: SessionStart,
         *,
         permission_rules: tuple[PermissionRule, ...],
     ) -> tuple[Session, PermissionPolicy]:
-        session_id = str(uuid4())
-        start = replace(
-            previous.start,
-            session_id=session_id,
-            created_at=datetime.now(UTC).isoformat(),
-            permission_mode=previous.permission_mode,
-            collaboration_mode=CollaborationMode.DEFAULT.value,
-        )
         session = Session(
             self._project_state_dir,
-            session_id,
-            tool_results_dir=self._paths.tool_results_dir(session_id),
+            start.session_id,
+            tool_results_dir=self._paths.tool_results_dir(start.session_id),
             start=start,
         )
-        session.append_attachment(PlanHandoffAttachment(plan))
+        inherited_rules = tuple(
+            rule for rule in permission_rules if rule.source != "session"
+        )
         return session, PermissionPolicy(
-            PermissionMode(previous.permission_mode), permission_rules
+            PermissionMode(start.permission_mode), inherited_rules
         )
 
 

@@ -143,7 +143,7 @@ class PanelFlowMixin:
                 self._close_panel()
             else:
                 try:
-                    self.application.start_plan_implementation(
+                    await self.application.start_plan_implementation(
                         fresh_context=action == "fresh"
                     )
                 except Exception as error:
@@ -165,10 +165,7 @@ class PanelFlowMixin:
         elif self._panel == "resume" and action is not None:
             try:
                 resumed = await self.application.resume_session(action)
-                self._status = resumed.status
-                self._context_status = None
-                self._status_warning = ""
-                self._todos = resumed.status.todos
+                self._reset_session_ui(resumed.status)
                 self._panel = None
                 self.buffer.set_document(Document(""), bypass_readonly=True)
                 await self._write(welcome(resumed.status, self.theme), clear=True)

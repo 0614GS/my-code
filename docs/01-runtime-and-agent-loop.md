@@ -7,6 +7,9 @@
 `application.service.ApplicationService` 协调用户级用例，只持有一个 `runtime.application.ApplicationRuntime`。`ApplicationRuntime` 的 operation lock 串行化 submit、stream、compact、resume、模型切换和其他会改变活动状态的操作。
 
 `agent.engine.AgentEngine` 是不持有活动会话的 turn 执行器。Session、`SessionContextCache`、工具快照和输入由调用方显式传入；session catalog、resume、历史展示和 provider 配置不属于 Agent。
+同一个 foreground Agent 可以跨 `/resume`、`/new` 与 fresh handoff 复用，但每个 tool
+round 必须从本次调用传入的 Session 派生 run/session/root identity；只有 child Agent
+保留创建时显式指定的 root Session。
 
 首次交互前，ApplicationRuntime 并行启动可选的 MCP 与 Skill runtime。成功发现的能力只更新 application-lifetime `ToolCatalog`，不会把连接或扫描状态放进 Agent loop。
 

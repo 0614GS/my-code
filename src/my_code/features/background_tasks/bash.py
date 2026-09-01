@@ -28,12 +28,10 @@ class BashBackgroundController:
         tasks: TaskSupervisor,
         registry: BackgroundTaskRegistry,
         output_dir: Callable[[str], Path],
-        fallback_session_id: str,
     ) -> None:
         self.tasks = tasks
         self.registry = registry
         self._output_dir = output_dir
-        self._fallback_session_id = fallback_session_id
 
     async def execute(
         self,
@@ -46,9 +44,9 @@ class BashBackgroundController:
         escalation_available: bool = False,
     ) -> ToolOutput:
         task_id = str(uuid4())
-        owner = (
-            context.root_session_id or context.session_id or self._fallback_session_id
-        )
+        owner = context.root_session_id or context.session_id
+        if owner is None:
+            raise RuntimeError("Background Bash requires a Session identity")
         output_dir = self._output_dir(owner)
         output_file = secure_task_output_path(output_dir, task_id)
         details: JsonObject = {

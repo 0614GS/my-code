@@ -22,7 +22,6 @@ def build_tool(
         tasks,
         registry,
         lambda session_id: tmp_path / "runtime" / session_id / "tasks",
-        "owner",
     )
     tool = BashTool(
         background_executor=controller,
@@ -56,14 +55,15 @@ async def test_supervised_foreground_uses_and_removes_private_output(
 
     output = await tool.execute(
         {"command": "printf 'out\\n'; printf 'err\\n' >&2"},
-        ToolExecutionContext(tmp_path),
+        ToolExecutionContext(tmp_path, session_id="owner"),
     )
 
     assert output.content == "exit_code: 0\nout\nerr\n"
     assert list((tmp_path / "runtime").rglob("*.output")) == []
 
     failed = await tool.execute(
-        {"command": "printf failure; exit 9"}, ToolExecutionContext(tmp_path)
+        {"command": "printf failure; exit 9"},
+        ToolExecutionContext(tmp_path, session_id="owner"),
     )
     assert failed.is_error is True
     assert failed.metadata["exit_code"] == 9
@@ -81,7 +81,7 @@ async def test_explicit_background_retains_output_and_pulses_once(
 
     output = await tool.execute(
         {"command": "printf background", "background": True},
-        ToolExecutionContext(tmp_path, run_id="owner"),
+        ToolExecutionContext(tmp_path, run_id="owner", session_id="owner"),
     )
     payload = json.loads(output.content)
     output_file = Path(payload["output_file"])
@@ -131,7 +131,7 @@ async def test_foreground_budget_hands_same_process_to_background(
     tmp_path: Path,
 ) -> None:
     tool, tasks, registry = build_tool(tmp_path)
-    context = ToolExecutionContext(tmp_path, run_id="owner")
+    context = ToolExecutionContext(tmp_path, run_id="owner", session_id="owner")
 
     assert tool.background_executor is not None
     output = await tool.background_executor.execute(
@@ -157,7 +157,7 @@ async def test_background_nonzero_is_failed_and_cancel_is_cancelled(
     tmp_path: Path,
 ) -> None:
     tool, tasks, registry = build_tool(tmp_path)
-    context = ToolExecutionContext(tmp_path, run_id="owner")
+    context = ToolExecutionContext(tmp_path, run_id="owner", session_id="owner")
     failed = json.loads(
         (
             await tool.execute(
@@ -185,7 +185,12 @@ async def test_output_cap_and_runtime_shutdown_are_terminal_failures(
     tmp_path: Path,
 ) -> None:
     tool, tasks, registry = build_tool(tmp_path)
-    context = ToolExecutionContext(tmp_path, max_command_output_bytes=8, run_id="owner")
+    context = ToolExecutionContext(
+        tmp_path,
+        max_command_output_bytes=8,
+        run_id="owner",
+        session_id="owner",
+    )
     capped = json.loads(
         (
             await tool.execute(

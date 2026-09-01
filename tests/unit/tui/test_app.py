@@ -104,6 +104,7 @@ class FakeRuntime:
         self.resumed_session_id: str | None = None
         self.view_density = DisplayDensity.CONCISE
         self.view_updates: list[DisplayDensity] = []
+        self.session_id = "session-id"
 
     async def initialize(self) -> SessionView:
         return SessionView(self.status(), self.history)
@@ -143,7 +144,7 @@ class FakeRuntime:
 
     def status(self) -> ApplicationStatus:
         return ApplicationStatus(
-            session_id="session-id",
+            session_id=self.session_id,
             cwd="/workspace",
             provider_id="anthropic",
             base_url=None,
@@ -182,6 +183,12 @@ class FakeRuntime:
 
     async def resume_session(self, session_id: str) -> SessionView:
         self.resumed_session_id = session_id
+        return self.current_session_view()
+
+    async def new_session(self) -> SessionView:
+        self.session_id = "fresh-session"
+        self.history = ()
+        self.prompts.clear()
         return self.current_session_view()
 
     async def stream_subagent_activity(self):
@@ -1809,6 +1816,42 @@ def test_new_slash_commands_have_strict_subcommands() -> None:
     permissions = registry.dispatch("/permissions", status=status)
     assert permissions is not None and permissions.open_permission_picker
     assert registry.concurrency("/permissions") is CommandConcurrency.CONCURRENT_UI
+    new = registry.dispatch("/new", status=status)
+    assert new is not None and new.create_new_session
+    assert registry.concurrency("/new") is CommandConcurrency.EXCLUSIVE
+    invalid_new = registry.dispatch("/new later", status=status)
+    assert invalid_new is not None
+    assert invalid_new.message == "/new does not accept arguments."
+    assert "/new" in registry.render_help()
+
+
+@pytest.mark.asyncio
+async def test_new_command_clears_session_scoped_ui_state() -> None:
+    runtime = FakeRuntime(history=(HistoryText("user", "old"),))
+    app = MyCodeApp(
+        runtime,  # type: ignore[arg-type]
+        output=DummyOutput(),
+        console=Console(file=StringIO(), force_terminal=False),
+    )
+    app._context_status = runtime.context_status()
+    app._status_warning = "old warning"
+    app._reasoning_parts = ["old reasoning"]
+    app._stream_text = "old stream"
+    app._stream_plan = "old plan"
+    app._agents = (object(),)  # type: ignore[assignment]
+    outcome = app.commands.dispatch("/new", status=runtime.status())
+    assert outcome is not None
+
+    await app._handle_command(outcome, command_line="/new")
+
+    assert app._status is not None
+    assert app._status.session_id == "fresh-session"
+    assert app._context_status is None
+    assert app._status_warning == ""
+    assert app._reasoning_parts == []
+    assert app._stream_text == ""
+    assert app._stream_plan == ""
+    assert app._agents == ()
 
 
 @pytest.mark.asyncio

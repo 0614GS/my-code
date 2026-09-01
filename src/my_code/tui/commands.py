@@ -15,6 +15,7 @@ class SlashCommandAction(StrEnum):
     PROVIDER = "provider"
     MODEL = "model"
     RESUME = "resume"
+    NEW = "new"
     CLEAR = "clear"
     EXIT = "exit"
     USAGE = "usage"
@@ -51,6 +52,7 @@ class CommandOutcome:
     open_provider_manager: bool = False
     open_model_picker: bool = False
     open_session_picker: bool = False
+    create_new_session: bool = False
     show_context: bool = False
     compact_context: bool = False
     show_usage: bool = False
@@ -152,6 +154,12 @@ class SlashCommandRegistry:
                     concurrency=CommandConcurrency.EXCLUSIVE,
                 ),
                 SlashCommand(
+                    "new",
+                    "Start a new conversation",
+                    SlashCommandAction.NEW,
+                    concurrency=CommandConcurrency.EXCLUSIVE,
+                ),
+                SlashCommand(
                     "clear", "Clear the terminal screen", SlashCommandAction.CLEAR
                 ),
                 SlashCommand(
@@ -234,6 +242,8 @@ class SlashCommandRegistry:
                 return CommandOutcome(open_model_picker=True)
             case SlashCommandAction.RESUME:
                 return CommandOutcome(open_session_picker=True)
+            case SlashCommandAction.NEW:
+                return CommandOutcome(create_new_session=True)
             case SlashCommandAction.CLEAR:
                 return CommandOutcome(clear_screen=True)
             case SlashCommandAction.EXIT:

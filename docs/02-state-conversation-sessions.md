@@ -92,6 +92,33 @@ sidecar 不保存 API key、认证头、Provider wire role 归一化或 opaque c
 
 替换 Session 会同时创建新的 `SessionContextCache` 并发布恢复后的 permission mode。任何一步失败都保留旧 Session、mode 与 cache，不会出现旧 conversation 配新 context、工具结果或 replay 的混合状态。当前 provider、permission rules 和 workspace 不从 transcript 的 mode 记录恢复。
 
+`/resume`、`/new` 与 fresh-context plan handoff 共用同一个 foreground replacement
+边界。候选 Session、history 与权限先在旧 binding 仍然有效时完整构造；发布时才重绑
+pending-input owner，并一次替换 Session、Run、`SessionContextCache` 与权限有效状态。
+`PermissionPolicy` 本身是进程级共享对象，发布只原地恢复 mode/rules，避免
+ToolExecutor、permission update、Subagent 与 UI 分裂为不同 policy identity。
+
+fresh Session 的继承矩阵如下：
+
+| 状态 | `/new` / fresh handoff |
+| --- | --- |
+| Session ID、Run ID、ContextCache | 新建 |
+| conversation、compact、audit、replay、todo、tool discovery | 清空 |
+| collaboration mode | 重置为 Default |
+| 基础 permission mode | 继承旧 Session 进入 Plan 前的 mode |
+| user/project/local rules | 继承 |
+| session Skill grants | 丢弃；仅 resume 时从目标 durable skill facts 重建 |
+| provider、model、protocol、model limits、compact trigger | 从当前 runtime 快照继承 |
+| workspace、sandbox、MCP、Skill/Tool catalog、task supervisor | 进程级共享 |
+| pending input、Question、permission prompt、TUI turn state | 不继承 |
+| 已启动后台任务与 Subagent | 保留原 Session owner，不迁移、不向新 Session 投递 |
+
+`/new` 发布空 Session，不创建模型 turn。fresh plan handoff 发布空 Session 后，将完整
+plan 包装为 Codex 兼容的首个模拟用户输入，通过普通 pending-input acceptance 提交为
+唯一 `HumanMessage` 后才启动模型；不再写新的 `PlanHandoffAttachment`。codec 与投影仍
+保留该 attachment，专用于读取 schema v7 历史 transcript。当前上下文 handoff 不新建
+Session，只切回 Default 并提交简短实现指令。
+
 Question 的 root identity、后台 Bash 输出目录、Subagent/Task 工具 lineage、activity view
 和 notification source 都从当前 `ToolExecutionContext` 或 binding 派生，不捕获启动 Session，
 也不各自维护 `rebind_session()`。切换后，旧 Session 已启动的后台任务继续保留原 owner，

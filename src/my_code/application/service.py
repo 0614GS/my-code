@@ -3,6 +3,8 @@
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
+from datetime import UTC, datetime
+from uuid import uuid4
 
 from my_code.agent.runner import InteractiveAgentRunner
 from my_code.application.activity.monitor import ActivityMonitor
@@ -64,6 +66,7 @@ from my_code.features.background_tasks.notifications import (
 from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.model.display import DisplayDensity
 from my_code.permissions.models import PermissionMode
+from my_code.permissions.policy import PermissionPolicy
 from my_code.providers.discovery import resolve_without_network
 from my_code.providers.manager import (
     ModelView,
@@ -75,7 +78,8 @@ from my_code.providers.manager import (
 )
 from my_code.runtime.application import ApplicationRuntime
 from my_code.sessions.catalog import SessionSummary
-from my_code.sessions.models import CollaborationMode
+from my_code.sessions.models import CollaborationMode, SessionStart
+from my_code.sessions.session import Session
 from my_code.tools.executor import ToolExecutor
 
 
@@ -408,31 +412,40 @@ class ApplicationService:
             self.runtime.session, self.runtime.permissions
         )
 
-    def start_plan_implementation(self, *, fresh_context: bool) -> QueuedInputView:
+    async def start_plan_implementation(
+        self, *, fresh_context: bool
+    ) -> QueuedInputView:
         """Leave Plan mode and queue the canonical implementation instruction."""
 
-        if self.current_collaboration_mode() is not CollaborationMode.PLAN:
-            raise RuntimeError("No Plan-mode handoff is active")
-        plan = _latest_proposed_plan(self.runtime.session.conversation)
-        if not plan:
-            raise RuntimeError("The session has no completed proposed plan")
-        if fresh_context:
-            previous = self.runtime.session
-            session, policy = self.sessions.create_plan_handoff(
-                previous,
-                plan,
-                permission_rules=self.runtime.permissions.policy.rules,
-            )
-            self.turns.rebind_session(session.session_id)
-            self.runtime.publish_foreground(
-                self.runtime.build_foreground(session, policy)
-            )
-        else:
+        async with self.runtime.operation_lock():
+            if self.current_collaboration_mode() is not CollaborationMode.PLAN:
+                raise RuntimeError("No Plan-mode handoff is active")
+            plan = _latest_proposed_plan(self.runtime.session.conversation)
+            if not plan:
+                raise RuntimeError("The session has no completed proposed plan")
+            if fresh_context:
+                session, policy = self.sessions.create_fresh(
+                    self._fresh_session_start(),
+                    permission_rules=self.runtime.permissions.policy.rules,
+                )
+                self._publish_foreground(session, policy)
+                return self.queue_input(_fresh_plan_prompt(plan))
             self.runtime.session.set_collaboration_mode(CollaborationMode.DEFAULT.value)
             self.runtime.permissions.restore_mode(
                 PermissionMode(self.runtime.session.permission_mode)
             )
-        return self.queue_input("Implement the approved plan.")
+            return self.queue_input("Implement the approved plan.")
+
+    async def new_session(self) -> SessionView:
+        """创建并发布一个空的前台 Session。"""
+
+        async with self.runtime.operation_lock():
+            session, policy = self.sessions.create_fresh(
+                self._fresh_session_start(),
+                permission_rules=self.runtime.permissions.policy.rules,
+            )
+            self._publish_foreground(session, policy)
+            return self.current_session_view()
 
     def permission_modes(self) -> tuple[PermissionModeView, ...]:
         """Project process-local mode state without exposing the mutable policy."""
@@ -515,22 +528,42 @@ class ApplicationService:
         async with self.runtime.operation_lock():
             if session_id == self.runtime.session.session_id:
                 raise ValueError("Session is already active")
-            if self.turns.queued_inputs():
-                raise RuntimeError("Recall or clear queued inputs before resuming")
             candidate = await self.sessions.restore(
                 session_id,
                 permission_rules=self.runtime.permissions.policy.rules,
                 tools=self.runtime.tools.snapshot(),
             )
-            self.turns.rebind_session(candidate.session.session_id)
-            self.runtime.publish_foreground(
-                self.runtime.build_foreground(
-                    candidate.session, candidate.permission_policy
-                )
-            )
-            if self.background_wake_signal is not None:
-                self.background_wake_signal.pulse()
+            self._publish_foreground(candidate.session, candidate.permission_policy)
             return ResumedSession(status=self.status(), history=candidate.history)
+
+    def _fresh_session_start(self) -> SessionStart:
+        connection = self.runtime.provider.router.connection
+        environment = self.runtime.provider.environment()
+        return SessionStart(
+            session_id=str(uuid4()),
+            created_at=datetime.now(UTC).isoformat(),
+            cwd=str(self.runtime.workspace.root),
+            provider_id=connection.id,
+            model=connection.model,
+            permission_mode=self.runtime.session.permission_mode,
+            max_steps=self.settings.max_steps,
+            max_output_tokens=self.settings.max_output_tokens,
+            model_limits=environment.descriptor.limits,
+            model_limit_source=environment.descriptor.source.value,
+            compact_trigger_tokens=environment.compact_trigger_tokens,
+            provider_protocol=connection.protocol.value,
+            collaboration_mode=CollaborationMode.DEFAULT.value,
+        )
+
+    def _publish_foreground(self, session: Session, policy: PermissionPolicy) -> None:
+        if self.turns.is_active:
+            raise RuntimeError("Session can change only while input is idle")
+        if self.turns.queued_inputs():
+            raise RuntimeError("Recall or clear queued inputs before changing Session")
+        self.turns.rebind_session(session.session_id)
+        self.runtime.publish_foreground(self.runtime.build_foreground(session, policy))
+        if self.background_wake_signal is not None:
+            self.background_wake_signal.pulse()
 
     async def close(self) -> None:
         await self.runtime.close()
@@ -548,6 +581,16 @@ def _latest_proposed_plan(
                 if plan:
                     return plan
     return None
+
+
+def _fresh_plan_prompt(plan: str) -> str:
+    return (
+        "A previous agent produced the plan below to accomplish the user's task. "
+        "Implement the plan in a fresh context. Treat the plan as the source of "
+        "user intent, re-read files as needed, and carry the work through "
+        "implementation and verification.\n\n"
+        f"{plan}"
+    )
 
 
 __all__ = [
