@@ -196,3 +196,7 @@ uv run python scripts/check.py
 ```
 
 `scripts/check.py` 会依次运行格式检查、Ruff、Pyright、Tach 和完整测试套件。命名、注释、测试组织与 Commit 约定见[本地开发规范](CONTRIBUTING.md)。
+
+## License
+
+本项目基于 [MIT License](LICENSE) 开源。
