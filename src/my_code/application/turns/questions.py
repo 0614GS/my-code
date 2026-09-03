@@ -138,6 +138,10 @@ class QuestionTool(Tool):
                                     "type": "array",
                                     "minItems": 2,
                                     "maxItems": 3,
+                                    "description": (
+                                        "Put the recommended option first and suffix "
+                                        'its label with "(Recommended)".'
+                                    ),
                                     "items": option,
                                 },
                             },
@@ -262,7 +266,10 @@ def _parse_request(tool_input: JsonObject) -> tuple[QuestionPrompt, ...]:
             if not isinstance(description, str) or not description.strip():
                 raise ToolInputError("option descriptions must not be empty")
             if option_index == 0 and not label.endswith("(Recommended)"):
-                raise ToolInputError("the first option must be marked (Recommended)")
+                raise ToolInputError(
+                    "the first option label must end with (Recommended), "
+                    "for example: Narrow (Recommended)"
+                )
             parsed_options.append(QuestionOption(label, description))
         prompts.append(
             QuestionPrompt(question, header, question_id, tuple(parsed_options))
