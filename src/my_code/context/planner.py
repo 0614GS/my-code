@@ -247,6 +247,7 @@ class ContextPlanner:
             delta = self.meter.estimate(binding, footprint).tokens
             projected = delta
             measurement = "estimated"
+            cache_hit_rate = None
         else:
             assert anchor.context_footprint is not None
             base = anchor.usage.total_input_tokens + anchor.usage.output_tokens
@@ -257,6 +258,7 @@ class ContextPlanner:
             delta = current_estimate - anchor_estimate
             projected = max(1, base + delta)
             measurement = "reported"
+            cache_hit_rate = _cache_hit_rate(anchor.usage)
         environment = self._model_environment()
         input_limit = (
             environment.descriptor.limits.effective_input_limit(self.max_output_tokens)
@@ -276,6 +278,7 @@ class ContextPlanner:
                 environment.configured_compact_trigger_tokens
             ),
             warning=environment.warning or environment.discovery_error,
+            cache_hit_rate=cache_hit_rate,
         )
         return budget, footprint
 
@@ -316,6 +319,12 @@ def _usage_anchor(
         ),
         None,
     )
+
+
+def _cache_hit_rate(usage: TokenUsage) -> float:
+    if usage.total_input_tokens == 0:
+        return 0.0
+    return usage.cache_read_input_tokens / usage.total_input_tokens
 
 
 def _request_provenance(

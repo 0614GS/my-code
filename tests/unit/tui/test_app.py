@@ -789,7 +789,7 @@ def test_status_render_uses_cached_context_during_an_in_flight_tool_call() -> No
     app._status = runtime.status()
     app._context_status = FakeRuntime().context_status()
 
-    assert app._status_text().endswith("0.1k / 200k")
+    assert app._status_text().endswith("0.1k / 200k    — cached")
 
 
 def test_footer_hides_context_until_a_user_action_measures_it() -> None:
@@ -806,7 +806,7 @@ def test_footer_hides_context_until_a_user_action_measures_it() -> None:
     after = fragment_list_to_text(to_formatted_text(app._status_display()))
 
     assert "/ 200k" not in before
-    assert "0.1k / 200k" in after
+    assert "0.1k / 200k    — cached" in after
 
 
 def test_footer_omits_permission_mode_and_shift_tab_hint() -> None:
@@ -1011,6 +1011,12 @@ async def test_context_status_updates_between_model_steps() -> None:
         projected_tokens=4_400,
         context_entry_count=17,
         conversation_entry_count=19,
+        cache_hit_rate=0.25,
+    )
+    next_step_status = replace(
+        step_status,
+        projected_tokens=8_800,
+        cache_hit_rate=0.75,
     )
 
     async def events() -> AsyncIterator[TurnEvent]:
@@ -1018,7 +1024,10 @@ async def test_context_status_updates_between_model_steps() -> None:
         assert app._context_status is step_status
         assert app._status is not None
         assert app._status.context_entry_count == 17
-        assert "4.4k / 200k" in app._status_text()
+        assert "4.4k / 200k    25.0% cached" in app._status_text()
+        yield ContextUpdated(next_step_status)
+        assert app._context_status is next_step_status
+        assert "8.8k / 200k    75.0% cached" in app._status_text()
         yield TurnSucceeded("done", 2, 10, 2)
 
     await app._run_turn("", events(), user=False)

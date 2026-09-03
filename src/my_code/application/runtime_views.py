@@ -48,6 +48,7 @@ def project_context_status(
         model_limit_source=budget.model_limit_source.value,
         configured_compact_trigger_tokens=budget.configured_compact_trigger_tokens,
         warning=budget.warning,
+        cache_hit_rate=budget.cache_hit_rate,
     )
 
 

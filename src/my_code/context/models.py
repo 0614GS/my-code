@@ -26,6 +26,7 @@ class ContextBudget:
     model_limit_source: CapabilitySource = CapabilitySource.FALLBACK
     configured_compact_trigger_tokens: int | None = None
     warning: str | None = None
+    cache_hit_rate: float | None = None
 
     @property
     def estimated_total_tokens(self) -> int:

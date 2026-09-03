@@ -93,7 +93,7 @@ from my_code.tui.picker import PickerRow, PickerState, PickerView
 from my_code.tui.presentation import (
     compaction_activity_label,
     compaction_completed_message,
-    format_context_usage,
+    format_context_footer,
     render_agent_view,
     render_context_card,
     render_mcp,
@@ -690,7 +690,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         if status is None:
             return "Starting my-code…"
         context = self._context_status
-        context_usage = format_context_usage(context) if context is not None else None
+        context_usage = format_context_footer(context) if context is not None else None
         rendered = status_line(status, context_usage)
         return rendered + (
             f" · ! {self._status_warning}" if self._status_warning else ""
@@ -703,7 +703,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         context = self._context_status
         left = f"{status.model} · {status.context_entry_count} context entries"
         if context is not None:
-            left += f"    {format_context_usage(context)}"
+            left += f"    {format_context_footer(context)}"
         if self._status_warning:
             left += f" · ! {self._status_warning}"
         fragments: list[tuple[str, str]] = [("class:secondary", left)]

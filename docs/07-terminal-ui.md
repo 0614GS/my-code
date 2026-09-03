@@ -50,13 +50,13 @@ Enter 提交，Shift+Enter 或 Ctrl+J 换行；Esc 按候选菜单、临时面�
 
 composer 下方最多显示三行 queue preview。Slash command 显式分为 `concurrent_read`、`concurrent_ui` 与 `exclusive`：只读命令、纯展示偏好和 permission mode 可在 Agent active 时运行；permission mode 切换从下一 step 生效。compact、能力 reload/reconnect、provider/model、resume 和 exit 等独占操作保留原草稿并等待 Agent 空闲。
 
-composer 底栏显示模型、context entry 数量、按需计算的 context usage 和警告；Plan 时底栏右下角显示 `Plan` 指示器。普通 composer 在空闲且无独占面板时用 Shift+Tab 切换 Default/Plan，并保留当前输入草稿；Agent working 期间即使 composer 可继续输入也禁止切换。provider form 中 Shift+Tab 仍表示上一字段。Plan 中 `/permissions` 与权限 Picker 禁用。
+composer 底栏显示模型、context entry 数量、按需计算的 context usage、最近一次匹配当前 Provider/模型的请求缓存命中率和警告；context usage 与缓存命中率来自同一个快照并同时更新，首次取得 Provider usage 前显示 `— cached`。Plan 时底栏右下角显示 `Plan` 指示器。普通 composer 在空闲且无独占面板时用 Shift+Tab 切换 Default/Plan，并保留当前输入草稿；Agent working 期间即使 composer 可继续输入也禁止切换。provider form 中 Shift+Tab 仍表示上一字段。Plan 中 `/permissions` 与权限 Picker 禁用。
 
 Question 使用独占面板逐题展示 2–3 个单选项，并由 TUI 自动增加 Other 文本输入；Escape、turn 取消、Session 切换和关闭都会解除等待并让工具结果闭合。成功 turn 收到非空 `<proposed_plan>` 后显示三项交接：当前上下文实施、全新上下文实施、留在 Plan。当前上下文会在下一次提交追加 Default mode、Question invalidation 和实施消息；全新上下文只携带 durable plan handoff 与实施消息；留在 Plan 不产生模型可见事实。
 
 `/view` 使用与 `/model`、`/provider`、`/resume` 相同的二级 Picker 选择主界面模式；`/view concise` 与 `/view detailed` 仍可直接原子写入用户级 `tui.viewMode`。默认 concise，偏好跨项目和 Session。切换会清屏并按新模式重新投影当前 Session，复用 resume 的历史渲染路径。Detailed 在每次请求前按 audit ID 去重展示新增/变化的 AGENTS、Attachment、Todo/Skill、工具发现与后台通知正文；恢复历史时从 request audit 投影相同内容。单项限制为 60 行和 8 KiB，并完整格式化 canonical ToolCall input。工具结果继续使用安全摘要/diff。Concise 保持原有展示；完整历史使用 Ctrl+T。
 
-Slash commands 在进入模型前本地解析。已执行命令先在 scrollback 回显；`/status`、`/context`、`/usage`、`/tools`、`/skills`、`/mcp` 和 `/tasks` 使用统一的圆角信息卡，命令与卡片作为一个串行输出批次提交。`/resume`、`/provider`、`/model`、`/permissions` 和 `/agents` 等仍只调用 ApplicationService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
+Slash commands 在进入模型前本地解析。已执行命令先在 scrollback 回显；`/status`、`/context`、`/usage`、`/tools`、`/skills`、`/mcp` 和 `/tasks` 使用统一的圆角信息卡，命令与卡片作为一个串行输出批次提交。`/usage` 汇总 Provider 报告的普通输入、缓存创建和缓存读取 token。`/resume`、`/provider`、`/model`、`/permissions` 和 `/agents` 等仍只调用 ApplicationService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
 
 Permission、Full Access、Provider 和 Resume 共用 composer 下方的 interaction host。工具权限默认安全拒绝；无 OS sandbox 时首次进入 Full Access 必须经过当前进程有效的危险确认。API key 输入使用密码处理，面板只显示是否已配置。
 

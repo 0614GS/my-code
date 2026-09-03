@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -134,10 +135,12 @@ def test_reported_anchor_includes_output_once_and_delta_only(tmp_path: Path) -> 
     first_plan = planner.plan(
         ContextPlanningInput((first,)), SessionContextCache(), tools=()
     )
+    assert first_plan.budget is not None
+    assert first_plan.budget.cache_hit_rate is None
     assert first_plan.request_footprint is not None
     response = AssistantMessage(
         (TextContent("answer"),),
-        TokenUsage(100, 20, provider_reported=True),
+        TokenUsage(60, 20, 20, 20, True),
         parent_uuid=first.uuid,
         provider_binding=binding,
         context_footprint=meter.response_footprint(
@@ -154,6 +157,30 @@ def test_reported_anchor_includes_output_once_and_delta_only(tmp_path: Path) -> 
     assert anchored.budget.estimated_delta_tokens == 0
     assert anchored.budget.projected_tokens == 120
     assert anchored.budget.measurement == "reported"
+    assert anchored.budget.cache_hit_rate == pytest.approx(0.2)
+
+    zero_usage = planner.plan(
+        ContextPlanningInput(
+            (first, replace(response, usage=TokenUsage(provider_reported=True)))
+        ),
+        SessionContextCache(),
+        tools=(),
+    )
+    assert zero_usage.budget is not None
+    assert zero_usage.budget.cache_hit_rate == 0.0
+
+    other_binding = ProviderBinding(
+        binding.protocol, binding.provider_id, "other-model", binding.base_url
+    )
+    mismatched = planner.plan(
+        ContextPlanningInput(
+            (first, replace(response, provider_binding=other_binding))
+        ),
+        SessionContextCache(),
+        tools=(),
+    )
+    assert mismatched.budget is not None
+    assert mismatched.budget.cache_hit_rate is None
 
     next_user = HumanMessage("more", parent_uuid=response.uuid)
     grown = planner.plan(

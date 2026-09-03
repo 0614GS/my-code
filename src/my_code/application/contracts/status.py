@@ -42,6 +42,7 @@ class ContextUsageView:
     model_limit_source: str = "fallback"
     configured_compact_trigger_tokens: int | None = None
     warning: str | None = None
+    cache_hit_rate: float | None = None
 
 
 __all__ = [

@@ -122,6 +122,15 @@ def format_context_usage(status: ContextUsageView) -> str:
     return f"{format_token_k(used)} / {format_token_k(status.input_limit_tokens)}"
 
 
+def format_context_footer(status: ContextUsageView) -> str:
+    cached = (
+        "— cached"
+        if status.cache_hit_rate is None
+        else f"{status.cache_hit_rate:.1%} cached"
+    )
+    return f"{format_context_usage(status)}    {cached}"
+
+
 def compaction_activity_label(trigger: CompactionTrigger) -> str:
     return {
         "manual": "Compacting context…",
@@ -285,6 +294,7 @@ def _elapsed(task: SubagentTaskView) -> str:
 __all__ = [
     "compaction_activity_label",
     "compaction_completed_message",
+    "format_context_footer",
     "format_context_usage",
     "render_context_status",
     "render_context_card",
