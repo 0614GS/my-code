@@ -72,7 +72,7 @@ bootstrap 组装 -> ApplicationRuntime.start() -> MCP / Skills -> 接受 turn
 
 ApplicationRuntime.close():
 foreground -> TaskSupervisor -> AgentRunFactory -> SkillRuntime
--> McpRuntime -> ProviderRuntime -> Observer
+-> McpRuntime -> ProviderRuntime -> ObservationDispatcher
 ```
 
 关闭会继续尝试回收后续资源，并汇总各阶段异常。运行期 Provider 切换只影响前台 router 和之后创建的 lease；已运行的 child 保持创建时捕获的 binding。

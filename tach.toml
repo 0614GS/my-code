@@ -84,7 +84,7 @@ depends_on = ["my_code.context", "my_code.conversation", "my_code.foundation", "
 
 [[modules]]
 path = "my_code.observability"
-depends_on = ["my_code.foundation"]
+depends_on = ["my_code.foundation", "my_code.version"]
 
 [[modules]]
 path = "my_code.runtime"

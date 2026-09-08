@@ -245,6 +245,16 @@ type ModelInputItem = UserInput | AssistantOutput | ToolOutputs
 
 
 @dataclass(frozen=True, slots=True)
+class ModelRequestIdentity:
+    """关联审计与调用边界，不参与 provider 请求正文或缓存键。"""
+
+    request_id: str
+    step: int
+    attempt: int
+    purpose: str
+
+
+@dataclass(frozen=True, slots=True)
 class ModelRequest:
     system_prompt: SystemPrompt
     input: tuple[ModelInputItem, ...]
@@ -252,6 +262,9 @@ class ModelRequest:
     max_output_tokens: int
     reasoning_mode: Literal["inherit", "disabled"] = "inherit"
     session_cache_identity: str | None = None
+    identity: ModelRequestIdentity | None = field(
+        default=None, kw_only=True, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.max_output_tokens < 1:
@@ -343,6 +356,7 @@ __all__ = [
     "ModelOutput",
     "ModelReasoningBlock",
     "ModelRequest",
+    "ModelRequestIdentity",
     "ModelTextBlock",
     "ModelToolDefinition",
     "ModelToolUseBlock",

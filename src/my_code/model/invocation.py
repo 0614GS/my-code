@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
@@ -13,7 +13,7 @@ from uuid import uuid4
 from my_code.model.client import ModelClient
 from my_code.model.errors import ModelContextOverflow, ModelProtocolError
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
-from my_code.model.request import ModelRequest
+from my_code.model.request import ModelRequest, ModelRequestIdentity
 
 
 class RequestPurpose(StrEnum):
@@ -117,8 +117,17 @@ class ModelInvocationCoordinator:
         self, invocation: ModelInvocation
     ) -> AsyncIterator[ModelStreamEvent]:
         completed_outputs = 0
+        request = replace(
+            invocation.request,
+            identity=ModelRequestIdentity(
+                invocation.request_id,
+                invocation.step,
+                invocation.attempt,
+                invocation.purpose.value,
+            ),
+        )
         try:
-            async for event in self.client.stream(invocation.request):
+            async for event in self.client.stream(request):
                 if isinstance(event.payload, ModelOutputCompleted):
                     completed_outputs += 1
                     if completed_outputs > 1:
@@ -134,7 +143,7 @@ class ModelInvocationCoordinator:
                         )
             if completed_outputs != 1:
                 raise RuntimeError("Model stream ended without a final response")
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, GeneratorExit):
             self.recorder.finish_model_invocation(invocation.request_id, "cancelled")
             raise
         except ModelContextOverflow:

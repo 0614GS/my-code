@@ -20,6 +20,7 @@
 - 基于 `prompt_toolkit + Rich` 的非全屏 TUI、原生 scrollback 和只读 transcript/agent pager。
 - Concise/Detailed 主界面密度、用户级 `/view` 偏好，以及带 resolved request 导航的 Audit transcript。
 - Session 私有、内容寻址的 provider-neutral request audit sidecar，覆盖 Agent、continuation、compact/retry 与 child run。
+- 类型化 observation dispatcher、默认本地元数据诊断日志、可选 OTel logs/traces/metrics 和只读 badcase 报告，覆盖重复工具轮次、工具错误与异常终态定位。
 - Agent active 时可编辑 composer、session-bound 临时输入队列、FIFO step-boundary steering 与 Up 召回。
 - 单 UI owner、单 worker 离屏 scrollback render，以及有界/latest-wins live Markdown projection。
 - Codex 风格的结构化命令信息卡，以及由显式 model-step 边界驱动的工作组/最终回答分隔。
@@ -42,6 +43,7 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 - macOS/Windows sandbox、完整应用容器、seccomp/Landlock 与域名级网络代理。
 - Provider 断线续传和 stream 重放。
 - 后台任务跨进程恢复或远端执行。
+- 自动死循环干预、SDK 内部网络 attempt 明细与全请求持久化计费账本。
 
 ## 长期不变量
 
@@ -61,6 +63,7 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 
 - 核心模型同时支持 Anthropic/OpenAI 协议，以 provider-neutral items 表达输入和工具结果。
 - TUI 使用 Python 原生非全屏 host 与 terminal scrollback，不复刻 Ink/Textual renderer。
+- 可观测性不复刻参考实现的产品 Analytics 多后端；正文复用 Session/request audit，默认诊断仅写本地元数据。
 - 第三级 transcript 展示 my-code 语义请求而非 Provider SDK/wire payload；历史缺失时明确留空，不用当前配置回填。
 - pending queue 属于 host/runtime 临时状态，不迁移到 canonical Session；进程退出时未接受输入允许丢失。
 - Provider、凭据和模型目录都有显式持久化来源，不从模型名或环境变量猜测能力与连接。

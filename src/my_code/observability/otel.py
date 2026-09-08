@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import time
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
-from dataclasses import fields, is_dataclass
+from collections.abc import Mapping
+from contextlib import AbstractContextManager
+from enum import StrEnum
+from threading import Thread
 from types import TracebackType
 from typing import Self
 
 from opentelemetry import metrics, trace
+from opentelemetry._logs import SeverityNumber
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -23,33 +28,31 @@ from opentelemetry.trace import Status, StatusCode
 from opentelemetry.util.types import AttributeValue
 
 from my_code.observability.api import (
-    _RUN_CONTEXT,
     ObservationOutcome,
     RunObservationContext,
     SpanKind,
     current_run_context,
 )
+from my_code.observability.dispatcher import ObservationRecord
+from my_code.observability.events import (
+    EventOutcome,
+    InvocationFinished,
+    ModelRequestFinished,
+    ModelResponseReceived,
+    ToolExecutionFinished,
+    event_attributes,
+    sensitive_content,
+)
+from my_code.version import __version__
 
 logger = logging.getLogger(__name__)
 _CONTENT_LIMIT = 16 * 1024
-_SENSITIVE_KEYS = {
-    "content",
-    "input",
-    "output",
-    "payload",
-    "prompt",
-    "request",
-    "response",
-    "result",
-    "system_prompt",
-    "tool_input",
-}
 
 
 class OpenTelemetrySpan:
     def __init__(
         self,
-        observer: OpenTelemetryObserver,
+        observer: OpenTelemetryBackend,
         name: str,
         kind: SpanKind,
         attributes: Mapping[str, object] | None,
@@ -58,7 +61,7 @@ class OpenTelemetrySpan:
         self._name = name
         self._kind = kind
         self._attributes = attributes
-        self._scope: object | None = None
+        self._scope: AbstractContextManager[trace.Span] | None = None
         self._span: trace.Span | None = None
         self._started = 0.0
         self._finished = False
@@ -75,6 +78,9 @@ class OpenTelemetrySpan:
                 else OtelSpanKind.INTERNAL
             ),
             attributes=attributes,
+            # 异常正文可能包含凭据或用户内容，禁止 SDK 自动记录及填充 status 描述。
+            record_exception=False,
+            set_status_on_exception=False,
         )
         self._scope = scope
         self._span = scope.__enter__()
@@ -87,17 +93,23 @@ class OpenTelemetrySpan:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool:
-        if exc is not None and self._span is not None:
-            self._span.record_exception(exc)
-            self._span.set_attribute("error.type", type(exc).__name__)
-            if type(exc).__name__ == "CancelledError":
-                self.finish(ObservationOutcome.CANCELLED)
+        try:
+            if (
+                exc is not None
+                and self._span is not None
+                and not (self._finished and isinstance(exc, GeneratorExit))
+            ):
+                self._span.set_attribute("error.type", type(exc).__name__)
+                if isinstance(exc, (asyncio.CancelledError, GeneratorExit)):
+                    self.finish(ObservationOutcome.CANCELLED)
+                else:
+                    self.finish(ObservationOutcome.ERROR)
             else:
-                self.finish(ObservationOutcome.ERROR)
-        else:
-            self.finish()
-        if self._scope is not None:
-            return bool(self._scope.__exit__(exc_type, exc, traceback))  # type: ignore[attr-defined]
+                self.finish()
+        finally:
+            # 指标导出失败也必须归还当前 context，避免后续调用挂错父 span。
+            if self._scope is not None:
+                self._scope.__exit__(exc_type, exc, traceback)
         return False
 
     def set_attributes(self, attributes: Mapping[str, object]) -> None:
@@ -125,34 +137,49 @@ class OpenTelemetrySpan:
         self._observer.record_duration(self._name, duration, outcome)
 
 
-class OpenTelemetryObserver:
+class OpenTelemetryBackend:
     def __init__(
         self,
         tracer_provider: TracerProvider,
         meter_provider: MeterProvider,
         *,
         capture_content: bool,
+        logger_provider: LoggerProvider | None = None,
     ) -> None:
         self._tracer_provider = tracer_provider
         self._meter_provider = meter_provider
-        self.tracer = tracer_provider.get_tracer("my_code", "0.1.0")
-        meter = meter_provider.get_meter("my_code", "0.1.0")
+        self._logger_provider = logger_provider
+        self.tracer = tracer_provider.get_tracer("my_code", __version__)
+        self._event_logger = (
+            logger_provider.get_logger("my_code", __version__)
+            if logger_provider is not None
+            else None
+        )
+        meter = meter_provider.get_meter("my_code", __version__)
         self._duration = meter.create_histogram(
             "my_code.operation.duration",
             unit="s",
             description="Runtime operation duration",
         )
+        self._event_count = meter.create_counter(
+            "my_code.event.count", description="Published observation events"
+        )
+        self._model_tokens = meter.create_counter(
+            "gen_ai.client.token.usage",
+            unit="token",
+            description="Provider-reported model token usage",
+        )
+        self._model_duration = meter.create_histogram(
+            "gen_ai.client.operation.duration", unit="s"
+        )
+        self._tool_duration = meter.create_histogram(
+            "my_code.tool.execution.duration", unit="s"
+        )
+        self._invocation_duration = meter.create_histogram(
+            "my_code.invocation.duration", unit="s"
+        )
         self._capture_content = capture_content
-
-    @contextmanager
-    def bind_run(
-        self, context: RunObservationContext
-    ) -> Iterator[RunObservationContext]:
-        token = _RUN_CONTEXT.set(context)
-        try:
-            yield context
-        finally:
-            _RUN_CONTEXT.reset(token)
+        self._shutdown_threads: tuple[Thread, ...] | None = None
 
     def start_span(
         self,
@@ -163,18 +190,22 @@ class OpenTelemetryObserver:
     ) -> OpenTelemetrySpan:
         return OpenTelemetrySpan(self, name, kind, attributes)
 
-    def record(self, event_type: str, payload: Mapping[str, object]) -> None:
+    def consume(self, record: ObservationRecord) -> None:
+        event_type = record.event.name
+        payload = event_attributes(record.event)
         span = trace.get_current_span()
-        if not span.is_recording():
-            return
-        attributes: dict[str, object] = {"my_code.event.type": event_type}
+        attributes: dict[str, object] = {
+            "my_code.event.id": record.event_id,
+            "my_code.event.type": event_type,
+            "my_code.event.sequence": record.sequence,
+        }
+        if record.context is not None:
+            attributes.update(_context_attributes(record.context))
         for key, value in payload.items():
-            if _is_scalar(value) and key.casefold() not in _SENSITIVE_KEYS:
-                attributes[f"my_code.event.{key}"] = value
-        if self._capture_content:
-            encoded = json.dumps(
-                _captured_content(payload), ensure_ascii=False
-            ).encode()
+            attributes[f"my_code.event.{key}"] = value
+        content = sensitive_content(record.event)
+        if self._capture_content and content is not None:
+            encoded = json.dumps(content.value, ensure_ascii=False).encode()
             attributes["my_code.event.content.bytes"] = len(encoded)
             attributes["my_code.event.content.sha256"] = hashlib.sha256(
                 encoded
@@ -185,7 +216,41 @@ class OpenTelemetryObserver:
             attributes["my_code.event.content.truncated"] = (
                 len(encoded) > _CONTENT_LIMIT
             )
-        span.add_event(event_type, _otel_attributes(attributes))
+        otel_attributes = _otel_attributes(attributes)
+        if span.is_recording():
+            span.add_event(event_type, otel_attributes)
+            _enrich_span(span, record.event)
+        if self._event_logger is not None:
+            self._event_logger.emit(
+                timestamp=_timestamp_ns(record.occurred_at),
+                severity_number=SeverityNumber.INFO,
+                severity_text="INFO",
+                body=event_type,
+                event_name=event_type,
+                attributes=otel_attributes,
+            )
+        self._record_event_metrics(record)
+
+    def _record_event_metrics(self, record: ObservationRecord) -> None:
+        event = record.event
+        dimensions = _metric_dimensions(event)
+        self._event_count.add(1, {"event.name": event.name, **dimensions})
+        if isinstance(event, ModelResponseReceived) and event.provider_reported:
+            for token_type, value in (
+                ("input", event.input_tokens),
+                ("output", event.output_tokens),
+                ("cache_read", event.cache_read_tokens),
+                ("cache_creation", event.cache_creation_tokens),
+            ):
+                self._model_tokens.add(
+                    value, {**dimensions, "gen_ai.token.type": token_type}
+                )
+        elif isinstance(event, ModelRequestFinished):
+            self._model_duration.record(event.duration_ms / 1000, dimensions)
+        elif isinstance(event, ToolExecutionFinished):
+            self._tool_duration.record(event.duration_ms / 1000, dimensions)
+        elif isinstance(event, InvocationFinished):
+            self._invocation_duration.record(event.duration_ms / 1000, dimensions)
 
     def record_duration(
         self, name: str, duration: float, outcome: ObservationOutcome
@@ -196,43 +261,80 @@ class OpenTelemetryObserver:
         )
 
     def shutdown(self, timeout_millis: int = 2_000) -> None:
-        self._tracer_provider.force_flush(timeout_millis)
-        self._meter_provider.force_flush(timeout_millis)
-        self._tracer_provider.shutdown()
-        self._meter_provider.shutdown()
+        """整个关闭过程共用预算；不等待失联 exporter 无限阻塞主线程。"""
 
-    @staticmethod
-    def trace_identifiers() -> tuple[str | None, str | None]:
-        context = trace.get_current_span().get_span_context()
-        if not context.is_valid:
-            return None, None
-        return f"{context.trace_id:032x}", f"{context.span_id:016x}"
+        deadline = time.monotonic() + max(0, timeout_millis) / 1000
+        if self._shutdown_threads is None:
+            providers = [self._tracer_provider, self._meter_provider]
+            if self._logger_provider is not None:
+                providers.append(self._logger_provider)
+            self._shutdown_threads = tuple(
+                Thread(target=_shutdown_provider, args=(provider,), daemon=True)
+                for provider in providers
+            )
+            for thread in self._shutdown_threads:
+                thread.start()
+        for thread in self._shutdown_threads:
+            thread.join(max(0, deadline - time.monotonic()))
 
 
-def build_otel_observer(
+def _shutdown_provider(
+    provider: TracerProvider | MeterProvider | LoggerProvider,
+) -> None:
+    try:
+        # SDK shutdown 自身负责最后一批导出，不额外重复 force_flush。
+        provider.shutdown()
+    except Exception:
+        logger.warning("OpenTelemetry shutdown failed")
+
+
+def build_otel_backend(
     *,
     service_name: str,
     service_version: str,
     capture_content: bool,
-) -> OpenTelemetryObserver:
-    # Importing exporters lazily keeps the API usable in unit tests without a
-    # configured endpoint and prevents any network work before bootstrap.
-    from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
-        OTLPMetricExporter,
-    )
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
+    enable_traces: bool,
+    enable_metrics: bool,
+    enable_logs: bool,
+) -> OpenTelemetryBackend:
     resource = Resource.create(
         {"service.name": service_name, "service.version": service_version}
     )
-    tracer_provider = TracerProvider(resource=resource)
-    tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-    metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter())
-    meter_provider = MeterProvider(resource=resource, metric_readers=(metric_reader,))
-    trace.set_tracer_provider(tracer_provider)
-    metrics.set_meter_provider(meter_provider)
-    return OpenTelemetryObserver(
-        tracer_provider, meter_provider, capture_content=capture_content
+    tracer_provider = TracerProvider(resource=resource, shutdown_on_exit=False)
+    if enable_traces:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+
+        tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        trace.set_tracer_provider(tracer_provider)
+    metric_readers: tuple[PeriodicExportingMetricReader, ...] = ()
+    if enable_metrics:
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+            OTLPMetricExporter,
+        )
+
+        metric_readers = (PeriodicExportingMetricReader(OTLPMetricExporter()),)
+    meter_provider = MeterProvider(
+        resource=resource,
+        metric_readers=metric_readers,
+        shutdown_on_exit=False,
+    )
+    if enable_metrics:
+        metrics.set_meter_provider(meter_provider)
+    logger_provider: LoggerProvider | None = None
+    if enable_logs:
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+
+        logger_provider = LoggerProvider(resource=resource, shutdown_on_exit=False)
+        logger_provider.add_log_record_processor(
+            BatchLogRecordProcessor(OTLPLogExporter())
+        )
+    return OpenTelemetryBackend(
+        tracer_provider,
+        meter_provider,
+        capture_content=capture_content,
+        logger_provider=logger_provider,
     )
 
 
@@ -260,26 +362,41 @@ def _is_scalar(value: object) -> bool:
     return isinstance(value, (bool, int, float, str))
 
 
-def _captured_content(value: object) -> object:
-    """Project explicit content events while excluding opaque provider replay."""
+def _enrich_span(span: trace.Span, event: object) -> None:
+    if isinstance(event, ModelResponseReceived):
+        span.set_attributes(
+            {
+                "gen_ai.usage.input_tokens": event.input_tokens
+                + event.cache_read_tokens
+                + event.cache_creation_tokens,
+                "gen_ai.usage.output_tokens": event.output_tokens,
+                "gen_ai.response.finish_reasons": (event.stop_reason,),
+                "my_code.usage.cache_read_tokens": event.cache_read_tokens,
+                "my_code.usage.cache_creation_tokens": event.cache_creation_tokens,
+            }
+        )
+    outcome = getattr(event, "outcome", None)
+    if isinstance(outcome, EventOutcome):
+        span.set_attribute("my_code.outcome", outcome.value)
+        if outcome in {EventOutcome.ERROR, EventOutcome.MISSING_OUTPUT}:
+            span.set_status(Status(StatusCode.ERROR))
 
-    if value is None or _is_scalar(value):
-        return value
-    if isinstance(value, Mapping):
-        return {
-            str(key): _captured_content(item)
-            for key, item in value.items()
-            if str(key) != "continuation"
-        }
-    if isinstance(value, (tuple, list)):
-        return [_captured_content(item) for item in value]
-    if is_dataclass(value) and not isinstance(value, type):
-        return {
-            item.name: _captured_content(getattr(value, item.name))
-            for item in fields(value)
-            if item.name != "continuation"
-        }
-    return repr(value)
+
+def _metric_dimensions(event: object) -> dict[str, str]:
+    dimensions: dict[str, str] = {}
+    for key in ("provider", "model", "purpose", "tool_name", "outcome"):
+        value = getattr(event, key, None)
+        if isinstance(value, StrEnum):
+            dimensions[f"my_code.{key}"] = value.value
+        elif isinstance(value, str):
+            dimensions[f"my_code.{key}"] = value
+    return dimensions
+
+
+def _timestamp_ns(value: str) -> int:
+    from datetime import datetime
+
+    return int(datetime.fromisoformat(value).timestamp() * 1_000_000_000)
 
 
 def _otel_attributes(values: Mapping[str, object]) -> dict[str, AttributeValue]:
@@ -294,4 +411,4 @@ def _otel_attributes(values: Mapping[str, object]) -> dict[str, AttributeValue]:
     return result
 
 
-__all__ = ["OpenTelemetryObserver", "build_otel_observer"]
+__all__ = ["OpenTelemetryBackend", "build_otel_backend"]

@@ -255,6 +255,8 @@ def collect_technical_leaks() -> tuple[TechnicalLeak, ...]:
                 and isinstance(node.value, str)
                 and ".jsonl" in node.value
                 and source != "my_code.sessions"
+                # 唯一非 Session JSONL owner 只存白名单元数据，不拥有 transcript codec。
+                and module_name != "my_code.observability.diagnostic_log"
             ):
                 leaks.append(
                     TechnicalLeak(relative_path, node.lineno, "jsonl-path", node.value)

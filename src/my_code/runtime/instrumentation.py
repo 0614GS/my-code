@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+import time
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from typing import TypeVar, cast
 from uuid import uuid4
 
@@ -24,18 +28,36 @@ from my_code.context.session_cache import SessionContextCache
 from my_code.conversation.models import ToolCall, ToolResult
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.model.client import ModelClient
-from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
+from my_code.model.events import (
+    ModelOutputCompleted,
+    ModelStreamEvent,
+    ModelTextCompleted,
+    ModelTextDelta,
+)
 from my_code.model.primitives import ProviderBinding
 from my_code.model.request import ModelRequest
 from my_code.observability.api import (
     EvaluationContext,
-    NoOpSpan,
     ObservationOutcome,
-    ObservationSpan,
-    Observer,
     RunObservationContext,
     SpanKind,
 )
+from my_code.observability.dispatcher import ObservationDispatcher
+from my_code.observability.events import (
+    EventOutcome,
+    JournalWriteFailed,
+    ModelRequestFinished,
+    ModelRequestStarted,
+    ModelResponseReceived,
+    SensitiveContent,
+    ToolExecutionFinished,
+    ToolExecutionStarted,
+    ToolPermissionEvaluated,
+)
+from my_code.observability.events import (
+    InvocationFinished as InvocationFinishedEvent,
+)
+from my_code.observability.events import InvocationStarted as InvocationStartedEvent
 from my_code.permissions.models import (
     PermissionConfirmation,
     PermissionDecision,
@@ -61,7 +83,7 @@ class InstrumentedAgentRunner:
     def __init__(
         self,
         runner: AgentRunner | InteractiveAgentRunner,
-        observer: Observer,
+        observations: ObservationDispatcher,
         *,
         run_id: str | None = None,
         parent_run_id: str | None = None,
@@ -70,7 +92,7 @@ class InstrumentedAgentRunner:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._runner = runner
-        self._observer = observer
+        self._observations = observations
         self._run_id = run_id
         self._parent_run_id = parent_run_id
         self._agent_name = agent_name
@@ -133,6 +155,7 @@ class InstrumentedAgentRunner:
         pending_source: PendingInputSource | None,
     ) -> AsyncIterator[AgentEvent]:
         invocation_id = str(uuid4())
+        started_at = time.monotonic()
         run_id = self._run_id or session.run_id
         evaluation = self._evaluation
         started = InvocationStarted(
@@ -155,9 +178,8 @@ class InstrumentedAgentRunner:
             evaluation,
         )
         terminal_written = False
-        with _safe_bind(self._observer, context):
-            with _safe_span(
-                self._observer,
+        with self._observations.bind_run(context):
+            with self._observations.operation(
                 f"invoke_agent {self._agent_name}",
                 attributes={
                     "gen_ai.operation.name": "invoke_agent",
@@ -171,10 +193,8 @@ class InstrumentedAgentRunner:
                 self._write_journal(
                     session.append_invocation_started, started, "invocation_started"
                 )
-                _safe_record(
-                    self._observer,
-                    "invocation.started",
-                    {"continuation": continuation},
+                self._observations.publish(
+                    InvocationStartedEvent(continuation=continuation)
                 )
                 if pending_source is not None:
                     interactive = cast(InteractiveAgentRunner, self._runner)
@@ -217,10 +237,13 @@ class InstrumentedAgentRunner:
                                 "invocation_finished",
                             )
                             span.set_attributes(_usage_attributes(event))
-                            _safe_record(
-                                self._observer,
-                                "invocation.completed",
-                                {"outcome": "succeeded"},
+                            span.finish(ObservationOutcome.OK)
+                            self._observations.publish(
+                                InvocationFinishedEvent(
+                                    EventOutcome.OK,
+                                    (time.monotonic() - started_at) * 1000,
+                                    completed_steps=event.completed_steps,
+                                )
                             )
                         elif isinstance(event, AgentMaxStepsReached):
                             terminal_written = True
@@ -239,10 +262,13 @@ class InstrumentedAgentRunner:
                             )
                             span.set_attributes(_usage_attributes(event))
                             span.finish(ObservationOutcome.LIMIT)
-                            _safe_record(
-                                self._observer,
-                                "invocation.completed",
-                                {"outcome": "max_steps"},
+                            self._observations.publish(
+                                InvocationFinishedEvent(
+                                    EventOutcome.LIMIT,
+                                    (time.monotonic() - started_at) * 1000,
+                                    completed_steps=event.completed_steps,
+                                    max_steps=event.max_steps,
+                                )
                             )
                         yield event
                 except (asyncio.CancelledError, GeneratorExit):
@@ -257,8 +283,13 @@ class InstrumentedAgentRunner:
                             ),
                             "invocation_finished",
                         )
-                    span.finish(ObservationOutcome.CANCELLED)
-                    _safe_record(self._observer, "invocation.cancelled", {})
+                        span.finish(ObservationOutcome.CANCELLED)
+                        self._observations.publish(
+                            InvocationFinishedEvent(
+                                EventOutcome.CANCELLED,
+                                (time.monotonic() - started_at) * 1000,
+                            )
+                        )
                     raise
                 except Exception as error:
                     if not terminal_written:
@@ -275,10 +306,12 @@ class InstrumentedAgentRunner:
                         )
                     span.set_attributes({"error.type": type(error).__name__})
                     span.finish(ObservationOutcome.ERROR)
-                    _safe_record(
-                        self._observer,
-                        "invocation.failed",
-                        {"error_type": type(error).__name__},
+                    self._observations.publish(
+                        InvocationFinishedEvent(
+                            EventOutcome.ERROR,
+                            (time.monotonic() - started_at) * 1000,
+                            error_type=type(error).__name__,
+                        )
                     )
                     raise
 
@@ -294,10 +327,8 @@ class InstrumentedAgentRunner:
             logger.exception(
                 "Session invocation journal write failed: type=%s", event_type
             )
-            _safe_record(
-                self._observer,
-                "journal.write_failed",
-                {"record_type": event_type, "error_type": type(error).__name__},
+            self._observations.publish(
+                JournalWriteFailed(event_type, type(error).__name__)
             )
 
 
@@ -305,43 +336,92 @@ class InstrumentedModelClient:
     def __init__(
         self,
         client: ModelClient,
-        observer: Observer,
+        observations: ObservationDispatcher,
         binding: Callable[[], ProviderBinding],
         *,
         purpose: str,
     ) -> None:
         self._client = client
-        self._observer = observer
+        self._observations = observations
         self._binding = binding
         self._purpose = purpose
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         binding = self._binding()
-        with _safe_span(
-            self._observer,
+        started = time.monotonic()
+        metadata: dict[str, object] = {
+            "purpose": self._purpose,
+            "provider": binding.provider_id,
+            "model": binding.model,
+        }
+        if request.identity is not None:
+            metadata.update(
+                request_id=request.identity.request_id,
+                step=request.identity.step,
+                attempt=request.identity.attempt,
+                purpose=request.identity.purpose,
+            )
+        with self._observations.operation(
             f"chat {binding.model}",
             kind=SpanKind.CLIENT,
             attributes={
                 "gen_ai.operation.name": "chat",
                 "gen_ai.provider.name": binding.provider_id,
                 "gen_ai.request.model": binding.model,
-                "my_code.model.purpose": self._purpose,
+                "my_code.model.purpose": metadata["purpose"],
                 "my_code.model.tool_count": len(request.tools),
+                **(
+                    {
+                        "my_code.request.id": request.identity.request_id,
+                        "my_code.request.step": request.identity.step,
+                        "my_code.request.attempt": request.identity.attempt,
+                    }
+                    if request.identity is not None
+                    else {}
+                ),
             },
         ) as span:
-            _safe_record(
-                self._observer,
-                "model.request",
-                {"purpose": self._purpose, "request": request},
+            self._observations.publish(
+                ModelRequestStarted(
+                    purpose=str(metadata["purpose"]),
+                    provider=binding.provider_id,
+                    model=binding.model,
+                    request_id=_optional_str(metadata.get("request_id")),
+                    step=_optional_int(metadata.get("step")),
+                    attempt=_optional_int(metadata.get("attempt")),
+                    content=_sensitive_content(self._observations, request),
+                )
             )
             first_chunk = True
+            first_text = True
+            completed = False
             try:
                 async for event in self._client.stream(request):
                     if first_chunk:
                         first_chunk = False
                         span.add_event("gen_ai.client.first_chunk")
+                        metadata["first_event_ms"] = (time.monotonic() - started) * 1000
+                    if (
+                        first_text
+                        and isinstance(
+                            event.payload, (ModelTextDelta, ModelTextCompleted)
+                        )
+                        and event.payload.text
+                    ):
+                        first_text = False
+                        metadata["first_text_ms"] = (time.monotonic() - started) * 1000
+                        span.add_event("my_code.client.first_text")
                     if isinstance(event.payload, ModelOutputCompleted):
+                        completed = True
                         output = event.payload.output
+                        metadata.update(
+                            input_tokens=output.usage.input_tokens,
+                            output_tokens=output.usage.output_tokens,
+                            cache_read_tokens=output.usage.cache_read_input_tokens,
+                            cache_creation_tokens=output.usage.cache_creation_input_tokens,
+                            provider_reported=output.usage.provider_reported,
+                            stop_reason=output.stop_reason,
+                        )
                         span.set_attributes(
                             {
                                 "gen_ai.usage.input_tokens": (
@@ -351,35 +431,88 @@ class InstrumentedModelClient:
                                     output.usage.output_tokens
                                 ),
                                 "gen_ai.response.finish_reasons": (output.stop_reason,),
+                                "my_code.usage.cache_read_tokens": (
+                                    output.usage.cache_read_input_tokens
+                                ),
+                                "my_code.usage.cache_creation_tokens": (
+                                    output.usage.cache_creation_input_tokens
+                                ),
                             }
                         )
-                        _safe_record(
-                            self._observer,
-                            "model.response",
-                            {"purpose": self._purpose, "response": output},
+                        self._observations.publish(
+                            ModelResponseReceived(
+                                purpose=str(metadata["purpose"]),
+                                provider=binding.provider_id,
+                                model=binding.model,
+                                input_tokens=output.usage.input_tokens,
+                                output_tokens=output.usage.output_tokens,
+                                cache_read_tokens=(
+                                    output.usage.cache_read_input_tokens
+                                ),
+                                cache_creation_tokens=(
+                                    output.usage.cache_creation_input_tokens
+                                ),
+                                provider_reported=output.usage.provider_reported,
+                                stop_reason=output.stop_reason,
+                                request_id=_optional_str(metadata.get("request_id")),
+                                step=_optional_int(metadata.get("step")),
+                                attempt=_optional_int(metadata.get("attempt")),
+                                first_event_ms=_optional_float(
+                                    metadata.get("first_event_ms")
+                                ),
+                                first_text_ms=_optional_float(
+                                    metadata.get("first_text_ms")
+                                ),
+                                content=_sensitive_content(self._observations, output),
+                            )
                         )
                     yield event
             except (asyncio.CancelledError, GeneratorExit):
                 span.finish(ObservationOutcome.CANCELLED)
-                _safe_record(
-                    self._observer, "model.cancelled", {"purpose": self._purpose}
+                self._observations.publish(
+                    _model_finished_event(
+                        metadata,
+                        binding,
+                        EventOutcome.CANCELLED,
+                        (time.monotonic() - started) * 1000,
+                    )
                 )
                 raise
             except Exception as error:
                 span.set_attributes({"error.type": type(error).__name__})
                 span.finish(ObservationOutcome.ERROR)
-                _safe_record(
-                    self._observer,
-                    "model.error",
-                    {"purpose": self._purpose, "error_type": type(error).__name__},
+                self._observations.publish(
+                    _model_finished_event(
+                        metadata,
+                        binding,
+                        EventOutcome.ERROR,
+                        (time.monotonic() - started) * 1000,
+                        error_type=type(error).__name__,
+                    )
                 )
                 raise
+            else:
+                # response 仅表示收到了输出；流自然结束才记为 completed。
+                if not completed:
+                    span.finish(ObservationOutcome.ERROR)
+                self._observations.publish(
+                    _model_finished_event(
+                        metadata,
+                        binding,
+                        EventOutcome.OK if completed else EventOutcome.MISSING_OUTPUT,
+                        (time.monotonic() - started) * 1000,
+                    )
+                )
 
 
 class InstrumentedToolExecutor:
-    def __init__(self, executor: ToolExecutor, observer: Observer) -> None:
+    def __init__(
+        self,
+        executor: ToolExecutor,
+        observations: ObservationDispatcher,
+    ) -> None:
         self._executor = executor
-        self._observer = observer
+        self._observations = observations
         self.tools = executor.tools
 
     def permission_snapshot(self) -> PermissionPolicy:
@@ -416,8 +549,15 @@ class InstrumentedToolExecutor:
         session_id: str | None = None,
         root_session_id: str | None = None,
     ) -> ToolExecutionOutcome:
-        with _safe_span(
-            self._observer,
+        started = time.monotonic()
+        metadata: dict[str, object] = {
+            "tool_name": call.name,
+            "tool_call_id": call.id,
+            "input_sha256": hashlib.sha256(
+                json.dumps(call.input, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+        }
+        with self._observations.operation(
             f"execute_tool {call.name}",
             attributes={
                 "gen_ai.operation.name": "execute_tool",
@@ -425,6 +565,9 @@ class InstrumentedToolExecutor:
                 "gen_ai.tool.call.id": call.id,
             },
         ) as span:
+            self._observations.publish(
+                ToolExecutionStarted(call.name, call.id, str(metadata["input_sha256"]))
+            )
             try:
                 outcome = await self._executor.execute(
                     call,
@@ -436,24 +579,48 @@ class InstrumentedToolExecutor:
                 )
             except asyncio.CancelledError:
                 span.finish(ObservationOutcome.CANCELLED)
+                self._observations.publish(
+                    ToolExecutionFinished(
+                        call.name,
+                        call.id,
+                        EventOutcome.CANCELLED,
+                        (time.monotonic() - started) * 1000,
+                        False,
+                        input_sha256=str(metadata["input_sha256"]),
+                    )
+                )
                 raise
             except Exception as error:
                 span.set_attributes({"error.type": type(error).__name__})
                 span.finish(ObservationOutcome.ERROR)
+                self._observations.publish(
+                    ToolExecutionFinished(
+                        call.name,
+                        call.id,
+                        EventOutcome.ERROR,
+                        (time.monotonic() - started) * 1000,
+                        True,
+                        input_sha256=str(metadata["input_sha256"]),
+                        error_type=type(error).__name__,
+                    )
+                )
                 raise
             if outcome.result.is_error:
-                denied = outcome.result.content.startswith("Permission denied:")
-                span.finish(
-                    ObservationOutcome.DENIED if denied else ObservationOutcome.ERROR
+                # 权限拒绝由结构化 permission 事件表达，不从模型可见文本猜测。
+                span.finish(ObservationOutcome.ERROR)
+            self._observations.publish(
+                ToolExecutionFinished(
+                    call.name,
+                    call.id,
+                    (
+                        EventOutcome.ERROR
+                        if outcome.result.is_error
+                        else EventOutcome.OK
+                    ),
+                    (time.monotonic() - started) * 1000,
+                    outcome.result.is_error,
+                    input_sha256=str(metadata["input_sha256"]),
                 )
-            _safe_record(
-                self._observer,
-                "tool.completed",
-                {
-                    "tool_name": call.name,
-                    "tool_call_id": call.id,
-                    "is_error": outcome.result.is_error,
-                },
             )
             return outcome
 
@@ -463,11 +630,11 @@ class TelemetryToolInvocationAudit:
 
     def __init__(
         self,
-        observer: Observer,
+        observations: ObservationDispatcher,
         delegate: ToolInvocationAudit | None = None,
         execution_backend: str = "unknown",
     ) -> None:
-        self._observer = observer
+        self._observations = observations
         self._delegate = delegate
         self._execution_backend = execution_backend
 
@@ -480,25 +647,20 @@ class TelemetryToolInvocationAudit:
         behavior = getattr(getattr(decision, "behavior", None), "value", "unknown")
         reason = getattr(decision, "decision_reason", None)
         authority = call.input.get("sandbox_permissions", "use_default")
-        _safe_record(
-            self._observer,
-            "tool.permission",
-            {
-                "tool_name": call.name,
-                "tool_call_id": call.id,
-                "origin": invocation.origin.value,
-                "behavior": behavior,
-                "reason_kind": getattr(
-                    getattr(reason, "kind", None), "value", "unknown"
-                ),
-                "reason_detail": getattr(reason, "detail", "unknown"),
-                "authority": authority,
-                "execution_backend": (
+        self._observations.publish(
+            ToolPermissionEvaluated(
+                tool_name=call.name,
+                tool_call_id=call.id,
+                origin=invocation.origin.value,
+                behavior=behavior,
+                reason_kind=getattr(getattr(reason, "kind", None), "value", "unknown"),
+                authority=str(authority),
+                execution_backend=(
                     "local"
                     if authority == "require_escalated"
                     else self._execution_backend
                 ),
-            },
+            )
         )
         if self._delegate is not None:
             try:
@@ -508,13 +670,14 @@ class TelemetryToolInvocationAudit:
 
 
 class InstrumentedPermissionPrompter:
-    def __init__(self, prompter: PermissionPrompter, observer: Observer) -> None:
+    def __init__(
+        self, prompter: PermissionPrompter, observations: ObservationDispatcher
+    ) -> None:
         self._prompter = prompter
-        self._observer = observer
+        self._observations = observations
 
     async def confirm(self, request: PermissionPrompt) -> PermissionConfirmation:
-        with _safe_span(
-            self._observer,
+        with self._observations.operation(
             "tool.blocked_on_user",
             attributes={"gen_ai.tool.name": request.tool_name},
         ) as span:
@@ -533,61 +696,69 @@ def _usage_attributes(
     }
 
 
-def _safe_record(observer: Observer, name: str, payload: Mapping[str, object]) -> None:
-    try:
-        observer.record(name, payload)
-    except Exception:
-        logger.exception("Telemetry event failed: %s", name)
-
-
-@contextmanager
-def _safe_bind(
-    observer: Observer, context: RunObservationContext
-) -> Iterator[RunObservationContext]:
-    try:
-        scope = observer.bind_run(context)
-        scope.__enter__()
-    except Exception:
-        logger.exception("Telemetry context binding failed")
-        yield context
-        return
-    try:
-        yield context
-    finally:
-        try:
-            scope.__exit__(None, None, None)
-        except Exception:
-            logger.exception("Telemetry context cleanup failed")
-
-
-@contextmanager
-def _safe_span(
-    observer: Observer,
-    name: str,
+def _model_finished_event(
+    metadata: Mapping[str, object],
+    binding: ProviderBinding,
+    outcome: EventOutcome,
+    duration_ms: float,
     *,
-    kind: SpanKind = SpanKind.INTERNAL,
-    attributes: Mapping[str, object] | None = None,
-) -> Iterator[ObservationSpan]:
-    span: ObservationSpan = NoOpSpan()
-    try:
-        candidate = observer.start_span(name, kind=kind, attributes=attributes)
-        candidate.__enter__()
-        span = candidate
-    except Exception:
-        logger.exception("Telemetry span start failed: %s", name)
-    try:
-        yield span
-    except BaseException as error:
-        try:
-            span.__exit__(type(error), error, error.__traceback__)
-        except Exception:
-            logger.exception("Telemetry span cleanup failed: %s", name)
-        raise
-    else:
-        try:
-            span.__exit__(None, None, None)
-        except Exception:
-            logger.exception("Telemetry span cleanup failed: %s", name)
+    error_type: str | None = None,
+) -> ModelRequestFinished:
+    return ModelRequestFinished(
+        purpose=str(metadata["purpose"]),
+        provider=binding.provider_id,
+        model=binding.model,
+        outcome=outcome,
+        duration_ms=duration_ms,
+        request_id=_optional_str(metadata.get("request_id")),
+        step=_optional_int(metadata.get("step")),
+        attempt=_optional_int(metadata.get("attempt")),
+        error_type=error_type,
+    )
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _optional_int(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def _optional_float(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _sensitive_content(
+    observations: ObservationDispatcher, value: object
+) -> SensitiveContent | None:
+    if not observations.capture_content:
+        return None
+    return SensitiveContent(_observation_json(value))
+
+
+def _observation_json(value: object):
+    """显式 opt-in 时才构造正文，排除 opaque continuation replay。"""
+
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Enum):
+        return _observation_json(value.value)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _observation_json(item)
+            for key, item in value.items()
+            if str(key) != "continuation"
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_observation_json(item) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            item.name: _observation_json(getattr(value, item.name))
+            for item in fields(value)
+            if item.name != "continuation"
+        }
+    return repr(value)
 
 
 __all__ = [

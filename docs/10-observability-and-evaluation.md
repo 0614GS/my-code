@@ -1,8 +1,81 @@
-# Session Transcript 与 OpenTelemetry
+# 执行证据与诊断
 
 my-code 只有一个可靠的执行事实源：Session transcript。OpenTelemetry 是可采样、
 可丢失的运行观测面，用于时间线、错误类型、重试、耗时与指标，不能用于恢复，也不是
 Harness 的数据依赖。
+
+## 职责与实施边界
+
+| 数据 | 所有者 | 用途与故障语义 |
+| --- | --- | --- |
+| conversation、request audit | Session | 正文证据与实际语义请求；沿用持久化校验与 audit-before-delivery |
+| invocation journal | Session | 最小生命周期辅助记录；写入失败不覆盖业务结果，缺口显式可见 |
+| 类型化 observation event | runtime 发布、observability 分发 | 连接诊断 sink，不是业务命令或持久化事实 |
+| 本地 metadata JSONL | observability subscriber | 默认开启、可丢失、可轮转的排障时间线，不用于恢复 |
+| logs、span、metrics | OTel | 可选运行遥测，不作为评测账本或正文存储 |
+| badcase report | sessions 只读派生 | 聚合原始证据中的线索，不反向改写会话、不自动干预 Agent |
+
+`ObservationDispatcher` 是进程内、同步、固定订阅的窄事件总线。它在发布时冻结 event ID、
+时间、sequence 与 run context，再分别投递本地 JSONL 和 OTel sink。单个 subscriber 失败不
+影响其他 subscriber 或业务结果。它不提供全局 registry、动态订阅或业务消息投递。
+
+## 本地诊断日志
+
+每次 application 在 `<project_state_dir>/diagnostics/<application-uuid>.jsonl`
+写入元数据日志。每个文件最多 5 MiB，保留两份轮转备份；不同 application 使用不同文件，
+避免多进程同时轮转。历史 application 文件不自动删除，由用户按保留策略清理。
+文件权限为 0600，新建目录为 0700。`MY_CODE_DIAGNOSTICS=0` 关闭本地日志，
+与 OTel 开关互不依赖。关闭 application 时关闭文件，不修改全局 logging handler。
+
+v2 日志包含 event ID、时间、序号、session/run/invocation、request ID、step/attempt/purpose、
+provider/model、工具 call ID、参数指纹、错误标志、终态与耗时。模型响应另含普通输入、
+输出、缓存读写 token、provider_reported 与 stop reason。字段使用白名单，字符串限长；
+不保存 prompt、工具参数正文、错误提示正文、异常 message/stacktrace 或权限 reason detail。
+工具名及模型名仍可能是私有元数据，日志不应未经审查上传。
+
+`model.response.received` 表示收到完成输出，`model.request.finished` 表示底层流自然结束，
+并不保证
+上层协议校验或持久化成功；request audit 的终态才反映 coordinator 是否接受该请求。
+首内部事件 `first_event_ms` 与首可见文本 `first_text_ms` 分开；纯工具响应可能没有后者。
+token 只按每个 request 的 `model.response.received` 计一次，不能再把 terminal/invocation
+指标相加。
+未收到 usage 的失败请求费用未知，不填零；SDK 内部网络重试目前不逐次记录。
+
+本地日志故障不能覆盖业务异常，后续成功记录中的 `dropped_events` 表示累计写入缺口。
+进程被强杀可能没有 terminal；日志轮转也可能移除 start，这两者都不等同于已确认失败。
+日志不 fsync，不提供审计级持久性承诺。原始正文仍通过 Session/request audit 查找。
+
+`ModelRequest.identity` 只在 coordinator 调用边界携带已有审计 ID、step、attempt、purpose，
+不参与 request equality、provider payload 或 prompt cache key；不另造一个请求 ID。
+
+## Badcase 排查
+
+先停止会话写入，或准备一致性副本，再运行：
+
+```bash
+uv run python scripts/analyze_session.py <project_state_dir> <session_id>
+uv run python scripts/analyze_session.py <project_state_dir> <session_id> --include-content
+uv run python scripts/analyze_session.py <project_state_dir> <session_id> --request-id <request_id>
+```
+
+`project_state_dir` 是保存 `<session_id>.jsonl` 的目录，默认位于
+`~/.my-code/projects/<规范化工作区路径>/`。报告写到 stdout，不创建或修复 Session 文件。
+`inspect_session()` 使用 Session 所有者内部的 reader，不调用会自动闭合工具的恢复接口。
+缺失/损坏的 canonical 证据明确失败；旧会话无 request audit 时报告历史缺口。报告还会
+扫描 `diagnostics/` 中兼容的 v1/v2 文件并附加 metadata timeline；轮转、损坏或没有匹配
+记录时只标记 evidence gap，不改变 canonical badcase 结论。
+
+默认报告不含正文，列出工具错误、未闭合调用、异常/取消/步数上限/incomplete、请求终态，
+以及同一用户 turn 内连续重复至少三次的工具轮次（模式长度 1~4）。重复是待核查信号，
+不是死循环判定；正常轮询也可能重复，非完全相同参数的循环可能漏检。
+工具错误携带 result entry ID 及确实引用该来源的后续 request ID。
+`--include-content` 输出模型可见工具错误与输入；`--request-id` 显式输出指定请求的
+system/input/tools/budget。两者可能包含敏感正文，只用于受控本地排障。
+
+建议按“失败/重复线索 -> 工具调用及错误提示 -> 后续实际请求 -> harness 假设 ->
+单变量修复与回归测试”分析。不要把 max_steps、正常取消或工具 is_error 自动当成根因。
+报告中的用量只覆盖已提交 assistant，不包括所有压缩、失败或 SDK 重试费用。
+大型工具结果可能只有 preview，外置临时文件可能已过期，报告不假装能还原缺失内容。
 
 ## Invocation Journal
 
@@ -42,13 +115,18 @@ InstrumentedModelClient(purpose=compaction) -> chat <model>
 ```
 
 `observability/` 是唯一允许导入 OpenTelemetry SDK 的生产包。runtime adapter 只依赖
-`Observer` Protocol，并负责把领域对象映射为 telemetry 语义。所有 telemetry 和 Invocation
+`ObservationDispatcher`，并负责把领域对象映射为类型化 metadata event。Agent、Model、
+Tool、Session 不发布 observation event。所有 telemetry 和 Invocation
 Journal 写入故障都只记录日志/事件，不改变 Agent、模型或工具的成功、失败和取消语义。
+
+point event 通过 subscriber fan-out；span 生命周期通过 dispatcher 的 `operation()` scope
+直接委托 OTel `start_as_current_span`。OTel Context 负责 asyncio task 内的父子传播，不通过
+started/finished 事件维护 span 状态表，也不自建 trace ID 或传播协议。
 
 ## OTLP 配置
 
-未配置端点时 `build_observer()` 返回 NoOp observer，不初始化 exporter，也不发起遥测
-网络请求。启用 Collector：
+未配置端点时使用 NoOp tracer，不初始化 exporter，也不发起遥测网络请求；本地 JSONL
+仍独立工作。启用 Collector：
 
 ```bash
 export OTEL_SERVICE_NAME=my-code
@@ -56,12 +134,19 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 uv run mycode
 ```
 
-仓库提供 `docs/examples/otel-collector.yaml` 作为最小示例。实现保留 trace、duration
-histogram、OTLP HTTP 批量导出和关闭时的有界 flush。
+通用 endpoint 启用 logs、traces、metrics；也可以只配置标准的
+`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`、`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 或
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`，未配置的 signal 不创建 exporter。
+
+仓库提供 `docs/examples/otel-collector.yaml` 作为最小示例。实现导出 trace、OTel Logs、
+事件计数、Agent/Tool/Model 耗时和四类 token usage。metric attributes 不包含 request、
+invocation、tool call 等高基数 ID。三个 provider 共享关闭总预算并使用批量 OTLP HTTP 导出。
 
 默认只导出 provider/model、TTFC、finish reason、token usage、权限 outcome、错误类型和
 耗时等元数据。只有显式设置 `MY_CODE_OTEL_CAPTURE_CONTENT=1` 才添加内容事件；内容限制
 为 16 KiB，并带原始字节数、SHA-256 与截断标记。不要把这一开关作为 Harness 输入机制。
+异常 message/stacktrace 即使开启内容捕获也不自动导出。span 写操作与清理失败均在
+runtime 边界隔离，关闭 exporter 共用总时间预算；超时后放弃等待，不保证遥测送达。
 
 旧版本生成的本地 trajectory 文件不会自动删除，但新版本不再写入或读取它们，也不再
 提供 trajectory reader、writer 或 composite fan-out。

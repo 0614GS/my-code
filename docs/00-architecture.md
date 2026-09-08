@@ -121,7 +121,7 @@ Subagent 是标准 Tool 之上的纵向能力。每个 child run 使用独立 Se
 启动：bootstrap -> ApplicationRuntime.start -> MCP / Skills -> 接受 invocation
 
 关闭：foreground interaction -> TaskSupervisor -> AgentRunFactory
-      -> SkillRuntime -> McpRuntime -> ProviderRuntime -> Observer
+      -> SkillRuntime -> McpRuntime -> ProviderRuntime -> ObservationDispatcher
 ```
 
 Session switch 先构造完整候选，再一次发布 `ActiveSessionBinding`，因此 Session、SessionContextCache、Run ID 与 effective permission policy 始终成对替换。Provider switch 原子更新前台连接和新 lease 的来源，但不改写 Session facts，也不影响已创建 child lease。

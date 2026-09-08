@@ -115,6 +115,23 @@ def test_technology_guard_rejects_sdk_app_state_and_session_leaks(
     }
 
 
+def test_diagnostic_jsonl_exception_does_not_allow_session_codec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_root = tmp_path / "src" / "my_code"
+    source = source_root / "observability" / "diagnostic_log.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "path = 'diagnostic.jsonl'\nfrom my_code.sessions._codec import decode\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dependency_rules, "SOURCE_ROOT", source_root)
+    monkeypatch.setattr(dependency_rules, "REPOSITORY_ROOT", tmp_path)
+    assert {leak.kind for leak in dependency_rules.collect_technical_leaks()} == {
+        "jsonl-record"
+    }
+
+
 def test_architecture_package_initializers_do_not_aggregate_apis() -> None:
     for module in configured_module_paths():
         if module in {"my_code.bootstrap", "my_code.version"}:

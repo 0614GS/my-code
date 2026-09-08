@@ -75,8 +75,9 @@ from my_code.model.capabilities import (
 from my_code.model.client import ModelClient
 from my_code.model.primitives import ProviderBinding
 from my_code.model.tool_search import ToolSearchMode
-from my_code.observability.api import EvaluationContext, Observer
-from my_code.observability.bootstrap import build_observer
+from my_code.observability.api import EvaluationContext
+from my_code.observability.bootstrap import build_observation_dispatcher
+from my_code.observability.dispatcher import ObservationDispatcher
 from my_code.permissions.models import PermissionMode, PermissionPrompter
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter, TerminalPrompter
@@ -203,7 +204,7 @@ def _build_agent_components(
     prompt_registry: PromptRegistry | None = None,
     allow_permission_updates: bool = True,
     attachment_sources: tuple[DerivedAttachmentSource, ...] = (),
-    observer: Observer,
+    observations: ObservationDispatcher,
     run_id: str | None,
     parent_run_id: str | None = None,
     agent_name: str = "main",
@@ -216,7 +217,7 @@ def _build_agent_components(
         else None
     )
     instrumented_prompter = InstrumentedPermissionPrompter(
-        permission_prompter, observer
+        permission_prompter, observations
     )
     tool_executor = ToolExecutor(
         tools=tool_catalog.snapshot(),
@@ -234,7 +235,7 @@ def _build_agent_components(
         ),
         internal_read_root=settings.paths.runtime_temp_root,
         audit=TelemetryToolInvocationAudit(
-            observer,
+            observations,
             LoggingToolInvocationAudit(command_launcher.status.display),
             command_launcher.status.display,
         ),
@@ -257,17 +258,17 @@ def _build_agent_components(
         ),
     )
     agent_model = InstrumentedModelClient(
-        model_call, observer, binding, purpose="agent"
+        model_call, observations, binding, purpose="agent"
     )
     compaction_model = InstrumentedModelClient(
-        model_call, observer, binding, purpose="compaction"
+        model_call, observations, binding, purpose="compaction"
     )
     context = ContextEngine(
         planner,
         ContextCompactor(compaction_model, model_environment=environment),
     )
     tool_round = ToolRoundExecutor(
-        InstrumentedToolExecutor(tool_executor, observer),
+        InstrumentedToolExecutor(tool_executor, observations),
         max_parallel_calls=settings.max_parallel_tool_calls,
     )
     return AgentRunComponents(
@@ -281,7 +282,7 @@ def _build_agent_components(
                 max_steps=settings.max_steps if max_steps is None else max_steps,
                 root_session_id=root_session_id,
             ),
-            observer,
+            observations,
             run_id=run_id,
             parent_run_id=parent_run_id,
             agent_name=agent_name,
@@ -301,7 +302,11 @@ def _assemble_agent(
     mcp_transport_factory: McpTransportFactory | None = None,
 ) -> _BootstrapComponents:
     actual_session_id = session_id or str(uuid4())
-    observer = build_observer()
+    observations = build_observation_dispatcher(settings.paths.project_state_dir)
+
+    def shutdown_observability() -> None:
+        observations.shutdown()
+
     descriptor = settings.model_descriptor or _resolve_local_descriptor(settings)
     model_environment = resolve_environment(
         descriptor,
@@ -514,7 +519,7 @@ def _assemble_agent(
                 SkillListingAttachmentSource(skills.catalog),
                 *extra_attachment_sources(),
             ),
-            observer=observer,
+            observations=observations,
             run_id=spec.run_id,
             parent_run_id=spec.parent_run_id,
             agent_name=spec.name,
@@ -622,7 +627,7 @@ def _assemble_agent(
             SkillListingAttachmentSource(skills.catalog),
             *extra_attachment_sources(),
         ),
-        observer=observer,
+        observations=observations,
         run_id=None,
         root_session_id=actual_session_id,
     )
@@ -641,7 +646,7 @@ def _assemble_agent(
         runs=run_factory,
         mcp=mcp,
         skills=skills,
-        shutdown_observability=observer.shutdown,
+        shutdown_observability=shutdown_observability,
     )
     return _BootstrapComponents(
         runtime=runtime,

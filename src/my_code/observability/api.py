@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from enum import StrEnum
@@ -62,11 +62,7 @@ class ObservationSpan(Protocol):
     def finish(self, outcome: ObservationOutcome = ObservationOutcome.OK) -> None: ...
 
 
-class Observer(Protocol):
-    def bind_run(
-        self, context: RunObservationContext
-    ) -> AbstractContextManager[RunObservationContext]: ...
-
+class OperationTracer(Protocol):
     def start_span(
         self,
         name: str,
@@ -74,8 +70,6 @@ class Observer(Protocol):
         kind: SpanKind = SpanKind.INTERNAL,
         attributes: Mapping[str, object] | None = None,
     ) -> ObservationSpan: ...
-
-    def record(self, event_type: str, payload: Mapping[str, object]) -> None: ...
 
     def shutdown(self, timeout_millis: int = 2_000) -> None: ...
 
@@ -87,6 +81,17 @@ _RUN_CONTEXT: ContextVar[RunObservationContext | None] = ContextVar(
 
 def current_run_context() -> RunObservationContext | None:
     return _RUN_CONTEXT.get()
+
+
+@contextmanager
+def bind_run_context(
+    context: RunObservationContext,
+) -> Iterator[RunObservationContext]:
+    token: Token[RunObservationContext | None] = _RUN_CONTEXT.set(context)
+    try:
+        yield context
+    finally:
+        _RUN_CONTEXT.reset(token)
 
 
 class NoOpSpan:
@@ -113,17 +118,7 @@ class NoOpSpan:
         del outcome
 
 
-class NoOpObserver:
-    @contextmanager
-    def bind_run(
-        self, context: RunObservationContext
-    ) -> Iterator[RunObservationContext]:
-        token: Token[RunObservationContext | None] = _RUN_CONTEXT.set(context)
-        try:
-            yield context
-        finally:
-            _RUN_CONTEXT.reset(token)
-
+class NoOpTracer:
     def start_span(
         self,
         name: str,
@@ -133,9 +128,6 @@ class NoOpObserver:
     ) -> NoOpSpan:
         del name, kind, attributes
         return NoOpSpan()
-
-    def record(self, event_type: str, payload: Mapping[str, object]) -> None:
-        del event_type, payload
 
     def shutdown(self, timeout_millis: int = 2_000) -> None:
         del timeout_millis
@@ -153,12 +145,13 @@ def evaluation_payload(context: EvaluationContext | None) -> JsonValue:
 
 __all__ = [
     "EvaluationContext",
-    "NoOpObserver",
+    "NoOpTracer",
     "NoOpSpan",
     "ObservationOutcome",
     "ObservationSpan",
-    "Observer",
+    "OperationTracer",
     "RunObservationContext",
     "SpanKind",
+    "bind_run_context",
     "current_run_context",
 ]
