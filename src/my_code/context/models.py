@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
+from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import ConversationSummaryMessage
 from my_code.conversation.state import CompactBoundary, ContentReplacement
 from my_code.model.capabilities import CapabilitySource, ModelLimits
@@ -57,12 +58,13 @@ class ContextPlan:
 
 @dataclass(frozen=True, slots=True)
 class CompactionOutcome:
-    """A side-effect-free proposal whose usage aggregates completed attempts."""
+    """无会话写入的压缩提案；完整入口补齐恢复附件，usage 汇总已完成尝试。"""
 
     replacements: tuple[ContentReplacement, ...]
     summary: ConversationSummaryMessage
     boundary: CompactBoundary
     usage: TokenUsage
+    attachments: tuple[AttachmentPayload, ...] = ()
 
 
 class ContextOverflow(RuntimeError):

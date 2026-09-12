@@ -262,3 +262,22 @@ def test_todos_are_a_self_contained_product_feature() -> None:
     assert not tuple((_PACKAGE_ROOT / "todos").glob("*.py"))
 
     assert not (_PACKAGE_ROOT / "tools" / "builtin" / "todo_write.py").exists()
+
+
+def test_post_compact_state_is_rebuilt_by_context_before_session_commit() -> None:
+    from my_code.context.rebuild import PostCompactContextRebuilder
+
+    commit = inspect.getsource(Session.commit_compaction)
+    assert "_latest_" not in commit
+    assert "project_todos" not in commit
+    rebuild = inspect.getsource(PostCompactContextRebuilder)
+    assert "acknowledge" not in rebuild
+    assert "except" not in rebuild
+    compact = inspect.getsource(ContextEngine.compact)
+    assert compact.index("await self._compactor.compact") < compact.index(
+        ".rebuild(state)"
+    )
+    for path in ("agent/engine.py", "application/service.py"):
+        source = (_PACKAGE_ROOT / path).read_text()
+        assert "session.compaction_input()" in source
+        assert "outcome.attachments" in source

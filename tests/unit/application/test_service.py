@@ -560,7 +560,7 @@ async def test_manual_compact_is_owned_and_committed_by_chat(tmp_path: Path) -> 
     compact.assert_awaited_once()
     assert compact.await_args is not None
     state, trigger = compact.await_args.args
-    assert state.context_entries == (user,)
+    assert state.planning.context_entries == (user,)
     assert trigger == "manual"
     assert active.compact_count == 1
     assert active.context_entries == (summary,)
@@ -1381,7 +1381,11 @@ def test_complete_transcript_view_projects_persisted_content_only(
     assert parent is not None
     summary = ConversationSummaryMessage("durable summary", parent_uuid=parent)
     session.commit_compaction(
-        (), summary, CompactBoundary(parent, summary.uuid, "manual", 10, "estimated")
+        (),
+        summary,
+        CompactBoundary(parent, summary.uuid, "manual", 10, "estimated"),
+        (),
+        source=session.compaction_input(),
     )
 
     view = runtime.current_transcript_view()

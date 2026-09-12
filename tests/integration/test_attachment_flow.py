@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from my_code.context.normalization import ModelInputNormalizer
+from my_code.context.rebuild import PostCompactContextRebuilder
 from my_code.conversation.attachments import (
     FileMentionAttachment,
     InvokedSkillsAttachment,
@@ -130,7 +131,13 @@ def test_compact_rebuilds_latest_invoked_skills_and_restores_grants(
     summary = ConversationSummaryMessage("state", parent_uuid=latest.uuid)
     boundary = CompactBoundary(latest.uuid, summary.uuid, "manual", 100, "estimated")
 
-    session.commit_compaction((), summary, boundary)
+    session.commit_compaction(
+        (),
+        summary,
+        boundary,
+        PostCompactContextRebuilder().rebuild(session.compaction_input()),
+        source=session.compaction_input(),
+    )
 
     invoked_message = session.context_entries[-1]
     assert isinstance(invoked_message, AttachmentMessage)
@@ -163,7 +170,13 @@ def test_compact_and_restore_rebuild_valid_tool_discoveries(tmp_path: Path) -> N
     summary = ConversationSummaryMessage("state", parent_uuid=latest.uuid)
     boundary = CompactBoundary(latest.uuid, summary.uuid, "manual", 100, "estimated")
 
-    session.commit_compaction((), summary, boundary)
+    session.commit_compaction(
+        (),
+        summary,
+        boundary,
+        PostCompactContextRebuilder().rebuild(session.compaction_input()),
+        source=session.compaction_input(),
+    )
 
     restored = Session(tmp_path, SESSION_ID)
     discoveries = restored_discoveries(restored.conversation)

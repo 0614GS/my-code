@@ -375,8 +375,9 @@ class ApplicationService:
                 self.runtime.context_cache,
                 tools=tools.definitions,
             )
+            source = session.compaction_input()
             outcome = await self.context.compact(
-                session.context_planning_state(),
+                source,
                 "manual",
                 recorder=session,
                 pre_compact_budget=pre_compact_budget,
@@ -385,6 +386,8 @@ class ApplicationService:
                 outcome.replacements,
                 outcome.summary,
                 outcome.boundary,
+                outcome.attachments,
+                source=source,
             )
             yield CompactionCompleted("manual", outcome.usage, self.context_status())
 

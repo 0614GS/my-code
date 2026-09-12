@@ -16,6 +16,8 @@ from my_code.conversation.attachments import (
     SkillListingAttachment,
     SkillListingEntry,
     TodoReminderAttachment,
+    TodoSnapshotAttachment,
+    TodoSnapshotEntry,
     ToolDiscoveryAttachment,
     ToolDiscoveryDefinition,
     ToolDiscoveryInvalidationAttachment,
@@ -581,7 +583,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
     except TypeError as error:
         raise TranscriptDecodeError("Transcript entry must be an object") from error
     schema_version = data.get("schema_version")
-    if schema_version not in {6, 7}:
+    if schema_version not in {6, 7, 8}:
         raise TranscriptDecodeError("Unsupported transcript schema version")
     kind = _string(data, "type")
     if schema_version == 6 and kind in {"turn_started", "turn_finished"}:
@@ -605,7 +607,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
             "collaboration_mode",
         }
         required_identity: set[str] = set()
-        if schema_version == 7:
+        if schema_version in {7, 8}:
             required_identity = {
                 "session_kind",
                 "parent_session_id",
@@ -649,22 +651,22 @@ def entry_from_json(value: object) -> TranscriptEntry:
                 ),
                 session_kind=(
                     _session_kind(data.get("session_kind"))
-                    if schema_version == 7
+                    if schema_version in {7, 8}
                     else SessionKind.FOREGROUND.value
                 ),
                 parent_session_id=(
                     _optional_non_empty_string(data, "parent_session_id")
-                    if schema_version == 7
+                    if schema_version in {7, 8}
                     else None
                 ),
                 created_by_run_id=(
                     _optional_non_empty_string(data, "created_by_run_id")
-                    if schema_version == 7
+                    if schema_version in {7, 8}
                     else None
                 ),
                 agent_name=(
                     _optional_non_empty_string(data, "agent_name")
-                    if schema_version == 7
+                    if schema_version in {7, 8}
                     else None
                 ),
             )
@@ -951,6 +953,19 @@ def _attachment_to_json(payload: AttachmentPayload) -> JsonObject:
             "body": payload.body,
             "is_directory": payload.is_directory,
         }
+    if isinstance(payload, TodoSnapshotAttachment):
+        return {
+            "kind": payload.kind,
+            "source_write_id": payload.source_write_id,
+            "todos": [
+                {
+                    "content": todo.content,
+                    "status": todo.status,
+                    "active_form": todo.active_form,
+                }
+                for todo in payload.todos
+            ],
+        }
     if isinstance(payload, TodoReminderAttachment):
         return {"kind": payload.kind, "content": payload.content}
     if isinstance(payload, BackgroundTaskCompletionAttachment):
@@ -1021,6 +1036,25 @@ def _attachment_from_json(value: object) -> AttachmentPayload:
                 raise TranscriptDecodeError("is_directory must be boolean")
             return FileMentionAttachment(
                 _string(data, "path"), _string(data, "body"), is_directory
+            )
+        if kind == "todo_snapshot":
+            _require_exact_fields(data, frozenset({"kind", "source_write_id", "todos"}))
+            todos: list[TodoSnapshotEntry] = []
+            for raw in _list(data, "todos"):
+                item = _object(raw)
+                _require_exact_fields(
+                    item, frozenset({"content", "status", "active_form"})
+                )
+                status = _string(item, "status")
+                if status not in ("pending", "in_progress", "completed"):
+                    raise TranscriptDecodeError("Invalid Todo snapshot status")
+                todos.append(
+                    TodoSnapshotEntry(
+                        _string(item, "content"), status, _string(item, "active_form")
+                    )
+                )
+            return TodoSnapshotAttachment(
+                _string(data, "source_write_id"), tuple(todos)
             )
         if kind == "todo_reminder":
             _require_exact_fields(data, frozenset({"kind", "content"}))

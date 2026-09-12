@@ -29,6 +29,32 @@ class TodoReminderAttachment:
 
 
 @dataclass(frozen=True, slots=True)
+class TodoSnapshotEntry:
+    """持久化任务状态值，不依赖 Todo 工具的业务模型。"""
+
+    content: str
+    status: Literal["pending", "in_progress", "completed"]
+    active_form: str
+
+    def __post_init__(self) -> None:
+        if not self.content.strip() or not self.active_form.strip():
+            raise ValueError("Todo snapshot text must not be empty")
+        if self.status not in ("pending", "in_progress", "completed"):
+            raise ValueError("Invalid Todo snapshot status")
+
+
+@dataclass(frozen=True, slots=True)
+class TodoSnapshotAttachment:
+    source_write_id: str
+    todos: tuple[TodoSnapshotEntry, ...]
+    kind: Literal["todo_snapshot"] = "todo_snapshot"
+
+    def __post_init__(self) -> None:
+        if not self.source_write_id.strip():
+            raise ValueError("Todo snapshot requires a source write ID")
+
+
+@dataclass(frozen=True, slots=True)
 class BackgroundTaskCompletionAttachment:
     owner_run_id: str
     task_id: str
@@ -168,6 +194,7 @@ class PlanHandoffAttachment:
 type AttachmentPayload = (
     FileMentionAttachment
     | TodoReminderAttachment
+    | TodoSnapshotAttachment
     | BackgroundTaskCompletionAttachment
     | SkillListingAttachment
     | SkillActivationAttachment
@@ -187,6 +214,7 @@ def is_durable_attachment(payload: AttachmentPayload) -> bool:
         payload,
         (
             FileMentionAttachment,
+            TodoSnapshotAttachment,
             BackgroundTaskCompletionAttachment,
             SkillActivationAttachment,
             InvokedSkillsAttachment,
@@ -209,6 +237,8 @@ __all__ = [
     "SkillListingAttachment",
     "SkillListingEntry",
     "TodoReminderAttachment",
+    "TodoSnapshotAttachment",
+    "TodoSnapshotEntry",
     "ToolDiscoveryAttachment",
     "ToolDiscoveryDefinition",
     "ToolDiscoveryInvalidationAttachment",

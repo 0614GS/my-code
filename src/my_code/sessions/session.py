@@ -10,16 +10,11 @@ from uuid import uuid4
 
 from my_code.context.session_cache import (
     AttachmentProjectionInput,
+    CompactionInput,
     ContextPlanningInput,
 )
 from my_code.conversation.attachments import (
     AttachmentPayload,
-    CollaborationModeAttachment,
-    InvokedSkillsAttachment,
-    SkillActivationAttachment,
-    ToolDiscoveryAttachment,
-    ToolDiscoveryDefinition,
-    ToolDiscoveryInvalidationAttachment,
     is_durable_attachment,
 )
 from my_code.conversation.models import (
@@ -212,6 +207,16 @@ class Session(ModelInvocationRecorder):
                 for record in self._replay_records.values()
                 if record.entry_id in context_ids
             ),
+        )
+
+    def compaction_input(self) -> CompactionInput:
+        """同步捕获压缩输入，避免摘要与恢复读取不同的会话状态。"""
+        return CompactionInput(
+            self.context_planning_state(),
+            self.session_id,
+            self.causal_head_uuid,
+            self.conversation,
+            self.collaboration_mode,
         )
 
     def attachment_derivation_state(self) -> AttachmentProjectionInput:
@@ -445,33 +450,35 @@ class Session(ModelInvocationRecorder):
         replacements: tuple[ContentReplacement, ...],
         summary: ConversationSummaryMessage,
         boundary: CompactBoundary,
+        attachments: tuple[AttachmentPayload, ...],
+        *,
+        source: CompactionInput,
     ) -> CompactBoundary:
+        """拒绝过期来源，将摘要和恢复附件作为一个工作集原子发布。"""
+        if (
+            source.session_id != self.session_id
+            or source.causal_head_uuid != self.causal_head_uuid
+            or source.collaboration_mode != self.collaboration_mode
+            or boundary.parent_uuid != source.causal_head_uuid
+        ):
+            raise ValueError("Stale compaction proposal")
+        if any(not is_durable_attachment(payload) for payload in attachments):
+            raise ValueError("Compaction attachments must be durable")
         candidate = self._conversation.clone()
         for replacement in replacements:
             candidate.add_content_replacement(replacement)
         candidate.add_compact_boundary(boundary)
         candidate.append(summary)
-        invoked = _latest_invoked_skills(candidate.conversation[:-1])
-        discovered = _latest_tool_discoveries(candidate.conversation[:-1])
-        collaboration = _latest_collaboration_mode(candidate.conversation[:-1])
         attachments_list: list[AttachmentMessage] = []
         parent_uuid = summary.uuid
-        if collaboration is not None:
-            attachment = AttachmentMessage(collaboration, parent_uuid=parent_uuid)
+        for payload in attachments:
+            attachment = AttachmentMessage(payload, parent_uuid=parent_uuid)
             candidate.append(attachment)
             attachments_list.append(attachment)
             parent_uuid = attachment.uuid
-        if invoked is not None:
-            attachment = AttachmentMessage(invoked, parent_uuid=parent_uuid)
-            candidate.append(attachment)
-            attachments_list.append(attachment)
-            parent_uuid = attachment.uuid
-        if discovered is not None:
-            attachment = AttachmentMessage(discovered, parent_uuid=parent_uuid)
-            candidate.append(attachment)
-            attachments_list.append(attachment)
-        attachments = tuple(attachments_list)
-        self._store.append_compaction(replacements, boundary, summary, attachments)
+        self._store.append_compaction(
+            replacements, boundary, summary, tuple(attachments_list)
+        )
         self._conversation = candidate
         return boundary
 
@@ -517,57 +524,6 @@ def _trailing_tool_repairs(
             is_error=True,
         )
         for call in calls
-    )
-
-
-def _latest_invoked_skills(
-    history: tuple[ConversationEntry, ...],
-) -> InvokedSkillsAttachment | None:
-    by_name: dict[str, SkillActivationAttachment] = {}
-    for entry in history:
-        if not isinstance(entry, AttachmentMessage):
-            continue
-        payload = entry.payload
-        if isinstance(payload, SkillActivationAttachment):
-            by_name[payload.name] = payload
-        elif isinstance(payload, InvokedSkillsAttachment):
-            for skill in payload.skills:
-                by_name[skill.name] = skill
-    if not by_name:
-        return None
-    return InvokedSkillsAttachment(tuple(by_name.values()))
-
-
-def _latest_collaboration_mode(
-    history: tuple[ConversationEntry, ...],
-) -> CollaborationModeAttachment | None:
-    for entry in reversed(history):
-        if isinstance(entry, AttachmentMessage) and isinstance(
-            entry.payload, CollaborationModeAttachment
-        ):
-            return entry.payload
-    return None
-
-
-def _latest_tool_discoveries(
-    history: tuple[ConversationEntry, ...],
-) -> ToolDiscoveryAttachment | None:
-    by_name: dict[str, ToolDiscoveryDefinition] = {}
-    mode: str = "dispatcher"
-    for entry in history:
-        if not isinstance(entry, AttachmentMessage):
-            continue
-        payload = entry.payload
-        if isinstance(payload, ToolDiscoveryAttachment):
-            mode = payload.mode
-            by_name.update((item.name, item) for item in payload.definitions)
-        elif isinstance(payload, ToolDiscoveryInvalidationAttachment):
-            for name in payload.names:
-                by_name.pop(name, None)
-    if not by_name:
-        return None
-    return ToolDiscoveryAttachment(
-        tuple(by_name[name] for name in sorted(by_name)), mode
     )
 
 

@@ -75,3 +75,13 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 - Linux Bubblewrap 只隔离 Bash 进程树；MCP、Provider 与 my-code 主进程仍在宿主运行，应用层权限继续作为独立前置边界。
 
 调整上述差异或长期不变量时，应同时修改对应架构专题、测试和本文件。
+
+
+### Full compact 重建范围
+
+manual、auto、reactive 与 child run 共用 Context 的摘要后、提交前重建阶段，恢复模式、
+已激活 Skill、有效工具发现和成功 TodoWrite 当前状态。与参考实现有意不同：关键状态
+首期完整恢复，不使用额外字符/单 Skill 截断预算；以当前窗口和不可变领域权威快照为输入。
+近期文件重读、Plan 文件、后台任务恢复与缓存刷新暂不纳入重建；普通 file mention、listing、
+旧 Todo reminder 和后台结果不会被搬回，继续通过摘要或普通附件派生生效。
+未来文件 I/O 需单独设计准备阶段，不扩展当前同步 source 为隐式异步插件框架。

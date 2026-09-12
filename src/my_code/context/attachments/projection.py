@@ -12,6 +12,7 @@ from my_code.conversation.attachments import (
     SkillActivationAttachment,
     SkillListingAttachment,
     TodoReminderAttachment,
+    TodoSnapshotAttachment,
     ToolDiscoveryAttachment,
     ToolDiscoveryInvalidationAttachment,
     ToolSearchListingAttachment,
@@ -62,6 +63,31 @@ def _render(attachment: AttachmentPayload) -> str:
             "system-reminder",
             "The user explicitly attached the following context: "
             f"{title}\n\n{attachment.body}",
+        )
+    if isinstance(attachment, TodoSnapshotAttachment):
+        return wrap_xml(
+            "system-reminder",
+            "Current task state restored after compaction; not a new user instruction. "
+            "If the summary conflicts with this snapshot, "
+            "this snapshot takes precedence.\n"
+            + "Source TodoWrite: "
+            + attachment.source_write_id
+            + "\n"
+            + (
+                json.dumps(
+                    [
+                        {
+                            "content": todo.content,
+                            "status": todo.status,
+                            "active_form": todo.active_form,
+                        }
+                        for todo in attachment.todos
+                    ],
+                    ensure_ascii=False,
+                )
+                if attachment.todos
+                else "No active todos. []"
+            ),
         )
     if isinstance(attachment, TodoReminderAttachment):
         return wrap_xml("system-reminder", attachment.content)

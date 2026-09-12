@@ -35,7 +35,7 @@ class SessionStartedRecord:
     created_by_run_id: str | None = None
     agent_name: str | None = None
     type: Literal["session_started"] = "session_started"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,21 +45,21 @@ class SessionMetadataRecord:
     title: str | None = None
     last_prompt: str | None = None
     type: Literal["session_metadata"] = "session_metadata"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
 class SessionPermissionModeRecord:
     permission_mode: str
     type: Literal["session_permission_mode"] = "session_permission_mode"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
 class SessionCollaborationModeRecord:
     collaboration_mode: str
     type: Literal["session_collaboration_mode"] = "session_collaboration_mode"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +74,7 @@ class InvocationStartedRecord:
     test_case_id: str | None = None
     attempt_id: str | None = None
     type: Literal["invocation_started"] = "invocation_started"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +87,7 @@ class InvocationFinishedRecord:
     usage: TokenUsage | None = None
     error_type: str | None = None
     type: Literal["invocation_finished"] = "invocation_finished"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +128,7 @@ class ToolPresentationRecord:
     tool_use_id: str
     presentation: ToolResultPresentation
     type: Literal["tool_presentation"] = "tool_presentation"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +137,7 @@ class ProviderReplaySidecarRecord:
     content_id: str
     continuation: ProviderContinuation
     type: Literal["provider_replay"] = "provider_replay"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +147,7 @@ class HumanMessageRecord:
     timestamp: str
     content: str
     type: Literal["human_message"] = "human_message"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +160,7 @@ class AssistantMessageRecord:
     provider_binding: ProviderBinding | None = None
     context_footprint: ContextFootprint | None = None
     type: Literal["assistant_message"] = "assistant_message"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +171,7 @@ class LegacyToolResultBatchRecord:
     content: tuple[ToolResultRecord, ...]
     source_assistant_uuid: str
     type: Literal["tool_results_message"] = "tool_results_message"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +182,7 @@ class ToolResultBatchRecord:
     content: tuple[ToolResultRecord, ...]
     source_assistant_id: str
     type: Literal["tool_result_batch"] = "tool_result_batch"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,7 +192,7 @@ class ConversationSummaryMessageRecord:
     timestamp: str
     content: str
     type: Literal["conversation_summary_message"] = "conversation_summary_message"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,7 +202,7 @@ class AttachmentMessageRecord:
     timestamp: str
     payload: JsonObject
     type: Literal["attachment_message"] = "attachment_message"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +212,7 @@ class ContentReplacementRecord:
     original_chars: int
     content: str
     type: Literal["content_replacement"] = "content_replacement"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,7 +224,7 @@ class CompactBoundaryRecord:
     pre_compact_tokens: int
     measurement: Literal["reported", "estimated"]
     type: Literal["compact_boundary"] = "compact_boundary"
-    schema_version: Literal[7] = 7
+    schema_version: Literal[8] = 8
 
 
 type MessageRecord = (

@@ -6,7 +6,7 @@ import pytest
 from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
-from my_code.context.session_cache import ContextPlanningInput
+from my_code.context.session_cache import CompactionInput, ContextPlanningInput
 from my_code.conversation.models import AssistantMessage, HumanMessage, TextContent
 from my_code.model.capabilities import (
     ActiveModelEnvironment,
@@ -324,7 +324,12 @@ async def test_context_engine_appends_recent_real_user_messages_verbatim() -> No
         ContextCompactor(model),
     )
 
-    outcome = await context.compact(state, "manual")
+    outcome = await context.compact(
+        CompactionInput(
+            state, "session", latest.uuid, state.context_entries, "default"
+        ),
+        "manual",
+    )
 
     assert outcome.summary.content.startswith(
         "This session continues from an earlier conversation\nthat was compacted."

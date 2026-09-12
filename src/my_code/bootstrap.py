@@ -46,6 +46,7 @@ from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.meter import ContextMeter
 from my_code.context.planner import ContextPlanner
+from my_code.context.rebuild import PostCompactContextRebuilder
 from my_code.context.user_context import AgentsUserContextResolver
 from my_code.features.background_tasks.bash import BashBackgroundController
 from my_code.features.background_tasks.notifications import (
@@ -61,6 +62,7 @@ from my_code.features.subagents.task_tools import (
     TaskListTool,
 )
 from my_code.features.subagents.tool import SubagentTool
+from my_code.features.todos.rebuild import TodoPostCompactAttachmentSource
 from my_code.features.todos.reminder import TodoReminderAttachmentSource
 from my_code.features.todos.tool import TodoWriteTool
 from my_code.mcp.models import McpServerScope, McpServerSpec
@@ -266,6 +268,7 @@ def _build_agent_components(
     context = ContextEngine(
         planner,
         ContextCompactor(compaction_model, model_environment=environment),
+        PostCompactContextRebuilder((TodoPostCompactAttachmentSource(),)),
     )
     tool_round = ToolRoundExecutor(
         InstrumentedToolExecutor(tool_executor, observations),

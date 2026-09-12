@@ -51,7 +51,7 @@ created/updated、完整增删统计、hunk、旧新行号、文件末尾换行�
 `ToolResult` 一同写入现有 v5 record；codec 兼容旧的三字段 presentation，并对带 diff
 的新嵌套结构逐层执行精确字段和类型校验。恢复只重放该持久化快照，不重新读取文件。
 
-Attachment 是否持久化由 Session 根据 payload 类型统一决定。显式文件、Skill 激活、invoked skills 和后台完成结果是 durable；Skill listing 和 Todo reminder 只存在于活动内存。非持久化 Attachment 不会成为 durable entry 的父节点，因此恢复后的因果链仍连续。
+Attachment 是否持久化由 Session 根据 payload 类型统一决定。显式文件、Skill 激活、invoked skills、Todo snapshot 和后台完成结果是 durable；Skill listing 和 Todo reminder 只存在于活动内存。非持久化 Attachment 不会成为 durable entry 的父节点，因此恢复后的因果链仍连续。
 
 ## Session 提交事务
 
@@ -129,7 +129,7 @@ Permission mode 使用 last-wins 的 session record；旧 transcript 没有该�
 
 Collaboration mode 是独立的 last-wins Session 状态，仅有 `default` 与 `plan`。基础 `permission_mode` 始终保存用户进入 Plan 前的选择；Plan 恢复时运行期 policy 临时使用 `plan`，退出时再从 Session 恢复基础权限。旧 transcript 缺少 collaboration 字段时按 Default 恢复。模式切换本身不改写 Conversation；下一次用户提交才在同一 batch 中按 mode/discovery prelude、HumanMessage、请求附件的顺序追加事实。
 
-Transcript 当前 schema 为 v7。v7 header 持久化 `session_kind`、`parent_session_id`、`created_by_run_id` 和 `agent_name`；foreground 不允许 child lineage，subagent 必须提供完整 lineage。v6 缺少 kind 时兼容解释为 foreground，旧 `turn_started/turn_finished` 映射为 legacy invocation；v5 及更早明确拒绝恢复。未知 kind、冲突字段或未知 schema 必须失败关闭。
+Transcript 新写入 schema 为 v8，继续读取 v6/v7，旧记录不重写。v8 增加严格校验的 `todo_snapshot` attachment（来源 TodoWrite ID、有序 content/status/active_form 条目），不伪造工具写入或 TodoList 更新事件。v7/v8 header 持久化 `session_kind`、`parent_session_id`、`created_by_run_id` 和 `agent_name`；foreground 不允许 child lineage，subagent 必须提供完整 lineage。v6 缺少 kind 时兼容解释为 foreground，旧 `turn_started/turn_finished` 映射为 legacy invocation；v5 及更早明确拒绝恢复。未知 kind、冲突字段或未知 schema 必须失败关闭。
 
 `session_kind` 是受控枚举，不从 title、prompt、路径或 lineage 猜测。Catalog 和 TUI
 `/resume` 默认只返回 foreground；child transcript 通过 Subagent activity/transcript 用例
@@ -138,7 +138,7 @@ Transcript 当前 schema 为 v7。v7 header 持久化 `session_kind`、`parent_s
 
 ## Compact 与模型工作集
 
-`session.conversation` 是完整事实序列，`session.context_entries` 是从最近 compact boundary 开始的规划工作集。full compact 原子提交 summary、content replacements、boundary 和 replay 裁剪；完整 transcript 仍可用于历史展示和 feature 投影。
+`session.conversation` 是完整事实序列，`session.context_entries` 是从最近 compact boundary 开始的规划工作集。full compact 原子提交 summary、content replacements、boundary 和 restored attachments，并在规划时过滤窗口外 replay；完整 transcript 仍可用于历史展示和 feature 投影。
 
 Provider replay 与 canonical assistant content 分离，通过 entry/content ID 和 provider binding 关联。切换 provider 保留可见事实，但不向 binding 不匹配的 adapter 发送旧 replay payload。
 
@@ -153,3 +153,13 @@ Provider replay 与 canonical assistant content 分离，通过 entry/content ID
 - 跨状态胶囊的变更由明确 application use case 协调，不让 ApplicationRuntime 退化为任意服务查询容器。
 
 主要源码入口：`src/my_code/runtime/application.py`、`src/my_code/conversation/models.py`、`src/my_code/sessions/session.py`。私有持久化实现在 `src/my_code/sessions/_*.py`，其他生产模块不得依赖它。
+
+
+## Full compact 提交
+
+Session 同步生成不可变 `CompactionInput`，包含当前 planning window、完整 conversation、
+Session ID、因果 head 和当前 collaboration mode。摘要与恢复使用同一个快照。
+`commit_compaction` 接收显式恢复 payload，校验 Session ID、来源 head 和模式仍然匹配，
+生成附件 UUID 与 summary 后父链，并一次持久化 replacement、boundary、summary 和附件。
+重建、取消、过期提案或持久化失败均不发布部分新工作集。摘要已经产生的 usage/audit
+以及此前独立提交的 microcompact replacement 不属于该事务的回滚范围。

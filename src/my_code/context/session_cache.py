@@ -19,6 +19,17 @@ class ContextPlanningInput:
 
 
 @dataclass(frozen=True, slots=True)
+class CompactionInput:
+    """摘要与恢复共享同一时刻的窗口和领域事实，完整历史不进入摘要请求。"""
+
+    planning: ContextPlanningInput
+    session_id: str
+    causal_head_uuid: str | None
+    conversation: tuple[ConversationEntry, ...]
+    collaboration_mode: str
+
+
+@dataclass(frozen=True, slots=True)
 class AttachmentProjectionInput:
     session_id: str
     conversation: tuple[ConversationEntry, ...]
@@ -46,6 +57,7 @@ class SessionContextCache:
 
 __all__ = [
     "AttachmentProjectionInput",
+    "CompactionInput",
     "ContextPlanningInput",
     "SessionContextCache",
 ]

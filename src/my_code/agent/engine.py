@@ -609,14 +609,19 @@ class AgentEngine:
     ) -> CompactionOutcome:
         """在当前 turn 内生成并提交 auto/reactive compact。"""
 
+        source = session.compaction_input()
         outcome = await self._context.compact(
-            session.context_planning_state(),
+            source,
             trigger,
             recorder=session,
             pre_compact_budget=pre_budget,
         )
         session.commit_compaction(
-            outcome.replacements, outcome.summary, outcome.boundary
+            outcome.replacements,
+            outcome.summary,
+            outcome.boundary,
+            outcome.attachments,
+            source=source,
         )
         return outcome
 

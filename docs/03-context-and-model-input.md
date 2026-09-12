@@ -39,7 +39,7 @@ Anthropic adapter 才负责相邻 role 归一化和 tool result 的 user-role �
 
 Provider adapter 只消费 `ModelRequest`，不读取 Session 或 ApplicationRuntime。绑定不匹配时保留 canonical content，但不重放 opaque continuation；compact 后已离开工作集的 replay 也不会进入请求。
 
-主 Agent 的 `ModelRequest.session_cache_identity` 固定为 Session ID。OpenAI Responses 将其映射为 `prompt_cache_key`；同一 Session 切换 collaboration mode 时 direct tool definitions 和 cache identity 不变，mode、Question discovery 或 invalidation 只作为尾部追加输入进入下一请求。Compaction 若移除了当前 mode world-state，下一次安全用户输入边界会精确补发一次。
+主 Agent 的 `ModelRequest.session_cache_identity` 固定为 Session ID。OpenAI Responses 将其映射为 `prompt_cache_key`；同一 Session 切换 collaboration mode 时 direct tool definitions 和 cache identity 不变，mode、Question discovery 或 invalidation 只作为尾部追加输入进入下一请求。Full compact 在 summary 后显式恢复 Session 当前 Default/Plan 模式。
 
 ## Prompt、用户上下文与 Attachment
 
@@ -78,7 +78,7 @@ Provider 成功响应必须携带有效 usage，否则按协议错误处理，�
 3. Provider 返回 context overflow 时允许一次 reactive compact。
 4. 仍无法构造合法请求时返回明确错误。
 
-`ContextEngine.compact()` 只生成 `CompactionOutcome`；Agent 的自动/反应式路径或 Application 的手动路径再通过 `Session.commit_compaction()` 原子提交 summary、replacement 和 boundary。摘要失败、截断或重试耗尽时 Session 不改变。
+`ContextEngine.compact()` 先生成摘要，再通过独立 `PostCompactContextRebuilder` 生成恢复附件，返回完整 `CompactionOutcome`；Agent 的自动/反应式路径或 Application 的手动路径通过 `Session.commit_compaction()` 原子提交 summary、replacement、boundary 和 attachments。摘要或恢复失败时不提交新工作集。
 
 压缩进度事件由拥有用例顺序的 Agent/Application 在调用 Context 前后发出，Context 本身不持有 observer、UI 状态或事件总线。completed 只允许出现在 persistence-first 提交之后。
 
@@ -97,3 +97,24 @@ Compact 请求显式关闭 reasoning，并使用受模型上限约束的独立�
 - 字符规模可以触发局部 content replacement，但不能越过 token budget 独立触发 full compact。
 
 主要源码入口：`src/my_code/context/engine.py`、`src/my_code/context/planner.py`、`src/my_code/context/session_cache.py`、`src/my_code/model/request.py`、`src/my_code/prompts/registry.py`。
+
+
+## 压缩后关键状态恢复
+
+`CompactionInput.planning` 是当前窗口（上次 summary、恢复附件及后续 entries），仅该窗口
+进入摘要视图。rebuilder 无 I/O、不分配消息 UUID，不调用普通附件 resolver，也不消费或
+acknowledge 通知。固定恢复顺序：Session 当前模式、按名称排序的已激活 Skill、最终有效
+工具发现、Todo 快照。Skill 与工具仅顺序折叠当前窗口，后值覆盖同名旧值；工具失效会删除
+对应发现，并保留每项 dispatcher/native 路由语义。不从 summary 解析结构化状态。
+
+Todo feature 通过同步 `PostCompactAttachmentSource` 从完整 conversation 的最后一次成功
+TodoWrite 投影状态；Bootstrap 为主运行与 child run 的组件分别组装 source，不捕获活动
+Session。没有成功写入时不生成快照；清空或全部完成时生成空快照；混合状态保留所有条目
+和顺序。快照明确是当前状态而非新用户指令，冲突时优先于 summary。它不是新的 TodoWrite，
+但作为最近一次 reminder 的时间锚点，之后仍按十次模型调用提醒。
+
+新窗口固定为 summary → restored attachments → 后续消息。请求 provenance/audit 正常记录
+恢复附件的 kind 和 UUID，历史视图按上下文附件展示。System Prompt、AGENTS 和工具 Schema
+仍由普通规划注入。关键状态完整恢复，不静默截断；下一完整请求仍由 ContextMeter 计量，
+超限走既有有界 compact/错误路径。Context 不依赖 Session 或 Todo 实现，现有 Tach 领域依赖
+无需增加；Session 不解释 Todo 业务。

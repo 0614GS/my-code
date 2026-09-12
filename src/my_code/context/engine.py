@@ -1,10 +1,14 @@
 """Context 模块对外的规划、检查与压缩能力。"""
 
+from dataclasses import replace
+
 from my_code.context.compaction import ContextCompactor
 from my_code.context.models import CompactionOutcome, ContextBudget, ContextPlan
 from my_code.context.planner import ContextPlanner
+from my_code.context.rebuild import PostCompactContextRebuilder
 from my_code.context.session_cache import (
     AttachmentProjectionInput,
+    CompactionInput,
     ContextPlanningInput,
     SessionContextCache,
 )
@@ -22,9 +26,11 @@ class ContextEngine:
         self,
         planner: ContextPlanner,
         compactor: ContextCompactor,
+        rebuilder: PostCompactContextRebuilder | None = None,
     ) -> None:
         self._planner = planner
         self._compactor = compactor
+        self._rebuilder = rebuilder or PostCompactContextRebuilder()
 
     def plan(
         self,
@@ -70,18 +76,20 @@ class ContextEngine:
 
     async def compact(
         self,
-        state: ContextPlanningInput,
+        state: CompactionInput,
         trigger: CompactTrigger,
         recorder: ModelInvocationRecorder | None = None,
         pre_compact_budget: ContextBudget | None = None,
     ) -> CompactionOutcome:
-        return await self._compactor.compact(
+        """摘要成功后恢复关键状态；任一阶段失败都不返回可提交提案。"""
+        outcome = await self._compactor.compact(
             self._planner,
-            state,
+            state.planning,
             trigger,
             recorder=recorder,
             pre_compact_budget=pre_compact_budget,
         )
+        return replace(outcome, attachments=self._rebuilder.rebuild(state))
 
 
 __all__ = ["ContextEngine"]

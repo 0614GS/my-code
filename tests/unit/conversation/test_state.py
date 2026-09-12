@@ -249,7 +249,9 @@ def test_compaction_is_persisted_before_conversation_changes(
 
     monkeypatch.setattr(SessionStore, "_append_records", fail)
     with pytest.raises(OSError, match="disk full"):
-        session.commit_compaction((replacement,), summary, boundary)
+        session.commit_compaction(
+            (replacement,), summary, boundary, (), source=session.compaction_input()
+        )
     assert session.conversation == (human,)
     assert session.context_planning_state().content_replacements == ()
     assert session.compact_count == 0
@@ -261,7 +263,9 @@ def test_compaction_updates_context_entries_without_reload(tmp_path: Path) -> No
     session.append_human_message(human)
     summary = ConversationSummaryMessage("summary", parent_uuid=human.uuid)
     boundary = CompactBoundary(human.uuid, summary.uuid, "manual", 5, "estimated")
-    session.commit_compaction((), summary, boundary)
+    session.commit_compaction(
+        (), summary, boundary, (), source=session.compaction_input()
+    )
     assert session.conversation == (human, summary)
     assert session.context_entries == (summary,)
 
@@ -288,7 +292,9 @@ def test_compaction_prunes_replay_from_context_but_preserves_recoverable_sidecar
     summary = ConversationSummaryMessage("state", parent_uuid=assistant.uuid)
     boundary = CompactBoundary(assistant.uuid, summary.uuid, "manual", 1, "estimated")
 
-    session.commit_compaction((), summary, boundary)
+    session.commit_compaction(
+        (), summary, boundary, (), source=session.compaction_input()
+    )
 
     assert SessionStore(tmp_path, session.session_id).load().replay_records == (replay,)
     assert session.context_planning_state().replay_records == ()

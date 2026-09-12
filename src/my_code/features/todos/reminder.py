@@ -1,7 +1,10 @@
 """Non-persistent, live-session TodoWrite reminder attachment."""
 
 from my_code.context.session_cache import AttachmentProjectionInput
-from my_code.conversation.attachments import TodoReminderAttachment
+from my_code.conversation.attachments import (
+    TodoReminderAttachment,
+    TodoSnapshotAttachment,
+)
 from my_code.conversation.models import AssistantMessage, AttachmentMessage, ToolCall
 from my_code.features.todos.codec import TODO_WRITE_TOOL_NAME
 from my_code.features.todos.projection import project_todos
@@ -85,7 +88,7 @@ def _completed_model_calls_since_reminder(state: AttachmentProjectionInput) -> i
     completed_calls = 0
     for message in reversed(state.context_entries):
         if isinstance(message, AttachmentMessage) and isinstance(
-            message.payload, TodoReminderAttachment
+            message.payload, (TodoReminderAttachment, TodoSnapshotAttachment)
         ):
             return completed_calls
         if isinstance(message, AssistantMessage):
