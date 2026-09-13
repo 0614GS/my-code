@@ -49,6 +49,10 @@ async def test_paginated_read_authorizes_edit_and_write_refreshes_snapshot(
     await WriteFileTool().execute({"path": "note.txt", "content": "final\n"}, context)
 
     assert path.read_text(encoding="utf-8") == "final\n"
+    recent_paths = tuple(
+        item.path for item in context.recent_files.recent("__anonymous__")
+    )
+    assert recent_paths == (path,)
 
 
 @pytest.mark.asyncio
@@ -77,3 +81,6 @@ async def test_new_file_is_created_atomically_without_read(tmp_path: Path) -> No
 
     assert (tmp_path / "nested/new.txt").read_text(encoding="utf-8") == "created\n"
     assert list((tmp_path / "nested").glob(".new.txt.*.tmp")) == []
+    assert context.recent_files.recent("__anonymous__")[0].path == (
+        tmp_path / "nested/new.txt"
+    )

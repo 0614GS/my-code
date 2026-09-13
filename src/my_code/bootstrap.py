@@ -101,6 +101,7 @@ from my_code.runtime.instrumentation import (
     InstrumentedToolExecutor,
     TelemetryToolInvocationAudit,
 )
+from my_code.runtime.recent_files import RuntimeRecentFileRecovery
 from my_code.runtime.runs import (
     AgentRunComponents,
     AgentRunFactory,
@@ -121,6 +122,7 @@ from my_code.tools.catalog import (
     ToolSourceId,
 )
 from my_code.tools.executor import LoggingToolInvocationAudit, ToolExecutor
+from my_code.tools.file_state import FileReadTracker, RecentFileRegistry
 from my_code.tools.round_executor import ToolRoundExecutor
 from my_code.tools.search import InvokeSearchedTool, ToolSearch
 from my_code.tui.app import MyCodeTui
@@ -221,6 +223,8 @@ def _build_agent_components(
     instrumented_prompter = InstrumentedPermissionPrompter(
         permission_prompter, observations
     )
+    file_reads = FileReadTracker()
+    recent_files = RecentFileRegistry()
     tool_executor = ToolExecutor(
         tools=tool_catalog.snapshot(),
         policy=permission_policy,
@@ -242,6 +246,8 @@ def _build_agent_components(
             command_launcher.status.display,
         ),
         requester_name=agent_name,
+        file_reads=file_reads,
+        recent_files=recent_files,
     )
     planner = ContextPlanner(
         prompt=prompt_registry or build_system_prompt_registry(workspace.root),
@@ -269,6 +275,13 @@ def _build_agent_components(
         planner,
         ContextCompactor(compaction_model, model_environment=environment),
         PostCompactContextRebuilder((TodoPostCompactAttachmentSource(),)),
+        RuntimeRecentFileRecovery(
+            workspace,
+            recent_files,
+            file_reads,
+            planner.meter,
+            binding,
+        ),
     )
     tool_round = ToolRoundExecutor(
         InstrumentedToolExecutor(tool_executor, observations),
@@ -662,6 +675,7 @@ def _assemble_agent(
         mcp=mcp,
         skills=skills,
         shutdown_observability=shutdown_observability,
+        clear_file_state=components.tool_executor.clear_file_state,
     )
     return _BootstrapComponents(
         runtime=runtime,

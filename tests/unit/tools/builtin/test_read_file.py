@@ -24,12 +24,14 @@ async def test_read_accepts_only_controlled_project_temp_root(tmp_path: Path) ->
     output.write_text("hello", encoding="utf-8")
     tool = ReadFileTool()
 
+    context = ToolExecutionContext(workspace, internal_read_root=runtime)
     result = await tool.execute(
         {"path": str(output)},
-        ToolExecutionContext(workspace, internal_read_root=runtime),
+        context,
     )
 
     assert "hello" in result.content
+    assert context.recent_files.recent("__anonymous__") == ()
     outside = tmp_path / "temp" / "other" / "id.output"
     outside.parent.mkdir(parents=True)
     outside.write_text("secret", encoding="utf-8")
@@ -47,9 +49,8 @@ async def test_read_caps_visible_output_and_reports_next_offset(tmp_path: Path) 
         encoding="utf-8",
     )
 
-    result = await ReadFileTool().execute(
-        {"path": "large.txt"}, ToolExecutionContext(workspace)
-    )
+    context = ToolExecutionContext(workspace)
+    result = await ReadFileTool().execute({"path": "large.txt"}, context)
 
     assert len(result.content) <= 16_000
     assert result.metadata["truncated_by"] == "characters"
@@ -57,6 +58,7 @@ async def test_read_caps_visible_output_and_reports_next_offset(tmp_path: Path) 
     assert isinstance(next_offset, int)
     assert next_offset > 1
     assert f"next_offset={next_offset}" in result.content
+    assert context.recent_files.recent("__anonymous__")[0].path == source
 
 
 @pytest.mark.asyncio

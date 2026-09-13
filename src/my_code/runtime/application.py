@@ -193,6 +193,7 @@ class ApplicationRuntime:
         mcp: McpRuntime,
         skills: SkillRuntime,
         shutdown_observability: Callable[[], None] | None = None,
+        clear_file_state: Callable[[], None] | None = None,
     ) -> None:
         self.workspace = workspace
         self.permissions = permissions
@@ -204,6 +205,7 @@ class ApplicationRuntime:
         self.mcp = mcp
         self.skills = skills
         self._shutdown_observability = shutdown_observability or (lambda: None)
+        self._clear_file_state = clear_file_state or (lambda: None)
         self._close_foreground: Callable[[], Awaitable[None]] | None = None
         self._operation_lock = asyncio.Lock()
         self._closed = False
@@ -281,6 +283,10 @@ class ApplicationRuntime:
                     errors.append(error)
             try:
                 self._shutdown_observability()
+            except Exception as error:
+                errors.append(error)
+            try:
+                self._clear_file_state()
             except Exception as error:
                 errors.append(error)
             if errors:

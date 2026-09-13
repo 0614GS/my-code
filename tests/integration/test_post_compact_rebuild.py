@@ -282,8 +282,8 @@ async def test_persistence_failure_preserves_whole_old_state(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("version", [6, 7])
-async def test_legacy_history_is_not_rewritten_and_generates_v8_snapshot(
+@pytest.mark.parametrize("version", [6, 7, 8])
+async def test_legacy_history_is_not_rewritten_and_generates_v9_snapshot(
     tmp_path: Path,
     version: int,
 ) -> None:
@@ -308,7 +308,7 @@ async def test_legacy_history_is_not_rewritten_and_generates_v8_snapshot(
     restored = await compact(session, engine())
     assert isinstance(restored[-1], TodoSnapshotAttachment)
     assert path.read_text().startswith(original)
-    assert json.loads(path.read_text().splitlines()[-1])["schema_version"] == 8
+    assert json.loads(path.read_text().splitlines()[-1])["schema_version"] == 9
     assert Session(tmp_path, SESSION_ID).context_entries == session.context_entries
 
 

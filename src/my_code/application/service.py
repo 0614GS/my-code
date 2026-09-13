@@ -382,13 +382,18 @@ class ApplicationService:
                 recorder=session,
                 pre_compact_budget=pre_compact_budget,
             )
-            session.commit_compaction(
-                outcome.replacements,
-                outcome.summary,
-                outcome.boundary,
-                outcome.attachments,
-                source=source,
-            )
+            try:
+                session.commit_compaction(
+                    outcome.replacements,
+                    outcome.summary,
+                    outcome.boundary,
+                    outcome.attachments,
+                    source=source,
+                )
+            except BaseException:
+                self.context.discard_compaction(outcome)
+                raise
+            await self.context.acknowledge_compaction(outcome)
             yield CompactionCompleted("manual", outcome.usage, self.context_status())
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:

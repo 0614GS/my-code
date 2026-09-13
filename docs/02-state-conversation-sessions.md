@@ -129,7 +129,7 @@ Permission mode 使用 last-wins 的 session record；旧 transcript 没有该�
 
 Collaboration mode 是独立的 last-wins Session 状态，仅有 `default` 与 `plan`。基础 `permission_mode` 始终保存用户进入 Plan 前的选择；Plan 恢复时运行期 policy 临时使用 `plan`，退出时再从 Session 恢复基础权限。旧 transcript 缺少 collaboration 字段时按 Default 恢复。模式切换本身不改写 Conversation；下一次用户提交才在同一 batch 中按 mode/discovery prelude、HumanMessage、请求附件的顺序追加事实。
 
-Transcript 新写入 schema 为 v8，继续读取 v6/v7，旧记录不重写。v8 增加严格校验的 `todo_snapshot` attachment（来源 TodoWrite ID、有序 content/status/active_form 条目），不伪造工具写入或 TodoList 更新事件。v7/v8 header 持久化 `session_kind`、`parent_session_id`、`created_by_run_id` 和 `agent_name`；foreground 不允许 child lineage，subagent 必须提供完整 lineage。v6 缺少 kind 时兼容解释为 foreground，旧 `turn_started/turn_finished` 映射为 legacy invocation；v5 及更早明确拒绝恢复。未知 kind、冲突字段或未知 schema 必须失败关闭。
+Transcript 新写入 schema 为 v9，继续读取 v6/v7/v8，旧记录不重写。v9 增加严格校验的 `recent_file_snapshot` attachment；v8 增加严格校验的 `todo_snapshot` attachment（来源 TodoWrite ID、有序 content/status/active_form 条目），不伪造工具写入或 TodoList 更新事件。v7-v9 header 持久化 `session_kind`、`parent_session_id`、`created_by_run_id` 和 `agent_name`；foreground 不允许 child lineage，subagent 必须提供完整 lineage。v6 缺少 kind 时兼容解释为 foreground，旧 `turn_started/turn_finished` 映射为 legacy invocation；v5 及更早明确拒绝恢复。未知 kind、冲突字段或未知 schema 必须失败关闭。
 
 `session_kind` 是受控枚举，不从 title、prompt、路径或 lineage 猜测。Catalog 和 TUI
 `/resume` 默认只返回 foreground；child transcript 通过 Subagent activity/transcript 用例

@@ -1,6 +1,7 @@
 """Provider-neutral structured payloads carried by ``AttachmentMessage``."""
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Literal
 
 from my_code.foundation.json import JsonObject, to_json_object
@@ -16,6 +17,44 @@ class FileMentionAttachment:
     def __post_init__(self) -> None:
         if not self.path.strip() or not self.body:
             raise ValueError("File attachment path and body must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class RecentFileSnapshotAttachment:
+    """Full compact 时重新读取的工作区文件当前快照。"""
+
+    path: str
+    text: str
+    sha256: str
+    total_lines: int
+    start_line: int
+    end_line: int
+    truncated: bool
+    kind: Literal["recent_file_snapshot"] = "recent_file_snapshot"
+
+    def __post_init__(self) -> None:
+        normalized_path = PurePosixPath(self.path)
+        if (
+            not self.path.strip()
+            or normalized_path.is_absolute()
+            or ".." in normalized_path.parts
+            or not _is_sha256(self.sha256)
+        ):
+            raise ValueError("Recent file snapshot identity is invalid")
+        if self.total_lines < 0 or self.start_line != 1:
+            raise ValueError("Recent file snapshot line range is invalid")
+        if self.total_lines == 0:
+            if self.end_line != 0 or self.text or self.truncated:
+                raise ValueError("Empty recent file snapshot is inconsistent")
+            return
+        if not (1 <= self.end_line <= self.total_lines):
+            raise ValueError("Recent file snapshot line range is invalid")
+        if self.truncated != (self.end_line < self.total_lines):
+            raise ValueError("Recent file snapshot truncation is inconsistent")
+        if len(self.text.splitlines()) != self.end_line:
+            raise ValueError("Recent file snapshot text does not match its line range")
+        if self.truncated and not self.text.endswith(("\n", "\r")):
+            raise ValueError("Truncated recent file snapshot must end on a full line")
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +232,7 @@ class PlanHandoffAttachment:
 
 type AttachmentPayload = (
     FileMentionAttachment
+    | RecentFileSnapshotAttachment
     | TodoReminderAttachment
     | TodoSnapshotAttachment
     | BackgroundTaskCompletionAttachment
@@ -214,6 +254,7 @@ def is_durable_attachment(payload: AttachmentPayload) -> bool:
         payload,
         (
             FileMentionAttachment,
+            RecentFileSnapshotAttachment,
             TodoSnapshotAttachment,
             BackgroundTaskCompletionAttachment,
             SkillActivationAttachment,
@@ -233,6 +274,7 @@ __all__ = [
     "FileMentionAttachment",
     "InvokedSkillsAttachment",
     "PlanHandoffAttachment",
+    "RecentFileSnapshotAttachment",
     "SkillActivationAttachment",
     "SkillListingAttachment",
     "SkillListingEntry",
@@ -245,3 +287,9 @@ __all__ = [
     "ToolSearchListingAttachment",
     "is_durable_attachment",
 ]
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )

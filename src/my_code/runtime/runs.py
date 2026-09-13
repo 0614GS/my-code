@@ -127,7 +127,10 @@ class AgentRun:
         try:
             await self.provider.close()
         finally:
-            self._release(self.run_id)
+            try:
+                self.tool_executor.clear_file_state()
+            finally:
+                self._release(self.run_id)
 
 
 class AgentRunFactory:

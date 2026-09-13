@@ -45,6 +45,7 @@ from my_code.tools.discovery import (
     TOOL_SEARCH_NAME,
     ToolExposureSnapshot,
 )
+from my_code.tools.file_state import FileReadTracker, RecentFileRegistry
 from my_code.tools.invocation import (
     ToolInvocation,
     ToolInvocationAudit,
@@ -121,6 +122,8 @@ class ToolExecutor:
         audit: ToolInvocationAudit | None = None,
         internal_read_root: Path | None = None,
         requester_name: str = "main",
+        file_reads: FileReadTracker | None = None,
+        recent_files: RecentFileRegistry | None = None,
     ) -> None:
         self.tools = tools
         self.policy = policy
@@ -130,6 +133,8 @@ class ToolExecutor:
             workspace,
             internal_read_root=internal_read_root,
             command_launcher=command_launcher,
+            file_reads=file_reads,
+            recent_files=recent_files,
         )
         self.update_applier = update_applier or _apply_updates(policy)
         self.session_update_applier = session_update_applier or _apply_session_updates(
@@ -146,6 +151,12 @@ class ToolExecutor:
         """Return a detached policy for a single Agent step."""
 
         return self.policy.snapshot()
+
+    def clear_file_state(self) -> None:
+        """释放此 executor 拥有的全部进程内文件状态。"""
+
+        self.context.file_reads.clear()
+        self.context.recent_files.clear()
 
     def present_use(
         self,

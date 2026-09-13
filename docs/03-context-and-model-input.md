@@ -80,6 +80,10 @@ Provider 成功响应必须携带有效 usage，否则按协议错误处理，�
 
 `ContextEngine.compact()` 先生成摘要，再通过独立 `PostCompactContextRebuilder` 生成恢复附件，返回完整 `CompactionOutcome`；Agent 的自动/反应式路径或 Application 的手动路径通过 `Session.commit_compaction()` 原子提交 summary、replacement、boundary 和 attachments。摘要或恢复失败时不提交新工作集。
 
+摘要成功后，runtime 会按 Session 最近访问顺序重新读取最多 5 个工作区文本文件，并把当前版本作为 durable `recent_file_snapshot` 追加到恢复附件。单文件最多估算 5,000 token、合计最多 50,000 token，截断只保留完整行；删除、越界、二进制、非 UTF-8、超过 8 MiB 或读取失败的候选会被跳过。该快照比 summary 中较旧的文件描述优先，截断内容必须通过 `Read` 继续获取。
+
+近期工作集与 Write/Edit 的完整读取授权相互独立，且只存在于当前进程。Full compact 成功提交后，runtime 清除本 Session 的旧授权，只为完整注入且在确认时仍与恢复版本一致的文件重新授权；提案失败或提交失败则丢弃一次性 receipt 并保留原授权。
+
 压缩进度事件由拥有用例顺序的 Agent/Application 在调用 Context 前后发出，Context 本身不持有 observer、UI 状态或事件总线。completed 只允许出现在 persistence-first 提交之后。
 
 Compact 请求显式关闭 reasoning，并使用受模型上限约束的独立输出预算。超长 compact 输入可以按完整用户轮次从最旧部分开始裁剪摘要视图，但不会删除完整 transcript。最终 summary 是新的 Conversation fact，而不是隐藏 cache。

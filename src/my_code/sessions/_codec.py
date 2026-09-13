@@ -12,6 +12,7 @@ from my_code.conversation.attachments import (
     FileMentionAttachment,
     InvokedSkillsAttachment,
     PlanHandoffAttachment,
+    RecentFileSnapshotAttachment,
     SkillActivationAttachment,
     SkillListingAttachment,
     SkillListingEntry,
@@ -583,7 +584,11 @@ def entry_from_json(value: object) -> TranscriptEntry:
     except TypeError as error:
         raise TranscriptDecodeError("Transcript entry must be an object") from error
     schema_version = data.get("schema_version")
-    if schema_version not in {6, 7, 8}:
+    if (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version not in {6, 7, 8, 9}
+    ):
         raise TranscriptDecodeError("Unsupported transcript schema version")
     kind = _string(data, "type")
     if schema_version == 6 and kind in {"turn_started", "turn_finished"}:
@@ -607,7 +612,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
             "collaboration_mode",
         }
         required_identity: set[str] = set()
-        if schema_version in {7, 8}:
+        if schema_version in {7, 8, 9}:
             required_identity = {
                 "session_kind",
                 "parent_session_id",
@@ -651,22 +656,22 @@ def entry_from_json(value: object) -> TranscriptEntry:
                 ),
                 session_kind=(
                     _session_kind(data.get("session_kind"))
-                    if schema_version in {7, 8}
+                    if schema_version in {7, 8, 9}
                     else SessionKind.FOREGROUND.value
                 ),
                 parent_session_id=(
                     _optional_non_empty_string(data, "parent_session_id")
-                    if schema_version in {7, 8}
+                    if schema_version in {7, 8, 9}
                     else None
                 ),
                 created_by_run_id=(
                     _optional_non_empty_string(data, "created_by_run_id")
-                    if schema_version in {7, 8}
+                    if schema_version in {7, 8, 9}
                     else None
                 ),
                 agent_name=(
                     _optional_non_empty_string(data, "agent_name")
-                    if schema_version in {7, 8}
+                    if schema_version in {7, 8, 9}
                     else None
                 ),
             )
@@ -814,7 +819,7 @@ def entry_from_json(value: object) -> TranscriptEntry:
     if kind == "attachment_message":
         try:
             payload = to_json_object(data.get("payload"))
-            _attachment_from_json(payload)
+            _attachment_from_json(payload, schema_version=schema_version)
         except (TypeError, ValueError) as error:
             raise TranscriptDecodeError(str(error)) from error
         return AttachmentMessageRecord(uuid, parent_uuid, timestamp, payload)
@@ -953,6 +958,17 @@ def _attachment_to_json(payload: AttachmentPayload) -> JsonObject:
             "body": payload.body,
             "is_directory": payload.is_directory,
         }
+    if isinstance(payload, RecentFileSnapshotAttachment):
+        return {
+            "kind": payload.kind,
+            "path": payload.path,
+            "text": payload.text,
+            "sha256": payload.sha256,
+            "total_lines": payload.total_lines,
+            "start_line": payload.start_line,
+            "end_line": payload.end_line,
+            "truncated": payload.truncated,
+        }
     if isinstance(payload, TodoSnapshotAttachment):
         return {
             "kind": payload.kind,
@@ -1014,7 +1030,9 @@ def _attachment_to_json(payload: AttachmentPayload) -> JsonObject:
     }
 
 
-def _attachment_from_json(value: object) -> AttachmentPayload:
+def _attachment_from_json(
+    value: object, *, schema_version: int = 9
+) -> AttachmentPayload:
     data = _object(value)
     kind = _string(data, "kind")
     try:
@@ -1036,6 +1054,38 @@ def _attachment_from_json(value: object) -> AttachmentPayload:
                 raise TranscriptDecodeError("is_directory must be boolean")
             return FileMentionAttachment(
                 _string(data, "path"), _string(data, "body"), is_directory
+            )
+        if kind == "recent_file_snapshot":
+            if schema_version < 9:
+                raise TranscriptDecodeError(
+                    "Recent file snapshots require transcript schema v9"
+                )
+            _require_exact_fields(
+                data,
+                frozenset(
+                    {
+                        "kind",
+                        "path",
+                        "text",
+                        "sha256",
+                        "total_lines",
+                        "start_line",
+                        "end_line",
+                        "truncated",
+                    }
+                ),
+            )
+            truncated = data.get("truncated")
+            if not isinstance(truncated, bool):
+                raise TranscriptDecodeError("truncated must be boolean")
+            return RecentFileSnapshotAttachment(
+                _string(data, "path"),
+                _possibly_empty_string(data, "text"),
+                _string(data, "sha256"),
+                _non_negative_int(data, "total_lines"),
+                _positive_int(data, "start_line"),
+                _non_negative_int(data, "end_line"),
+                truncated,
             )
         if kind == "todo_snapshot":
             _require_exact_fields(data, frozenset({"kind", "source_write_id", "todos"}))

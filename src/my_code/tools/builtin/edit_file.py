@@ -142,6 +142,7 @@ class EditFileTool(Tool):
                 written.fingerprint,
                 total_lines=text_line_count(updated),
             )
+            context.recent_files.record(session_key, path, written.fingerprint)
         replacements = count if replace_all else 1
         display_path = relative_display_path(context.cwd, path)
         return ToolOutput(

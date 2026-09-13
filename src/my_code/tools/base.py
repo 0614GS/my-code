@@ -15,7 +15,7 @@ from my_code.conversation.presentation import ToolResultPresentation
 from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import PermissionUpdate, PermissionUpdateDestination
-from my_code.tools.file_state import FileReadTracker
+from my_code.tools.file_state import FileReadTracker, RecentFileRegistry
 from my_code.tools.presentation import (
     ToolUsePresentation,
     compact_text,
@@ -54,6 +54,7 @@ class ToolExecutionContext:
     internal_read_root: Path | None
     searched_fingerprints: Mapping[str, str]
     file_reads: FileReadTracker
+    recent_files: RecentFileRegistry
 
     def __init__(
         self,
@@ -69,6 +70,7 @@ class ToolExecutionContext:
         internal_read_root: Path | None = None,
         searched_fingerprints: Mapping[str, str] = MappingProxyType({}),
         file_reads: FileReadTracker | None = None,
+        recent_files: RecentFileRegistry | None = None,
         *,
         command_launcher: CommandLauncher | None = None,
     ) -> None:
@@ -105,6 +107,7 @@ class ToolExecutionContext:
             MappingProxyType(dict(searched_fingerprints)),
         )
         object.__setattr__(self, "file_reads", file_reads or FileReadTracker())
+        object.__setattr__(self, "recent_files", recent_files or RecentFileRegistry())
 
     @property
     def cwd(self) -> Path:
@@ -134,6 +137,7 @@ class ToolExecutionContext:
             self.internal_read_root,
             searched_fingerprints,
             self.file_reads,
+            self.recent_files,
             command_launcher=self.command_launcher,
         )
 

@@ -86,8 +86,8 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 ### Full compact 重建范围
 
 manual、auto、reactive 与 child run 共用 Context 的摘要后、提交前重建阶段，恢复模式、
-已激活 Skill、有效工具发现和成功 TodoWrite 当前状态。与参考实现有意不同：关键状态
-首期完整恢复，不使用额外字符/单 Skill 截断预算；以当前窗口和不可变领域权威快照为输入。
-近期文件重读、Plan 文件、后台任务恢复与缓存刷新暂不纳入重建；普通 file mention、listing、
-旧 Todo reminder 和后台结果不会被搬回，继续通过摘要或普通附件派生生效。
-未来文件 I/O 需单独设计准备阶段，不扩展当前同步 source 为隐式异步插件框架。
+已激活 Skill、有效工具发现和成功 TodoWrite 当前状态。之后由独立 runtime 端口重新读取
+当前进程内最近成功 Read、Write、Edit 的工作区文件，最多恢复 5 个，并受单文件与总 token
+预算约束。当前磁盘快照优先于摘要中的旧描述；近期顺序不从 transcript 重建。外置
+`tool-results/`、runtime temp 和后台任务输出不展开为近期文件，普通 file mention、listing、
+旧 Todo reminder 和后台结果也不会被搬回。同步状态 rebuilder 仍保持无 I/O 纯投影。

@@ -132,6 +132,7 @@ class WriteFileTool(Tool):
                 written.fingerprint,
                 total_lines=text_line_count(content),
             )
+            context.recent_files.record(session_key, path, written.fingerprint)
         display_path = relative_display_path(context.cwd, path)
         byte_count = len(content.encode("utf-8"))
         return ToolOutput(

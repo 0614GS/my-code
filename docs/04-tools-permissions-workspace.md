@@ -47,6 +47,11 @@ ToolCall
 要求重新 Read。写入采用同目录临时文件、文件与父目录 fsync 及原子发布；新文件使用
 无覆盖创建，失败和取消不更新观察状态。该观察状态不持久化，resume 后必须重新 Read。
 
+独立的 `RecentFileRegistry` 记录当前进程内每个 Session 最近成功 Read、Write、Edit 的
+规范化工作区路径与版本，不缓存正文；部分 Read 也更新顺序，runtime temp Read 和失败或
+取消的操作不更新。每个 Session 最多保留 100 个唯一路径并按 LRU 淘汰。Full compact
+会通过 runtime 恢复端口重读这些候选，但近期顺序本身不持久化，也不替代上述写入授权。
+
 拒绝、验证失败、执行异常和取消都必须形成与原 call ID 配对的错误结果。权限更新先持久化目标配置，再替换 runtime policy；写入失败时当前权限不改变。
 
 ## ToolRound 与并行

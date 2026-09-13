@@ -150,8 +150,9 @@ class ReadFileTool(Tool):
                     read_bytes=read_snapshot_bytes,
                 )
         if snapshot is not None:
+            session_key = execution_session_key(context.session_id, context.run_id)
             context.file_reads.record_range(
-                execution_session_key(context.session_id, context.run_id),
+                session_key,
                 path,
                 snapshot.fingerprint,
                 total_lines=details.total_lines,
@@ -159,6 +160,7 @@ class ReadFileTool(Tool):
                 end=details.returned_end,
                 complete_lines=details.truncated_by != "line_chars",
             )
+            context.recent_files.record(session_key, path, snapshot.fingerprint)
         if details.returned_start is None:
             range_text = "no lines returned"
         else:

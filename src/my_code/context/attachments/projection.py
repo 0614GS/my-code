@@ -9,6 +9,7 @@ from my_code.conversation.attachments import (
     CollaborationModeAttachment,
     FileMentionAttachment,
     PlanHandoffAttachment,
+    RecentFileSnapshotAttachment,
     SkillActivationAttachment,
     SkillListingAttachment,
     TodoReminderAttachment,
@@ -63,6 +64,27 @@ def _render(attachment: AttachmentPayload) -> str:
             "system-reminder",
             "The user explicitly attached the following context: "
             f"{title}\n\n{attachment.body}",
+        )
+    if isinstance(attachment, RecentFileSnapshotAttachment):
+        range_text = (
+            "empty file"
+            if attachment.total_lines == 0
+            else f"lines {attachment.start_line}-{attachment.end_line} "
+            f"of {attachment.total_lines}"
+        )
+        continuation = (
+            " The snapshot is truncated; use Read to inspect the remaining lines."
+            if attachment.truncated
+            else ""
+        )
+        return wrap_xml(
+            "system-reminder",
+            "Current workspace file state restored after compaction. This file was "
+            "re-read after the compact summary was generated, so it takes precedence "
+            "over older file descriptions in that summary."
+            + continuation
+            + f"\nFile: {attachment.path}\nSHA-256: {attachment.sha256}"
+            + f"\nRestored: {range_text}\n\n{attachment.text}",
         )
     if isinstance(attachment, TodoSnapshotAttachment):
         return wrap_xml(

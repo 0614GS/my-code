@@ -616,13 +616,18 @@ class AgentEngine:
             recorder=session,
             pre_compact_budget=pre_budget,
         )
-        session.commit_compaction(
-            outcome.replacements,
-            outcome.summary,
-            outcome.boundary,
-            outcome.attachments,
-            source=source,
-        )
+        try:
+            session.commit_compaction(
+                outcome.replacements,
+                outcome.summary,
+                outcome.boundary,
+                outcome.attachments,
+                source=source,
+            )
+        except BaseException:
+            self._context.discard_compaction(outcome)
+            raise
+        await self._context.acknowledge_compaction(outcome)
         return outcome
 
     async def _plan_request(

@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
+from my_code.context.recent_files import RecentFileRecoveryReceipt
 from my_code.conversation.attachments import AttachmentPayload
 from my_code.conversation.models import ConversationSummaryMessage
 from my_code.conversation.state import CompactBoundary, ContentReplacement
@@ -65,6 +66,7 @@ class CompactionOutcome:
     boundary: CompactBoundary
     usage: TokenUsage
     attachments: tuple[AttachmentPayload, ...] = ()
+    recovery_receipt: RecentFileRecoveryReceipt | None = None
 
 
 class ContextOverflow(RuntimeError):

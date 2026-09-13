@@ -188,7 +188,7 @@ def test_four_message_records_round_trip_new_schema(tmp_path: Path) -> None:
         "conversation_summary_message",
         "session_metadata",
     ]
-    assert all(entry["schema_version"] == 8 for entry in entries)
+    assert all(entry["schema_version"] == 9 for entry in entries)
     assert entries[0]["max_steps"] is None
     assert "max_turns" not in entries[0]
     assert all("role" not in entry and "origin" not in entry for entry in entries)
@@ -507,7 +507,7 @@ def test_file_diff_presentation_round_trips_in_v7_and_is_strict(
     assert restored.content[0].presentation == presentation
     documents = [json.loads(line) for line in store.path.read_text().splitlines()]
     record = next(item for item in documents if item["type"] == "tool_result_batch")
-    assert record["schema_version"] == 8
+    assert record["schema_version"] == 9
     record["content"][0]["presentation"]["file_diff"]["unexpected"] = True
     store.path.write_text(
         "".join(json.dumps(item) + "\n" for item in documents), encoding="utf-8"

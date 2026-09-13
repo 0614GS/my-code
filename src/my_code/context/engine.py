@@ -1,18 +1,23 @@
 """Context 模块对外的规划、检查与压缩能力。"""
 
+import hashlib
 from dataclasses import replace
 
 from my_code.context.compaction import ContextCompactor
 from my_code.context.models import CompactionOutcome, ContextBudget, ContextPlan
 from my_code.context.planner import ContextPlanner
 from my_code.context.rebuild import PostCompactContextRebuilder
+from my_code.context.recent_files import PostCompactFileRecovery
 from my_code.context.session_cache import (
     AttachmentProjectionInput,
     CompactionInput,
     ContextPlanningInput,
     SessionContextCache,
 )
-from my_code.conversation.attachments import AttachmentPayload
+from my_code.conversation.attachments import (
+    AttachmentPayload,
+    RecentFileSnapshotAttachment,
+)
 from my_code.conversation.state import CompactTrigger
 from my_code.model.invocation import ModelInvocationRecorder
 from my_code.model.primitives import ContextFootprint, TokenUsage
@@ -27,10 +32,12 @@ class ContextEngine:
         planner: ContextPlanner,
         compactor: ContextCompactor,
         rebuilder: PostCompactContextRebuilder | None = None,
+        file_recovery: PostCompactFileRecovery | None = None,
     ) -> None:
         self._planner = planner
         self._compactor = compactor
         self._rebuilder = rebuilder or PostCompactContextRebuilder()
+        self._file_recovery = file_recovery
 
     def plan(
         self,
@@ -89,7 +96,42 @@ class ContextEngine:
             recorder=recorder,
             pre_compact_budget=pre_compact_budget,
         )
-        return replace(outcome, attachments=self._rebuilder.rebuild(state))
+        attachments = self._rebuilder.rebuild(state)
+        if self._file_recovery is None:
+            return replace(outcome, attachments=attachments)
+        summary_sha256 = hashlib.sha256(outcome.summary.content.encode()).hexdigest()
+        prepared = await self._file_recovery.prepare(state.session_id, summary_sha256)
+        try:
+            recent = tuple(
+                RecentFileSnapshotAttachment(
+                    item.path,
+                    item.text,
+                    item.sha256,
+                    item.total_lines,
+                    item.start_line,
+                    item.end_line,
+                    item.truncated,
+                )
+                for item in prepared.files
+            )
+        except BaseException:
+            self._file_recovery.discard(prepared.receipt)
+            raise
+        return replace(
+            outcome,
+            attachments=(*attachments, *recent),
+            recovery_receipt=prepared.receipt,
+        )
+
+    async def acknowledge_compaction(self, outcome: CompactionOutcome) -> None:
+        receipt = outcome.recovery_receipt
+        if receipt is not None and self._file_recovery is not None:
+            await self._file_recovery.acknowledge(receipt)
+
+    def discard_compaction(self, outcome: CompactionOutcome) -> None:
+        receipt = outcome.recovery_receipt
+        if receipt is not None and self._file_recovery is not None:
+            self._file_recovery.discard(receipt)
 
 
 __all__ = ["ContextEngine"]
