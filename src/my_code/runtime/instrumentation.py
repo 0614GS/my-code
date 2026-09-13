@@ -69,6 +69,7 @@ from my_code.permissions.models import (
 from my_code.permissions.policy import PermissionPolicy
 from my_code.sessions.models import InvocationFinished, InvocationStarted
 from my_code.sessions.session import Session
+from my_code.tools.base import ConcurrencyAssessment
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.discovery import ToolExposureSnapshot
 from my_code.tools.executor import ToolExecutionOutcome, ToolExecutor
@@ -531,6 +532,11 @@ class InstrumentedToolExecutor:
 
     def is_concurrency_safe(self, call: ToolCall, **kwargs: object) -> bool:
         return self._executor.is_concurrency_safe(call, **kwargs)  # type: ignore[arg-type]
+
+    def concurrency_assessment(
+        self, call: ToolCall, **kwargs: object
+    ) -> ConcurrencyAssessment:
+        return self._executor.concurrency_assessment(call, **kwargs)  # type: ignore[arg-type]
 
     def apply_session_updates(
         self,

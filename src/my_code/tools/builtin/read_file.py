@@ -9,12 +9,16 @@ from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from my_code.tools.base import (
+    ConcurrencyAssessment,
+    ConcurrencyMode,
     Tool,
     ToolExecutionContext,
     ToolExecutionError,
     ToolOutput,
+    ToolResource,
 )
 from my_code.tools.builtin.file_permissions import check_read_permission
+from my_code.tools.file_state import execution_session_key
 from my_code.tools.paths import relative_display_path, resolve_read_path
 from my_code.tools.validation import optional_int, required_string
 
@@ -67,6 +71,14 @@ class ReadFileTool(Tool):
         del tool_input
         return True
 
+    def assess_concurrency(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ConcurrencyAssessment:
+        path = context.workspace.resolve(required_string(tool_input, "path"))
+        return ConcurrencyAssessment(
+            ConcurrencyMode.RESOURCE_SCOPED, (ToolResource(path, False),)
+        )
+
     def get_tool_use_summary(self, tool_input: JsonObject) -> str:
         return required_string(tool_input, "path")
 
@@ -115,13 +127,38 @@ class ReadFileTool(Tool):
         display_path = (
             str(path) if internal else relative_display_path(context.cwd, path)
         )
-        details = self._read_details(
-            path,
-            offset,
-            limit,
-            max_chars=max(1, _MAX_OUTPUT_CHARS - len(display_path) - 300),
-            read_bytes=Path.read_bytes if internal else context.workspace.read_bytes,
-        )
+        if internal:
+            snapshot = None
+            details = self._read_details(
+                path,
+                offset,
+                limit,
+                max_chars=max(1, _MAX_OUTPUT_CHARS - len(display_path) - 300),
+            )
+        else:
+            async with context.workspace.coordinator.path_lease(path, write=False):
+                snapshot = context.workspace.read_snapshot(path)
+
+                def read_snapshot_bytes(_: Path) -> bytes:
+                    return snapshot.content
+
+                details = self._read_details(
+                    path,
+                    offset,
+                    limit,
+                    max_chars=max(1, _MAX_OUTPUT_CHARS - len(display_path) - 300),
+                    read_bytes=read_snapshot_bytes,
+                )
+        if snapshot is not None:
+            context.file_reads.record_range(
+                execution_session_key(context.session_id, context.run_id),
+                path,
+                snapshot.fingerprint,
+                total_lines=details.total_lines,
+                start=details.returned_start,
+                end=details.returned_end,
+                complete_lines=details.truncated_by != "line_chars",
+            )
         if details.returned_start is None:
             range_text = "no lines returned"
         else:

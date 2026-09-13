@@ -30,11 +30,14 @@ from my_code.permissions.models import (
 )
 from my_code.permissions.policy import PermissionPolicy
 from my_code.tools.base import (
+    ConcurrencyAssessment,
+    ConcurrencyMode,
     Tool,
     ToolExecutionContext,
     ToolExecutionError,
     ToolInputError,
     ToolOutput,
+    ToolResource,
 )
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.discovery import (
@@ -223,14 +226,55 @@ class ToolExecutor:
     ) -> bool:
         """Resolve a call and conservatively classify parallel execution safety."""
 
+        return self.concurrency_assessment(call, tools=tools).mode is not (
+            ConcurrencyMode.EXCLUSIVE
+        )
+
+    def concurrency_assessment(
+        self,
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+    ) -> ConcurrencyAssessment:
+        """解析并验证工具声明；无效或异常声明降级为独占。"""
+
+        exclusive = ConcurrencyAssessment(ConcurrencyMode.EXCLUSIVE)
         active_tools = self.tools if tools is None else tools
         resolved_call, tool, error, _ = self._resolve(call, active_tools, None)
         if error is not None or tool is None:
-            return False
+            return exclusive
         try:
-            return tool.is_concurrency_safe(resolved_call.input)
+            assessment = tool.assess_concurrency(resolved_call.input, self.context)
+            if assessment.mode is ConcurrencyMode.READ_ONLY:
+                if not tool.assess_read_only(
+                    resolved_call.input, self.context
+                ).is_read_only:
+                    return exclusive
+                return assessment
+            if assessment.mode is ConcurrencyMode.RESOURCE_SCOPED:
+                if not assessment.resources:
+                    return exclusive
+                resources = tuple(
+                    ToolResource(
+                        None
+                        if resource.path is None
+                        else self.workspace.resolve(str(resource.path)),
+                        resource.write,
+                    )
+                    for resource in assessment.resources
+                )
+                if not any(resource.write for resource in resources) and not (
+                    tool.assess_read_only(
+                        resolved_call.input, self.context
+                    ).is_read_only
+                ):
+                    return exclusive
+                return ConcurrencyAssessment(assessment.mode, resources)
+            if assessment.mode is ConcurrencyMode.INTERNALLY_SYNCHRONIZED:
+                return assessment
+            return exclusive
         except Exception:
-            return False
+            return exclusive
 
     async def execute(
         self,

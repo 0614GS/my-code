@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from my_code.tools.base import ToolExecutionContext, ToolExecutionError, ToolOutput
+from my_code.tools.builtin.bash.permissions import analyze_bash_command
 from my_code.workspace.launcher import (
     BASH_EXECUTABLE,
     CommandAuthority,
@@ -42,7 +43,7 @@ class BashTaskFailed(ToolExecutionError):
         self.exit_code = exit_code
 
 
-async def execute_bash_to_file(
+async def _execute_bash_to_file(
     command: str,
     context: ToolExecutionContext,
     output_file: Path,
@@ -121,7 +122,7 @@ async def execute_bash_to_file(
     return BashTaskOutcome(exit_code, output_file)
 
 
-async def execute_bash(
+async def _execute_bash(
     command: str,
     context: ToolExecutionContext,
     timeout_seconds: int,
@@ -258,6 +259,47 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
         pass
     if process.returncode is None:
         await process.wait()
+
+
+async def execute_bash_to_file(
+    command: str,
+    context: ToolExecutionContext,
+    output_file: Path,
+    *,
+    authority: CommandAuthority | str = CommandAuthority.USE_DEFAULT,
+) -> BashTaskOutcome:
+    """在命令完整生命周期持有与静态效果匹配的工作区锁。"""
+
+    analysis = analyze_bash_command(command, context.cwd)
+    async with context.workspace.coordinator.workspace_lease(
+        write=not analysis.is_read_only
+    ):
+        return await _execute_bash_to_file(
+            command, context, output_file, authority=authority
+        )
+
+
+async def execute_bash(
+    command: str,
+    context: ToolExecutionContext,
+    timeout_seconds: int,
+    *,
+    authority: CommandAuthority = CommandAuthority.USE_DEFAULT,
+    escalation_available: bool = False,
+) -> ToolOutput:
+    """在命令完整生命周期持有与静态效果匹配的工作区锁。"""
+
+    analysis = analyze_bash_command(command, context.cwd)
+    async with context.workspace.coordinator.workspace_lease(
+        write=not analysis.is_read_only
+    ):
+        return await _execute_bash(
+            command,
+            context,
+            timeout_seconds,
+            authority=authority,
+            escalation_available=escalation_available,
+        )
 
 
 __all__ = [

@@ -41,16 +41,37 @@ ToolCall
 任一侧超过 2 MiB 或 50,000 行时跳过高成本比较，记录明确的省略原因。失败、权限拒绝
 和取消结果不携带 diff。
 
+覆盖现有文件前，`Write` 和 `Edit` 都要求当前 Session 已通过一次或多次 `Read`
+完整观察同一文件版本。Read 只登记实际返回给模型的完整行，字符截断的行不计入覆盖；
+分页覆盖可以累计。写入前再次比较 inode、长度、mtime 与内容摘要，版本变化时废弃授权并
+要求重新 Read。写入采用同目录临时文件、文件与父目录 fsync 及原子发布；新文件使用
+无覆盖创建，失败和取消不更新观察状态。该观察状态不持久化，resume 后必须重新 Read。
+
 拒绝、验证失败、执行异常和取消都必须形成与原 call ID 配对的错误结果。权限更新先持久化目标配置，再替换 runtime policy；写入失败时当前权限不改变。
 
 ## ToolRound 与并行
 
-`ToolRoundExecutor` 按 AssistantMessage 中的 ToolCall 顺序扫描：
+`ToolRoundExecutor` 按 AssistantMessage 中的 ToolCall 顺序扫描。工具调用通过
+`ConcurrencyAssessment` 声明 `EXCLUSIVE`、`READ_ONLY`、`RESOURCE_SCOPED` 或
+`INTERNALLY_SYNCHRONIZED`；旧布尔接口仅作为保守兼容入口：
 
-- 连续且 `is_concurrency_safe(input)` 为真的调用组成有上限的并行组；
+- 旧接口只有 `is_concurrency_safe(input)` 与 `assess_read_only(input)` 同时为真才映射
+  为只读并行；任一判断异常都按独占处理；
+- 路径资源由 Workspace 规范化，读/读兼容，同一路径只要一方写入就冲突；不同路径的
+  Write/Edit 可以并行；工作区级资源与全部路径冲突；
 - 不安全调用单独执行，并成为前后屏障；
 - 未知、MCP 和有副作用的工具默认不安全；
 - 最终 batch 始终按原 ToolCall 顺序排列，不受完成先后影响。
+
+每个 Workspace 使用运行时临时目录中的稳定锁键协调同一工作区。文件调用先持有工作区
+共享锁，再持有路径共享或独占锁；锁按工作区、规范化路径顺序获取。不同 my-code 进程
+通过 POSIX `flock` 互斥，异常退出由操作系统释放。只读 Bash 持有工作区共享锁，其他
+Bash 在完整子进程生命周期持有工作区独占锁，后台进程也不会提前释放。
+
+Explore Subagent 是只读并发调用；共享工作区 General Subagent 是串行屏障。General
+后台调用必须指定 `isolation=worktree`：系统从当前 Git HEAD 建立独立分支和 worktree，
+并为 child 重建 Workspace、sandbox launcher 与路径提示。无改动时自动清理；存在改动时
+保留目录和分支并随工具结果返回，且不自动合并。非 Git 工作区明确拒绝该模式。
 
 取消会回收当前组的任务，保留已经完成的结果，并为其余调用补齐稳定错误结果。下一个模型 step 只能在完整 batch 成功提交后开始。
 

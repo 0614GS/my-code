@@ -18,11 +18,13 @@ from my_code.features.background_tasks.registry import (
 )
 from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.features.subagents.activity import SubagentActivityRecord
+from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import (
     BackgroundSubagent,
     CompletedSubagent,
     StartedSubagent,
     SubagentDefinition,
+    SubagentIsolation,
     SubagentLimits,
     SubagentParentContext,
     SubagentSpec,
@@ -30,6 +32,7 @@ from my_code.features.subagents.models import (
 )
 from my_code.features.subagents.read_only import ReadOnlyToolProxy
 from my_code.features.subagents.views import SubagentActivityView
+from my_code.features.subagents.worktrees import SubagentWorktreeManager
 from my_code.permissions.policy import PermissionPolicy
 from my_code.runtime.runs import AgentRunFactory, AgentRunSpec
 from my_code.sessions.session import Session
@@ -54,6 +57,8 @@ class SubagentController:
         background_enabled: bool = False,
         wake_signal: BackgroundTaskWakeSignal | None = None,
         background_registry: BackgroundTaskRegistry | None = None,
+        workspace_root: Path | None = None,
+        worktree_root: Path | None = None,
     ) -> None:
         self.runs = runs
         self.tasks = tasks
@@ -73,6 +78,11 @@ class SubagentController:
         self._sessions: dict[str, Session] = {}
         self._activity_revision = 0
         self._activity_changed = asyncio.Event()
+        self.worktrees = (
+            SubagentWorktreeManager(workspace_root, worktree_root)
+            if workspace_root is not None and worktree_root is not None
+            else None
+        )
 
     async def start(
         self,
@@ -121,7 +131,14 @@ class SubagentController:
             background,
             spec.prompt,
         )
+        worktree = None
         try:
+            if spec.isolation is SubagentIsolation.WORKTREE:
+                if self.worktrees is None:
+                    raise ToolExecutionError(
+                        "Subagent worktree isolation is unavailable"
+                    )
+                worktree = self.worktrees.create(run_id)
             child_catalog = self._child_catalog(
                 spec,
                 available_tools=available_tools,
@@ -146,12 +163,21 @@ class SubagentController:
                 run_id=run_id,
                 tool_catalog=child_catalog,
                 permission_policy=child_policy,
-                prompt_registry=definition.system_prompt,
+                prompt_registry=(
+                    build_subagent_definitions(worktree.path)[
+                        spec.agent_type
+                    ].system_prompt
+                    if worktree is not None
+                    else definition.system_prompt
+                ),
                 max_steps=self.limits.max_steps,
                 max_tokens=self.limits.max_tokens,
                 allow_permission_updates=False,
+                cwd=worktree.path if worktree is not None else None,
             )
         except BaseException:
+            if worktree is not None:
+                worktree.clean_if_unchanged()
             self._release(parent.run_id, task_id)
             raise
 
@@ -182,8 +208,12 @@ class SubagentController:
                     if run is not None:
                         await run.close()
                 finally:
-                    self._release(parent.run_id, task_id)
-                    self._publish_activity()
+                    try:
+                        if worktree is not None:
+                            worktree.clean_if_unchanged()
+                    finally:
+                        self._release(parent.run_id, task_id)
+                        self._publish_activity()
 
         if background:
             self.background_registry.register(
@@ -217,12 +247,20 @@ class SubagentController:
             )
         except BaseException:
             self.background_registry.unregister(task_id)
+            if worktree is not None:
+                worktree.clean_if_unchanged()
             self._release(parent.run_id, task_id)
             raise
         self._activity[task_id] = activity
         self._sessions[task_id] = run_spec.session
         self._publish_activity()
-        return StartedSubagent(task_id, run_id, spec.agent_type), handle
+        return StartedSubagent(
+            task_id,
+            run_id,
+            spec.agent_type,
+            str(worktree.path) if worktree is not None else None,
+            worktree.branch if worktree is not None else None,
+        ), handle
 
     @property
     def activity_revision(self) -> int:
@@ -306,7 +344,14 @@ class SubagentController:
         )
         if snapshot.status is TaskStatus.SUCCEEDED and outcome is None:
             raise RuntimeError("Subagent task returned an invalid outcome")
-        return CompletedSubagent(snapshot, started.run_id, outcome, started.agent_type)
+        return CompletedSubagent(
+            snapshot,
+            started.run_id,
+            outcome,
+            started.agent_type,
+            started.workspace_path,
+            started.branch,
+        )
 
     def active_children(self, parent_run_id: str) -> int:
         return len(self._active_tasks(parent_run_id))

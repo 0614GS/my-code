@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import uuid4
 
 from my_code.agent.events import AgentEvent
@@ -40,6 +41,7 @@ class AgentRunSpec:
     max_tokens: int | None = None
     allow_permission_updates: bool = True
     evaluation: EvaluationContext | None = None
+    cwd: Path | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():

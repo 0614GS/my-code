@@ -14,6 +14,11 @@ class SubagentType(StrEnum):
     GENERAL = "general"
 
 
+class SubagentIsolation(StrEnum):
+    SHARED = "shared"
+    WORKTREE = "worktree"
+
+
 @dataclass(frozen=True, slots=True)
 class SubagentDefinition:
     agent_type: SubagentType
@@ -92,12 +97,15 @@ class SubagentSpec:
     prompt: str
     description: str
     attachments: tuple[AttachmentPayload, ...] = ()
+    isolation: SubagentIsolation = SubagentIsolation.SHARED
 
     def __post_init__(self) -> None:
         if not isinstance(self.agent_type, SubagentType):
             raise ValueError("Subagent type must be explore or general")
         if not self.prompt.strip() or not self.description.strip():
             raise ValueError("Subagent prompt and description must not be blank")
+        if not isinstance(self.isolation, SubagentIsolation):
+            raise ValueError("Subagent isolation must be shared or worktree")
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +113,8 @@ class StartedSubagent:
     task_id: str
     run_id: str
     agent_type: SubagentType
+    workspace_path: str | None = None
+    branch: str | None = None
 
     def __post_init__(self) -> None:
         if not self.task_id.strip() or not self.run_id.strip():
@@ -119,6 +129,8 @@ class CompletedSubagent:
     run_id: str
     outcome: AgentInvocationOutcome | None
     agent_type: SubagentType
+    workspace_path: str | None = None
+    branch: str | None = None
 
     def __post_init__(self) -> None:
         if not self.run_id.strip():
@@ -147,6 +159,7 @@ __all__ = [
     "StartedSubagent",
     "SubagentDefinition",
     "SubagentLimits",
+    "SubagentIsolation",
     "SubagentParentContext",
     "SubagentSpec",
     "SubagentType",

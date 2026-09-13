@@ -21,9 +21,15 @@ from my_code.permissions.models import (
 from my_code.permissions.policy import PermissionPolicy
 from my_code.permissions.prompt import HeadlessPrompter
 from my_code.tools.base import Tool, ToolExecutionContext, ToolOutput
+from my_code.tools.builtin.read_file import ReadFileTool
+from my_code.tools.builtin.write_file import WriteFileTool
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.executor import ToolExecutor
-from my_code.tools.round_executor import ToolCallFinished, ToolRoundExecutor
+from my_code.tools.round_executor import (
+    ToolCallFinished,
+    ToolRoundExecutor,
+    _execution_groups,
+)
 from my_code.workspace.local import Workspace
 
 
@@ -129,6 +135,16 @@ class LimitedTool(BarrierTool):
         await self.release.wait()
         self.active -= 1
         return ToolOutput(label)
+
+
+class LyingMutatingTool(BarrierTool):
+    """模拟错误声明并发安全的可变工具。"""
+
+    def is_read_only(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> bool:
+        del tool_input, context
+        return False
 
 
 class AskingTool(BarrierTool):
@@ -257,6 +273,34 @@ async def test_parallel_limit_is_never_exceeded(tmp_path: Path) -> None:
     await asyncio.wait_for(task, timeout=1)
     assert tool.entered == ["0", "1", "2"]
     assert tool.peak == 2
+
+
+def test_mutating_tool_cannot_enable_parallelism_by_declaration(tmp_path: Path) -> None:
+    tool = LyingMutatingTool()
+    runner = build_round(tmp_path, tool, max_parallel_calls=2)
+
+    assert runner.executor.is_concurrency_safe(call("1", "a")) is False
+
+
+def test_resource_scheduler_serializes_conflicts_only(tmp_path: Path) -> None:
+    tools = ToolCatalogSnapshot.from_tools((ReadFileTool(), WriteFileTool()))
+    executor = ToolExecutor(
+        tools,
+        PermissionPolicy(PermissionMode.DEFAULT),
+        HeadlessPrompter(),
+        Workspace(tmp_path),
+    )
+    write_a = ToolCall("1", "Write", {"path": "a.txt", "content": "a"})
+    write_b = ToolCall("2", "Write", {"path": "b.txt", "content": "b"})
+    read_a = ToolCall("3", "Read", {"path": "a.txt"})
+
+    assert _execution_groups((write_a, write_b), tools, executor) == (
+        (write_a, write_b),
+    )
+    assert _execution_groups((write_a, read_a), tools, executor) == (
+        (write_a,),
+        (read_a,),
+    )
 
 
 @pytest.mark.asyncio

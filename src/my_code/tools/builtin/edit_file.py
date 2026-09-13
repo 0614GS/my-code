@@ -5,10 +5,13 @@ from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
 from my_code.tools.base import (
+    ConcurrencyAssessment,
+    ConcurrencyMode,
     Tool,
     ToolExecutionContext,
     ToolExecutionError,
     ToolOutput,
+    ToolResource,
 )
 from my_code.tools.builtin.file_diff import (
     build_file_diff,
@@ -16,16 +19,29 @@ from my_code.tools.builtin.file_diff import (
     file_diff_to_json,
 )
 from my_code.tools.builtin.file_permissions import check_write_permission
+from my_code.tools.file_state import execution_session_key, text_line_count
 from my_code.tools.paths import relative_display_path, resolve_workspace_path
 from my_code.tools.validation import optional_bool, required_string
+from my_code.workspace.local import WorkspaceConflictError
 
 
 class EditFileTool(Tool):
+    def assess_concurrency(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ConcurrencyAssessment:
+        path = context.workspace.resolve(required_string(tool_input, "path"))
+        return ConcurrencyAssessment(
+            ConcurrencyMode.RESOURCE_SCOPED, (ToolResource(path, True),)
+        )
+
     @property
     def definition(self) -> ModelToolDefinition:
         return ModelToolDefinition(
             name="Edit",
-            description="Replace an exact string in an existing UTF-8 file.",
+            description=(
+                "Replace an exact string in an existing UTF-8 file. Read the "
+                "entire current file before editing it."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -91,18 +107,41 @@ class EditFileTool(Tool):
         replace_all = optional_bool(tool_input, "replace_all", False)
         if not path.is_file():
             raise ToolExecutionError(f"Not a file: {path}")
-        content = context.workspace.read_text(path)
-        count = content.count(old)
-        if count == 0:
-            raise ToolExecutionError("old_string was not found")
-        if not replace_all and count != 1:
-            raise ToolExecutionError(
-                f"old_string occurs {count} times; set replace_all "
-                "or provide more context"
+        session_key = execution_session_key(context.session_id, context.run_id)
+        async with context.workspace.coordinator.path_lease(path, write=True):
+            expected = context.file_reads.require_complete(session_key, path)
+            if expected is None:
+                raise ToolExecutionError(
+                    "Read the entire current file before editing it"
+                )
+            snapshot = context.workspace.read_snapshot(path)
+            if snapshot.fingerprint != expected:
+                context.file_reads.invalidate(session_key, path)
+                raise ToolExecutionError("File changed since Read; Read it again")
+            content = snapshot.content.decode("utf-8")
+            count = content.count(old)
+            if count == 0:
+                raise ToolExecutionError("old_string was not found")
+            if not replace_all and count != 1:
+                raise ToolExecutionError(
+                    f"old_string occurs {count} times; set replace_all "
+                    "or provide more context"
+                )
+            limit = -1 if replace_all else 1
+            updated = content.replace(old, new, limit)
+            try:
+                written = context.workspace.atomic_write_text(
+                    path, updated, expected=expected
+                )
+            except WorkspaceConflictError as error:
+                context.file_reads.invalidate(session_key, path)
+                raise ToolExecutionError(str(error)) from error
+            context.file_reads.record_complete(
+                session_key,
+                path,
+                written.fingerprint,
+                total_lines=text_line_count(updated),
             )
-        limit = -1 if replace_all else 1
-        updated = content.replace(old, new, limit)
-        context.workspace.write_text(path, updated)
         replacements = count if replace_all else 1
         display_path = relative_display_path(context.cwd, path)
         return ToolOutput(

@@ -4,23 +4,44 @@ from my_code.conversation.presentation import ToolResultPresentation
 from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import ToolPermissionContext, ToolPermissionResult
-from my_code.tools.base import Tool, ToolExecutionContext, ToolOutput
+from my_code.tools.base import (
+    ConcurrencyAssessment,
+    ConcurrencyMode,
+    Tool,
+    ToolExecutionContext,
+    ToolExecutionError,
+    ToolOutput,
+    ToolResource,
+)
 from my_code.tools.builtin.file_diff import (
     build_file_diff,
     file_diff_from_json,
     file_diff_to_json,
 )
 from my_code.tools.builtin.file_permissions import check_write_permission
+from my_code.tools.file_state import execution_session_key, text_line_count
 from my_code.tools.paths import relative_display_path, resolve_workspace_path
 from my_code.tools.validation import required_string
+from my_code.workspace.local import WorkspaceConflictError
 
 
 class WriteFileTool(Tool):
+    def assess_concurrency(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ConcurrencyAssessment:
+        path = context.workspace.resolve(required_string(tool_input, "path"))
+        return ConcurrencyAssessment(
+            ConcurrencyMode.RESOURCE_SCOPED, (ToolResource(path, True),)
+        )
+
     @property
     def definition(self) -> ModelToolDefinition:
         return ModelToolDefinition(
             name="Write",
-            description="Create or replace a UTF-8 text file in the workspace.",
+            description=(
+                "Create or replace a UTF-8 text file in the workspace. Before "
+                "replacing an existing file, Read the entire current file."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -75,11 +96,42 @@ class WriteFileTool(Tool):
             context.cwd, required_string(tool_input, "path"), writable=True
         )
         content = required_string(tool_input, "content", allow_empty=True)
-        if path.exists() and not path.is_file():
-            raise IsADirectoryError(path)
-        created = not path.exists()
-        before = "" if created else context.workspace.read_text(path)
-        context.workspace.write_text(path, content, create_parents=True)
+        session_key = execution_session_key(context.session_id, context.run_id)
+        async with context.workspace.coordinator.path_lease(path, write=True):
+            if path.exists() and not path.is_file():
+                raise IsADirectoryError(path)
+            created = not path.exists()
+            expected = None
+            if created:
+                before = ""
+            else:
+                expected = context.file_reads.require_complete(session_key, path)
+                if expected is None:
+                    raise ToolExecutionError(
+                        "Read the entire current file before replacing it"
+                    )
+                snapshot = context.workspace.read_snapshot(path)
+                if snapshot.fingerprint != expected:
+                    context.file_reads.invalidate(session_key, path)
+                    raise ToolExecutionError("File changed since Read; Read it again")
+                before = snapshot.content.decode("utf-8")
+            try:
+                written = context.workspace.atomic_write_text(
+                    path,
+                    content,
+                    expected=expected,
+                    must_not_exist=created,
+                    create_parents=True,
+                )
+            except WorkspaceConflictError as error:
+                context.file_reads.invalidate(session_key, path)
+                raise ToolExecutionError(str(error)) from error
+            context.file_reads.record_complete(
+                session_key,
+                path,
+                written.fingerprint,
+                total_lines=text_line_count(content),
+            )
         display_path = relative_display_path(context.cwd, path)
         byte_count = len(content.encode("utf-8"))
         return ToolOutput(

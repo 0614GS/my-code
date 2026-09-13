@@ -18,6 +18,7 @@ from my_code.conversation.models import (
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.permissions.models import PermissionMode, PermissionUpdate
 from my_code.permissions.policy import PermissionPolicy
+from my_code.tools.base import ConcurrencyAssessment, ConcurrencyMode, ToolResource
 from my_code.tools.catalog import ToolCatalogSnapshot
 from my_code.tools.discovery import ToolExposureSnapshot
 from my_code.tools.executor import ToolExecutionOutcome
@@ -83,6 +84,13 @@ class ToolCallExecutor(Protocol):
         *,
         tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
     ) -> bool: ...
+
+    def concurrency_assessment(
+        self,
+        call: ToolCall,
+        *,
+        tools: ToolCatalogSnapshot | ToolExposureSnapshot | None = None,
+    ) -> ConcurrencyAssessment: ...
 
     async def execute(
         self,
@@ -267,19 +275,60 @@ def _execution_groups(
     executor: ToolCallExecutor,
 ) -> tuple[tuple[ToolCall, ...], ...]:
     groups: list[tuple[ToolCall, ...]] = []
-    safe: list[ToolCall] = []
+    safe: list[tuple[ToolCall, ConcurrencyAssessment]] = []
     for call in calls:
-        concurrency_safe = executor.is_concurrency_safe(call, tools=tools)
-        if concurrency_safe:
-            safe.append(call)
+        assessor = getattr(executor, "concurrency_assessment", None)
+        assessment = (
+            assessor(call, tools=tools)
+            if assessor is not None
+            else ConcurrencyAssessment(
+                ConcurrencyMode.READ_ONLY
+                if executor.is_concurrency_safe(call, tools=tools)
+                else ConcurrencyMode.EXCLUSIVE
+            )
+        )
+        if assessment.mode is not ConcurrencyMode.EXCLUSIVE and all(
+            _compatible(assessment, existing) for _, existing in safe
+        ):
+            safe.append((call, assessment))
             continue
         if safe:
-            groups.append(tuple(safe))
+            groups.append(tuple(item for item, _ in safe))
             safe = []
-        groups.append((call,))
+        if assessment.mode is ConcurrencyMode.EXCLUSIVE:
+            groups.append((call,))
+        else:
+            safe.append((call, assessment))
     if safe:
-        groups.append(tuple(safe))
+        groups.append(tuple(item for item, _ in safe))
     return tuple(groups)
+
+
+def _compatible(left: ConcurrencyAssessment, right: ConcurrencyAssessment) -> bool:
+    if (
+        left.mode is ConcurrencyMode.READ_ONLY
+        or right.mode is ConcurrencyMode.READ_ONLY
+    ):
+        return (
+            left.mode is ConcurrencyMode.READ_ONLY
+            and right.mode is ConcurrencyMode.READ_ONLY
+        )
+    if (
+        left.mode is ConcurrencyMode.INTERNALLY_SYNCHRONIZED
+        or right.mode is ConcurrencyMode.INTERNALLY_SYNCHRONIZED
+    ):
+        return True
+    return not any(
+        _resources_conflict(a, b) for a in left.resources for b in right.resources
+    )
+
+
+def _resources_conflict(left: ToolResource, right: ToolResource) -> bool:
+    if not left.write and not right.write:
+        return False
+    if left.path is None or right.path is None:
+        return True
+    return left.path == right.path
 
 
 def _tool_result_message(

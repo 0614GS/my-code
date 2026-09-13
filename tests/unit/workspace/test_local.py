@@ -4,7 +4,11 @@ import pytest
 
 from my_code.context.documents import ContextInstruction, UserContextDocument
 from my_code.context.user_context import AgentsUserContextResolver
-from my_code.workspace.local import Workspace, WorkspaceBoundaryError
+from my_code.workspace.local import (
+    Workspace,
+    WorkspaceBoundaryError,
+    WorkspaceConflictError,
+)
 
 
 def test_agents_resolver_loads_and_wraps_workspace_instructions(
@@ -120,3 +124,22 @@ def test_workspace_owns_bounded_utf8_io(tmp_path: Path) -> None:
     assert workspace.read_text(path) == "hello"
     assert workspace.read_bytes(path) == b"hello"
     assert workspace.display(path) == "nested/note.txt"
+
+
+def test_atomic_write_preserves_mode_and_rejects_stale_snapshot(
+    tmp_path: Path,
+) -> None:
+    workspace = Workspace(tmp_path)
+    path = tmp_path / "script.sh"
+    path.write_text("old\n", encoding="utf-8")
+    path.chmod(0o750)
+    snapshot = workspace.read_snapshot(path)
+
+    workspace.atomic_write_text(path, "new\n", expected=snapshot.fingerprint)
+    assert path.read_text(encoding="utf-8") == "new\n"
+    assert path.stat().st_mode & 0o777 == 0o750
+
+    with pytest.raises(WorkspaceConflictError, match="changed since"):
+        workspace.atomic_write_text(path, "stale\n", expected=snapshot.fingerprint)
+    assert path.read_text(encoding="utf-8") == "new\n"
+    assert list(tmp_path.glob(".script.sh.*.tmp")) == []

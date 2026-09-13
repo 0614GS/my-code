@@ -244,9 +244,9 @@ def _build_agent_components(
         requester_name=agent_name,
     )
     planner = ContextPlanner(
-        prompt=prompt_registry or build_system_prompt_registry(settings.cwd),
+        prompt=prompt_registry or build_system_prompt_registry(workspace.root),
         max_output_tokens=settings.max_output_tokens,
-        user_context_resolver=AgentsUserContextResolver(settings.cwd),
+        user_context_resolver=AgentsUserContextResolver(workspace.root),
         attachment_resolver=DerivedAttachmentResolver(
             (
                 TodoReminderAttachmentSource(settings.tool_search_mode),
@@ -505,6 +505,16 @@ def _assemble_agent(
         model_call: ModelClient = lease
         if spec.max_tokens is not None:
             model_call = TokenBudgetModelClient(lease, spec.max_tokens)
+        child_workspace = workspace
+        child_launcher = command_launcher
+        if spec.cwd is not None:
+            child_workspace = Workspace(spec.cwd)
+            child_launcher = resolve_command_launcher(
+                spec.cwd,
+                mode=settings.sandbox_mode.value,
+                network_enabled=settings.sandbox_network.value == "enabled",
+                runtime_root=settings.paths.runtime_temp_root / "sandbox",
+            )
         return _build_agent_components(
             settings,
             model_call=model_call,
@@ -513,8 +523,8 @@ def _assemble_agent(
             tool_catalog=spec.tool_catalog or tool_catalog,
             permission_policy=spec.permission_policy or permission_policy,
             permission_prompter=prompter,
-            workspace=workspace,
-            command_launcher=command_launcher,
+            workspace=child_workspace,
+            command_launcher=child_launcher,
             max_steps=spec.max_steps,
             prompt_registry=spec.prompt_registry,
             allow_permission_updates=spec.allow_permission_updates,
@@ -537,7 +547,7 @@ def _assemble_agent(
         session_start=lambda spec, lease, environment: SessionStart(
             session_id=spec.session.session_id,
             created_at=datetime.now(UTC).isoformat(),
-            cwd=str(settings.cwd),
+            cwd=str(spec.cwd or settings.cwd),
             provider_id=lease.connection.id,
             model=lease.connection.model,
             permission_mode=(
@@ -579,6 +589,8 @@ def _assemble_agent(
             background_enabled=effective_background_enabled,
             wake_signal=background_wake_signal,
             background_registry=background_registry,
+            workspace_root=settings.cwd,
+            worktree_root=settings.paths.runtime_temp_root / "worktrees",
         )
         parent = SubagentParentContext(
             actual_session_id,

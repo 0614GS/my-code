@@ -218,7 +218,7 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
                     "subagent-1",
                     "Subagent",
                     {
-                        "agent_type": "general",
+                        "agent_type": "explore",
                         "description": "background work",
                         "prompt": "finish later",
                         "background": True,

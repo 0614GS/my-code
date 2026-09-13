@@ -6,6 +6,7 @@ from my_code.agent.models import AgentInvocationSucceeded, AgentMaxStepsReached
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.models import (
+    SubagentIsolation,
     SubagentParentContext,
     SubagentSpec,
     SubagentType,
@@ -21,6 +22,8 @@ from my_code.permissions.models import (
 from my_code.permissions.policy import PermissionPolicy
 from my_code.tasks.models import TaskStatus
 from my_code.tools.base import (
+    ConcurrencyAssessment,
+    ConcurrencyMode,
     Tool,
     ToolExecutionContext,
     ToolInputError,
@@ -64,6 +67,15 @@ class SubagentTool(Tool):
                     "type": "string",
                     "description": "Complete instruction for the child agent",
                 },
+                "isolation": {
+                    "type": "string",
+                    "enum": [item.value for item in SubagentIsolation],
+                    "description": (
+                        "shared uses the current workspace; worktree creates an "
+                        "isolated Git worktree"
+                    ),
+                    "default": "shared",
+                },
             },
             "required": ["agent_type", "description", "prompt"],
             "additionalProperties": False,
@@ -75,8 +87,9 @@ class SubagentTool(Tool):
                 "type": "boolean",
                 "description": (
                     "When true, run asynchronously and return a task ID "
-                    "immediately. When false or omitted, wait for completion "
-                    "and return the final result."
+                    "immediately. General background agents require "
+                    "isolation=worktree. When false or omitted, wait for "
+                    "completion and return the final result."
                 ),
                 "default": False,
             }
@@ -92,17 +105,29 @@ class SubagentTool(Tool):
     def is_read_only(
         self, tool_input: JsonObject, context: ToolExecutionContext
     ) -> bool:
-        del tool_input, context
-        return False
+        del context
+        return tool_input.get("agent_type") == SubagentType.EXPLORE.value
 
     def is_concurrency_safe(self, tool_input: JsonObject) -> bool:
-        """Independent child runs own isolated sessions, providers, and task state."""
+        """只有受只读代理约束的 Explore 子任务可与其他调用重叠。"""
 
-        del tool_input
-        return True
+        return (
+            tool_input.get("agent_type") == SubagentType.EXPLORE.value
+            or tool_input.get("isolation") == SubagentIsolation.WORKTREE.value
+        )
+
+    def assess_concurrency(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ConcurrencyAssessment:
+        del context
+        if tool_input.get("agent_type") == SubagentType.EXPLORE.value:
+            return ConcurrencyAssessment(ConcurrencyMode.READ_ONLY)
+        if tool_input.get("isolation") == SubagentIsolation.WORKTREE.value:
+            return ConcurrencyAssessment(ConcurrencyMode.INTERNALLY_SYNCHRONIZED)
+        return ConcurrencyAssessment(ConcurrencyMode.EXCLUSIVE)
 
     def validate_input(self, tool_input: JsonObject) -> None:
-        allowed_keys = {"agent_type", "description", "prompt"}
+        allowed_keys = {"agent_type", "description", "prompt", "isolation"}
         if self.allow_background:
             allowed_keys.add("background")
         unexpected = sorted(set(tool_input) - allowed_keys)
@@ -126,6 +151,19 @@ class SubagentTool(Tool):
             raise ToolInputError("background must be a boolean")
         if background and not self.allow_background:
             raise ToolInputError("background Subagents are disabled")
+        isolation = tool_input.get("isolation", SubagentIsolation.SHARED.value)
+        try:
+            SubagentIsolation(isolation)
+        except (TypeError, ValueError):
+            raise ToolInputError("isolation must be shared or worktree") from None
+        if (
+            background
+            and agent_type == SubagentType.GENERAL.value
+            and isolation != SubagentIsolation.WORKTREE.value
+        ):
+            raise ToolInputError(
+                "background general Subagents require isolated worktree support"
+            )
 
     async def check_permissions(
         self,
@@ -155,6 +193,9 @@ class SubagentTool(Tool):
             agent_type=SubagentType(str(tool_input["agent_type"])),
             prompt=str(tool_input["prompt"]),
             description=str(tool_input["description"]),
+            isolation=SubagentIsolation(
+                str(tool_input.get("isolation", SubagentIsolation.SHARED.value))
+            ),
         )
         parent = self._runtime_parent(context)
         if tool_input.get("background") is True:
@@ -173,6 +214,8 @@ class SubagentTool(Tool):
                         "task_id": started.task_id,
                         "run_id": started.run_id,
                         "agent_type": started.agent_type.value,
+                        "workspace_path": started.workspace_path,
+                        "branch": started.branch,
                     },
                     ensure_ascii=False,
                 )
@@ -192,6 +235,8 @@ class SubagentTool(Tool):
                 "task_id": task.task_id,
                 "run_id": completed.run_id,
                 "agent_type": completed.agent_type.value,
+                "workspace_path": completed.workspace_path,
+                "branch": completed.branch,
                 "error": failure.message if failure is not None else "unknown failure",
                 "error_kind": failure.kind if failure is not None else "unknown",
             }
@@ -205,6 +250,8 @@ class SubagentTool(Tool):
                         "task_id": task.task_id,
                         "run_id": completed.run_id,
                         "agent_type": completed.agent_type.value,
+                        "workspace_path": completed.workspace_path,
+                        "branch": completed.branch,
                         "completed_steps": outcome.completed_steps,
                         "max_steps": outcome.max_steps,
                     },
@@ -221,6 +268,8 @@ class SubagentTool(Tool):
                     "task_id": task.task_id,
                     "run_id": completed.run_id,
                     "agent_type": completed.agent_type.value,
+                    "workspace_path": completed.workspace_path,
+                    "branch": completed.branch,
                     "result": outcome.text,
                     "completed_steps": outcome.completed_steps,
                 },

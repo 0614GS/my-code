@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 from typing import cast
 
@@ -13,6 +14,7 @@ from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import (
+    SubagentIsolation,
     SubagentLimits,
     SubagentParentContext,
     SubagentSpec,
@@ -23,6 +25,7 @@ from my_code.features.subagents.task_tools import (
     TaskListTool,
 )
 from my_code.features.subagents.tool import SubagentTool
+from my_code.features.subagents.worktrees import SubagentWorktreeManager
 from my_code.foundation.json import JsonObject
 from my_code.model.primitives import TokenUsage
 from my_code.permissions.models import PermissionMode
@@ -114,6 +117,27 @@ def parent(depth: int = 0) -> SubagentParentContext:
     )
 
 
+def git_repository(path: Path) -> Path:
+    path.mkdir()
+    subprocess.run(["git", "-C", str(path), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "Test"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(path),
+            "config",
+            "user.email",
+            "test@example.com",
+        ],
+        check=True,
+    )
+    (path / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", "base"], check=True)
+    return path
+
+
 def test_subagent_schema_requires_fixed_type_and_rejects_tools(tmp_path: Path) -> None:
     controller, _, _ = build_controller(tmp_path)
     tool = SubagentTool(
@@ -163,11 +187,15 @@ def test_subagent_background_schema_explains_both_boolean_modes(
     assert background["default"] is False
     assert background["description"] == (
         "When true, run asynchronously and return a task ID immediately. "
-        "When false or omitted, wait for completion and return the final result."
+        "General background agents require isolation=worktree. When false or "
+        "omitted, wait for completion and return the final result."
     )
+    isolation = properties["isolation"]
+    assert isinstance(isolation, dict)
+    assert isolation["enum"] == ["shared", "worktree"]
 
 
-def test_subagent_invocations_are_concurrency_safe_for_every_role_and_mode(
+def test_only_explore_subagent_invocations_are_concurrency_safe(
     tmp_path: Path,
 ) -> None:
     controller, _, _ = build_controller(tmp_path, background_enabled=True)
@@ -184,8 +212,28 @@ def test_subagent_invocations_are_concurrency_safe_for_every_role_and_mode(
             "prompt": "work",
         }
         background: JsonObject = {**foreground, "background": True}
-        assert tool.is_concurrency_safe(foreground) is True
-        assert tool.is_concurrency_safe(background) is True
+        expected = agent_type is SubagentType.EXPLORE
+        assert tool.is_concurrency_safe(foreground) is expected
+        assert tool.is_concurrency_safe(background) is expected
+
+    with pytest.raises(ValueError, match="worktree"):
+        tool.validate_input(
+            {
+                "agent_type": "general",
+                "description": "change files",
+                "prompt": "work",
+                "background": True,
+            }
+        )
+    worktree_general: JsonObject = {
+        "agent_type": "general",
+        "description": "change files",
+        "prompt": "work",
+        "background": True,
+        "isolation": "worktree",
+    }
+    tool.validate_input(worktree_general)
+    assert tool.is_concurrency_safe(worktree_general) is True
 
 
 def test_subagent_execution_budgets_are_unlimited_by_default() -> None:
@@ -356,6 +404,39 @@ async def test_subagent_timeout_is_a_closed_cancelled_terminal(
     assert completed.task.failure.kind == "timeout"
     assert factory.runs[0].closed is True
     assert controller.active_children(parent().run_id) == 0
+    await tasks.close()
+
+
+@pytest.mark.asyncio
+async def test_worktree_run_uses_isolated_cwd_and_cleans_when_unchanged(
+    tmp_path: Path,
+) -> None:
+    repository = git_repository(tmp_path / "repository")
+    controller, factory, tasks = build_controller(tmp_path)
+    controller.worktrees = SubagentWorktreeManager(repository, tmp_path / "worktrees")
+
+    started, handle = await controller.start(
+        SubagentSpec(
+            SubagentType.GENERAL,
+            "work",
+            "isolated",
+            isolation=SubagentIsolation.WORKTREE,
+        ),
+        parent=parent(),
+        parent_policy=PermissionPolicy(PermissionMode.BYPASS),
+        available_tools={},
+        tool_snapshot_version=1,
+    )
+    await factory.entered.wait()
+    isolated = factory.specs[0].cwd
+    assert isolated is not None
+    assert isolated.exists()
+    assert started.workspace_path == str(isolated)
+
+    factory.release.set()
+    snapshot = await handle.wait()
+    assert snapshot.status is TaskStatus.SUCCEEDED
+    assert not isolated.exists()
     await tasks.close()
 
 

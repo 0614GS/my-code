@@ -15,6 +15,7 @@ from my_code.conversation.presentation import ToolResultPresentation
 from my_code.foundation.json import JsonObject
 from my_code.model.request import ModelToolDefinition
 from my_code.permissions.models import PermissionUpdate, PermissionUpdateDestination
+from my_code.tools.file_state import FileReadTracker
 from my_code.tools.presentation import (
     ToolUsePresentation,
     compact_text,
@@ -52,6 +53,7 @@ class ToolExecutionContext:
     tool_use_id: str | None
     internal_read_root: Path | None
     searched_fingerprints: Mapping[str, str]
+    file_reads: FileReadTracker
 
     def __init__(
         self,
@@ -66,6 +68,7 @@ class ToolExecutionContext:
         tool_use_id: str | None = None,
         internal_read_root: Path | None = None,
         searched_fingerprints: Mapping[str, str] = MappingProxyType({}),
+        file_reads: FileReadTracker | None = None,
         *,
         command_launcher: CommandLauncher | None = None,
     ) -> None:
@@ -101,6 +104,7 @@ class ToolExecutionContext:
             "searched_fingerprints",
             MappingProxyType(dict(searched_fingerprints)),
         )
+        object.__setattr__(self, "file_reads", file_reads or FileReadTracker())
 
     @property
     def cwd(self) -> Path:
@@ -129,6 +133,7 @@ class ToolExecutionContext:
             tool_use_id,
             self.internal_read_root,
             searched_fingerprints,
+            self.file_reads,
             command_launcher=self.command_launcher,
         )
 
@@ -169,6 +174,31 @@ class ReadOnlyAssessment:
     reason: str
 
 
+class ConcurrencyMode(StrEnum):
+    """一次具体工具调用可采用的并发方式。"""
+
+    EXCLUSIVE = "exclusive"
+    READ_ONLY = "read_only"
+    RESOURCE_SCOPED = "resource_scoped"
+    INTERNALLY_SYNCHRONIZED = "internally_synchronized"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResource:
+    """规范化工作区资源；空路径代表整个工作区。"""
+
+    path: Path | None
+    write: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConcurrencyAssessment:
+    """调度器可验证的一次调用并发契约。"""
+
+    mode: ConcurrencyMode
+    resources: tuple[ToolResource, ...] = ()
+
+
 class Tool(ABC):
     """封装校验、权限元数据与执行的强类型单元。"""
 
@@ -188,6 +218,15 @@ class Tool(ABC):
 
         del tool_input
         return False
+
+    def assess_concurrency(
+        self, tool_input: JsonObject, context: ToolExecutionContext
+    ) -> ConcurrencyAssessment:
+        """将旧布尔声明保守映射为只读或独占调用。"""
+
+        if self.is_concurrency_safe(tool_input):
+            return ConcurrencyAssessment(ConcurrencyMode.READ_ONLY)
+        return ConcurrencyAssessment(ConcurrencyMode.EXCLUSIVE)
 
     def user_facing_name(self, tool_input: JsonObject) -> str:
         """返回面向用户的稳定工具名称。"""
@@ -298,11 +337,14 @@ class Tool(ABC):
 
 
 __all__ = [
+    "ConcurrencyAssessment",
+    "ConcurrencyMode",
     "ReadOnlyAssessment",
     "Tool",
     "ToolExecutionContext",
     "ToolExecutionError",
     "ToolInputError",
     "ToolOutput",
+    "ToolResource",
     "ToolExposure",
 ]

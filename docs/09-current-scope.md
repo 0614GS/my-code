@@ -12,7 +12,8 @@
 - canonical Conversation、JSONL Session、session permission mode、resume、自动/手动/reactive compact。
 - Codex 风格 Default/Plan collaboration mode、追加式 mode prelude、Question 交互和 proposed-plan 实施交接；v1 不提供 `/plan`、多选问题或 headless Question 回答。
 - `@path` 文件/目录 Attachment、AGENTS 用户上下文和路径补全。
-- foreground/background Subagent、独立 child run/Session/provider lease 和权限收窄。
+- foreground General、foreground/background Explore 及 worktree 隔离的 background
+  General Subagent，具备独立 child run/Session/provider lease 和权限收窄。
 - Bash/Subagent 统一后台任务、查询、取消和单次完成通知。
 - MCP stdio 工具发现、refresh/reconnect、全量 catalog 和标准权限执行。
 - Skill 分层发现、严格 frontmatter、lazy load、reload、durable activation 和 additive session rules。
@@ -69,6 +70,11 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 - Provider、凭据和模型目录都有显式持久化来源，不从模型名或环境变量猜测能力与连接。
 - Skill Markdown 是数据，不导入目录代码；激活正文使用 Attachment，而不是修改 system prompt。
 - Subagent 使用固定角色、fresh child Session 和独立 lease；默认不设置 step/token/timeout 上限，但保留显式可选限制。
+- 文件覆盖要求当前 Session 完整 Read 同一版本，并使用内容指纹、同目录临时文件与原子
+  发布阻止陈旧覆盖和半写文件；Read 授权不跨进程恢复。
+- 并行调度使用结构化资源契约；文件路径和工作区锁通过 POSIX `flock` 在多个 my-code
+  进程之间协调。Bash 未证明只读时持有工作区独占锁，General 后台执行使用独立 Git
+  worktree，保留有改动的分支供人工审查，不自动合并。
 - ToolSearch 使用 provider-neutral dispatcher/native 模式，不发送特定 Provider 的 defer/reference wire 类型；canonical dispatcher call 与 feature-facing 目标语义分别保留。
 - 后台完成用无 payload wake signal 触发 pull，再通过 durable attachment 交付，不建立第二份消息队列。
 - 相对参考源码，my-code 有意保持通用 `TaskSupervisor` 与用户级后台任务能力分离：前者只拥有任务状态机、取消树和终态，`features.background_tasks` 另行拥有 owner、投递、唤醒与结果展示语义。

@@ -157,7 +157,9 @@ async def test_replace_all_produces_separate_hunks_with_complete_counts(
 ) -> None:
     content = "target\n" + "".join(f"middle {index}\n" for index in range(20))
     (tmp_path / "x.txt").write_text(content + "target\n", encoding="utf-8")
-    outcome = await _executor(tmp_path).execute(
+    executor = _executor(tmp_path)
+    await executor.execute(ToolCall("read", "Read", {"path": "x.txt"}))
+    outcome = await executor.execute(
         ToolCall(
             "edit-all",
             "Edit",
