@@ -39,7 +39,9 @@ provider/model、工具 call ID、参数指纹、错误标志、终态与耗时�
 首内部事件 `first_event_ms` 与首可见文本 `first_text_ms` 分开；纯工具响应可能没有后者。
 token 只按每个 request 的 `model.response.received` 计一次，不能再把 terminal/invocation
 指标相加。
-未收到 usage 的失败请求费用未知，不填零；SDK 内部网络重试目前不逐次记录。
+未收到 usage 的失败请求费用未知，不填零。my-code 发起的 SSE 重放会使用独立 request
+manifest，并将中断 attempt 记录为 `delivery-unknown`；SDK 在响应头前执行的内部网络重试
+仍不逐次记录。
 
 本地日志故障不能覆盖业务异常，后续成功记录中的 `dropped_events` 表示累计写入缺口。
 进程被强杀可能没有 terminal；日志轮转也可能移除 start，这两者都不等同于已确认失败。

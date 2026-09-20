@@ -1,6 +1,7 @@
 """Safe, ordered child-agent transcript projection tests."""
 
 from my_code.agent.events import (
+    AgentModelRequestRetrying,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentTextCompleted,
@@ -105,3 +106,17 @@ def test_concurrent_subagent_streams_remain_isolated() -> None:
 
     assert "second-only" not in repr(first.view(snapshot("first")))
     assert "first-only" not in repr(second.view(snapshot("second")))
+
+
+def test_retry_discards_partial_subagent_projection() -> None:
+    activity = record()
+    activity.consume(AgentTextDelta("discarded text"))
+    activity.consume(AgentReasoningDelta("summary", 0, "discarded reasoning"))
+
+    activity.consume(
+        AgentModelRequestRetrying("request-1", 2, 3, 500, "RemoteProtocolError")
+    )
+
+    projected = activity.view(snapshot())
+    assert "discarded text" not in repr(projected)
+    assert "discarded reasoning" not in repr(projected)

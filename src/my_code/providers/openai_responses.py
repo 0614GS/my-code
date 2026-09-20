@@ -5,13 +5,20 @@ from collections.abc import AsyncIterator, Iterable
 from typing import Any, cast
 from uuid import uuid4
 
-from openai import AsyncOpenAI, BadRequestError
+import httpx
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    BadRequestError,
+)
 
 from my_code.config.providers import OPENAI_API_BASE_URL, ReasoningConfig
 from my_code.foundation.json import JsonObject, to_json_object
 from my_code.model.capabilities import ProviderCapabilities
 from my_code.model.client import ModelClient
-from my_code.model.errors import ModelContextOverflow
+from my_code.model.errors import ModelContextOverflow, ModelStreamInterrupted
 from my_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
@@ -238,8 +245,17 @@ class OpenAIResponsesProvider(ModelClient):
         except BadRequestError as error:
             _raise_context_overflow(error)
             raise
+        except (APIConnectionError, APITimeoutError, httpx.TransportError) as error:
+            raise _stream_interrupted(error) from error
+        except APIStatusError as error:
+            if _is_retryable_status(error.status_code):
+                raise _stream_interrupted(error) from error
+            raise
         if final is None:
-            raise RuntimeError("OpenAI Responses stream ended without a final response")
+            raise ModelStreamInterrupted(
+                "OpenAI Responses stream ended without a final response",
+                error_type="IncompleteStream",
+            )
         output = self._response(final)
         for payload in normalizer.reconcile(final):
             yield sequencer.emit(payload)
@@ -517,6 +533,14 @@ def _raise_context_overflow(error: BadRequestError) -> None:
         for marker in ("context_length_exceeded", "context window", "too many tokens")
     ):
         raise ModelContextOverflow("Model context window exceeded") from error
+
+
+def _stream_interrupted(error: BaseException) -> ModelStreamInterrupted:
+    return ModelStreamInterrupted(str(error), error_type=type(error).__name__)
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    return status_code in {408, 409, 429} or status_code >= 500
 
 
 __all__ = ["OpenAIResponsesProvider"]

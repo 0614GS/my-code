@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 from typing import Any, cast
 
+import httpx
 import pytest
 
 from my_code.config.providers import ReasoningConfig
 from my_code.model.capabilities import ProviderCapabilities
+from my_code.model.errors import ModelStreamInterrupted
 from my_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
@@ -423,6 +425,7 @@ async def test_anthropic_stream_empty_thinking_completes_hidden_without_replay()
             delta=SimpleNamespace(type="text_delta", text="done"),
         ),
         SimpleNamespace(type="content_block_stop", index=1),
+        SimpleNamespace(type="message_stop"),
     )
 
     class Stream:
@@ -472,3 +475,103 @@ async def test_anthropic_stream_empty_thinking_completes_hidden_without_replay()
     assert payloads[-1].output.content[-1] == ModelTextBlock("done")
     completed = cast(ModelReasoningCompleted, payloads[1])
     assert completed.presentation == ReasoningPresentation("hidden")
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_maps_incomplete_chunked_read_after_partial_delta() -> (
+    None
+):
+    provider = object.__new__(AnthropicProvider)
+    provider.model = "claude-test"
+    provider.binding = ProviderBinding("anthropic-messages", "anthropic", "claude-test")
+    provider.reasoning = ReasoningConfig(enabled=False)
+    provider._capabilities = ProviderCapabilities()
+    raw_events = iter(
+        (
+            SimpleNamespace(
+                type="content_block_start",
+                index=0,
+                content_block=SimpleNamespace(type="text", text=""),
+            ),
+            SimpleNamespace(
+                type="content_block_delta",
+                index=0,
+                delta=SimpleNamespace(type="text_delta", text="partial"),
+            ),
+        )
+    )
+
+    class Stream:
+        async def __aenter__(self) -> "Stream":
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def __aiter__(self) -> "Stream":
+            return self
+
+        async def __anext__(self) -> object:
+            try:
+                return next(raw_events)
+            except StopIteration as error:
+                raise httpx.RemoteProtocolError("incomplete chunked read") from error
+
+    class Messages:
+        def stream(self, **_: object) -> Stream:
+            return Stream()
+
+    provider.client = SimpleNamespace(messages=Messages())  # type: ignore[assignment]
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (UserInput((InputText("hello"),)),),
+        (),
+        100,
+    )
+
+    stream = provider.stream(request)
+    assert isinstance((await anext(stream)).payload, ModelTextStarted)
+    assert isinstance((await anext(stream)).payload, ModelTextDelta)
+    with pytest.raises(ModelStreamInterrupted) as caught:
+        await anext(stream)
+
+    assert caught.value.error_type == "RemoteProtocolError"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_requires_message_stop() -> None:
+    provider = object.__new__(AnthropicProvider)
+    provider.model = "claude-test"
+    provider.binding = ProviderBinding("anthropic-messages", "anthropic", "claude-test")
+    provider.reasoning = ReasoningConfig(enabled=False)
+    provider._capabilities = ProviderCapabilities()
+
+    class Stream:
+        async def __aenter__(self) -> "Stream":
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def __aiter__(self) -> "Stream":
+            return self
+
+        async def __anext__(self) -> object:
+            raise StopAsyncIteration
+
+    class Messages:
+        def stream(self, **_: object) -> Stream:
+            return Stream()
+
+    provider.client = SimpleNamespace(messages=Messages())  # type: ignore[assignment]
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (UserInput((InputText("hello"),)),),
+        (),
+        100,
+    )
+
+    with pytest.raises(ModelStreamInterrupted) as caught:
+        _ = [event async for event in provider.stream(request)]
+
+    assert caught.value.error_type == "IncompleteStream"

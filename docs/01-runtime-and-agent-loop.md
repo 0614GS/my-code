@@ -27,7 +27,7 @@ ApplicationService.stream_interactive()
      -> ContextEngine.plan(...) 生成 ModelRequest
      -> Session.prepare_model_invocation() 原子提交 request audit blobs + manifest
      -> ModelClient.stream()
-     -> Session.finish_model_invocation() 记录 completed/failed/cancelled/overflow
+     -> Session.finish_model_invocation() 记录 completed/failed/cancelled/overflow/delivery-unknown
      -> 完整响应提交为 AssistantMessage
      -> 无工具：形成完整 step boundary；有 pending input 时提交并继续下一 step
      -> 有工具：使用同一 step 工具与权限快照执行 ToolRound
@@ -47,6 +47,13 @@ Headless `submit/stream` 不提供 pending source，保留单输入行为。前�
 
 所有 session-bound 模型调用都遵守 audit-before-delivery：主 Agent、后台 continuation、child run 及 manual/auto/reactive compact 在 Provider 收到请求前，先持久化 provider-neutral 的 `ModelInvocation`。初始审计写入失败会阻止网络请求；Provider 终态随后追加到 sidecar。进程在 prepared 后中断时，恢复投影为 `delivery-unknown`，不会猜测 Provider 是否已接收。
 
+Agent 与 compact 请求在收到完整 Provider 终态前若发生可恢复的 SSE 传输中断，会以
+新的 request ID 重放，最多重试两次。Agent 会先放弃当前 partial 投影。每次 delivery 都独立遵守
+audit-before-delivery；中断 attempt 记为 `delivery-unknown`，成功 attempt 才能提交
+`AssistantMessage`。`model.request_retrying` 事件通知 host 清除未完成的 text/reasoning
+投影。由于 ToolRound 只在完整响应提交后开始，重放不会重复执行工具；用户取消、认证
+错误、请求校验错误和模型协议错误不进入该重试路径。
+
 ## 工具与扩展运行
 
 每个 step 只捕获一次工具目录、曝光视图和权限策略。请求中的 definitions、ToolCall 校验和后续 ToolRound 使用同一工具快照；运行中切换 permission mode 会立即持久化并更新 UI，但当前 step 继续使用已捕获的 mode/rules，下一 step 才重新捕获。MCP refresh、Skill reload 或其他目录更新也只影响下一个 step。
@@ -58,6 +65,7 @@ Foreground Subagent 由标准 Tool 启动。`SubagentController` 只传递显式
 ## 失败与取消
 
 - Provider、事件序列或 context 规划失败不会提交部分 `AssistantMessage`；已经提交的 `HumanMessage` 保留。
+- 可恢复的连接中断使用有界退避重放；耗尽预算后传播最后一次 `ModelStreamInterrupted`。
 - request audit 初始提交失败时 Provider 不会被调用；compact 的 summary/boundary 也不会提交。
 - context overflow 允许执行一次 reactive compact，再从最新 Session 状态重新规划。
 - 工具轮取消时，执行器取消当前并行组，为未完成调用生成稳定错误结果，按原 ToolCall 顺序提交闭合 batch，然后继续传播取消。

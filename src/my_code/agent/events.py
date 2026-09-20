@@ -33,6 +33,17 @@ class AgentModelRequestPrepared:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentModelRequestRetrying:
+    """未完成的 delivery 已作废，即将用新 request 重放。"""
+
+    failed_request_id: str
+    next_attempt: int
+    max_attempts: int
+    delay_ms: int
+    error_type: str
+
+
+@dataclass(frozen=True, slots=True)
 class AgentInputAccepted:
     """A host input became a canonical HumanMessage at a safe boundary."""
 
@@ -144,6 +155,7 @@ class AgentConversationUpdated:
 
 type AgentEvent = (
     AgentModelRequestPrepared
+    | AgentModelRequestRetrying
     | AgentCompactionStarted
     | AgentCompactionCompleted
     | AgentInputAccepted
@@ -174,6 +186,7 @@ __all__ = [
     "AgentInputFailed",
     "AgentModelStepCompleted",
     "AgentModelRequestPrepared",
+    "AgentModelRequestRetrying",
     "AgentPlanCompleted",
     "AgentPlanDelta",
     "AgentPlanStarted",

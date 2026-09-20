@@ -13,6 +13,7 @@ from my_code.agent.events import (
     AgentEvent,
     AgentInputAccepted,
     AgentModelRequestPrepared,
+    AgentModelRequestRetrying,
     AgentModelStepCompleted,
     AgentPlanCompleted,
     AgentPlanDelta,
@@ -62,7 +63,7 @@ from my_code.conversation.proposed_plan import (
 )
 from my_code.conversation.state import CompactTrigger
 from my_code.model.client import ModelClient
-from my_code.model.errors import ModelContextOverflow
+from my_code.model.errors import ModelContextOverflow, ModelStreamInterrupted
 from my_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
@@ -92,6 +93,7 @@ from my_code.model.request import (
     ModelTextBlock,
     ModelToolUseBlock,
 )
+from my_code.model.retry import MAX_STREAM_RETRIES, stream_retry_delay
 from my_code.model.tool_search import ToolSearchMode
 from my_code.permissions.models import PermissionUpdate, PermissionUpdateType
 from my_code.permissions.policy import PermissionPolicy
@@ -281,8 +283,11 @@ class AgentEngine:
                 yield AgentCompactionCompleted("auto", outcome.usage)
                 request = await self._plan_request(session, runtime, tools)
             reactive_attempted = False
+            delivery_attempt = 1
+            stream_retries = 0
             while True:
                 projector = _ModelStreamProjector()
+                invocation: ModelInvocation | None = None
                 try:
                     origins = request.provenance or tuple(
                         ModelInputOrigin(ModelInputOriginKind.CONVERSATION_ENTRY)
@@ -298,7 +303,7 @@ class AgentEngine:
                         ),
                         causal_head=session.causal_head_uuid,
                         step=step_count,
-                        attempt=2 if reactive_attempted else 1,
+                        attempt=delivery_attempt,
                         budget=request.budget,
                     )
                     previous_refs = {
@@ -347,6 +352,27 @@ class AgentEngine:
                     )
                     yield AgentCompactionCompleted("reactive", outcome.usage)
                     request = await self._plan_request(session, runtime, tools)
+                    delivery_attempt += 1
+                    stream_retries = 0
+                    continue
+                except ModelStreamInterrupted as error:
+                    if stream_retries >= MAX_STREAM_RETRIES:
+                        raise
+                    if invocation is None:
+                        raise RuntimeError(
+                            "Model stream interrupted before invocation preparation"
+                        ) from error
+                    stream_retries += 1
+                    delivery_attempt += 1
+                    delay = stream_retry_delay(stream_retries)
+                    yield AgentModelRequestRetrying(
+                        invocation.request_id,
+                        delivery_attempt,
+                        delivery_attempt + (MAX_STREAM_RETRIES - stream_retries),
+                        round(delay * 1000),
+                        error.error_type,
+                    )
+                    await asyncio.sleep(delay)
                     continue
                 break
 

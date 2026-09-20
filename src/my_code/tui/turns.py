@@ -17,6 +17,7 @@ from my_code.application.contracts.events import (
     ContextUpdated,
     MaxStepsReached,
     ModelRequestPrepared,
+    ModelRequestRetrying,
     ModelStepCompleted,
     PlanCompleted,
     PlanDelta,
@@ -211,6 +212,8 @@ class TurnFlowMixin:
                         await self._flush_tool_activity()
                         await self._write(_detailed_context_group(event))
                         self._blocks.mark_work()
+                elif isinstance(event, ModelRequestRetrying):
+                    await self._handle_model_retry(event, "my-code is working…")
                 elif isinstance(event, CompactionStarted):
                     self._update_agent_activity(
                         compaction_activity_label(event.trigger)
@@ -341,6 +344,8 @@ class TurnFlowMixin:
                 await self._flush_tool_activity()
                 await self._write(_detailed_context_group(event))
                 self._blocks.mark_work()
+        elif isinstance(event, ModelRequestRetrying):
+            await self._handle_model_retry(event, "Handling background task…")
         elif isinstance(event, CompactionStarted):
             self._update_agent_activity(compaction_activity_label(event.trigger))
         elif isinstance(event, CompactionCompleted):
@@ -417,6 +422,26 @@ class TurnFlowMixin:
             system_message(compaction_completed_message(event.trigger, event.status))
         )
         self._blocks.mark_work()
+        self._update_agent_activity(resume_label)
+
+    async def _handle_model_retry(
+        self, event: ModelRequestRetrying, resume_label: str
+    ) -> None:
+        """丢弃未完成的动态投影，并明确标记下一次完整请求。"""
+
+        await self._flush_tool_activity()
+        self._stream_text = ""
+        self._stream_answer_started = False
+        self._stream_plan = ""
+        self._reasoning_parts = []
+        self._reset_stream_projection()
+        self._blocks.reset_group()
+        await self._write(
+            system_message(
+                "Model stream interrupted; retrying "
+                f"attempt {event.next_attempt}/{event.max_attempts}…"
+            )
+        )
         self._update_agent_activity(resume_label)
 
     async def _commit_assistant_text(self, text: str) -> None:

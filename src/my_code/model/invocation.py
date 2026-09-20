@@ -11,7 +11,11 @@ from typing import Literal
 from uuid import uuid4
 
 from my_code.model.client import ModelClient
-from my_code.model.errors import ModelContextOverflow, ModelProtocolError
+from my_code.model.errors import (
+    ModelContextOverflow,
+    ModelProtocolError,
+    ModelStreamInterrupted,
+)
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
 from my_code.model.request import ModelRequest, ModelRequestIdentity
 
@@ -149,6 +153,11 @@ class ModelInvocationCoordinator:
         except ModelContextOverflow:
             self.recorder.finish_model_invocation(
                 invocation.request_id, "context-overflow"
+            )
+            raise
+        except ModelStreamInterrupted as error:
+            self.recorder.finish_model_invocation(
+                invocation.request_id, "delivery-unknown", error.error_type
             )
             raise
         except BaseException as error:

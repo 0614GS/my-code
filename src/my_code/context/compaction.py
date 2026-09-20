@@ -1,5 +1,6 @@
 """使用独立模型请求生成可继续工作的会话摘要。"""
 
+import asyncio
 import re
 from collections.abc import Callable
 
@@ -16,7 +17,7 @@ from my_code.conversation.models import (
 from my_code.conversation.state import CompactBoundary, CompactTrigger
 from my_code.model.capabilities import ActiveModelEnvironment
 from my_code.model.client import ModelClient, collect_model_output
-from my_code.model.errors import ModelContextOverflow
+from my_code.model.errors import ModelContextOverflow, ModelStreamInterrupted
 from my_code.model.events import ModelOutputCompleted
 from my_code.model.invocation import (
     ModelInputOrigin,
@@ -35,6 +36,7 @@ from my_code.model.request import (
     SystemPrompt,
     UserInput,
 )
+from my_code.model.retry import MAX_STREAM_RETRIES, stream_retry_delay
 
 _COMPACTION_SYSTEM_PROMPT = """You are a coding-agent conversation compactor.
 Your only task is to turn the supplied conversation into accurate continuation
@@ -127,6 +129,7 @@ class ContextCompactor:
         output_attempts = 0
         usage_parts: list[TokenUsage] = []
         omitted_earlier_context = False
+        delivery_attempt = 0
 
         while True:
             visible_messages = _render_visible_groups(
@@ -156,24 +159,41 @@ class ContextCompactor:
                 ),
             )
             try:
-                if recorder is None:
-                    response = await collect_model_output(self.provider, request)
-                else:
-                    invocation = ModelInvocation(
-                        request=request,
-                        origins=tuple(
-                            ModelInputOrigin(ModelInputOriginKind.COMPACT_INPUT)
-                            for _ in request.input
-                        ),
-                        purpose=RequestPurpose.COMPACT,
-                        causal_head=causal_head,
-                        step=1,
-                        attempt=input_retries + output_attempts + 1,
-                        compact_trigger=trigger,
-                    )
-                    coordinator = ModelInvocationCoordinator(self.provider, recorder)
-                    coordinator.prepare(invocation)
-                    response = await _collect_audited_output(coordinator, invocation)
+                stream_retries = 0
+                while True:
+                    delivery_attempt += 1
+                    try:
+                        if recorder is None:
+                            response = await collect_model_output(
+                                self.provider, request
+                            )
+                        else:
+                            invocation = ModelInvocation(
+                                request=request,
+                                origins=tuple(
+                                    ModelInputOrigin(ModelInputOriginKind.COMPACT_INPUT)
+                                    for _ in request.input
+                                ),
+                                purpose=RequestPurpose.COMPACT,
+                                causal_head=causal_head,
+                                step=1,
+                                attempt=delivery_attempt,
+                                compact_trigger=trigger,
+                            )
+                            coordinator = ModelInvocationCoordinator(
+                                self.provider, recorder
+                            )
+                            coordinator.prepare(invocation)
+                            response = await _collect_audited_output(
+                                coordinator, invocation
+                            )
+                    except ModelStreamInterrupted:
+                        if stream_retries >= MAX_STREAM_RETRIES:
+                            raise
+                        stream_retries += 1
+                        await asyncio.sleep(stream_retry_delay(stream_retries))
+                        continue
+                    break
             except ModelContextOverflow as error:
                 if input_retries >= _MAX_INPUT_RETRIES:
                     raise ModelContextOverflow(

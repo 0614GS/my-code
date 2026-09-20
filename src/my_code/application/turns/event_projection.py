@@ -10,6 +10,7 @@ from my_code.agent.events import (
     AgentInputAccepted,
     AgentInputFailed,
     AgentModelRequestPrepared,
+    AgentModelRequestRetrying,
     AgentModelStepCompleted,
     AgentPlanCompleted,
     AgentPlanDelta,
@@ -30,6 +31,7 @@ from my_code.application.contracts.events import (
     ContextUpdated,
     MaxStepsReached,
     ModelRequestPrepared,
+    ModelRequestRetrying,
     ModelStepCompleted,
     PlanCompleted,
     PlanDelta,
@@ -80,6 +82,14 @@ async def project_agent_events(
                     )
                     for item in event.injections
                 ),
+            )
+        elif isinstance(event, AgentModelRequestRetrying):
+            yield ModelRequestRetrying(
+                event.failed_request_id,
+                event.next_attempt,
+                event.max_attempts,
+                event.delay_ms,
+                event.error_type,
             )
         elif isinstance(event, AgentInputAccepted):
             yield TurnInputAccepted(event.input_id, event.prompt)

@@ -31,6 +31,15 @@ class ModelRequestPrepared:
     injections: tuple[PreparedContext, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ModelRequestRetrying:
+    failed_request_id: str
+    next_attempt: int
+    max_attempts: int
+    delay_ms: int
+    error_type: str
+
+
 type CompactionTrigger = Literal["auto", "manual", "reactive"]
 
 
@@ -221,6 +230,7 @@ type TurnEvent = (
     | CompactionStarted
     | CompactionCompleted
     | ModelRequestPrepared
+    | ModelRequestRetrying
     | AttachmentLoaded
     | TurnInputAccepted
     | TurnInputFailed
@@ -254,6 +264,7 @@ __all__ = [
     "MaxStepsReached",
     "ModelStepCompleted",
     "ModelRequestPrepared",
+    "ModelRequestRetrying",
     "PlanCompleted",
     "PlanDelta",
     "PlanStarted",

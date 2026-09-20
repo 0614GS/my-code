@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 from typing import cast
 
+import httpx
 import pytest
 
 from my_code.config.providers import ReasoningConfig
 from my_code.foundation.json import JsonObject
+from my_code.model.errors import ModelStreamInterrupted
 from my_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
@@ -510,3 +512,76 @@ async def test_openai_stream_rejects_non_increasing_provider_sequence() -> None:
 
     with pytest.raises(RuntimeError, match="sequence numbers"):
         _ = [event async for event in provider.stream(request)]
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_maps_incomplete_chunked_read_after_partial_delta() -> None:
+    provider = _provider()
+
+    class EventStream:
+        def __init__(self) -> None:
+            self._delivered = False
+
+        def __aiter__(self) -> "EventStream":
+            return self
+
+        async def __anext__(self) -> object:
+            if not self._delivered:
+                self._delivered = True
+                return SimpleNamespace(
+                    type="response.reasoning_summary_text.delta",
+                    sequence_number=1,
+                    output_index=0,
+                    summary_index=0,
+                    delta="partial",
+                )
+            raise httpx.RemoteProtocolError("incomplete chunked read")
+
+    class Responses:
+        async def create(self, **_: object) -> EventStream:
+            return EventStream()
+
+    provider.client = SimpleNamespace(responses=Responses())  # type: ignore[assignment]
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (UserInput((InputText("hello"),)),),
+        (),
+        100,
+    )
+
+    stream = provider.stream(request)
+    assert isinstance((await anext(stream)).payload, ModelReasoningStarted)
+    assert isinstance((await anext(stream)).payload, ModelReasoningDelta)
+    with pytest.raises(ModelStreamInterrupted) as caught:
+        await anext(stream)
+
+    assert caught.value.error_type == "RemoteProtocolError"
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_maps_clean_early_close_without_terminal_event() -> None:
+    provider = _provider()
+
+    class EmptyStream:
+        def __aiter__(self) -> "EmptyStream":
+            return self
+
+        async def __anext__(self) -> object:
+            raise StopAsyncIteration
+
+    class Responses:
+        async def create(self, **_: object) -> EmptyStream:
+            return EmptyStream()
+
+    provider.client = SimpleNamespace(responses=Responses())  # type: ignore[assignment]
+    request = ModelRequest(
+        SystemPrompt.from_text("system"),
+        (UserInput((InputText("hello"),)),),
+        (),
+        100,
+    )
+
+    with pytest.raises(ModelStreamInterrupted) as caught:
+        _ = [event async for event in provider.stream(request)]
+
+    assert caught.value.error_type == "IncompleteStream"

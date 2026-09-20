@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from my_code.agent.events import (
     AgentEvent,
+    AgentModelRequestRetrying,
     AgentReasoningCompleted,
     AgentReasoningDelta,
     AgentTextCompleted,
@@ -52,7 +53,11 @@ class SubagentActivityRecord:
         self.transcript.append(SubagentTranscriptText("user", self.prompt))
 
     def consume(self, event: AgentEvent) -> None:
-        if isinstance(event, AgentTextDelta):
+        if isinstance(event, AgentModelRequestRetrying):
+            self.text_stream = ""
+            self.reasoning_stream = ""
+            self.reasoning_disclosure = None
+        elif isinstance(event, AgentTextDelta):
             self.text_stream += event.text
         elif isinstance(event, AgentTextCompleted):
             self.transcript.append(SubagentTranscriptText("assistant", event.text))

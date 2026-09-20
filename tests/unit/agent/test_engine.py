@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import pytest
 
@@ -12,6 +12,7 @@ from my_code.agent.events import (
     AgentCompactionStarted,
     AgentConversationUpdated,
     AgentInputAccepted,
+    AgentModelRequestRetrying,
     AgentModelStepCompleted,
     AgentReasoningCompleted,
     AgentReasoningDelta,
@@ -43,7 +44,11 @@ from my_code.conversation.models import (
 )
 from my_code.features.todos.projection import project_todos
 from my_code.features.todos.tool import TodoWriteTool
-from my_code.model.errors import ModelContextOverflow, ModelProtocolError
+from my_code.model.errors import (
+    ModelContextOverflow,
+    ModelProtocolError,
+    ModelStreamInterrupted,
+)
 from my_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
@@ -138,6 +143,29 @@ class NativeLifecycleModel(FakeModel):
             ModelOutputCompleted(output),
         )
         for payload in payloads:
+            yield sequencer.emit(payload)
+
+
+class InterruptedModel(FakeModel):
+    def __init__(self, outputs: list[ModelOutput], interruptions: int = 2) -> None:
+        super().__init__(outputs)
+        self.interruptions = interruptions
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        self.requests.append(request)
+        if self.interruptions > 0:
+            self.interruptions -= 1
+            sequencer = ModelStreamSequencer()
+            yield sequencer.emit(ModelReasoningStarted("summary"))
+            yield sequencer.emit(ModelReasoningDelta("summary", 0, "partial"))
+            raise ModelStreamInterrupted(
+                "incomplete chunked read", error_type="RemoteProtocolError"
+            )
+        output = self.outputs.pop(0)
+        if not output.usage.provider_reported:
+            output = replace(output, usage=TokenUsage(1, 1, provider_reported=True))
+        sequencer = ModelStreamSequencer()
+        for payload in completed_output_payloads(output):
             yield sequencer.emit(payload)
 
 
@@ -269,6 +297,93 @@ async def test_native_stream_lifecycle_is_not_replayed_from_final_output(
     assert sum(isinstance(block, ReasoningContent) for block in assistant.content) == 1
 
 
+@pytest.mark.asyncio
+async def test_interrupted_stream_retries_with_new_audited_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine, model, session, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput(
+                (ModelTextBlock("recovered"),),
+                "end_turn",
+                TokenUsage(3, 1, provider_reported=True),
+            )
+        ],
+        model_type=InterruptedModel,
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr("my_code.agent.engine.asyncio.sleep", sleep)
+    monkeypatch.setattr("my_code.model.retry.random.random", lambda: 0.5)
+
+    events = [event async for event in engine.stream(AgentTurnInput("hello"))]
+
+    retries = [
+        event for event in events if isinstance(event, AgentModelRequestRetrying)
+    ]
+    assert retries == [
+        AgentModelRequestRetrying(
+            retries[0].failed_request_id,
+            2,
+            3,
+            500,
+            "RemoteProtocolError",
+        ),
+        AgentModelRequestRetrying(
+            retries[1].failed_request_id,
+            3,
+            3,
+            1000,
+            "RemoteProtocolError",
+        ),
+    ]
+    assert retries[0].failed_request_id != retries[1].failed_request_id
+    assert sleep.await_args_list == [call(0.5), call(1.0)]
+    assert len(model.requests) == 3
+    attempts = [
+        request.identity.attempt for request in model.requests if request.identity
+    ]
+    assert attempts == [1, 2, 3]
+    audited = session.request_audit_snapshot().requests
+    assert [request.manifest.status for request in audited] == [
+        "delivery-unknown",
+        "delivery-unknown",
+        "completed",
+    ]
+    assert [request.manifest.error for request in audited] == [
+        "RemoteProtocolError",
+        "RemoteProtocolError",
+        None,
+    ]
+    assert len(session.conversation) == 2
+    assert isinstance(session.conversation[-1], AssistantMessage)
+    assert session.conversation[-1].content == (TextContent("recovered"),)
+
+
+@pytest.mark.asyncio
+async def test_interrupted_stream_stops_after_retry_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine, model, session, _ = _engine(
+        tmp_path,
+        [ModelOutput((ModelTextBlock("unused"),), "end_turn")],
+        model_type=InterruptedModel,
+    )
+    assert isinstance(model, InterruptedModel)
+    model.interruptions = 3
+    monkeypatch.setattr("my_code.agent.engine.asyncio.sleep", AsyncMock())
+
+    with pytest.raises(ModelStreamInterrupted, match="incomplete chunked read"):
+        _ = [event async for event in engine.stream(AgentTurnInput("hello"))]
+
+    assert len(model.requests) == 3
+    assert [
+        request.manifest.status for request in session.request_audit_snapshot().requests
+    ] == ["delivery-unknown", "delivery-unknown", "delivery-unknown"]
+    assert len(session.conversation) == 1
+    assert isinstance(session.conversation[0], HumanMessage)
+
+
 @pytest.mark.parametrize(
     ("events", "message"),
     (
@@ -336,6 +451,8 @@ async def test_engine_rejects_invalid_model_stream_protocol(
 
     assert len(session.conversation) == 1
     assert isinstance(session.conversation[0], HumanMessage)
+    audited = session.request_audit_snapshot().requests
+    assert len(audited) == 1
 
 
 @pytest.mark.asyncio

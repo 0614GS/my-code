@@ -4,7 +4,14 @@ from collections.abc import AsyncIterator, Iterable
 from typing import Any, Literal, cast
 from uuid import uuid4
 
-from anthropic import AsyncAnthropic, BadRequestError
+import httpx
+from anthropic import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncAnthropic,
+    BadRequestError,
+)
 from anthropic.types import (
     Message,
     MessageParam,
@@ -20,7 +27,7 @@ from my_code.config.providers import (
 from my_code.foundation.json import to_json_object
 from my_code.model.capabilities import ProviderCapabilities
 from my_code.model.client import ModelClient
-from my_code.model.errors import ModelContextOverflow
+from my_code.model.errors import ModelContextOverflow, ModelStreamInterrupted
 from my_code.model.events import (
     ModelOutputCompleted,
     ModelReasoningCompleted,
@@ -111,6 +118,7 @@ class AnthropicProvider(ModelClient):
         kinds: dict[int, str] = {}
         text_parts: dict[int, str] = {}
         thinking_parts: dict[int, str] = {}
+        saw_message_stop = False
         try:
             async with self.client.messages.stream(
                 model=self.model,
@@ -125,6 +133,8 @@ class AnthropicProvider(ModelClient):
                 **cast(Any, self._reasoning_params(request)),
             ) as stream:
                 async for event in stream:
+                    if event.type == "message_stop":
+                        saw_message_stop = True
                     if event.type == "content_block_start":
                         index = event.index
                         kind = event.content_block.type
@@ -199,9 +209,22 @@ class AnthropicProvider(ModelClient):
                                     ReasoningPresentation("redacted")
                                 )
                             )
+                if not saw_message_stop:
+                    raise ModelStreamInterrupted(
+                        "Anthropic Messages stream ended without message_stop",
+                        error_type="IncompleteStream",
+                    )
                 final_message = cast(Message, await stream.get_final_message())
         except BadRequestError as error:
             _raise_context_overflow(error)
+            raise
+        except ModelStreamInterrupted:
+            raise
+        except (APIConnectionError, APITimeoutError, httpx.TransportError) as error:
+            raise _stream_interrupted(error) from error
+        except APIStatusError as error:
+            if _is_retryable_status(error.status_code):
+                raise _stream_interrupted(error) from error
             raise
         output = self._response(final_message)
         for index, block in enumerate(output.content):
@@ -476,3 +499,11 @@ def _raise_context_overflow(error: BadRequestError) -> None:
     )
     if any(marker in message for marker in markers):
         raise ModelContextOverflow("Model context window exceeded") from error
+
+
+def _stream_interrupted(error: BaseException) -> ModelStreamInterrupted:
+    return ModelStreamInterrupted(str(error), error_type=type(error).__name__)
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    return status_code in {408, 409, 429} or status_code >= 500

@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from typing import cast
+from unittest.mock import AsyncMock, call
 
 import pytest
 
@@ -13,7 +14,7 @@ from my_code.model.capabilities import (
     ModelDescriptor,
     ModelLimits,
 )
-from my_code.model.errors import ModelContextOverflow
+from my_code.model.errors import ModelContextOverflow, ModelStreamInterrupted
 from my_code.model.events import ModelOutputCompleted, ModelStreamEvent
 from my_code.model.primitives import TokenUsage
 from my_code.model.request import (
@@ -174,6 +175,31 @@ async def test_compaction_retries_truncation_and_accumulates_usage() -> None:
     assert isinstance(retry, InputText)
     assert "16,000 tokens" in retry.text
     assert usage == TokenUsage(21, 25, provider_reported=True)
+
+
+@pytest.mark.asyncio
+async def test_compaction_retries_interrupted_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _ScriptedModel(
+        [
+            ModelStreamInterrupted("disconnected", error_type="RemoteProtocolError"),
+            ModelStreamInterrupted("disconnected", error_type="RemoteProtocolError"),
+            _output("complete", "end_turn", TokenUsage(11, 5, provider_reported=True)),
+        ]
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr("my_code.context.compaction.asyncio.sleep", sleep)
+    monkeypatch.setattr("my_code.model.retry.random.random", lambda: 0.5)
+
+    summary, usage = await ContextCompactor(model).summarize(
+        (UserInput((InputText("task"),)),)
+    )
+
+    assert summary == "complete"
+    assert usage == TokenUsage(11, 5, provider_reported=True)
+    assert len(model.requests) == 3
+    assert sleep.await_args_list == [call(0.5), call(1.0)]
 
 
 @pytest.mark.asyncio

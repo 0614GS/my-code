@@ -1305,6 +1305,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "httpx" },
     { name = "openai" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
@@ -1331,6 +1332,7 @@ harbor = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.121.0,<0.122.0" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "openai", specifier = ">=2,<3" },
     { name = "opentelemetry-api", specifier = ">=1.44,<2" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.44,<2" },

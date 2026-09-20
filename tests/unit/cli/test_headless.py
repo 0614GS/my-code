@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 
 from my_code.application.contracts.events import (
+    ModelRequestRetrying,
     TextDelta,
     TextStarted,
     ToolFinished,
@@ -20,6 +21,7 @@ from my_code.cli.arguments import OutputFormat, RunCliOptions
 from my_code.cli.headless import read_prompt, run_headless
 from my_code.config.settings import SandboxMode, SandboxNetwork, SettingsOverrides
 from my_code.conversation.presentation import ToolResultPresentation
+from my_code.model.errors import ModelStreamInterrupted
 from my_code.permissions.models import PermissionMode
 from my_code.tools.presentation import ToolUsePresentation
 
@@ -90,6 +92,18 @@ class SlowApplication(FakeApplication):
             yield TextStarted()
 
 
+class InterruptedApplication(FakeApplication):
+    async def stream(
+        self, prompt: str, *, cancellation_message: str = ""
+    ) -> AsyncIterator[TurnEvent]:
+        del prompt, cancellation_message
+        raise ModelStreamInterrupted(
+            "incomplete chunked read", error_type="RemoteProtocolError"
+        )
+        if False:
+            yield TextStarted()
+
+
 def options(
     tmp_path: Path,
     output_format: OutputFormat,
@@ -109,6 +123,7 @@ def options(
 
 def successful_events() -> tuple[TurnEvent, ...]:
     return (
+        ModelRequestRetrying("request-1", 2, 3, 500, "RemoteProtocolError"),
         TextStarted(),
         TextDelta("done"),
         ToolStarted(
@@ -228,8 +243,19 @@ async def test_stream_json_has_ordered_events_and_one_terminal_result(
     assert {record.get("event") for record in records} >= {
         "text.started",
         "text.delta",
+        "model.request_retrying",
         "tool.started",
         "tool.finished",
+    }
+    retry = next(
+        record for record in records if record.get("event") == "model.request_retrying"
+    )
+    assert retry["data"] == {
+        "failed_request_id": "request-1",
+        "next_attempt": 2,
+        "max_attempts": 3,
+        "delay_ms": 500,
+        "error_type": "RemoteProtocolError",
     }
 
 
@@ -276,3 +302,26 @@ async def test_timeout_emits_terminal_result_and_closes_application(
     assert result["outcome"] == "timed_out"
     assert result["error"]["code"] == "timeout"
     assert application.closed is True
+
+
+@pytest.mark.asyncio
+async def test_exhausted_stream_retry_preserves_transport_error_code(
+    tmp_path: Path,
+) -> None:
+    application = InterruptedApplication(tmp_path, ())
+    stdout = io.StringIO()
+
+    code = await run_headless(
+        as_application(application),
+        options(tmp_path, OutputFormat.JSON),
+        "do work",
+        stdout=stdout,
+    )
+
+    result = json.loads(stdout.getvalue())
+    assert code == 1
+    assert result["outcome"] == "failed"
+    assert result["error"] == {
+        "code": "RemoteProtocolError",
+        "message": "incomplete chunked read",
+    }

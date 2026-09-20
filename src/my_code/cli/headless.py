@@ -19,6 +19,7 @@ from my_code.application.contracts.events import (
     ContextUpdated,
     MaxStepsReached,
     ModelRequestPrepared,
+    ModelRequestRetrying,
     ModelStepCompleted,
     PlanCompleted,
     PlanDelta,
@@ -39,6 +40,7 @@ from my_code.application.contracts.events import (
 )
 from my_code.application.service import ApplicationService
 from my_code.cli.arguments import OutputFormat, RunCliOptions
+from my_code.model.errors import ModelStreamInterrupted
 from my_code.model.primitives import TokenUsage
 
 SCHEMA_VERSION = 1
@@ -116,7 +118,7 @@ async def run_headless(
         exit_code = 130
         failure = ("cancelled", "Agent run was cancelled")
     except Exception as error:
-        failure = (type(error).__name__, str(error))
+        failure = (_error_code(error), str(error))
 
     try:
         await application.close()
@@ -150,6 +152,12 @@ async def run_headless(
     else:
         _write_json(actual_stdout, result)
     return exit_code
+
+
+def _error_code(error: Exception) -> str:
+    if isinstance(error, ModelStreamInterrupted):
+        return error.error_type
+    return type(error).__name__
 
 
 def startup_failure_record(
@@ -247,6 +255,14 @@ def _project_event(event: TurnEvent) -> tuple[str, dict[str, Any]]:
                 }
                 for item in event.injections
             ],
+        }
+    if isinstance(event, ModelRequestRetrying):
+        return "model.request_retrying", {
+            "failed_request_id": event.failed_request_id,
+            "next_attempt": event.next_attempt,
+            "max_attempts": event.max_attempts,
+            "delay_ms": event.delay_ms,
+            "error_type": event.error_type,
         }
     if isinstance(event, TurnInputAccepted):
         return "turn.input_accepted", {
