@@ -34,6 +34,9 @@ dev = [
     "ruff>=0.12.0",
     "tach>=0.35.0",
 ]
+harbor = [
+    "harbor==0.23.0",
+]
 
 [tool.ruff]
 target-version = "py312"

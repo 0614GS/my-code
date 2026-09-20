@@ -84,6 +84,7 @@ class AgentSettings:
     skills_enabled: bool = False
     mcp_enabled: bool = False
     mcp_servers: tuple[McpServerSettingsLayer, ...] = ()
+    project_settings_ignored: bool = False
     permission_rules: tuple[PermissionRule, ...] = ()
     api_key: str | None = None
     credential_source: CredentialSource = CredentialSource.NONE
@@ -175,12 +176,18 @@ class SettingsResolver:
         overrides: SettingsOverrides | None = None,
         *,
         interactive: bool,
+        ignore_project_settings: bool = False,
     ) -> AgentSettings:
         actual_overrides = overrides or SettingsOverrides()
-        stored = self.store.load()
         user = self.store.load_scope(SettingsScope.USER)
-        local = self.store.load_scope(SettingsScope.LOCAL)
-        project = self.store.load_scope(SettingsScope.PROJECT).overlay(local)
+        if ignore_project_settings:
+            stored = user
+            local = SettingsLayer()
+            project = SettingsLayer()
+        else:
+            stored = self.store.load()
+            local = self.store.load_scope(SettingsScope.LOCAL)
+            project = self.store.load_scope(SettingsScope.PROJECT).overlay(local)
         provider_id = self.active_provider_id(actual_overrides.provider_id)
         profiles = ProviderProfileStore(self.paths.providers_path).load()
         if not profiles:
@@ -276,6 +283,7 @@ class SettingsResolver:
             skills_enabled=stored.skills_enabled or False,
             mcp_enabled=stored.mcp_enabled or False,
             mcp_servers=stored.mcp_servers,
+            project_settings_ignored=ignore_project_settings,
             permission_rules=_resolve_permission_rules(user, project, local),
             api_key=credential.api_key,
             credential_source=credential.source,

@@ -318,6 +318,7 @@ def _assemble_agent(
     full_access_confirmed: bool | None = None,
     permission_prompter: PermissionPrompter | None = None,
     mcp_transport_factory: McpTransportFactory | None = None,
+    evaluation: EvaluationContext | None = None,
 ) -> _BootstrapComponents:
     actual_session_id = session_id or str(uuid4())
     observations = build_observation_dispatcher(settings.paths.project_state_dir)
@@ -468,7 +469,10 @@ def _assemble_agent(
             Path(__file__).resolve().parent / "builtin_skills",
         ),
     ]
-    if not settings.paths.project_config_collides_with_user_storage:
+    if (
+        not settings.project_settings_ignored
+        and not settings.paths.project_config_collides_with_user_storage
+    ):
         skill_roots.insert(
             0,
             SkillSearchRoot(
@@ -557,7 +561,7 @@ def _assemble_agent(
             parent_run_id=spec.parent_run_id,
             agent_name=spec.name,
             root_session_id=spec.root_session_id,
-            evaluation=spec.evaluation,
+            evaluation=spec.evaluation or evaluation,
         )
 
     run_factory = AgentRunFactory(
@@ -665,6 +669,7 @@ def _assemble_agent(
         observations=observations,
         run_id=None,
         root_session_id=actual_session_id,
+        evaluation=evaluation,
     )
     runtime = ApplicationRuntime(
         workspace=workspace,
@@ -703,6 +708,7 @@ def bootstrap_application(
     *,
     permission_mode_override: PermissionMode | None = None,
     full_access_confirmed: bool | None = None,
+    evaluation: EvaluationContext | None = None,
 ) -> ApplicationService:
     """Assemble the concrete application service used by every host."""
 
@@ -713,6 +719,7 @@ def bootstrap_application(
         permission_mode_override=permission_mode_override,
         full_access_confirmed=full_access_confirmed,
         permission_prompter=prompter,
+        evaluation=evaluation,
     )
     application_runtime = assembled.runtime
     attachment_loader = AttachmentLoader(
@@ -737,7 +744,7 @@ def bootstrap_application(
         assembled.subagents,
         project_transcript,
     )
-    return ApplicationService(
+    application = ApplicationService(
         context=assembled.context,
         tool_executor=assembled.tool_executor,
         settings=settings,
@@ -754,7 +761,17 @@ def bootstrap_application(
         background_notifications=assembled.background_notifications,
         background_wake_signal=assembled.background_wake_signal,
         diagnostics_directory=settings.paths.project_state_dir / "diagnostics",
+        evaluation=(
+            {
+                "evaluation_run_id": evaluation.evaluation_run_id,
+                "test_case_id": evaluation.test_case_id,
+                "attempt_id": evaluation.attempt_id,
+            }
+            if evaluation is not None
+            else None
+        ),
     )
+    return application
 
 
 async def run(options: CliOptions, resolver: SettingsResolver) -> int:
@@ -789,16 +806,34 @@ async def run_noninteractive(
     """Assemble and run one non-interactive invocation."""
 
     try:
-        settings = resolver.resolve(options.settings_overrides, interactive=False)
+        settings = resolver.resolve(
+            options.settings_overrides,
+            interactive=False,
+            ignore_project_settings=options.ignore_project_settings,
+        )
     except Exception as error:
         write_startup_failure(options, error)
         return 2
     try:
+        evaluation = EvaluationContext(
+            options.evaluation_run_id,
+            options.test_case_id,
+            options.attempt_id,
+        )
+        if not any(
+            (
+                evaluation.evaluation_run_id,
+                evaluation.test_case_id,
+                evaluation.attempt_id,
+            )
+        ):
+            evaluation = None
         application = bootstrap_application(
             settings,
             options.session_id,
             permission_mode_override=options.settings_overrides.permission_mode,
             full_access_confirmed=options.dangerously_skip_permissions,
+            evaluation=evaluation,
         )
     except Exception as error:
         write_startup_failure(options, error)

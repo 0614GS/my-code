@@ -152,7 +152,9 @@ async def run_headless(
     return exit_code
 
 
-def startup_failure_record(error: Exception) -> dict[str, Any]:
+def startup_failure_record(
+    error: Exception, evaluation: dict[str, str | None] | None = None
+) -> dict[str, Any]:
     """Build a protocol result when application assembly never completed."""
 
     return {
@@ -172,6 +174,7 @@ def startup_failure_record(error: Exception) -> dict[str, Any]:
         "error": {"code": type(error).__name__, "message": str(error)},
         "execution_environment": None,
         "artifacts": None,
+        "evaluation": evaluation,
     }
 
 
@@ -187,7 +190,7 @@ def write_startup_failure(
     if options.output_format is OutputFormat.TEXT:
         print(f"Error: {error}", file=actual_stderr)
     else:
-        _write_json(actual_stdout, startup_failure_record(error))
+        _write_json(actual_stdout, startup_failure_record(error, _evaluation(options)))
 
 
 def _system_record(application: ApplicationService, sequence: int) -> dict[str, Any]:
@@ -204,6 +207,7 @@ def _system_record(application: ApplicationService, sequence: int) -> dict[str, 
         "model": status.model,
         "permission_mode": status.permission_mode,
         "execution_environment": _execution_environment(application),
+        "evaluation": _evaluation_from_application(application),
     }
 
 
@@ -374,7 +378,28 @@ def _result_record(
         ),
         "execution_environment": _execution_environment(application),
         "artifacts": _artifacts(application),
+        "evaluation": _evaluation_from_application(application),
     }
+
+
+def _evaluation(options: RunCliOptions) -> dict[str, str | None] | None:
+    values = (options.evaluation_run_id, options.test_case_id, options.attempt_id)
+    if not any(values):
+        return None
+    return {
+        "evaluation_run_id": options.evaluation_run_id,
+        "test_case_id": options.test_case_id,
+        "attempt_id": options.attempt_id,
+    }
+
+
+def _evaluation_from_application(
+    application: ApplicationService,
+) -> dict[str, str | None] | None:
+    evaluation = getattr(application, "evaluation", None)
+    if evaluation is None:
+        return None
+    return evaluation
 
 
 def _usage(usage: TokenUsage) -> dict[str, Any]:

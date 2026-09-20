@@ -105,6 +105,7 @@ class ApplicationService:
         background_notifications: BackgroundTaskNotificationSource | None = None,
         background_wake_signal: BackgroundTaskWakeSignal | None = None,
         diagnostics_directory: Path | None = None,
+        evaluation: dict[str, str | None] | None = None,
     ) -> None:
         self.context = context
         self.tool_executor = tool_executor
@@ -115,6 +116,7 @@ class ApplicationService:
         self.background_notifications = background_notifications
         self.background_wake_signal = background_wake_signal
         self._diagnostics_directory = diagnostics_directory
+        self.evaluation = evaluation
         self._initialization_lock = asyncio.Lock()
         self._initialized = False
         self.turns = turns

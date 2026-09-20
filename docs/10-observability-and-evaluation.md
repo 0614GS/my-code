@@ -116,6 +116,62 @@ Provider 向导、权限确认或 Question UI。默认权限模式固定为 `don
 安全，也不验证外部网络隔离；选择 local 或危险绕过时，调用方负责容器、网络、仓库准备和
 资源限制。数据集解析、任务注入与评分应由独立 adapter 完成，不进入产品 CLI。
 
+评测 harness 可以同时传入 `--evaluation-run-id`、`--test-case-id` 和 `--attempt-id`。
+非空字段会组成 `EvaluationContext`，写入根运行和子 Agent 的 invocation journal、诊断
+上下文，以及 `system`/`result` 机器记录的可空 `evaluation` 对象。schema version 仍为 1；
+未传入时该字段为 `null`。
+
+`--ignore-project-settings` 只跳过工作区 `.my-code/settings.json`、
+`settings.local.json` 和项目 Skill 搜索根。用户级 provider、凭据、设置、MCP/Skill 配置仍
+有效，`AGENTS.md` 与普通工作区文件仍进入正常上下文。该开关用于不可信评测仓库，不能替代
+容器隔离。
+
+## Harbor v0.23.0 adapter
+
+`integrations/harbor/agent.py:MyCodeAgent` 是仓库外层 adapter；核心包不导入 Harbor。
+先生成固定安装产物：
+
+```bash
+uv run python scripts/build_harbor_artifacts.py /tmp/mycode-artifacts
+```
+
+目录包含 wheel、由 `uv.lock` 导出的精确 `constraints.txt`、当前 uv 二进制，以及带
+wheel/constraints/uv/lock SHA-256 和 `.python-version` selector 的 `manifest.json`。adapter
+把 uv 一并上传，并在每个 task 容器内创建 uv-managed Python 3.12 和独立 venv；不依赖任务
+镜像的系统 Python，也不复制宿主机 `.venv`。Harbor agent kwarg `artifact_dir` 必填。模型连接完全由
+`MYCODE_MODEL`、`MYCODE_PROTOCOL`、`MYCODE_API_KEY` 和可选的 `MYCODE_BASE_URL` 定义；协议必须
+显式选择 `anthropic-messages` 或 `openai-responses`。adapter 不使用 Harbor 的 provider 推断，
+也不经由 LiteLLM 请求模型。它在容器中创建独立 venv，通过 my-code 配置 store API 写临时
+provider，并以 stdin 运行
+`mycode run --output-format stream-json --ignore-project-settings`。API key 只存在于该临时
+进程环境和随后删除的私有配置中。
+
+仓库提供 SWE-bench Verified 启动脚本。它默认运行一个 smoke task；先复制示例配置并填写
+模型凭据：
+
+```bash
+cp .env.harbor.example .env.harbor
+scripts/run_harbor_swebench.sh
+```
+
+并发、attempt 数、模型、协议、数据集和 artifact 目录都可以在 `.env.harbor` 中调整；额外的
+Harbor 参数可以直接追加到脚本命令后。`.env.harbor` 被 gitignore，示例文件不得包含真实凭据。
+
+Harbor agent 日志包含 `stream.jsonl`、`stderr.log`、`result.json`、`mycode/projects/` 原生
+证据和转换成功时的 ATIF-v1.7 `trajectory.json`。`populate_context_post_run()` 只解析 terminal
+result 填充 token/cache 与 metadata；非零退出按机器字段分类，不扫描模型正文。ATIF 转换
+失败只记录 `trajectory_conversion_error`，不改写原始结果。
+
+job 级只读汇总：
+
+```bash
+uv run python scripts/analyze_harbor_job.py <harbor-job-dir>
+uv run python scripts/analyze_harbor_job.py <harbor-job-dir> --format csv
+```
+
+分析器联合 Harbor reward/exception、my-code terminal result 和 canonical Session finding，
+不会启动 Collector，也不会修改 trial 或 Session。
+
 ## Runtime 观测边界
 
 Agent、Context、ToolExecutor 和 Session 都不导入 observability。bootstrap 在 runtime

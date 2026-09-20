@@ -126,6 +126,50 @@ def test_run_parser_accepts_machine_and_sandbox_overrides() -> None:
     assert options.settings_overrides.sandbox_network == "enabled"
 
 
+def test_run_parser_accepts_evaluation_and_project_isolation() -> None:
+    options = parse_cli(
+        [
+            "run",
+            "--ignore-project-settings",
+            "--evaluation-run-id",
+            "job-1",
+            "--test-case-id",
+            "case-1",
+            "--attempt-id",
+            "2",
+            "task",
+        ]
+    )
+
+    assert isinstance(options, RunCliOptions)
+    assert options.ignore_project_settings is True
+    assert options.evaluation_run_id == "job-1"
+    assert options.test_case_id == "case-1"
+    assert options.attempt_id == "2"
+
+
+def test_ignore_project_settings_does_not_parse_untrusted_project_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / ".my-code").mkdir(parents=True)
+    (workspace / ".my-code" / "settings.json").write_text("not-json", encoding="utf-8")
+    config_home = tmp_path / "config"
+    write_provider_config(config_home)
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
+    resolver = SettingsResolver.for_workspace(workspace)
+
+    settings = resolver.resolve(
+        interactive=False,
+        ignore_project_settings=True,
+    )
+
+    assert settings.project_settings_ignored is True
+    assert settings.model == "profile-model"
+    with pytest.raises(ValueError):
+        resolver.resolve(interactive=False)
+
+
 def test_run_parser_rejects_permission_mode_with_dangerous_bypass() -> None:
     with pytest.raises(SystemExit) as exit_info:
         parse_cli(

@@ -22,7 +22,8 @@
 - Concise/Detailed 主界面密度、用户级 `/view` 偏好，以及带 resolved request 导航的 Audit transcript。
 - Session 私有、内容寻址的 provider-neutral request audit sidecar，覆盖 Agent、continuation、compact/retry 与 child run。
 - 类型化 observation dispatcher、默认本地元数据诊断日志、可选 OTel logs/traces/metrics 和只读 badcase 报告，覆盖重复工具轮次、工具错误与异常终态定位。
-- `mycode run` 单回合无头入口，提供 text、单结果 JSON、实时 JSONL、超时、完整 usage 与 artifact 定位；无头默认 `dontAsk`，危险绕过必须逐进程显式声明。
+- `mycode run` 单回合无头入口，提供 text、单结果 JSON、实时 JSONL、超时、完整 usage、artifact 定位、项目配置隔离与评测关联 ID；无头默认 `dontAsk`，危险绕过必须逐进程显式声明。
+- Harbor v0.23.0 独立 adapter、锁定 wheel/constraints manifest、canonical Session trajectory DTO、ATIF-v1.7 转换和只读 job badcase 汇总；核心包不依赖 Harbor。
 - Agent active 时可编辑 composer、session-bound 临时输入队列、FIFO step-boundary steering 与 Up 召回。
 - 单 UI owner、单 worker 离屏 scrollback render，以及有界/latest-wins live Markdown projection。
 - Codex 风格的结构化命令信息卡，以及由显式 model-step 边界驱动的工作组/最终回答分隔。
@@ -80,7 +81,7 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 - 后台完成用无 payload wake signal 触发 pull，再通过 durable attachment 交付，不建立第二份消息队列。
 - 相对参考源码，my-code 有意保持通用 `TaskSupervisor` 与用户级后台任务能力分离：前者只拥有任务状态机、取消树和终态，`features.background_tasks` 另行拥有 owner、投递、唤醒与结果展示语义。
 - Linux Bubblewrap 只隔离 Bash 进程树；MCP、Provider 与 my-code 主进程仍在宿主运行，应用层权限继续作为独立前置边界。
-- 无头 CLI 不负责创建或验证外部容器、网络隔离及任务评分；调用方选择 `sandbox-mode=local` 时承担进程环境隔离，后续 adapter 只消费通用 JSON/JSONL 协议。
+- 无头 CLI 不负责创建或验证外部容器、网络隔离及任务评分；调用方选择 `sandbox-mode=local` 时承担进程环境隔离，Harbor adapter 只消费通用 JSON/JSONL、Session 和 request audit 证据。
 
 调整上述差异或长期不变量时，应同时修改对应架构专题、测试和本文件。
 

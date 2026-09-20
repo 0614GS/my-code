@@ -32,6 +32,10 @@ class RunCliOptions:
     output_format: OutputFormat
     timeout_seconds: float | None
     dangerously_skip_permissions: bool
+    ignore_project_settings: bool = False
+    evaluation_run_id: str | None = None
+    test_case_id: str | None = None
+    attempt_id: str | None = None
 
 
 type ParsedCliOptions = CliOptions | RunCliOptions
@@ -98,6 +102,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["restricted", "enabled"],
         help="network policy for the built-in command sandbox",
     )
+    run.add_argument(
+        "--ignore-project-settings",
+        action="store_true",
+        help="ignore workspace project/local settings and project Skills",
+    )
+    run.add_argument("--evaluation-run-id", type=_non_blank_identifier)
+    run.add_argument("--test-case-id", type=_non_blank_identifier)
+    run.add_argument("--attempt-id", type=_non_blank_identifier)
     return parser
 
 
@@ -135,12 +147,22 @@ def parse_cli(argv: list[str] | None = None) -> ParsedCliOptions:
             output_format=OutputFormat(namespace.output_format),
             timeout_seconds=namespace.timeout_seconds,
             dangerously_skip_permissions=namespace.dangerously_skip_permissions,
+            ignore_project_settings=namespace.ignore_project_settings,
+            evaluation_run_id=namespace.evaluation_run_id,
+            test_case_id=namespace.test_case_id,
+            attempt_id=namespace.attempt_id,
         )
     return CliOptions(
         cwd=namespace.cwd,
         session_id=namespace.session_id,
         settings_overrides=overrides,
     )
+
+
+def _non_blank_identifier(value: str) -> str:
+    if not value.strip():
+        raise argparse.ArgumentTypeError("identifier must not be blank")
+    return value
 
 
 __all__ = [

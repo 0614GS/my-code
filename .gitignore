@@ -19,10 +19,12 @@ htmlcov/
 .env
 .env.*
 !.env.example
+!.env.harbor.example
 /.my-code/settings.local.json
 /.my-code/*.tmp
 **/.credentials.json
 *.log
+/jobs/
 
 # 编辑器与操作系统文件
 .idea/

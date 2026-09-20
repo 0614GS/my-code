@@ -46,6 +46,7 @@ class FakeApplication:
         )
         self.events = events
         self.closed = False
+        self.evaluation: dict[str, str | None] | None = None
 
     def status(self) -> SimpleNamespace:
         return SimpleNamespace(
@@ -230,6 +231,30 @@ async def test_stream_json_has_ordered_events_and_one_terminal_result(
         "tool.started",
         "tool.finished",
     }
+
+
+@pytest.mark.asyncio
+async def test_machine_records_include_optional_evaluation_context(
+    tmp_path: Path,
+) -> None:
+    application = FakeApplication(tmp_path, successful_events())
+    application.evaluation = {
+        "evaluation_run_id": "job-1",
+        "test_case_id": "case-1",
+        "attempt_id": "2",
+    }
+    stdout = io.StringIO()
+
+    await run_headless(
+        as_application(application),
+        options(tmp_path, OutputFormat.STREAM_JSON),
+        "do work",
+        stdout=stdout,
+    )
+
+    records = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert records[0]["evaluation"] == application.evaluation
+    assert records[-1]["evaluation"] == application.evaluation
 
 
 @pytest.mark.asyncio

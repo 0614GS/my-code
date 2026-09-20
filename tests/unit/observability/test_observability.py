@@ -36,6 +36,7 @@ from my_code.model.request import (
     SystemPrompt,
 )
 from my_code.observability.api import (
+    EvaluationContext,
     NoOpSpan,
     NoOpTracer,
     OperationTracer,
@@ -198,6 +199,26 @@ async def test_agent_adapter_writes_finish_before_terminal_event(tmp_path) -> No
     assert len(session.invocation_history) == 1
     assert session.invocation_history[0].finished is not None
     assert session.invocation_history[0].finished.outcome == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_agent_adapter_persists_evaluation_context(tmp_path) -> None:
+    observer, _ = _observer()
+    session = Session(tmp_path, SESSION_ID)
+    runner = InstrumentedAgentRunner(
+        _SuccessfulRunner(),
+        _observations(observer),
+        evaluation=EvaluationContext("job-1", "case-1", "2"),
+    )
+
+    await runner.submit(session, SessionContextCache(), AgentTurnInput("hello"))
+
+    started = session.invocation_history[0].started
+    assert (
+        started.evaluation_run_id,
+        started.test_case_id,
+        started.attempt_id,
+    ) == ("job-1", "case-1", "2")
 
 
 @pytest.mark.asyncio
