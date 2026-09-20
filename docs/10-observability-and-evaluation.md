@@ -99,6 +99,23 @@ Invocation 覆盖一次完整 Agent loop；interactive stream 可以在安全 st
 Harness 以 transcript、外置工具结果和 `Session.invocation_history` 为权威输入，并在自己的
 存储中保存评分。运行评测不要求启动 Collector。
 
+## 无头执行协议
+
+`mycode run [PROMPT]` 执行一个非交互回合；省略位置参数时从 stdin 读取。它不会启动
+Provider 向导、权限确认或 Question UI。默认权限模式固定为 `dontAsk`，与项目默认值无关；
+`--dangerously-skip-permissions` 才启用 bypass，并且每次进程都要重新声明。bypass 自动批准
+普通 ASK，但显式 deny、工作区边界、受保护路径和 bypass-immune 检查仍生效。
+
+`--output-format text` 只在 stdout 写最终回答；`json` 写一个 v1 result；`stream-json`
+逐行写 system、前端事件和唯一的 terminal result。机器协议包含 session/run/invocation ID、
+普通输入、缓存创建、缓存读取、输出 token、实际 sandbox 状态，以及 session、request audit
+和 diagnostics 的路径。诊断信息写 stderr，不污染 stdout。退出码分别为成功 0、运行异常 1、
+参数/配置错误 2、max steps 3、超时 124 和中断 130。
+
+`--sandbox-mode auto|local` 只选择 my-code 的 Bash launcher。无头 CLI 不探测 Docker 是否
+安全，也不验证外部网络隔离；选择 local 或危险绕过时，调用方负责容器、网络、仓库准备和
+资源限制。数据集解析、任务注入与评分应由独立 adapter 完成，不进入产品 CLI。
+
 ## Runtime 观测边界
 
 Agent、Context、ToolExecutor 和 Session 都不导入 observability。bootstrap 在 runtime

@@ -62,6 +62,18 @@ uv sync --group dev
 uv run mycode
 ```
 
+单次无头运行使用独立的 `run` 子命令：
+
+```bash
+uv run mycode run --output-format json "检查并修复当前项目的测试"
+printf '%s\n' "实现任务并运行测试" | uv run mycode run --output-format stream-json
+```
+
+无头模式默认使用 `dontAsk`，不会打开权限或 Question 对话框。由外部容器负责隔离且需要
+自动批准普通权限请求时，显式传入 `--dangerously-skip-permissions`；该参数仍不能绕过
+显式 deny、工作区边界和受保护路径。可用 `--timeout-seconds`、`--max-steps`、
+`--sandbox-mode` 和 `--sandbox-network` 限制单次运行。
+
 ## 稳定前缀，按需扩展工具集
 
 工具数量增长时，把每个 schema 都常驻在模型请求中会持续占用 token；动态增减 definition 还会改变请求前缀，缩小 Provider 前缀缓存的复用空间。my-code 的 dispatcher 模式把高频能力与按需能力分开，让工具集可以持续扩展，同时保持请求前部稳定。

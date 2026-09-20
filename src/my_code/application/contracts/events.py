@@ -40,6 +40,22 @@ class TurnSucceeded:
     completed_steps: int
     input_tokens: int
     output_tokens: int
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    provider_reported: bool = False
+    session_id: str | None = None
+    run_id: str | None = None
+    invocation_id: str | None = None
+
+    @property
+    def usage(self) -> TokenUsage:
+        return TokenUsage(
+            self.input_tokens,
+            self.output_tokens,
+            self.cache_creation_input_tokens,
+            self.cache_read_input_tokens,
+            self.provider_reported,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +64,22 @@ class MaxStepsReached:
     completed_steps: int
     input_tokens: int
     output_tokens: int
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    provider_reported: bool = False
+    session_id: str | None = None
+    run_id: str | None = None
+    invocation_id: str | None = None
+
+    @property
+    def usage(self) -> TokenUsage:
+        return TokenUsage(
+            self.input_tokens,
+            self.output_tokens,
+            self.cache_creation_input_tokens,
+            self.cache_read_input_tokens,
+            self.provider_reported,
+        )
 
 
 type InvocationOutcome = TurnSucceeded | MaxStepsReached

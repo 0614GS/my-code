@@ -132,7 +132,7 @@ depends_on = ["my_code.agent", "my_code.application.activity", "my_code.applicat
 
 [[modules]]
 path = "my_code.cli"
-depends_on = ["my_code.config", "my_code.permissions", "my_code.version"]
+depends_on = ["my_code.application", "my_code.application.contracts", "my_code.config", "my_code.model", "my_code.permissions", "my_code.version"]
 
 [[modules]]
 path = "my_code.tui"

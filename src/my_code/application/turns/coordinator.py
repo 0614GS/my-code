@@ -75,18 +75,34 @@ class TurnCoordinator:
             session, runtime, AgentTurnInput(prompt, attachments)
         )
         if isinstance(result, AgentInvocationSucceeded):
+            history = session.invocation_history
+            invocation_id = history[-1].started.invocation_id if history else None
             return TurnSucceeded(
                 result.text,
                 result.completed_steps,
                 result.usage.input_tokens,
                 result.usage.output_tokens,
+                result.usage.cache_creation_input_tokens,
+                result.usage.cache_read_input_tokens,
+                result.usage.provider_reported,
+                session.session_id,
+                session.run_id,
+                invocation_id,
             )
         assert isinstance(result, AgentMaxStepsReached)
+        history = session.invocation_history
+        invocation_id = history[-1].started.invocation_id if history else None
         return MaxStepsReached(
             result.max_steps,
             result.completed_steps,
             result.usage.input_tokens,
             result.usage.output_tokens,
+            result.usage.cache_creation_input_tokens,
+            result.usage.cache_read_input_tokens,
+            result.usage.provider_reported,
+            session.session_id,
+            session.run_id,
+            invocation_id,
         )
 
     async def stream(
@@ -95,6 +111,7 @@ class TurnCoordinator:
         runtime: SessionContextCache,
         prompt: str,
         context_status: Callable[[], ContextUsageView],
+        cancellation_message: str = "Tool execution was aborted by the user.",
     ) -> AsyncIterator[TurnEvent]:
         loaded = (
             await self._attachment_loader.load(prompt)
@@ -108,7 +125,9 @@ class TurnCoordinator:
             runtime,
             AgentTurnInput(prompt, tuple(item.attachment for item in loaded)),
         )
-        async for event in self._project_with_cancel(session, events, context_status):
+        async for event in self._project_with_cancel(
+            session, events, context_status, cancellation_message
+        ):
             yield event
 
     async def stream_interactive(
@@ -162,14 +181,13 @@ class TurnCoordinator:
         session: Session,
         events: AsyncIterator[AgentEvent],
         context_status: Callable[[], ContextUsageView],
+        cancellation_message: str = "Tool execution was aborted by the user.",
     ) -> AsyncIterator[TurnEvent]:
         try:
             async for event in project_agent_events(session, events, context_status):
                 yield event
         except asyncio.CancelledError:
-            session.close_unresolved_tool_calls(
-                "Tool execution was aborted by the user."
-            )
+            session.close_unresolved_tool_calls(cancellation_message)
             raise
 
     def queue_input(self, prompt: str) -> QueuedInputView:

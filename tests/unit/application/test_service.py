@@ -393,6 +393,18 @@ def test_rejecting_bypass_startup_falls_back_to_default(tmp_path: Path) -> None:
     assert runtime.runtime.session.permission_mode == "default"
 
 
+def test_headless_host_can_explicitly_confirm_bypass_startup(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    confirmed = bootstrap_application(
+        runtime.settings,
+        permission_mode_override=PermissionMode.BYPASS,
+        full_access_confirmed=True,
+    )
+
+    assert confirmed.status().permission_mode == "bypassPermissions"
+    assert confirmed.current_permission_mode().requires_confirmation is False
+
+
 def test_permission_mode_write_failure_preserves_runtime_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -465,7 +477,15 @@ async def test_background_watcher_runs_continuation_without_human_message(
     events = [await anext(stream), await anext(stream), await anext(stream)]
 
     assert isinstance(events[0], BackgroundInvocationStarted)
-    assert events[1] == TurnSucceeded("handled", 1, 2, 1)
+    assert events[1] == TurnSucceeded(
+        "handled",
+        1,
+        2,
+        1,
+        provider_reported=True,
+        session_id=_CURRENT_SESSION_ID,
+        run_id=runtime.runtime.session.run_id,
+    )
     assert events[2] == BackgroundInvocationFinished()
     assert agent.calls == 1
 

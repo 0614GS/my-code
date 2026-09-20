@@ -123,18 +123,34 @@ async def project_agent_events(
                     yield TodoListUpdated(todo_projection.latest_write_todos)
             yield ContextUpdated(context_status())
         elif isinstance(event, AgentInvocationSucceeded):
+            history = session.invocation_history
+            invocation_id = history[-1].started.invocation_id if history else None
             yield TurnSucceeded(
                 event.text,
                 event.completed_steps,
                 event.usage.input_tokens,
                 event.usage.output_tokens,
+                event.usage.cache_creation_input_tokens,
+                event.usage.cache_read_input_tokens,
+                event.usage.provider_reported,
+                session.session_id,
+                session.run_id,
+                invocation_id,
             )
         elif isinstance(event, AgentMaxStepsReached):
+            history = session.invocation_history
+            invocation_id = history[-1].started.invocation_id if history else None
             yield MaxStepsReached(
                 event.max_steps,
                 event.completed_steps,
                 event.usage.input_tokens,
                 event.usage.output_tokens,
+                event.usage.cache_creation_input_tokens,
+                event.usage.cache_read_input_tokens,
+                event.usage.provider_reported,
+                session.session_id,
+                session.run_id,
+                invocation_id,
             )
 
 

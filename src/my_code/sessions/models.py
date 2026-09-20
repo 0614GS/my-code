@@ -28,6 +28,14 @@ class SessionKind(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class SessionArtifactPaths:
+    """Session owner 提供的持久化证据位置。"""
+
+    session_log: Path
+    request_audit_log: Path
+
+
+@dataclass(frozen=True, slots=True)
 class SessionStart:
     session_id: str
     created_at: str
@@ -216,6 +224,7 @@ def _timestamp(value: str, name: str) -> datetime:
 __all__ = [
     "CollaborationMode",
     "SessionMetadata",
+    "SessionArtifactPaths",
     "SessionKind",
     "SessionStart",
     "InvocationFinished",

@@ -54,6 +54,8 @@ class SettingsOverrides:
     permission_mode: PermissionMode | None = None
     max_steps: int | None = None
     max_output_tokens: int | None = None
+    sandbox_mode: SandboxMode | str | None = None
+    sandbox_network: SandboxNetwork | str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,8 +258,16 @@ class SettingsResolver:
                 if stored.background_tasks_enabled is None
                 else stored.background_tasks_enabled
             ),
-            sandbox_mode=stored.sandbox_mode or SandboxMode.AUTO,
-            sandbox_network=(stored.sandbox_network or SandboxNetwork.RESTRICTED),
+            sandbox_mode=(
+                SandboxMode(actual_overrides.sandbox_mode)
+                if actual_overrides.sandbox_mode is not None
+                else stored.sandbox_mode or SandboxMode.AUTO
+            ),
+            sandbox_network=(
+                SandboxNetwork(actual_overrides.sandbox_network)
+                if actual_overrides.sandbox_network is not None
+                else stored.sandbox_network or SandboxNetwork.RESTRICTED
+            ),
             sandbox_allow_unsandboxed_commands=(
                 True
                 if stored.sandbox_allow_unsandboxed_commands is None

@@ -28,7 +28,8 @@ from my_code.application.turns.mentions.suggestions import WorkspacePathSuggeste
 from my_code.application.turns.permission_prompt import DeferredPermissionPrompter
 from my_code.application.turns.questions import DeferredQuestionBroker, QuestionTool
 from my_code.auth.credentials import CredentialStore
-from my_code.cli.arguments import CliOptions, parse_cli
+from my_code.cli.arguments import CliOptions, RunCliOptions, parse_cli
+from my_code.cli.headless import read_prompt, run_headless, write_startup_failure
 from my_code.config.paths import MyCodePaths, SettingsScope
 from my_code.config.permission_updates import PermissionUpdateApplier
 from my_code.config.providers import ProviderProfileStore
@@ -314,6 +315,7 @@ def _assemble_agent(
     session_id: str | None = None,
     *,
     permission_mode_override: PermissionMode | None = None,
+    full_access_confirmed: bool | None = None,
     permission_prompter: PermissionPrompter | None = None,
     mcp_transport_factory: McpTransportFactory | None = None,
 ) -> _BootstrapComponents:
@@ -366,9 +368,14 @@ def _assemble_agent(
         if collaboration_mode is CollaborationMode.PLAN
         else base_permission_mode
     )
-    bypass_confirmed = base_permission_mode is PermissionMode.BYPASS and (
-        restored_session
-        or (session_id is not None and permission_mode_override is not None)
+    bypass_confirmed = (
+        full_access_confirmed
+        if full_access_confirmed is not None
+        else base_permission_mode is PermissionMode.BYPASS
+        and (
+            restored_session
+            or (session_id is not None and permission_mode_override is not None)
+        )
     )
     effective_background_enabled = (
         settings.interactive and settings.background_tasks_enabled
@@ -695,6 +702,7 @@ def bootstrap_application(
     session_id: str | None = None,
     *,
     permission_mode_override: PermissionMode | None = None,
+    full_access_confirmed: bool | None = None,
 ) -> ApplicationService:
     """Assemble the concrete application service used by every host."""
 
@@ -703,6 +711,7 @@ def bootstrap_application(
         settings,
         session_id,
         permission_mode_override=permission_mode_override,
+        full_access_confirmed=full_access_confirmed,
         permission_prompter=prompter,
     )
     application_runtime = assembled.runtime
@@ -744,6 +753,7 @@ def bootstrap_application(
         path_suggester=WorkspacePathSuggester(settings.cwd),
         background_notifications=assembled.background_notifications,
         background_wake_signal=assembled.background_wake_signal,
+        diagnostics_directory=settings.paths.project_state_dir / "diagnostics",
     )
 
 
@@ -769,6 +779,31 @@ async def run(options: CliOptions, resolver: SettingsResolver) -> int:
     finally:
         await application.close()
     return 0
+
+
+async def run_noninteractive(
+    options: RunCliOptions,
+    resolver: SettingsResolver,
+    prompt: str,
+) -> int:
+    """Assemble and run one non-interactive invocation."""
+
+    try:
+        settings = resolver.resolve(options.settings_overrides, interactive=False)
+    except Exception as error:
+        write_startup_failure(options, error)
+        return 2
+    try:
+        application = bootstrap_application(
+            settings,
+            options.session_id,
+            permission_mode_override=options.settings_overrides.permission_mode,
+            full_access_confirmed=options.dangerously_skip_permissions,
+        )
+    except Exception as error:
+        write_startup_failure(options, error)
+        return 1
+    return await run_headless(application, options, prompt)
 
 
 def _resolve_local_descriptor(settings: AgentSettings) -> ModelDescriptor:
@@ -801,9 +836,12 @@ def _run_async(task: Coroutine[Any, Any, int]) -> int:
 
 
 def main(argv: list[str] | None = None) -> None:
+    options: CliOptions | RunCliOptions | None = None
     try:
         options = parse_cli(argv)
-        if not sys.stdin.isatty() or not sys.stdout.isatty():
+        if isinstance(options, CliOptions) and (
+            not sys.stdin.isatty() or not sys.stdout.isatty()
+        ):
             print(
                 "Error: mycode requires an interactive terminal; "
                 "piped or redirected chat is not supported.",
@@ -813,6 +851,16 @@ def main(argv: list[str] | None = None) -> None:
         resolver = SettingsResolver.for_workspace(options.cwd)
         initialize_user_storage(resolver.paths)
     except ValueError as error:
-        print(f"Error: {error}", file=sys.stderr)
+        if isinstance(options, RunCliOptions):
+            write_startup_failure(options, error)
+        else:
+            print(f"Error: {error}", file=sys.stderr)
         raise SystemExit(2) from error
+    if isinstance(options, RunCliOptions):
+        try:
+            prompt = read_prompt(options)
+        except ValueError as error:
+            write_startup_failure(options, error)
+            raise SystemExit(2) from error
+        raise SystemExit(_run_async(run_noninteractive(options, resolver, prompt)))
     raise SystemExit(_run_async(run(options, resolver)))

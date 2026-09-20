@@ -6,11 +6,18 @@ import pytest
 from my_code.auth.credentials import CredentialSource, CredentialStore
 from my_code.cli.arguments import (
     CliOptions,
+    OutputFormat,
+    RunCliOptions,
     build_parser,
     parse_args,
     parse_cli,
 )
-from my_code.config.settings import AgentSettings, SettingsResolver
+from my_code.config.settings import (
+    AgentSettings,
+    SandboxMode,
+    SandboxNetwork,
+    SettingsResolver,
+)
 from my_code.permissions.models import PermissionMode
 
 
@@ -25,7 +32,7 @@ def clear_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def resolve_options(options: CliOptions) -> AgentSettings:
+def resolve_options(options: CliOptions | RunCliOptions) -> AgentSettings:
     resolver = SettingsResolver.for_workspace(options.cwd)
     return resolver.resolve(
         options.settings_overrides,
@@ -81,6 +88,93 @@ def test_parser_rejects_non_interactive_chat_forms(
         parse_cli(list(arguments))
 
     assert exit_info.value.code == 2
+
+
+def test_run_parser_defaults_to_dont_ask_and_text_output() -> None:
+    options = parse_cli(["run", "fix the tests"])
+
+    assert isinstance(options, RunCliOptions)
+    assert options.prompt == "fix the tests"
+    assert options.output_format is OutputFormat.TEXT
+    assert options.timeout_seconds is None
+    assert options.settings_overrides.permission_mode is PermissionMode.DONT_ASK
+
+
+def test_run_parser_accepts_machine_and_sandbox_overrides() -> None:
+    options = parse_cli(
+        [
+            "run",
+            "--output-format",
+            "stream-json",
+            "--timeout-seconds",
+            "30",
+            "--sandbox-mode",
+            "local",
+            "--sandbox-network",
+            "enabled",
+            "--dangerously-skip-permissions",
+            "task",
+        ]
+    )
+
+    assert isinstance(options, RunCliOptions)
+    assert options.output_format is OutputFormat.STREAM_JSON
+    assert options.timeout_seconds == 30
+    assert options.dangerously_skip_permissions is True
+    assert options.settings_overrides.permission_mode is PermissionMode.BYPASS
+    assert options.settings_overrides.sandbox_mode == "local"
+    assert options.settings_overrides.sandbox_network == "enabled"
+
+
+def test_run_parser_rejects_permission_mode_with_dangerous_bypass() -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        parse_cli(
+            [
+                "run",
+                "--permission-mode",
+                "default",
+                "--dangerously-skip-permissions",
+                "task",
+            ]
+        )
+
+    assert exit_info.value.code == 2
+
+
+def test_run_parser_rejects_non_positive_timeout() -> None:
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        parse_cli(["run", "--timeout-seconds", "0", "task"])
+
+
+def test_settings_resolver_applies_sandbox_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clear_provider_environment(monkeypatch)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config_home = tmp_path / "config"
+    write_provider_config(config_home)
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(config_home))
+    options = parse_cli(
+        [
+            "run",
+            "--sandbox-mode",
+            "local",
+            "--sandbox-network",
+            "enabled",
+            "task",
+        ]
+    )
+    assert isinstance(options, RunCliOptions)
+
+    settings = SettingsResolver.for_workspace(workspace).resolve(
+        options.settings_overrides,
+        interactive=False,
+    )
+
+    assert settings.sandbox_mode is SandboxMode.LOCAL
+    assert settings.sandbox_network is SandboxNetwork.ENABLED
+    assert settings.interactive is False
 
 
 def test_cli_resolves_profile_and_non_provider_flag_precedence(

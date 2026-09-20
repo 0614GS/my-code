@@ -44,6 +44,7 @@ from my_code.sessions.models import (
     InvocationFinished,
     InvocationHistoryEntry,
     InvocationStarted,
+    SessionArtifactPaths,
     SessionStart,
 )
 from my_code.sessions.request_audit import RequestAuditSnapshot
@@ -108,6 +109,11 @@ class Session(ModelInvocationRecorder):
     def request_audit_snapshot(self) -> RequestAuditSnapshot:
         snapshot = self._request_audit.snapshot()
         return replace(snapshot, legacy_missing=self._audit_legacy_gap)
+
+    def artifact_paths(self) -> SessionArtifactPaths:
+        """返回 owner 定义的证据路径，不向上游泄漏存储布局。"""
+
+        return SessionArtifactPaths(self._store.path, self._request_audit.path)
 
     @classmethod
     def restore(

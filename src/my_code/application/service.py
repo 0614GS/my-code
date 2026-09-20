@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 from my_code.agent.runner import InteractiveAgentRunner
@@ -33,6 +34,7 @@ from my_code.application.contracts.status import ApplicationStatus, ContextUsage
 from my_code.application.contracts.views import (
     BackgroundTaskView,
     CapabilitiesView,
+    ExecutionArtifactsView,
     SessionUsageView,
     SessionView,
     SubagentTaskView,
@@ -102,6 +104,7 @@ class ApplicationService:
         path_suggester: WorkspacePathSuggester | None = None,
         background_notifications: BackgroundTaskNotificationSource | None = None,
         background_wake_signal: BackgroundTaskWakeSignal | None = None,
+        diagnostics_directory: Path | None = None,
     ) -> None:
         self.context = context
         self.tool_executor = tool_executor
@@ -111,6 +114,7 @@ class ApplicationService:
         self.path_suggester = path_suggester or WorkspacePathSuggester(settings.cwd)
         self.background_notifications = background_notifications
         self.background_wake_signal = background_wake_signal
+        self._diagnostics_directory = diagnostics_directory
         self._initialization_lock = asyncio.Lock()
         self._initialized = False
         self.turns = turns
@@ -211,6 +215,20 @@ class ApplicationService:
     def session_usage(self) -> SessionUsageView:
         return project_session_usage(self.runtime.session, self.context_status())
 
+    def execution_artifacts(self) -> ExecutionArtifactsView:
+        """投影当前运行的持久化与诊断证据位置。"""
+
+        paths = self.runtime.session.artifact_paths()
+        return ExecutionArtifactsView(
+            str(paths.session_log),
+            str(paths.request_audit_log),
+            (
+                str(self._diagnostics_directory)
+                if self._diagnostics_directory is not None
+                else None
+            ),
+        )
+
     def capabilities(self) -> CapabilitiesView:
         """Return a fresh catalog snapshot without leaking runtime objects."""
 
@@ -259,7 +277,12 @@ class ApplicationService:
                 self.runtime.session, self.runtime.context_cache, prompt
             )
 
-    async def stream(self, prompt: str) -> AsyncIterator[TurnEvent]:
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        cancellation_message: str = "Tool execution was aborted by the user.",
+    ) -> AsyncIterator[TurnEvent]:
         async with self.runtime.operation_lock():
             await self.runtime.start()
             session = self.runtime.session
@@ -268,6 +291,7 @@ class ApplicationService:
                 self.runtime.context_cache,
                 prompt,
                 self.context_status,
+                cancellation_message,
             ):
                 yield event
 

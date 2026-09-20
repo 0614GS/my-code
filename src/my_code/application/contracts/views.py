@@ -108,6 +108,13 @@ class SessionUsageView:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionArtifactsView:
+    session_log: str
+    request_audit_log: str
+    diagnostics_directory: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCapabilityView:
     name: str
     description: str
@@ -191,6 +198,7 @@ __all__ = [
     "BackgroundTaskView",
     "CapabilitiesView",
     "CapabilityDiagnosticView",
+    "ExecutionArtifactsView",
     "McpServerView",
     "SessionUsageView",
     "SessionView",

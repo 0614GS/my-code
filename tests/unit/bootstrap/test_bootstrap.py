@@ -184,6 +184,11 @@ def test_headless_ignores_background_task_configuration(tmp_path: Path) -> None:
     properties = subagent.definition.input_schema["properties"]
     assert isinstance(properties, dict)
     assert "background" not in properties
+    bash = tools.get("Bash")
+    assert bash is not None
+    bash_properties = bash.definition.input_schema["properties"]
+    assert isinstance(bash_properties, dict)
+    assert "sandbox_permissions" not in bash_properties
     assert not {"TaskList", "TaskCancel"}.intersection(names)
     assert assembled.background_notifications is None
     assert assembled.background_wake_signal is None
@@ -408,3 +413,55 @@ def test_cli_metadata_options_work_without_tty(
 
     assert exit_info.value.code == 0
     assert output.getvalue()
+
+
+def test_headless_cli_does_not_require_tty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("MY_CODE_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(bootstrap_module.sys, "stdin", TerminalStream(False))
+    monkeypatch.setattr(bootstrap_module.sys, "stdout", TerminalStream(False))
+    monkeypatch.setattr(
+        bootstrap_module, "initialize_user_storage", lambda _paths: None
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_run(options, resolver, prompt):
+        captured.update(options=options, resolver=resolver, prompt=prompt)
+        return 17
+
+    monkeypatch.setattr(bootstrap_module, "run_noninteractive", fake_run)
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["run", "--cwd", str(workspace), "do work"])
+
+    assert exit_info.value.code == 17
+    assert captured["prompt"] == "do work"
+
+
+def test_headless_invalid_workspace_uses_json_protocol(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = TerminalStream(False)
+    monkeypatch.setattr(bootstrap_module.sys, "stdin", TerminalStream(False))
+    monkeypatch.setattr(bootstrap_module.sys, "stdout", output)
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            [
+                "run",
+                "--cwd",
+                str(tmp_path / "missing"),
+                "--output-format",
+                "json",
+                "do work",
+            ]
+        )
+
+    result = json.loads(output.getvalue())
+    assert exit_info.value.code == 2
+    assert result["type"] == "result"
+    assert result["outcome"] == "failed"
+    assert result["session_id"] is None
