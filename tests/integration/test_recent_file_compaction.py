@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -22,10 +23,12 @@ from my_code.prompts.models import PromptSection
 from my_code.prompts.registry import PromptRegistry
 from my_code.runtime.recent_files import RuntimeRecentFileRecovery
 from my_code.sessions.session import Session
-from my_code.tools.base import ToolExecutionContext
+from my_code.tools.base import ToolExecutionContext, ToolExecutionError
+from my_code.tools.builtin.edit_file import EditFileTool
 from my_code.tools.builtin.read_file import ReadFileTool
+from my_code.tools.builtin.write_file import WriteFileTool
 from my_code.tools.file_state import FileReadTracker, RecentFileRegistry
-from my_code.workspace.local import Workspace
+from my_code.workspace.local import FileFingerprint, Workspace
 
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
 BINDING = ProviderBinding("test", "provider", "model")
@@ -44,6 +47,12 @@ class _SummaryModel:
                 )
             ),
         )
+
+
+class _CancellingRecovery(RuntimeRecentFileRecovery):
+    async def _current_fingerprint(self, raw_path: Path) -> FileFingerprint | None:
+        del raw_path
+        raise asyncio.CancelledError
 
 
 def _components(
@@ -135,7 +144,7 @@ async def test_compact_restores_five_most_recent_current_snapshots(
 
 
 @pytest.mark.asyncio
-async def test_truncated_restore_does_not_authorize_and_uses_complete_lines(
+async def test_truncated_restore_authorizes_edit_but_not_full_replacement(
     tmp_path: Path,
 ) -> None:
     engine, workspace, tool_context, reads, _ = _components(tmp_path)
@@ -172,9 +181,27 @@ async def test_truncated_restore_does_not_authorize_and_uses_complete_lines(
     await engine.acknowledge_compaction(outcome)
     assert reads.require_complete(SESSION_ID, large) is None
     assert (
+        reads.require_observed(SESSION_ID, large)
+        == workspace.read_snapshot(large).fingerprint
+    )
+    assert (
         reads.require_complete(SESSION_ID, small)
         == workspace.read_snapshot(small).fingerprint
     )
+
+    with pytest.raises(ToolExecutionError, match="entire current file"):
+        await WriteFileTool().execute(
+            {"path": large.name, "content": "replacement\n"}, tool_context
+        )
+    await EditFileTool().execute(
+        {
+            "path": large.name,
+            "old_string": "line 999 " + "x" * 200,
+            "new_string": "changed final line",
+        },
+        tool_context,
+    )
+    assert large.read_text(encoding="utf-8").endswith("changed final line\n")
 
 
 @pytest.mark.asyncio
@@ -197,6 +224,34 @@ async def test_changed_after_prepare_is_not_authorized(tmp_path: Path) -> None:
     )
     await engine.acknowledge_compaction(outcome)
 
+    assert reads.require_complete(SESSION_ID, path) is None
+    assert reads.require_observed(SESSION_ID, path) is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_compact_acknowledgement_clears_old_observations(
+    tmp_path: Path,
+) -> None:
+    workspace = Workspace(tmp_path)
+    reads = FileReadTracker()
+    recent = RecentFileRegistry()
+    meter = ContextMeter(cache_path=tmp_path / "ratios.json")
+    recovery = _CancellingRecovery(workspace, recent, reads, meter, lambda: BINDING)
+    context = ToolExecutionContext(
+        workspace,
+        session_id=SESSION_ID,
+        file_reads=reads,
+        recent_files=recent,
+    )
+    path = tmp_path / "note.txt"
+    path.write_text("body\n", encoding="utf-8")
+    await ReadFileTool().execute({"path": path.name}, context)
+    prepared = await recovery.prepare(SESSION_ID, "summary")
+
+    with pytest.raises(asyncio.CancelledError):
+        await recovery.acknowledge(prepared.receipt)
+
+    assert reads.require_observed(SESSION_ID, path) is None
     assert reads.require_complete(SESSION_ID, path) is None
 
 

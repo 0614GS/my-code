@@ -169,3 +169,16 @@ def test_failure_rules_keep_command_exit_separate() -> None:
 
     assert invalid["category"] == "invalid_input"
     assert command["category"] == "command_nonzero"
+
+
+def test_file_precondition_rule_accepts_current_and_legacy_messages() -> None:
+    current = classify_tool_failure(
+        "Edit", "ToolExecutionError: Read the current file before editing it"
+    )
+    legacy = classify_tool_failure(
+        "Edit", "ToolExecutionError: Read the entire current file before editing it"
+    )
+
+    assert current["category"] == "precondition_failed"
+    assert legacy["category"] == "precondition_failed"
+    assert current["rule_id"] == legacy["rule_id"] == "result.file_precondition"

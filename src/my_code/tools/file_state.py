@@ -10,6 +10,7 @@ from my_code.workspace.local import FileFingerprint
 class _ObservedFile:
     fingerprint: FileFingerprint
     total_lines: int
+    observed: bool = False
     intervals: list[tuple[int, int]] = field(default_factory=list)
 
 
@@ -36,10 +37,22 @@ class FileReadTracker:
             observed = _ObservedFile(fingerprint, total_lines)
             files[path] = observed
         if total_lines == 0:
+            observed.observed = True
             return
-        if not complete_lines or start is None or end is None:
+        if start is None or end is None:
+            return
+        observed.observed = True
+        if not complete_lines:
             return
         observed.intervals = _merge((*observed.intervals, (start, end)))
+
+    def require_observed(self, session_key: str, path: Path) -> FileFingerprint | None:
+        """返回模型已实际看到内容的当前文件版本。"""
+
+        observed = self._sessions.get(session_key, {}).get(path)
+        if observed is None or not observed.observed:
+            return None
+        return observed.fingerprint
 
     def require_complete(self, session_key: str, path: Path) -> FileFingerprint | None:
         observed = self._sessions.get(session_key, {}).get(path)
@@ -61,7 +74,7 @@ class FileReadTracker:
     ) -> None:
         intervals = [] if total_lines == 0 else [(1, total_lines)]
         self._sessions.setdefault(session_key, {})[path] = _ObservedFile(
-            fingerprint, total_lines, intervals
+            fingerprint, total_lines, True, intervals
         )
 
     def invalidate(self, session_key: str, path: Path) -> None:
@@ -72,12 +85,12 @@ class FileReadTracker:
 
         self._sessions.pop(session_key, None)
 
-    def replace_session_complete(
+    def replace_session_observations(
         self,
         session_key: str,
-        files: tuple[tuple[Path, FileFingerprint, int], ...],
+        files: tuple[tuple[Path, FileFingerprint, int, bool], ...],
     ) -> None:
-        """一次替换本 Session 的全部授权，供 compact 确认边界使用。"""
+        """一次替换 compact 后重新校验的观察状态。"""
 
         if not files:
             self._sessions.pop(session_key, None)
@@ -86,9 +99,10 @@ class FileReadTracker:
             path: _ObservedFile(
                 fingerprint,
                 total_lines,
-                [] if total_lines == 0 else [(1, total_lines)],
+                True,
+                [] if total_lines == 0 or not complete else [(1, total_lines)],
             )
-            for path, fingerprint, total_lines in files
+            for path, fingerprint, total_lines, complete in files
         }
 
     def clear(self) -> None:

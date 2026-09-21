@@ -128,7 +128,7 @@ class RuntimeRecentFileRecovery:
         return PreparedRecentFileRecovery(tuple(prepared), receipt)
 
     async def acknowledge(self, receipt: RecentFileRecoveryReceipt) -> None:
-        """提交后清空旧授权，只恢复仍与准备版本一致的完整文件。"""
+        """提交后以重新校验的快照替换旧观察状态。"""
 
         pending = self._pending.pop(receipt.token, None)
         try:
@@ -138,8 +138,6 @@ class RuntimeRecentFileRecovery:
                 return
             validated: list[_PendingFile] = []
             for item in pending.files:
-                if not item.complete:
-                    continue
                 current = await self._current_fingerprint(item.path)
                 if current != item.fingerprint:
                     logger.warning(
@@ -148,10 +146,15 @@ class RuntimeRecentFileRecovery:
                     )
                     continue
                 validated.append(item)
-            self._file_reads.replace_session_complete(
+            self._file_reads.replace_session_observations(
                 receipt.session_key,
                 tuple(
-                    (item.path, item.fingerprint, item.total_lines)
+                    (
+                        item.path,
+                        item.fingerprint,
+                        item.total_lines,
+                        item.complete,
+                    )
                     for item in validated
                 ),
             )

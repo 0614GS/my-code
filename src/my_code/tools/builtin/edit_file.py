@@ -39,8 +39,9 @@ class EditFileTool(Tool):
         return ModelToolDefinition(
             name="Edit",
             description=(
-                "Replace an exact string in an existing UTF-8 file. Read the "
-                "entire current file before editing it."
+                "Replace an exact string in an existing UTF-8 file. Use Read "
+                "at least once on the current file version before editing; a "
+                "targeted range is sufficient."
             ),
             input_schema={
                 "type": "object",
@@ -109,11 +110,9 @@ class EditFileTool(Tool):
             raise ToolExecutionError(f"Not a file: {path}")
         session_key = execution_session_key(context.session_id, context.run_id)
         async with context.workspace.coordinator.path_lease(path, write=True):
-            expected = context.file_reads.require_complete(session_key, path)
+            expected = context.file_reads.require_observed(session_key, path)
             if expected is None:
-                raise ToolExecutionError(
-                    "Read the entire current file before editing it"
-                )
+                raise ToolExecutionError("Read the current file before editing it")
             snapshot = context.workspace.read_snapshot(path)
             if snapshot.fingerprint != expected:
                 context.file_reads.invalidate(session_key, path)

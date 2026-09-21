@@ -374,6 +374,7 @@ def classify_tool_failure(
     elif any(
         phrase in first_line
         for phrase in (
+            "Read the current file before editing it",
             "Read the entire current file before editing it",
             "File changed since Read; Read it again",
             "old_string was not found",
