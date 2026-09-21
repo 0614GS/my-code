@@ -752,6 +752,32 @@ async def test_one_human_turn_can_contain_multiple_steps_and_one_tool_round(
 
 
 @pytest.mark.asyncio
+async def test_invocation_usage_preserves_cache_breakdown(tmp_path: Path) -> None:
+    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
+    engine, _, _, _ = _engine(
+        tmp_path,
+        [
+            ModelOutput(
+                (ModelToolUseBlock("read", "Read", {"path": "hello.txt"}),),
+                "tool_use",
+                TokenUsage(3, 1, 2, 5, True),
+            ),
+            ModelOutput(
+                (ModelTextBlock("finished"),),
+                "end_turn",
+                TokenUsage(7, 2, 11, 13, True),
+            ),
+        ],
+    )
+
+    result = await engine.submit(AgentTurnInput("read"))
+
+    assert isinstance(result, AgentInvocationSucceeded)
+    assert result.usage == TokenUsage(10, 3, 13, 18, True)
+    assert result.usage.total_input_tokens == 41
+
+
+@pytest.mark.asyncio
 async def test_permission_mode_change_during_step_applies_to_next_step(
     tmp_path: Path,
 ) -> None:

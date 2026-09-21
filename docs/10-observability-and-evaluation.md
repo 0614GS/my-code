@@ -168,11 +168,17 @@ job 级只读汇总：
 
 ```bash
 uv run python scripts/analyze_harbor_job.py <harbor-job-dir>
+uv run python scripts/analyze_harbor_job.py <harbor-job-dir> --format json
 uv run python scripts/analyze_harbor_job.py <harbor-job-dir> --format csv
 ```
 
-分析器联合 Harbor reward/exception、my-code terminal result 和 canonical Session finding，
-不会启动 Collector，也不会修改 trial 或 Session。
+默认命令将完整 JSON 及 trial、tool、incident CSV 写入 `<harbor-job-dir>/analysis/`，
+stdout 只显示摘要；显式 `--format` 保留只向 stdout 输出的兼容模式。分析器联合 Harbor
+reward/exception、my-code terminal result、canonical Session、request audit 和本地 diagnostics，
+报告 cache 命中、模型请求、工具成功/拒绝/超时/非零退出、耗时、重复调用与证据缺口。
+canonical Session 是首选事实源，ATIF 只在原生 Session 缺失时降级使用；两种来源不会重复计数。
+默认报告不包含工具参数或结果正文，`--include-content` 仅用于受控本地排障。分析器不会启动
+Collector，也不会修改 trial、Session 或 verifier 证据。
 
 ## Runtime 观测边界
 

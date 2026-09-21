@@ -264,7 +264,10 @@ class AgentEngine:
             yield event
 
         input_tokens = 0
+        cache_creation_input_tokens = 0
+        cache_read_input_tokens = 0
         output_tokens = 0
+        provider_reported = True
         step_count = 0
         continuation = not bool(accepted)
         while True:
@@ -378,8 +381,11 @@ class AgentEngine:
 
             response = projector.completed_output()
 
-            input_tokens += response.usage.total_input_tokens
+            input_tokens += response.usage.input_tokens
+            cache_creation_input_tokens += response.usage.cache_creation_input_tokens
+            cache_read_input_tokens += response.usage.cache_read_input_tokens
             output_tokens += response.usage.output_tokens
+            provider_reported = provider_reported and response.usage.provider_reported
             response_footprint = self._context.record_response(
                 request, AssistantOutput(response.content), response.usage
             )
@@ -427,7 +433,11 @@ class AgentEngine:
                         text=final_text,
                         completed_steps=step_count,
                         usage=TokenUsage(
-                            input_tokens, output_tokens, provider_reported=True
+                            input_tokens,
+                            output_tokens,
+                            cache_creation_input_tokens,
+                            cache_read_input_tokens,
+                            provider_reported,
                         ),
                     )
                     return
@@ -443,7 +453,11 @@ class AgentEngine:
                     text=final_text,
                     completed_steps=step_count,
                     usage=TokenUsage(
-                        input_tokens, output_tokens, provider_reported=True
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens,
+                        provider_reported,
                     ),
                 )
                 return
@@ -461,7 +475,11 @@ class AgentEngine:
                     max_steps=self.max_steps,
                     completed_steps=step_count,
                     usage=TokenUsage(
-                        input_tokens, output_tokens, provider_reported=True
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens,
+                        provider_reported,
                     ),
                 )
                 return

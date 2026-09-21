@@ -229,7 +229,13 @@ def test_job_analyzer_combines_harbor_and_agent_results(tmp_path: Path) -> None:
     )
 
     completed = subprocess.run(
-        [sys.executable, "scripts/analyze_harbor_job.py", str(tmp_path)],
+        [
+            sys.executable,
+            "scripts/analyze_harbor_job.py",
+            str(tmp_path),
+            "--format",
+            "json",
+        ],
         cwd=Path(__file__).parents[2],
         check=True,
         capture_output=True,
@@ -237,6 +243,6 @@ def test_job_analyzer_combines_harbor_and_agent_results(tmp_path: Path) -> None:
     )
     report = json.loads(completed.stdout)
 
-    assert report["summary"]["pass_rate"] == 1
-    assert report["summary"]["token_p50"] == 13
-    assert report["trials"][0]["cache_hit_ratio"] == 0.4
+    assert report["summary"]["evaluation"]["pass_rate"] == 1
+    assert report["summary"]["usage"]["token_p50"] == 13
+    assert report["trials"][0]["usage"]["cache_hit_ratio"] == 0.4
