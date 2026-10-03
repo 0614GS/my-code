@@ -21,6 +21,7 @@ htmlcov/
 !.env.example
 !.env.harbor.example
 /.my-code/settings.local.json
+/.my-code/.mcp-oauth/
 /.my-code/*.tmp
 **/.credentials.json
 *.log

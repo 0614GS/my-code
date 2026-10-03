@@ -76,7 +76,7 @@ depends_on = ["my_code.context", "my_code.conversation", "my_code.foundation", "
 
 [[modules]]
 path = "my_code.mcp"
-depends_on = ["my_code.foundation", "my_code.model", "my_code.permissions", "my_code.tools"]
+depends_on = ["my_code.auth", "my_code.foundation", "my_code.model", "my_code.permissions", "my_code.tools"]
 
 [[modules]]
 path = "my_code.skills"

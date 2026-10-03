@@ -68,9 +68,14 @@ from my_code.features.subagents.tool import SubagentTool
 from my_code.features.todos.rebuild import TodoPostCompactAttachmentSource
 from my_code.features.todos.reminder import TodoReminderAttachmentSource
 from my_code.features.todos.tool import TodoWriteTool
-from my_code.mcp.models import McpServerScope, McpServerSpec
+from my_code.mcp.models import (
+    McpAuthKind,
+    McpServerScope,
+    McpServerSpec,
+    McpServerTransport,
+)
 from my_code.mcp.runtime import McpRuntime
-from my_code.mcp.stdio import StdioMcpTransportFactory
+from my_code.mcp.sdk import SdkMcpTransportFactory
 from my_code.mcp.transport import McpTransportFactory
 from my_code.model.capabilities import (
     ActiveModelEnvironment,
@@ -451,6 +456,10 @@ def _assemble_agent(
                 start_allowed=server.scope is not SettingsScope.PROJECT,
                 startup_timeout_seconds=server.startup_timeout_seconds,
                 call_timeout_seconds=server.call_timeout_seconds,
+                transport=McpServerTransport(server.transport),
+                url=server.url,
+                auth=McpAuthKind(server.auth),
+                bearer_token_from=server.bearer_token_from,
             )
             for server in settings.mcp_servers
         ),
@@ -458,7 +467,11 @@ def _assemble_agent(
         transport_factory=(
             mcp_transport_factory
             if mcp_transport_factory is not None
-            else StdioMcpTransportFactory(os.environ)
+            else SdkMcpTransportFactory(
+                os.environ,
+                settings.paths.config_home / ".mcp-oauth",
+                interactive=settings.interactive,
+            )
         ),
     )
     skill_roots = [

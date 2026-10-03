@@ -401,6 +401,46 @@ def test_mcp_settings_replace_servers_by_scope_and_store_only_env_references(
     assert "super-secret-value" not in json.dumps(user_document)
 
 
+def test_http_mcp_settings_round_trip_and_reject_embedded_secret(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    store = SettingsStore(paths)
+    store.write(
+        SettingsScope.USER,
+        SettingsLayer(
+            mcp_servers=(
+                McpServerSettingsLayer(
+                    "remote",
+                    None,
+                    transport="http",
+                    url="https://example.com/mcp",
+                    auth="bearer",
+                    bearer_token_from="MCP_TOKEN",
+                ),
+            ),
+        ),
+    )
+    assert (
+        store.load_scope(SettingsScope.USER).mcp_servers[0].bearer_token_from
+        == "MCP_TOKEN"
+    )
+    document = json.loads(paths.user_settings_path.read_text(encoding="utf-8"))
+    assert document["mcp"]["servers"]["remote"] == {
+        "type": "http",
+        "url": "https://example.com/mcp",
+        "auth": "bearer",
+        "bearerTokenFrom": "MCP_TOKEN",
+        "enabled": True,
+        "startupTimeoutSeconds": 10.0,
+        "callTimeoutSeconds": 60.0,
+    }
+    document["mcp"]["servers"]["remote"]["token"] = "secret"
+    paths.user_settings_path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(SettingsFileError):
+        store.load_scope(SettingsScope.USER)
+
+
 def test_shared_project_mcp_definition_is_disabled_unless_copied_locally(
     tmp_path: Path,
 ) -> None:

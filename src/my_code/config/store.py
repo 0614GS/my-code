@@ -87,13 +87,17 @@ class SkillSettingsLayer:
 @dataclass(frozen=True, slots=True)
 class McpServerSettingsLayer:
     name: str
-    command: str
+    command: str | None
     args: tuple[str, ...] = ()
     env_from: tuple[tuple[str, str], ...] = ()
     enabled: bool = True
     startup_timeout_seconds: float = 10.0
     call_timeout_seconds: float = 60.0
     scope: SettingsScope = SettingsScope.USER
+    transport: str = "stdio"
+    url: str | None = None
+    auth: str = "none"
+    bearer_token_from: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -777,9 +781,20 @@ def _settings_document(settings: SettingsLayer) -> dict[str, object]:
     if settings.mcp_servers:
         mcp["servers"] = {
             server.name: {
-                "command": server.command,
-                "args": list(server.args),
-                "envFrom": dict(server.env_from),
+                **(
+                    {"type": "http", "url": server.url, "auth": server.auth}
+                    if server.transport == "http"
+                    else {
+                        "command": server.command,
+                        "args": list(server.args),
+                        "envFrom": dict(server.env_from),
+                    }
+                ),
+                **(
+                    {"bearerTokenFrom": server.bearer_token_from}
+                    if server.bearer_token_from is not None
+                    else {}
+                ),
                 "enabled": server.enabled,
                 "startupTimeoutSeconds": server.startup_timeout_seconds,
                 "callTimeoutSeconds": server.call_timeout_seconds,
@@ -898,16 +913,69 @@ def _parse_mcp_servers(
                 f"mcp.servers.{raw_name}.env cannot contain literal values; "
                 f"use envFrom references: {path}"
             )
+        allowed = {
+            "type",
+            "command",
+            "args",
+            "envFrom",
+            "enabled",
+            "startupTimeoutSeconds",
+            "callTimeoutSeconds",
+            "url",
+            "auth",
+            "bearerTokenFrom",
+        }
+        unexpected = set(raw_server) - allowed
+        if unexpected:
+            raise SettingsFileError(
+                f"mcp.servers.{raw_name} has unsupported fields: {path}"
+            )
+        transport = raw_server.get("type", "stdio")
+        if transport not in ("stdio", "http"):
+            raise SettingsFileError(
+                f"mcp.servers.{raw_name}.type must be stdio or http: {path}"
+            )
         command = _optional_string(
             raw_server,
             "command",
             path,
             f"mcp.servers.{raw_name}.command",
         )
-        if command is None or "\x00" in command:
+        if transport == "stdio" and (command is None or "\x00" in command):
             raise SettingsFileError(
                 f"mcp.servers.{raw_name}.command is required and cannot "
                 f"contain NUL: {path}"
+            )
+        if transport == "http" and command is not None:
+            raise SettingsFileError(
+                f"mcp.servers.{raw_name} cannot combine command and URL: {path}"
+            )
+        if transport == "http" and ("args" in raw_server or "envFrom" in raw_server):
+            raise SettingsFileError(
+                f"mcp.servers.{raw_name} cannot use stdio arguments "
+                f"or environment: {path}"
+            )
+        url = _optional_string(raw_server, "url", path, f"mcp.servers.{raw_name}.url")
+        if (transport == "http") != (url is not None):
+            raise SettingsFileError(
+                f"mcp.servers.{raw_name}.url requires HTTP type: {path}"
+            )
+        auth = raw_server.get("auth", "none")
+        if auth not in ("none", "bearer", "oauth") or (
+            transport == "stdio" and auth != "none"
+        ):
+            raise SettingsFileError(f"mcp.servers.{raw_name}.auth is invalid: {path}")
+        bearer = _optional_string(
+            raw_server,
+            "bearerTokenFrom",
+            path,
+            f"mcp.servers.{raw_name}.bearerTokenFrom",
+        )
+        if (auth == "bearer") != (bearer is not None) or (
+            bearer is not None and _ENVIRONMENT_NAME.fullmatch(bearer) is None
+        ):
+            raise SettingsFileError(
+                f"mcp.servers.{raw_name}.bearerTokenFrom is invalid: {path}"
             )
         args = _string_array(
             raw_server,
@@ -957,6 +1025,10 @@ def _parse_mcp_servers(
                     or 60.0
                 ),
                 scope=scope,
+                transport=transport,
+                url=url,
+                auth=auth,
+                bearer_token_from=bearer,
             )
         )
     return tuple(servers)

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from my_code.foundation.json import JsonObject, to_json_object
 
@@ -20,6 +21,17 @@ class McpServerScope(StrEnum):
     USER = "user"
     PROJECT = "project"
     LOCAL = "local"
+
+
+class McpServerTransport(StrEnum):
+    STDIO = "stdio"
+    HTTP = "http"
+
+
+class McpAuthKind(StrEnum):
+    NONE = "none"
+    BEARER = "bearer"
+    OAUTH = "oauth"
 
 
 class McpConnectionState(StrEnum):
@@ -43,10 +55,10 @@ class McpDiagnosticCode(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class McpServerSpec:
-    """Resolved subprocess configuration; secret values are never persisted here."""
+    """已解析的 server 配置；这里仅保存凭据来源，不保存凭据值。"""
 
     name: str
-    command: str
+    command: str | None
     cwd: Path
     args: tuple[str, ...] = ()
     env_from: tuple[tuple[str, str], ...] = ()
@@ -55,12 +67,58 @@ class McpServerSpec:
     start_allowed: bool = True
     startup_timeout_seconds: float = 10.0
     call_timeout_seconds: float = 60.0
+    transport: McpServerTransport = McpServerTransport.STDIO
+    url: str | None = None
+    auth: McpAuthKind = McpAuthKind.NONE
+    bearer_token_from: str | None = None
 
     def __post_init__(self) -> None:
         if _SERVER_NAME.fullmatch(self.name) is None:
             raise ValueError("MCP server name must match [a-z0-9][a-z0-9_-]{0,63}")
-        if not self.command.strip() or "\x00" in self.command:
-            raise ValueError("MCP server command must be non-empty and contain no NUL")
+        if self.transport is McpServerTransport.STDIO:
+            if (
+                self.command is None
+                or not self.command.strip()
+                or "\x00" in self.command
+            ):
+                raise ValueError(
+                    "MCP server command must be non-empty and contain no NUL"
+                )
+            if self.url is not None or self.auth is not McpAuthKind.NONE:
+                raise ValueError("stdio MCP server cannot use URL or HTTP auth")
+        elif self.command is not None or self.url is None:
+            raise ValueError("HTTP MCP server requires URL and no command")
+        if self.transport is McpServerTransport.HTTP:
+            assert self.url is not None
+            if self.args or self.env_from:
+                raise ValueError(
+                    "HTTP MCP server cannot use stdio arguments or environment"
+                )
+            parsed = urlsplit(self.url)
+            if (
+                not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.fragment
+                or (
+                    parsed.scheme != "https"
+                    and not (
+                        parsed.scheme == "http"
+                        and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+                    )
+                )
+            ):
+                raise ValueError("HTTP MCP URL requires HTTPS or loopback HTTP")
+        if self.auth is McpAuthKind.BEARER:
+            if (
+                self.bearer_token_from is None
+                or _ENVIRONMENT_NAME.fullmatch(self.bearer_token_from) is None
+            ):
+                raise ValueError(
+                    "Bearer MCP auth requires an environment variable name"
+                )
+        elif self.bearer_token_from is not None:
+            raise ValueError("Bearer token source requires bearer auth")
         if any("\x00" in argument for argument in self.args):
             raise ValueError("MCP server arguments must not contain NUL")
         if self.startup_timeout_seconds <= 0 or self.call_timeout_seconds <= 0:
@@ -144,6 +202,7 @@ def _bounded_public_name(value: str) -> str:
 
 __all__ = [
     "McpCallResult",
+    "McpAuthKind",
     "McpConnectionInfo",
     "McpConnectionState",
     "McpDiagnostic",
@@ -152,6 +211,7 @@ __all__ = [
     "McpServerScope",
     "McpServerSnapshot",
     "McpServerSpec",
+    "McpServerTransport",
     "public_tool_name",
     "validate_remote_tool_name",
 ]

@@ -48,7 +48,7 @@ Provider profile 和 API key 不进入普通分层 settings。运行时读取完
 
 `auth.credentials.CredentialStore` 只管理私有 `.credentials.json`，每个 Provider 只有 `stored` 或 `none` 的可观察来源。API key 不进入 settings、profile、Session、状态投影、日志或诊断。
 
-Provider ID、模型、URL 和 key 不从 `ANTHROPIC_*`、`OPENAI_*` 或旧 Provider 环境变量隐式解析；SDK client 总是接收显式解析后的连接数据。MCP 的 `envFrom` 只保存目标变量名到来源变量名的映射，不保存环境值。
+Provider ID、模型、URL 和 key 不从 `ANTHROPIC_*`、`OPENAI_*` 或旧 Provider 环境变量隐式解析；SDK client 总是接收显式解析后的连接数据。MCP 的 `envFrom` 和 HTTP `bearerTokenFrom` 只保存环境变量名，不保存环境值。MCP OAuth 凭据按 server 名与 URL 分文件保存在用户配置目录的 `.mcp-oauth/` 中，不进入 settings 或 Session。
 
 ## Session 与临时结果
 

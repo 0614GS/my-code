@@ -15,7 +15,7 @@
 - foreground General、foreground/background Explore 及 worktree 隔离的 background
   General Subagent，具备独立 child run/Session/provider lease 和权限收窄。
 - Bash/Subagent 统一后台任务、查询、取消、显式等待与订阅，以及单次完成通知。后台 Bash 保留私有完整日志；模型只收到有界预览。
-- MCP stdio 工具发现、refresh/reconnect、全量 catalog 和标准权限执行。
+- MCP 官方 SDK 的 stdio 与 Streamable HTTP tools、Bearer 和交互式 OAuth、refresh/reconnect、全量 catalog 和标准权限执行。
 - Skill 分层发现、严格 frontmatter、lazy load、reload、durable activation 和 additive session rules。
 - Provider profile、私有凭据、模型发现目录和运行期 `/provider`、`/model` 切换。
 - 基于 `prompt_toolkit + Rich` 的非全屏 TUI、原生 scrollback 和只读 transcript/agent pager。
@@ -37,12 +37,12 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
 
 ## 明确延后
 
-- MCP resources/prompts、富媒体结果和更新版 driver。
+- MCP resources/prompts、富媒体结果和 SDK 之外的 transport。
 - 通用 Hooks runtime 与配置 schema。
 - Plan Mode 产品能力。
 - Session fork、远程会话和跨设备同步。
 - 图片、音频等媒体 Attachment。
-- OAuth、系统 Keychain 和团队凭据管理。
+- Provider OAuth、系统 Keychain 和团队凭据管理。
 - macOS/Windows sandbox、完整应用容器、seccomp/Landlock 与域名级网络代理。
 - Provider 断线续传和 stream 重放。
 - 后台任务跨进程恢复或远端执行。

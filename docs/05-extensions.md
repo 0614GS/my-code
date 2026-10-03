@@ -17,13 +17,32 @@ Builtin / Feature / MCP / Skill sources
 
 ## MCP
 
-`McpRuntime` 拥有 stdio transport、server 连接、发现、诊断、refresh task 和 server tool source。每个 server 完整发现成功后才原子发布工具；失败或 schema 冲突不留下半套目录。
+`McpRuntime` 拥有 server 连接、发现、诊断、refresh task 和 server tool source。官方 Python MCP SDK 负责 stdio、Streamable HTTP、协议协商、调用及 OAuth；SDK 的 tool 定义由 adapter 映射为本地 `McpRemoteTool`，再通过普通 `ToolCatalog` 和 `ToolExecutor` 执行。每个 server 完整发现成功后才原子发布工具；失败或 schema 冲突不留下半套目录。
 
 MCP Tool adapter 只负责 schema 和调用协议转换，执行时仍是普通 Tool。远端 ToolCall/ToolResult 进入 Conversation；连接状态、诊断和 discovery cache 不进入 Session。`tools/list_changed` 由受管 refresh task 合并处理，runtime 关闭会取消并等待这些任务再回收 transport。
 
 项目 settings 中的 server 定义默认不受信任：project 层不能直接开启全局 MCP 或 server，用户必须在 local settings 中显式启用完整定义。环境变量只通过名称映射注入，不把值写入配置、诊断或 Session。
 
-当前支持 stdio tools；resources、prompts、富媒体结果和更新版 driver 仍延后。
+HTTP server 使用 `type: "http"` 和 `url`，只接受 HTTPS 或本机 loopback HTTP。`auth` 可设为 `none`、`bearer` 或 `oauth`。Bearer 使用 `bearerTokenFrom` 指向环境变量；OAuth 在交互模式首次连接时打开浏览器，通过本机回调完成动态客户端注册和授权，令牌保存在用户配置目录下私有文件。当前只支持动态客户端注册，无头模式仅能使用已有凭据。当前仅暴露 tools；非文本内容以占位文本呈现，resources 和 prompts 延后。
+
+用户 settings 示例（令牌值通过进程环境提供）：
+
+```json
+{
+  "version": 3,
+  "mcp": {
+    "enabled": true,
+    "servers": {
+      "remote": {
+        "type": "http",
+        "url": "https://example.com/mcp",
+        "auth": "bearer",
+        "bearerTokenFrom": "MCP_TOKEN"
+      }
+    }
+  }
+}
+```
 
 ## Skills
 
