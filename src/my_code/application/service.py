@@ -125,6 +125,8 @@ class ApplicationService:
         self.modes = mode_operations
         self.activity = activity_projection
         self.activity_monitor = activity_monitor
+        self._background_scheduler: asyncio.Task[None] | None = None
+        self._background_events: asyncio.Queue[TurnEvent] = asyncio.Queue()
 
     @property
     def agent(self) -> InteractiveAgentRunner:
@@ -146,6 +148,7 @@ class ApplicationService:
         """Refresh network-backed capabilities after the local UI is visible."""
 
         async with self._initialization_lock:
+            self._ensure_background_scheduler()
             if self._initialized:
                 return self.current_session_view()
             connection = self.runtime.provider.router.connection
@@ -273,6 +276,8 @@ class ApplicationService:
             return self.capabilities()
 
     async def submit(self, prompt: str) -> InvocationOutcome:
+        self._interrupt_background_waits()
+        self._ensure_background_scheduler()
         async with self.runtime.operation_lock():
             await self.runtime.start()
             return await self.turns.submit(
@@ -285,6 +290,8 @@ class ApplicationService:
         *,
         cancellation_message: str = "Tool execution was aborted by the user.",
     ) -> AsyncIterator[TurnEvent]:
+        self._interrupt_background_waits()
+        self._ensure_background_scheduler()
         async with self.runtime.operation_lock():
             await self.runtime.start()
             session = self.runtime.session
@@ -300,7 +307,18 @@ class ApplicationService:
     def queue_input(self, prompt: str) -> QueuedInputView:
         """Start preparing a transient input without persisting it."""
 
-        return self.turns.queue_input(prompt)
+        queued = self.turns.queue_input(prompt)
+        self._interrupt_background_waits(self.runtime.session.session_id)
+        return queued
+
+    def _interrupt_background_waits(self, owner: str | None = None) -> None:
+        source = self.background_notifications
+        if source is None:
+            return
+        if owner is None:
+            source.registry.interrupt_all_waiters()
+        else:
+            source.registry.interrupt_waiters(owner)
 
     def recall_latest_input(self) -> str | None:
         return self.turns.recall_latest_input()
@@ -311,6 +329,7 @@ class ApplicationService:
     async def stream_interactive(self) -> AsyncIterator[TurnEvent]:
         """Consume queued inputs across fresh step budgets until the queue is idle."""
 
+        self._ensure_background_scheduler()
         async with self.runtime.operation_lock():
             await self.runtime.start()
             async for event in self.turns.stream_interactive(
@@ -324,36 +343,52 @@ class ApplicationService:
         self.turns.cancel_active_turn()
 
     async def stream_background_notifications(self) -> AsyncIterator[TurnEvent]:
-        """Watch terminal background tasks and run idle continuations."""
+        """只消费 Application 调度器发出的续跑事件。"""
 
+        self._ensure_background_scheduler()
+        while True:
+            yield await self._background_events.get()
+
+    def _ensure_background_scheduler(self) -> None:
+        if self.background_notifications is None or self.background_wake_signal is None:
+            return
+        if self._background_scheduler is None or self._background_scheduler.done():
+            self._background_scheduler = asyncio.create_task(
+                self._run_background_scheduler(),
+                name="my-code:background-continuations",
+            )
+
+    async def _run_background_scheduler(self) -> None:
         source = self.background_notifications
         signal = self.background_wake_signal
-        if source is None or signal is None:
-            return
+        assert source is not None and signal is not None
         revision = signal.revision
         while True:
             async with self.runtime.operation_lock():
                 await self.runtime.start()
                 session = self.runtime.session
-                if source.has_pending(session.session_id):
-                    yield BackgroundInvocationStarted()
+                if not self.turns.queued_inputs() and source.has_watched_pending(
+                    session.session_id
+                ):
+                    await self._background_events.put(BackgroundInvocationStarted())
                     failed = False
                     try:
                         async for event in self.turns.stream_continuation(
-                            session,
-                            self.runtime.context_cache,
-                            self.context_status,
+                            session, self.runtime.context_cache, self.context_status
                         ):
-                            yield event
+                            await self._background_events.put(event)
                     except asyncio.CancelledError:
                         raise
                     except Exception as error:
                         failed = True
-                        yield BackgroundInvocationFinished(str(error))
+                        await self._background_events.put(
+                            BackgroundInvocationFinished(str(error))
+                        )
                     else:
-                        yield BackgroundInvocationFinished()
-                    if not failed:
-                        revision = signal.revision
+                        await self._background_events.put(
+                            BackgroundInvocationFinished()
+                        )
+                    if not failed and source.has_watched_pending(session.session_id):
                         continue
             revision = await signal.wait_for_change(revision)
 
@@ -473,6 +508,7 @@ class ApplicationService:
     async def new_session(self) -> SessionView:
         """创建并发布一个空的前台 Session。"""
 
+        self._interrupt_background_waits()
         async with self.runtime.operation_lock():
             session, policy = self.sessions.create_fresh(
                 self._fresh_session_start(),
@@ -559,6 +595,7 @@ class ApplicationService:
         return await self.sessions.list(self.runtime.session.session_id)
 
     async def resume_session(self, session_id: str) -> ResumedSession:
+        self._interrupt_background_waits()
         async with self.runtime.operation_lock():
             if session_id == self.runtime.session.session_id:
                 raise ValueError("Session is already active")
@@ -600,6 +637,10 @@ class ApplicationService:
             self.background_wake_signal.pulse()
 
     async def close(self) -> None:
+        self._interrupt_background_waits()
+        if self._background_scheduler is not None:
+            self._background_scheduler.cancel()
+            await asyncio.gather(self._background_scheduler, return_exceptions=True)
         await self.runtime.close()
 
 

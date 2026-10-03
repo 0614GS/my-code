@@ -16,13 +16,27 @@ from my_code.context.compaction import ContextCompactor
 from my_code.context.engine import ContextEngine
 from my_code.context.planner import ContextPlanner
 from my_code.context.session_cache import SessionContextCache
-from my_code.conversation.models import HumanMessage, ToolResultBatch
+from my_code.conversation.attachments import BackgroundTaskCompletionAttachment
+from my_code.conversation.models import (
+    AssistantMessage,
+    AttachmentMessage,
+    HumanMessage,
+    ToolCall,
+    ToolResult,
+    ToolResultBatch,
+)
+from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.background_tasks.notifications import (
     BackgroundTaskNotificationSource,
+)
+from my_code.features.background_tasks.registry import (
+    BackgroundTask,
+    BackgroundTaskRegistry,
 )
 from my_code.features.subagents.controller import SubagentController
 from my_code.features.subagents.definitions import build_subagent_definitions
 from my_code.features.subagents.models import SubagentParentContext
+from my_code.features.subagents.task_tools import TaskWaitTool
 from my_code.features.subagents.tool import SubagentTool
 from my_code.model.capabilities import (
     ActiveModelEnvironment,
@@ -60,6 +74,7 @@ from my_code.runtime.runs import (
 from my_code.sessions.session import Session
 from my_code.tasks.models import TaskStatus
 from my_code.tasks.supervisor import TaskSupervisor
+from my_code.tools.base import ToolExecutionContext
 from my_code.tools.catalog import ToolCatalog, ToolSourceId
 from my_code.tools.executor import ToolExecutor
 from my_code.tools.round_executor import ToolRoundExecutor
@@ -313,3 +328,136 @@ async def test_background_submit_does_not_wait_and_completion_is_delivered_once(
     await tasks.close()
     await runs.close()
     await leases.close()
+
+
+@pytest.mark.asyncio
+async def test_task_wait_commits_result_and_completion_once(tmp_path: Path) -> None:
+    supervisor = TaskSupervisor()
+    registry = BackgroundTaskRegistry(supervisor)
+    owner = "55555555-5555-5555-5555-555555555555"
+    task_id = "66666666-6666-6666-6666-666666666666"
+    registry.register(BackgroundTask(task_id, owner, "subagent", "finished"))
+    release = asyncio.Event()
+
+    async def finish() -> None:
+        await release.wait()
+
+    await supervisor.submit(
+        finish, name="finished", task_id=task_id, on_terminal=registry.terminal
+    )
+    notifications = BackgroundTaskNotificationSource(registry)
+    catalog = ToolCatalog()
+    catalog.register_source(
+        ToolSourceId("test", "wait"),
+        (TaskWaitTool(registry, parent=SubagentParentContext(owner)),),
+    )
+    model = ScriptedModel(
+        [
+            output(ModelToolUseBlock("wait", "TaskWait", {"task_id": task_id})),
+            output(ModelTextBlock("done")),
+            output(ModelTextBlock("again")),
+        ]
+    )
+    policy = PermissionPolicy(PermissionMode.BYPASS)
+    context = ContextEngine(
+        ContextPlanner(
+            prompt=prompt_registry(),
+            max_output_tokens=100,
+            attachment_resolver=DerivedAttachmentResolver((notifications,)),
+        ),
+        ContextCompactor(model),
+    )
+    executor = ToolExecutor(
+        catalog.snapshot(), policy, HeadlessPrompter(), Workspace(tmp_path)
+    )
+    agent = AgentEngine(
+        model_call=model,
+        tool_round=ToolRoundExecutor(executor),
+        context=context,
+        tool_catalog=catalog,
+        max_steps=3,
+    )
+    session = Session(tmp_path / "sessions", owner)
+    runtime = SessionContextCache()
+
+    asyncio.get_running_loop().call_later(0.01, release.set)
+    await agent.submit(session, runtime, AgentTurnInput("wait"))
+    assert len(model.requests) == 2
+    batch = next(
+        item for item in session.conversation if isinstance(item, ToolResultBatch)
+    )
+    result = json.loads(batch.content[0].content)
+    assert result["end_reason"] == "completed"
+    attachments = [
+        item
+        for item in session.conversation
+        if isinstance(item, AttachmentMessage)
+        and isinstance(item.payload, BackgroundTaskCompletionAttachment)
+    ]
+    assert len(attachments) == 1
+    assert attachments[0].parent_uuid == batch.uuid
+    assert registry.pending(owner) == ()
+    await agent.submit(session, runtime, AgentTurnInput("again"))
+    assert (
+        len(
+            [
+                item
+                for item in session.conversation
+                if isinstance(item, AttachmentMessage)
+                and isinstance(item.payload, BackgroundTaskCompletionAttachment)
+            ]
+        )
+        == 1
+    )
+    await supervisor.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_round_commit_keeps_completion_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    supervisor = TaskSupervisor()
+    registry = BackgroundTaskRegistry(supervisor)
+    owner = "77777777-7777-7777-7777-777777777777"
+    task_id = "88888888-8888-8888-8888-888888888888"
+    registry.register(BackgroundTask(task_id, owner, "subagent", "finished"))
+
+    async def finish() -> None:
+        return None
+
+    await supervisor.submit(
+        finish, name="finished", task_id=task_id, on_terminal=registry.terminal
+    )
+    await supervisor.wait(task_id)
+    wait_tool = TaskWaitTool(registry, parent=SubagentParentContext(owner))
+    result = await wait_tool.execute(
+        {"task_id": task_id}, ToolExecutionContext(tmp_path, session_id=owner)
+    )
+    assert len(result.new_attachments) == 1
+    session = Session(tmp_path / "sessions", owner)
+    human = HumanMessage("wait")
+    session.append_human_message(human)
+    assistant = AssistantMessage(
+        (ToolCall("wait", "TaskWait", {"task_id": task_id}),),
+        TokenUsage(),
+        parent_uuid=human.uuid,
+    )
+    session.append_assistant_message(assistant)
+    batch = ToolResultBatch(
+        (ToolResult("wait", result.content, ToolResultPresentation("Task completed")),),
+        assistant.uuid,
+        parent_uuid=assistant.uuid,
+    )
+
+    def fail(_: object) -> None:
+        raise OSError("disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(session._store, "_append_records", fail)  # type: ignore[attr-defined]
+        with pytest.raises(OSError, match="disk full"):
+            session.commit_tool_round(batch, result.new_attachments)
+    assert len(registry.pending(owner)) == 1
+    session.commit_tool_round(batch, result.new_attachments)
+    BackgroundTaskNotificationSource(registry).acknowledge(result.new_attachments)
+    assert registry.pending(owner) == ()
+    await supervisor.close()

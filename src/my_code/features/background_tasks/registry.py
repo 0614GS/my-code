@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +44,8 @@ class BackgroundTaskRegistry:
         self._records: dict[str, BackgroundTask] = {}
         self._delivered: dict[str, set[str]] = {}
         self._pulsed: set[str] = set()
+        self._watched: dict[str, set[str]] = {}
+        self._waiters: dict[str, set[asyncio.Event]] = {}
 
     def register(self, item: BackgroundTask) -> None:
         if item.task_id in self._records:
@@ -51,6 +54,8 @@ class BackgroundTaskRegistry:
 
     def unregister(self, task_id: str) -> None:
         self._records.pop(task_id, None)
+        for watched in self._watched.values():
+            watched.discard(task_id)
 
     def terminal(self, snapshot: TaskSnapshot) -> None:
         if snapshot.task_id not in self._records or snapshot.task_id in self._pulsed:
@@ -73,12 +78,72 @@ class BackgroundTaskRegistry:
 
     async def cancel(self, owner_run_id: str, task_id: str) -> BackgroundTask:
         item = self.get(owner_run_id, task_id)
+        self.watch(owner_run_id, task_id, enabled=False)
         snapshot = self.tasks.snapshot(task_id)
         if not snapshot.status.terminal:
             await self.tasks.cancel(
                 task_id, message="Background task was cancelled by its owner."
             )
         return item
+
+    def watch(self, owner_run_id: str, task_id: str, *, enabled: bool) -> bool:
+        """只订阅仍在运行且尚未投递的任务。"""
+
+        self.get(owner_run_id, task_id)
+        watched = self._watched.setdefault(owner_run_id, set())
+        if not enabled:
+            watched.discard(task_id)
+            return False
+        if self.tasks.snapshot(
+            task_id
+        ).status.terminal or task_id in self._delivered.get(owner_run_id, set()):
+            watched.discard(task_id)
+            return False
+        watched.add(task_id)
+        return True
+
+    def watched_pending(self, owner_run_id: str) -> tuple[BackgroundTask, ...]:
+        watched = self._watched.get(owner_run_id, set())
+        return tuple(
+            item for item in self.pending(owner_run_id) if item.task_id in watched
+        )
+
+    def interrupt_waiters(self, owner_run_id: str) -> None:
+        for event in tuple(self._waiters.get(owner_run_id, ())):
+            event.set()
+
+    def interrupt_all_waiters(self) -> None:
+        for owner in tuple(self._waiters):
+            self.interrupt_waiters(owner)
+
+    async def wait(
+        self, owner_run_id: str, task_id: str, timeout_seconds: float
+    ) -> str:
+        """等待终态或用户输入；取消等待不影响被监督任务。"""
+
+        self.get(owner_run_id, task_id)
+        if self.tasks.snapshot(task_id).status.terminal:
+            return "completed"
+        interrupted = asyncio.Event()
+        self._waiters.setdefault(owner_run_id, set()).add(interrupted)
+        task_wait = asyncio.create_task(self.tasks.wait(task_id))
+        input_wait = asyncio.create_task(interrupted.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (task_wait, input_wait),
+                timeout=timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if interrupted.is_set():
+                return "user_input"
+            return "completed" if task_wait in done else "timeout"
+        finally:
+            task_wait.cancel()
+            input_wait.cancel()
+            waiters = self._waiters[owner_run_id]
+            waiters.discard(interrupted)
+            if not waiters:
+                self._waiters.pop(owner_run_id, None)
 
     def pending(self, owner_run_id: str) -> tuple[BackgroundTask, ...]:
         delivered = self._delivered.get(owner_run_id, set())
@@ -97,6 +162,7 @@ class BackgroundTaskRegistry:
                 "Cannot acknowledge unowned background tasks: " + ", ".join(unknown)
             )
         self._delivered.setdefault(owner_run_id, set()).update(task_ids)
+        self._watched.setdefault(owner_run_id, set()).difference_update(task_ids)
 
     def payload(self, item: BackgroundTask) -> JsonObject:
         task = self.tasks.snapshot(item.task_id)
@@ -122,7 +188,76 @@ class BackgroundTaskRegistry:
             payload["result_status"] = "max_steps"
             payload["completed_steps"] = task.result.completed_steps
             payload["max_steps"] = task.result.max_steps
+        if item.task_type == "bash":
+            payload.update(self.output_preview(item, terminal=task.status.terminal))
         return payload
+
+    def output_preview(self, item: BackgroundTask, *, terminal: bool) -> JsonObject:
+        path = item.details.get("output_file")
+        if item.task_type != "bash" or not isinstance(path, str):
+            return {}
+        limit = 4096 if terminal else 1024
+        line_limit = 40 if terminal else 5
+        raw, total = _read_output(Path(path), -limit, limit)
+        lines = raw.decode("utf-8", errors="replace").splitlines()[-line_limit:]
+        preview = "\n".join(lines)
+        encoded_preview = preview.encode("utf-8")
+        if len(encoded_preview) > limit:
+            preview = encoded_preview[-limit:].decode("utf-8", errors="ignore")
+        return {
+            "output_preview": preview,
+            "output_total_bytes": total,
+            "output_truncated": total > len(preview.encode("utf-8")),
+        }
+
+    def output_since(self, item: BackgroundTask, offset: int) -> JsonObject:
+        path = item.details.get("output_file")
+        if item.task_type != "bash" or not isinstance(path, str):
+            return {"output": "", "next_output_offset": offset, "omitted_bytes": 0}
+        raw, total, omitted = _read_output_since(Path(path), offset)
+        output = raw.decode("utf-8", errors="replace")
+        encoded_output = output.encode("utf-8")
+        display_truncated = len(encoded_output) > 8192
+        if display_truncated:
+            output = encoded_output[:4096].decode(
+                "utf-8", errors="ignore"
+            ) + encoded_output[-4096:].decode("utf-8", errors="ignore")
+        return {
+            "output": output,
+            "next_output_offset": total,
+            "output_total_bytes": total,
+            "omitted_bytes": omitted,
+            "output_display_truncated": display_truncated,
+        }
+
+
+def _read_output(path: Path, offset: int, limit: int) -> tuple[bytes, int]:
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return b"", 0
+    with os.fdopen(fd, "rb") as stream:
+        total = os.fstat(stream.fileno()).st_size
+        stream.seek(max(0, total + offset) if offset < 0 else offset)
+        return stream.read(limit), total
+
+
+def _read_output_since(path: Path, offset: int) -> tuple[bytes, int, int]:
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return b"", 0, 0
+    with os.fdopen(fd, "rb") as stream:
+        total = os.fstat(stream.fileno()).st_size
+        start = min(max(offset, 0), total)
+        available = total - start
+        stream.seek(start)
+        if available <= 8192:
+            return stream.read(available), total, 0
+        head = stream.read(4096)
+        stream.seek(total - 4096)
+        tail = stream.read(4096)
+        return head + tail, total, available - 8192
 
 
 def secure_task_output_path(directory: Path, task_id: str) -> Path:

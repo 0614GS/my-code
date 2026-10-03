@@ -14,7 +14,7 @@
 - `@path` 文件/目录 Attachment、AGENTS 用户上下文和路径补全。
 - foreground General、foreground/background Explore 及 worktree 隔离的 background
   General Subagent，具备独立 child run/Session/provider lease 和权限收窄。
-- Bash/Subagent 统一后台任务、查询、取消和单次完成通知。
+- Bash/Subagent 统一后台任务、查询、取消、显式等待与订阅，以及单次完成通知。后台 Bash 保留私有完整日志；模型只收到有界预览。
 - MCP stdio 工具发现、refresh/reconnect、全量 catalog 和标准权限执行。
 - Skill 分层发现、严格 frontmatter、lazy load、reload、durable activation 和 additive session rules。
 - Provider profile、私有凭据、模型发现目录和运行期 `/provider`、`/model` 切换。
@@ -79,6 +79,7 @@ Subagent 和后台任务默认开启；MCP 与 Skill 默认关闭。Headless 入
   worktree，保留有改动的分支供人工审查，不自动合并。
 - ToolSearch 使用 provider-neutral dispatcher/native 模式，不发送特定 Provider 的 defer/reference wire 类型；canonical dispatcher call 与 feature-facing 目标语义分别保留。
 - 后台完成用无 payload wake signal 触发 pull，再通过 durable attachment 交付，不建立第二份消息队列。
+- 空闲 turn 仅由当前根 Session 显式 TaskWatch 的未投递完成触发；TaskWait 超时不取消任务，新用户输入优先中断等待。
 - 相对参考源码，my-code 有意保持通用 `TaskSupervisor` 与用户级后台任务能力分离：前者只拥有任务状态机、取消树和终态，`features.background_tasks` 另行拥有 owner、投递、唤醒与结果展示语义。
 - Linux Bubblewrap 只隔离 Bash 进程树；MCP、Provider 与 my-code 主进程仍在宿主运行，应用层权限继续作为独立前置边界。
 - 无头 CLI 不负责创建或验证外部容器、网络隔离及任务评分；调用方选择 `sandbox-mode=local` 时承担进程环境隔离，Harbor adapter 只消费通用 JSON/JSONL、Session 和 request audit 证据。

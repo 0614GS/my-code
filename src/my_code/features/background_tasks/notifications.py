@@ -41,6 +41,9 @@ class BackgroundTaskNotificationSource:
 
         return bool(self.registry.pending(owner_run_id))
 
+    def has_watched_pending(self, owner_run_id: str) -> bool:
+        return bool(self.registry.watched_pending(owner_run_id))
+
     def acknowledge(self, attachments: tuple[AttachmentPayload, ...]) -> None:
         grouped: dict[str, list[str]] = {}
         for attachment in attachments:

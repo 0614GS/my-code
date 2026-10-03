@@ -438,11 +438,13 @@ async def test_background_watcher_runs_continuation_without_human_message(
     runtime = _bootstrap_runtime(tmp_path)
     runtime.runtime.session.append_human_message(HumanMessage("original"))
     signal = BackgroundTaskWakeSignal()
+    assert runtime.background_notifications is not None
 
     class PendingSource:
         pending = True
+        registry = runtime.background_notifications.registry
 
-        def has_pending(self, owner_run_id: str) -> bool:
+        def has_watched_pending(self, owner_run_id: str) -> bool:
             assert owner_run_id == _CURRENT_SESSION_ID
             return self.pending
 
@@ -488,6 +490,7 @@ async def test_background_watcher_runs_continuation_without_human_message(
     )
     assert events[2] == BackgroundInvocationFinished()
     assert agent.calls == 1
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -496,9 +499,12 @@ async def test_failed_background_continuation_waits_for_a_new_revision(
 ) -> None:
     runtime = _bootstrap_runtime(tmp_path)
     signal = BackgroundTaskWakeSignal()
+    assert runtime.background_notifications is not None
 
     class PendingSource:
-        def has_pending(self, owner_run_id: str) -> bool:
+        registry = runtime.background_notifications.registry
+
+        def has_watched_pending(self, owner_run_id: str) -> bool:
             del owner_run_id
             return True
 
@@ -532,6 +538,214 @@ async def test_failed_background_continuation_waits_for_a_new_revision(
     assert isinstance(
         await asyncio.wait_for(next_event, 1), BackgroundInvocationStarted
     )
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_queue_input_interrupts_task_wait_without_cancelling_task(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    source = runtime.background_notifications
+    assert source is not None
+    registry = source.registry
+    owner = runtime.runtime.session.session_id
+    task_id = str(uuid4())
+    release = asyncio.Event()
+    registry.register(BackgroundTask(task_id, owner, "subagent", "wait"))
+
+    async def runner() -> None:
+        await release.wait()
+
+    await registry.tasks.submit(
+        runner, name="wait", task_id=task_id, on_terminal=registry.terminal
+    )
+    waiting = asyncio.create_task(registry.wait(owner, task_id, 5))
+    await asyncio.sleep(0)
+    runtime.queue_input("new input")
+    assert await asyncio.wait_for(waiting, 1) == "user_input"
+    assert not registry.tasks.snapshot(task_id).status.terminal
+    release.set()
+    await registry.tasks.wait(task_id)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_session_switch_interrupts_task_wait(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    source = runtime.background_notifications
+    assert source is not None
+    registry = source.registry
+    owner = runtime.runtime.session.session_id
+    task_id = str(uuid4())
+    release = asyncio.Event()
+    registry.register(BackgroundTask(task_id, owner, "subagent", "wait"))
+
+    async def runner() -> None:
+        await release.wait()
+
+    await registry.tasks.submit(
+        runner, name="wait", task_id=task_id, on_terminal=registry.terminal
+    )
+    waiting = asyncio.create_task(registry.wait(owner, task_id, 5))
+    await asyncio.sleep(0)
+    await runtime.new_session()
+    assert await asyncio.wait_for(waiting, 1) == "user_input"
+    assert not registry.tasks.snapshot(task_id).status.terminal
+    release.set()
+    await registry.tasks.wait(task_id)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_close_interrupts_task_wait(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    source = runtime.background_notifications
+    assert source is not None
+    registry = source.registry
+    owner = runtime.runtime.session.session_id
+    task_id = str(uuid4())
+    registry.register(BackgroundTask(task_id, owner, "subagent", "wait"))
+
+    async def runner() -> None:
+        await asyncio.Event().wait()
+
+    await registry.tasks.submit(
+        runner, name="wait", task_id=task_id, on_terminal=registry.terminal
+    )
+    waiting = asyncio.create_task(registry.wait(owner, task_id, 5))
+    await asyncio.sleep(0)
+    await runtime.close()
+    assert await asyncio.wait_for(waiting, 1) == "user_input"
+    assert registry.tasks.snapshot(task_id).status.terminal
+
+
+@pytest.mark.asyncio
+async def test_unwatched_completion_does_not_start_idle_turn(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    source = runtime.background_notifications
+    assert source is not None
+    registry = source.registry
+    owner = runtime.runtime.session.session_id
+    task_id = str(uuid4())
+    registry.register(BackgroundTask(task_id, owner, "subagent", "work"))
+
+    class CountingAgent:
+        calls = 0
+
+        async def stream_continuation(self, *args, **kwargs):
+            del args, kwargs
+            self.calls += 1
+            yield AgentInvocationSucceeded("done", 1, TokenUsage())
+
+    agent = CountingAgent()
+    runtime.agent = agent  # type: ignore[assignment]
+    stream = runtime.stream_background_notifications()
+    receiving = asyncio.ensure_future(anext(stream))
+    await asyncio.sleep(0)
+
+    async def finish() -> None:
+        return None
+
+    await registry.tasks.submit(
+        finish, name="work", task_id=task_id, on_terminal=registry.terminal
+    )
+    await registry.tasks.wait(task_id)
+    await asyncio.sleep(0.01)
+    assert not receiving.done()
+    assert agent.calls == 0
+    assert len(registry.pending(owner)) == 1
+    receiving.cancel()
+    await asyncio.gather(receiving, return_exceptions=True)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_two_watched_completions_share_one_idle_turn(tmp_path: Path) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    source = runtime.background_notifications
+    assert source is not None
+    registry = source.registry
+    owner = runtime.runtime.session.session_id
+    release = asyncio.Event()
+    task_ids = (str(uuid4()), str(uuid4()))
+
+    async def finish() -> None:
+        await release.wait()
+
+    for task_id in task_ids:
+        registry.register(BackgroundTask(task_id, owner, "subagent", "work"))
+        await registry.tasks.submit(
+            finish, name="work", task_id=task_id, on_terminal=registry.terminal
+        )
+        registry.watch(owner, task_id, enabled=True)
+    release.set()
+    await asyncio.gather(*(registry.tasks.wait(task_id) for task_id in task_ids))
+    assert len(registry.watched_pending(owner)) == 2
+
+    class CountingAgent:
+        calls = 0
+
+        async def stream_continuation(self, *args, **kwargs):
+            del args, kwargs
+            self.calls += 1
+            assert len(registry.watched_pending(owner)) == 2
+            registry.acknowledge(owner, task_ids)
+            yield AgentInvocationSucceeded("done", 1, TokenUsage())
+
+    agent = CountingAgent()
+    runtime.agent = agent  # type: ignore[assignment]
+    stream = runtime.stream_background_notifications()
+    events = [await anext(stream), await anext(stream), await anext(stream)]
+    assert isinstance(events[0], BackgroundInvocationStarted)
+    assert events[2] == BackgroundInvocationFinished()
+    assert agent.calls == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_queued_input_wins_terminal_race_under_operation_lock(
+    tmp_path: Path,
+) -> None:
+    runtime = _bootstrap_runtime(tmp_path)
+    source = runtime.background_notifications
+    assert source is not None
+    registry = source.registry
+    owner = runtime.runtime.session.session_id
+    task_id = str(uuid4())
+    registry.register(BackgroundTask(task_id, owner, "subagent", "work"))
+
+    class CountingAgent:
+        calls = 0
+
+        async def stream_continuation(self, *args, **kwargs):
+            del args, kwargs
+            self.calls += 1
+            yield AgentInvocationSucceeded("done", 1, TokenUsage())
+
+    agent = CountingAgent()
+    runtime.agent = agent  # type: ignore[assignment]
+    stream = runtime.stream_background_notifications()
+    receiving = asyncio.ensure_future(anext(stream))
+    await asyncio.sleep(0)
+
+    async def finish() -> None:
+        return None
+
+    async with runtime.runtime.operation_lock():
+        await registry.tasks.submit(
+            finish, name="work", task_id=task_id, on_terminal=registry.terminal
+        )
+        registry.watch(owner, task_id, enabled=True)
+        await registry.tasks.wait(task_id)
+        runtime.queue_input("new input")
+    await asyncio.sleep(0.01)
+    assert not receiving.done()
+    assert agent.calls == 0
+    assert len(registry.watched_pending(owner)) == 1
+    receiving.cancel()
+    await asyncio.gather(receiving, return_exceptions=True)
+    await runtime.close()
 
 
 @pytest.mark.asyncio

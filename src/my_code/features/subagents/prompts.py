@@ -4,6 +4,7 @@ from pathlib import Path
 
 from my_code.model.request import PromptStability
 from my_code.prompts.defaults import (
+    BACKGROUND_TASKS_PROMPT,
     DISPATCHER_TOOLS_PROMPT,
     RESPONSE_STYLE_PROMPT,
     SAFETY_PROMPT,
@@ -34,7 +35,8 @@ unrelated work. Perform reasonable verification before finishing. Report to the
 parent agent what changed, what you verified, and any unresolved risks. Do not
 address an end user or assume access to the parent conversation; all task context
 must come from the explicit prompt and attachments.
-{DISPATCHER_TOOLS_PROMPT}"""
+{DISPATCHER_TOOLS_PROMPT}
+{BACKGROUND_TASKS_PROMPT}"""
 
 
 def build_explore_prompt_registry(cwd: Path) -> PromptRegistry:

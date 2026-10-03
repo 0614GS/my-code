@@ -608,6 +608,7 @@ class AgentEngine:
                     parent_uuid=assistant_message.uuid,
                 )
             session.commit_tool_round(result_message, round_attachments)
+            self._context.acknowledge_attachments(round_attachments)
             if round_permission_updates:
                 applicable_updates = _applicable_permission_updates(
                     session, round_permission_updates
@@ -630,6 +631,7 @@ class AgentEngine:
                     parent_uuid=assistant_message.uuid,
                 )
             session.commit_tool_round(result_message, round_attachments)
+            self._context.acknowledge_attachments(round_attachments)
             if round_permission_updates:
                 applicable_updates = _applicable_permission_updates(
                     session, round_permission_updates

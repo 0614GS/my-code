@@ -119,6 +119,8 @@ def test_subagent_tool_registration_is_feature_gated(tmp_path: Path) -> None:
         "Subagent",
         "TaskCancel",
         "TaskList",
+        "TaskWait",
+        "TaskWatch",
         "TodoWrite",
         "ToolSearch",
         "Write",
@@ -189,7 +191,7 @@ def test_headless_ignores_background_task_configuration(tmp_path: Path) -> None:
     bash_properties = bash.definition.input_schema["properties"]
     assert isinstance(bash_properties, dict)
     assert "sandbox_permissions" not in bash_properties
-    assert not {"TaskList", "TaskCancel"}.intersection(names)
+    assert not {"TaskList", "TaskCancel", "TaskWait", "TaskWatch"}.intersection(names)
     assert assembled.background_notifications is None
     assert assembled.background_wake_signal is None
 
@@ -212,7 +214,7 @@ def test_background_bash_does_not_require_subagents(tmp_path: Path) -> None:
     properties = bash.definition.input_schema["properties"]
     assert isinstance(properties, dict)
     assert "background" in properties
-    assert {"TaskList", "TaskCancel"}.issubset(names)
+    assert {"TaskList", "TaskCancel", "TaskWait", "TaskWatch"}.issubset(names)
     assert "TaskOutput" not in names
     assert "Subagent" not in names
 

@@ -21,7 +21,7 @@ my-code 是模块化单体。类型放在哪里由它维护的语义、不变量
 | `agent` | 无活动会话状态的 turn/step 循环 |
 | `mcp` / `skills` | 各自的发现、runtime 与标准 Tool adapter |
 | `runtime` | ApplicationRuntime、ActiveSessionBinding、ProviderRuntime 和 AgentRunFactory |
-| `features.background_tasks` | 用户级后台任务 owner、投递、唤醒和结果展示 |
+| `features.background_tasks` | 用户级后台任务 owner、等待、订阅、投递、唤醒和结果展示 |
 | `features.subagents` | child Agent 生命周期、策略、activity 与 View |
 | `features.todos` | Todo 模型、投影、提醒和工具 |
 | `application.contracts` | Host-safe DTO、事件和 handler 类型 |

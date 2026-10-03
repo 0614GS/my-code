@@ -96,3 +96,9 @@ foreground -> TaskSupervisor -> AgentRunFactory -> SkillRuntime
 - runtime 关闭先停止任务和 child run，再关闭扩展 transport 与 provider client。
 
 主要源码入口：`src/my_code/application/service.py`、`src/my_code/application/turns/coordinator.py`、`src/my_code/runtime/application.py`、`src/my_code/agent/engine.py`、`src/my_code/tools/round_executor.py`。
+
+## 后台任务等待与续跑
+
+`features.background_tasks` 在进程内 registry 保存根 Session 的任务、等待者、订阅与投递状态。`TaskWait` 等待终态、用户输入或超时，返回从偏移读取的有界日志；新用户输入只打断等待。`TaskWatch` 显式订阅一次完成续跑。未订阅的完成信息保留到下一次正常模型请求。
+
+任务终态只触发无 payload wake signal。Application 调度器取得 operation lock 后重新检查当前 Session 的订阅与输入队列，将同一时点的完成通知合并到一次 continuation。TUI 只消费 Application 产生的事件。`TaskWait` 的终态 attachment 与工具结果在同一工具轮提交，成功提交后才确认投递并清除订阅；Session 提交失败仍可重试。

@@ -439,15 +439,19 @@ class SubagentController:
                 from my_code.features.subagents.tool import SubagentTool
 
                 tools.append(SubagentTool(self, parent=parent, policy=policy))
-            elif name in {"TaskList", "TaskCancel"}:
+            elif name in {"TaskList", "TaskCancel", "TaskWait", "TaskWatch"}:
                 from my_code.features.subagents.task_tools import (
                     TaskCancelTool,
                     TaskListTool,
+                    TaskWaitTool,
+                    TaskWatchTool,
                 )
 
                 task_tool_types = {
                     "TaskList": TaskListTool,
                     "TaskCancel": TaskCancelTool,
+                    "TaskWait": TaskWaitTool,
+                    "TaskWatch": TaskWatchTool,
                 }
                 tools.append(task_tool_types[name](self, parent=parent))
             else:

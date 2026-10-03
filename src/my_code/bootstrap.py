@@ -61,6 +61,8 @@ from my_code.features.subagents.models import SubagentLimits, SubagentParentCont
 from my_code.features.subagents.task_tools import (
     TaskCancelTool,
     TaskListTool,
+    TaskWaitTool,
+    TaskWatchTool,
 )
 from my_code.features.subagents.tool import SubagentTool
 from my_code.features.todos.rebuild import TodoPostCompactAttachmentSource
@@ -633,6 +635,8 @@ def _assemble_agent(
                 (
                     TaskListTool(background_registry, parent=parent),
                     TaskCancelTool(background_registry, parent=parent),
+                    TaskWaitTool(background_registry, parent=parent),
+                    TaskWatchTool(background_registry, parent=parent),
                 )
             )
         tool_catalog.register_source(
@@ -650,6 +654,8 @@ def _assemble_agent(
             (
                 TaskListTool(background_registry, parent=parent),
                 TaskCancelTool(background_registry, parent=parent),
+                TaskWaitTool(background_registry, parent=parent),
+                TaskWatchTool(background_registry, parent=parent),
             ),
         )
     components = _build_agent_components(
