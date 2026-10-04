@@ -144,6 +144,7 @@ class McpServerView:
     state: str
     tool_names: tuple[str, ...]
     diagnostic: CapabilityDiagnosticView | None = None
+    auth_challenge: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

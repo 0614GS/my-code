@@ -115,6 +115,7 @@ def project_capabilities(
                     if server.diagnostic is not None
                     else None
                 ),
+                server.auth_challenge.value if server.auth_challenge else None,
             )
             for server in mcp_servers
         ),

@@ -29,6 +29,7 @@ _NAVIGATION_PANELS = {
     "agents",
     "question",
     "plan_action",
+    "mcp_auth_choice",
 }
 _PROVIDER_PANELS = {
     "provider_actions",

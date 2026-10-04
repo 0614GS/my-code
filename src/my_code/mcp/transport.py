@@ -7,6 +7,7 @@ from typing import Protocol
 
 from my_code.foundation.json import JsonObject
 from my_code.mcp.models import (
+    McpAuthChallenge,
     McpCallResult,
     McpConnectionInfo,
     McpRemoteTool,
@@ -24,6 +25,12 @@ class McpConfigurationError(McpTransportError):
 
 class McpConnectionError(McpTransportError):
     pass
+
+
+class McpAuthenticationRequired(McpConnectionError):
+    def __init__(self, challenge: McpAuthChallenge) -> None:
+        self.challenge = challenge
+        super().__init__("MCP server requires authentication")
 
 
 class McpProtocolError(McpTransportError):
@@ -61,6 +68,7 @@ class McpTransportFactory(Protocol):
 
 
 __all__ = [
+    "McpAuthenticationRequired",
     "McpConfigurationError",
     "McpConnectionError",
     "McpProtocolError",

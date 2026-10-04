@@ -51,6 +51,7 @@ from my_code.application.contracts.permissions import (
 from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
 from my_code.application.contracts.views import (
     CapabilitiesView,
+    McpServerView,
     SessionView,
     SubagentTaskView,
 )
@@ -58,6 +59,7 @@ from my_code.auth.credentials import CredentialSource
 from my_code.config.providers import ProviderProtocol
 from my_code.conversation.presentation import ToolResultPresentation
 from my_code.features.todos.models import TodoItem
+from my_code.mcp.models import McpAuthKind
 from my_code.model.capabilities import ModelDescriptor
 from my_code.model.display import DisplayDensity
 from my_code.model.primitives import ReasoningPresentation, TokenUsage
@@ -1810,6 +1812,37 @@ def test_new_slash_commands_have_strict_subcommands() -> None:
     mcp = registry.dispatch("/mcp refresh local", status=status)
     assert skills is not None and skills.skill_operation == "reload"
     assert mcp is not None and mcp.mcp_operation == ("refresh", "local")
+    uri_add = registry.dispatch("/mcp add https://example.com/mcp", status=status)
+    assert uri_add is not None and uri_add.mcp_add is not None
+    assert uri_add.mcp_add.name is None
+    assert uri_add.mcp_add.auth == "auto"
+    logout = registry.dispatch("/mcp logout remote", status=status)
+    assert logout is not None and logout.mcp_operation == ("logout", "remote")
+    http_add = registry.dispatch(
+        "/mcp add remote https://example.com/mcp --oauth", status=status
+    )
+    assert http_add is not None and http_add.mcp_add is not None
+    assert http_add.mcp_add.url == "https://example.com/mcp"
+    assert http_add.mcp_add.auth == "oauth"
+    stdio_add = registry.dispatch(
+        "/mcp add local --env-from TOKEN=LOCAL_TOKEN -- python -m server",
+        status=status,
+    )
+    assert stdio_add is not None and stdio_add.mcp_add is not None
+    assert stdio_add.mcp_add.command == "python"
+    assert stdio_add.mcp_add.args == ("-m", "server")
+    assert stdio_add.mcp_add.env_from == (("TOKEN", "LOCAL_TOKEN"),)
+    bearer_add = registry.dispatch(
+        "/mcp add remote https://example.com/mcp --bearer-env MCP_TOKEN",
+        status=status,
+    )
+    assert bearer_add is not None and bearer_add.mcp_add is not None
+    assert bearer_add.mcp_add.bearer_token_from == "MCP_TOKEN"
+    invalid_add = registry.dispatch(
+        "/mcp add remote https://example.com/mcp --oauth --bearer-env TOKEN",
+        status=status,
+    )
+    assert invalid_add is not None and invalid_add.message.startswith("Usage:")
     assert registry.dispatch("/tasks", status=status).show_tasks  # type: ignore[union-attr]
     invalid = registry.dispatch("/mcp refresh", status=status)
     assert invalid is not None and invalid.message.startswith("Usage:")
@@ -1832,6 +1865,79 @@ def test_new_slash_commands_have_strict_subcommands() -> None:
     assert invalid_new is not None
     assert invalid_new.message == "/new does not accept arguments."
     assert "/new" in registry.render_help()
+
+
+@pytest.mark.asyncio
+async def test_mcp_bearer_panel_keeps_token_out_of_history_and_output() -> None:
+    runtime = FakeRuntime()
+    supplied: list[tuple[str, McpAuthKind, str | None]] = []
+
+    async def authenticate_mcp(
+        name: str, auth: McpAuthKind, *, token: str | None = None
+    ) -> CapabilitiesView:
+        supplied.append((name, auth, token))
+        return CapabilitiesView((), (), (), (McpServerView(name, "connected", ()),))
+
+    runtime.authenticate_mcp = authenticate_mcp  # type: ignore[attr-defined]
+    app = RecordingMyCodeApp(runtime)
+    required = CapabilitiesView(
+        (),
+        (),
+        (),
+        (McpServerView("remote", "auth_required", (), auth_challenge="bearer"),),
+    )
+    await app._offer_mcp_auth(required, "remote")
+    assert app._panel == "mcp_bearer"
+    app.buffer.insert_text("secret")
+    assert "secret" not in fragment_list_to_text(to_formatted_text(app._panel_text()))
+    await app._panel_enter()
+    assert supplied == [("remote", McpAuthKind.BEARER, "secret")]
+    assert app._panel is None
+    assert app.buffer.text == ""
+    assert "secret" not in str(app.write_snapshots)
+    assert "secret" not in str(list(app._history.get_strings()))
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_mcp_auth_can_be_deferred_without_prompting() -> None:
+    app = RecordingMyCodeApp(FakeRuntime())
+    required = CapabilitiesView(
+        (),
+        (),
+        (),
+        (McpServerView("remote", "auth_required", (), auth_challenge="choose"),),
+    )
+    await app._offer_mcp_auth(required, "remote")
+    assert app._panel == "mcp_auth_choice"
+    app._panel_index = 2
+    await app._panel_enter()
+    assert app._panel is None
+    assert app._mcp_auth_server is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_challenge_starts_auth_without_choice_panel() -> None:
+    runtime = FakeRuntime()
+    selected: list[tuple[str, McpAuthKind]] = []
+
+    async def authenticate_mcp(
+        name: str, auth: McpAuthKind, *, token: str | None = None
+    ) -> CapabilitiesView:
+        assert token is None
+        selected.append((name, auth))
+        return CapabilitiesView((), (), (), (McpServerView(name, "connected", ()),))
+
+    runtime.authenticate_mcp = authenticate_mcp  # type: ignore[attr-defined]
+    app = RecordingMyCodeApp(runtime)
+    required = CapabilitiesView(
+        (),
+        (),
+        (),
+        (McpServerView("remote", "auth_required", (), auth_challenge="oauth"),),
+    )
+    await app._offer_mcp_auth(required, "remote")
+    assert selected == [("remote", McpAuthKind.OAUTH)]
+    assert app._panel is None
 
 
 @pytest.mark.asyncio

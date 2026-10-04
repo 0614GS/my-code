@@ -159,6 +159,61 @@ async def test_connect_discover_call_disconnect_reconnect_and_close(
 
 
 @pytest.mark.asyncio
+async def test_add_or_replace_connects_in_current_runtime(tmp_path: Path) -> None:
+    first = FakeTransport((remote_tool("first"),))
+    second = FakeTransport((remote_tool("second"),))
+    catalog = ToolCatalog()
+    runtime = McpRuntime(
+        enabled=False,
+        servers=(),
+        catalog=catalog,
+        transport_factory=FakeFactory([first, second]),
+    )
+    await runtime.start()
+
+    connected = await runtime.add_or_replace(spec(tmp_path))
+    assert runtime.enabled is True
+    assert connected.state is McpConnectionState.CONNECTED
+    assert catalog.snapshot().get("mcp__search__first") is not None
+
+    replaced = await runtime.add_or_replace(spec(tmp_path))
+    assert replaced.tool_names == ("mcp__search__second",)
+    assert first.events[-1] == "close"
+    assert catalog.snapshot().get("mcp__search__first") is None
+    assert catalog.snapshot().get("mcp__search__second") is not None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_add_cancel_closes_partial_connection(tmp_path: Path) -> None:
+    started = asyncio.Event()
+
+    class BlockingTransport(FakeTransport):
+        async def connect(self, *, timeout_seconds: float) -> McpConnectionInfo:
+            del timeout_seconds
+            started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    transport = BlockingTransport(())
+    runtime = McpRuntime(
+        enabled=True,
+        servers=(),
+        catalog=ToolCatalog(),
+        transport_factory=FakeFactory([transport]),
+    )
+    await runtime.start()
+    task = asyncio.create_task(runtime.add_or_replace(spec(tmp_path)))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert runtime.snapshot("search").state is McpConnectionState.FAILED
+    assert transport.events[-1] == "close"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "tools",
     [

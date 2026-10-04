@@ -46,8 +46,13 @@ from my_code.application.contracts.inputs import PathSuggestion
 from my_code.application.contracts.permissions import PermissionRequest
 from my_code.application.contracts.questions import QuestionAnswer, QuestionRequest
 from my_code.application.contracts.status import ApplicationStatus, ContextUsageView
-from my_code.application.contracts.views import SubagentTaskView, TranscriptView
+from my_code.application.contracts.views import (
+    CapabilitiesView,
+    SubagentTaskView,
+    TranscriptView,
+)
 from my_code.application.service import ApplicationService
+from my_code.mcp.models import McpAuthKind
 from my_code.model.display import DisplayDensity
 from my_code.permissions.models import (
     PermissionConfirmation,
@@ -197,6 +202,7 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         self._sessions: tuple[SessionSummary, ...] = ()
         self._providers: tuple[ProviderView, ...] = ()
         self._provider_form: ProviderForm | None = None
+        self._mcp_auth_server: str | None = None
         self._provider_wizard: ProviderWizard | None = None
         self._provider_probe_task: asyncio.Task[object] | None = None
         self._provider_selected_index = 0
@@ -245,7 +251,10 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
         prompt = BeforeInput(FormattedText([("class:prompt", prompt_text)]))
         continuation = ContinuationIndent(len(prompt_text))
         password = ConditionalProcessor(
-            PasswordProcessor(), Condition(lambda: self._provider_password_field())
+            PasswordProcessor(),
+            Condition(
+                lambda: self._provider_password_field() or self._panel == "mcp_bearer"
+            ),
         )
         self.input_control = BufferControl(
             buffer=self.buffer, input_processors=[prompt, continuation, password]
@@ -806,6 +815,16 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                 ),
                 "Enter select · Esc stay in Plan",
             )
+        if self._panel == "mcp_auth_choice" and self._mcp_auth_server:
+            return PickerView(
+                f"Choose authentication for {self._mcp_auth_server}",
+                (
+                    PickerRow("oauth", "Sign in with OAuth"),
+                    PickerRow("bearer", "Enter a Bearer token"),
+                    PickerRow("later", "Set up later"),
+                ),
+                "↑↓ navigate · Enter select · Esc later",
+            )
         if self._panel == "agents" and self._agent_task_id is None:
             return agent_select_panel(self._agents)
         return None
@@ -843,6 +862,15 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             )
         if self._panel == "provider_checking":
             return provider_checking_panel()
+        if self._panel == "mcp_bearer" and self._mcp_auth_server:
+            return FormattedText(
+                [
+                    ("class:heading", f"Bearer token · {self._mcp_auth_server}"),
+                    ("", "\nToken: "),
+                    ("class:secondary", "••••" if self.buffer.text else ""),
+                    ("class:secondary", "\nEnter connect · Esc cancel"),
+                ]
+            )
         if self._panel == "agents":
             return self._agent_panel_text()
         return ""
@@ -1036,16 +1064,45 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
                 self._busy = True
                 activity_owner = self._begin_activity(f"MCP {operation} · {server}…")
                 try:
-                    capabilities = (
-                        await self.application.refresh_mcp(server)
-                        if operation == "refresh"
-                        else await self.application.reconnect_mcp(server)
-                    )
+                    if operation == "refresh":
+                        capabilities = await self.application.refresh_mcp(server)
+                    elif operation == "logout":
+                        capabilities = await self.application.logout_mcp(server)
+                    else:
+                        capabilities = await self.application.reconnect_mcp(server)
                 finally:
                     self._busy = False
                     self._end_activity(activity_owner)
                     self._refresh_status()
             await emit(render_mcp(capabilities))
+            if operation == "reconnect":
+                await self._offer_mcp_auth(capabilities, server)
+        if outcome.mcp_add is not None:
+            previous_names = {
+                item.name for item in self.application.capabilities().mcp_servers
+            }
+            self._busy = True
+            activity_owner = self._begin_activity(
+                f"MCP connect · {outcome.mcp_add.name}…"
+            )
+            try:
+                capabilities = await self.application.add_mcp(outcome.mcp_add)
+            finally:
+                self._busy = False
+                self._end_activity(activity_owner)
+                self._refresh_status()
+            await emit(render_mcp(capabilities))
+            name = outcome.mcp_add.name or next(
+                (
+                    item.name
+                    for item in capabilities.mcp_servers
+                    if item.name not in previous_names
+                ),
+                None,
+            )
+            if name is not None:
+                await self._offer_mcp_auth(capabilities, name)
+
         if outcome.show_tasks:
             await emit(render_tasks(self.application.background_tasks()))
         if echo_pending and (
@@ -1073,6 +1130,48 @@ class MyCodeApp(ActivityFlowMixin, PanelFlowMixin, TurnFlowMixin):
             self._open_permission_picker()
         if outcome.should_exit:
             self.terminal_application.exit()
+
+    async def _offer_mcp_auth(
+        self, capabilities: CapabilitiesView, server_name: str
+    ) -> None:
+        server = next(
+            (item for item in capabilities.mcp_servers if item.name == server_name),
+            None,
+        )
+        if server is None or server.state != "auth_required":
+            return
+        self._mcp_auth_server = server_name
+        if server.auth_challenge == "oauth":
+            await self._authenticate_mcp(McpAuthKind.OAUTH)
+        elif server.auth_challenge == "bearer":
+            self._open_panel("mcp_bearer")
+        else:
+            self._panel_index = 0
+            self._open_panel("mcp_auth_choice")
+
+    async def _authenticate_mcp(
+        self, auth: McpAuthKind, *, token: str | None = None
+    ) -> None:
+        server_name = self._mcp_auth_server
+        if server_name is None:
+            return
+        self._busy = True
+        owner = self._begin_activity(f"MCP authenticate · {server_name}…")
+        try:
+            capabilities = await self.application.authenticate_mcp(
+                server_name, auth, token=token
+            )
+        except Exception as error:
+            await self._write(
+                system_message(f"MCP authentication failed: {error}", error=True)
+            )
+            capabilities = self.application.capabilities()
+        finally:
+            self._busy = False
+            self._end_activity(owner)
+            self._refresh_status()
+        await self._write(render_mcp(capabilities))
+        self._mcp_auth_server = None
 
     async def _change_view_mode(self, operation: str) -> str:
         requested = DisplayDensity.from_view_mode(operation)

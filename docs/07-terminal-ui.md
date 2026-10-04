@@ -58,6 +58,8 @@ Question 使用独占面板逐题展示 2–3 个单选项，并由 TUI 自动�
 
 Slash commands 在进入模型前本地解析。已执行命令先在 scrollback 回显；`/status`、`/context`、`/usage`、`/tools`、`/skills`、`/mcp` 和 `/tasks` 使用统一的圆角信息卡，命令与卡片作为一个串行输出批次提交。`/usage` 汇总 Provider 报告的普通输入、缓存创建和缓存读取 token。`/resume`、`/provider`、`/model`、`/permissions` 和 `/agents` 等仍只调用 ApplicationService 的窄用例接口。选择器共用稳定 action key、可视窗口、导航和草稿恢复语义。
 
+`/mcp add <URI>` 自动命名并先匿名连接；需要鉴权时，根据可验证的 OAuth 元数据启动浏览器流程，或用遮蔽输入面板接收 Bearer token，信息不足则显示方式选择器。原有带名称的 HTTP 形式（可选 `--oauth` 或 `--bearer-env`）和 `--` 后的 stdio 命令继续支持。ApplicationService 持久化本地可信定义，连接成功后立即发布工具；`/mcp refresh`、`/mcp reconnect` 和 `/mcp logout` 操作已加载的 server。
+
 Permission、Full Access、Provider 和 Resume 共用 composer 下方的 interaction host。工具权限默认安全拒绝；无 OS sandbox 时首次进入 Full Access 必须经过当前进程有效的危险确认。API key 输入使用密码处理，面板只显示是否已配置。
 
 ## 生命周期

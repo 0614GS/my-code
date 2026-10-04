@@ -36,7 +36,19 @@ class McpOAuthTokenStore:
     async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
         self._write("clientInfo", client_info.model_dump(mode="json"))
 
+    def delete(self) -> bool:
+        if self.path.parent.is_symlink():
+            raise ValueError("MCP OAuth credential directory must not be a symlink")
+        if self.path.is_symlink():
+            raise ValueError("MCP OAuth credential path must not be a symlink")
+        if not self.path.exists():
+            return False
+        self.path.unlink()
+        return True
+
     def _read(self) -> dict[str, object]:
+        if self.path.parent.is_symlink():
+            raise ValueError("MCP OAuth credential directory must not be a symlink")
         if not self.path.exists():
             return {}
         if self.path.is_symlink():

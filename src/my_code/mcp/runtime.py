@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from my_code.foundation.json import JsonObject
 from my_code.mcp.models import (
+    McpAuthChallenge,
     McpCallResult,
     McpConnectionInfo,
     McpConnectionState,
@@ -20,6 +21,7 @@ from my_code.mcp.models import (
 from my_code.mcp.schema import validate_tool_schema
 from my_code.mcp.tool import McpTool
 from my_code.mcp.transport import (
+    McpAuthenticationRequired,
     McpConfigurationError,
     McpConnectionError,
     McpProtocolError,
@@ -45,6 +47,7 @@ class _ServerRuntime:
     remote_tools: tuple[McpRemoteTool, ...] = ()
     tool_names: tuple[str, ...] = ()
     diagnostic: McpDiagnostic | None = None
+    auth_challenge: McpAuthChallenge | None = None
 
 
 class McpRuntime:
@@ -105,7 +108,11 @@ class McpRuntime:
             tool_names=server.tool_names,
             diagnostic=server.diagnostic,
             connection_info=server.info,
+            auth_challenge=server.auth_challenge,
         )
+
+    def spec(self, server_name: str) -> McpServerSpec:
+        return self._server(server_name).spec
 
     async def start(self) -> None:
         async with self._lock:
@@ -154,6 +161,41 @@ class McpRuntime:
                 await self._connect(server)
             return self._snapshot(server_name, server)
 
+    async def add_or_replace(self, spec: McpServerSpec) -> McpServerSnapshot:
+        """把刚保存的 server 立即接入当前 catalog。"""
+
+        if not self._started:
+            await self.start()
+        async with self._lock:
+            if self._closed:
+                raise McpRuntimeError("MCP runtime is closed")
+            previously_enabled = self.enabled
+            self.enabled = True
+            previous = self._servers.get(spec.name)
+            if previous is not None:
+                await self._detach(previous, target=McpConnectionState.PENDING)
+            server = _ServerRuntime(spec, self._initial_state(spec))
+            self._servers[spec.name] = server
+            self._servers = dict(sorted(self._servers.items()))
+            if spec.enabled and spec.start_allowed:
+                await self._connect(server)
+            else:
+                self._disable(
+                    server,
+                    McpDiagnosticCode.SERVER_DISABLED,
+                    "MCP server is disabled by settings.",
+                )
+            if not previously_enabled:
+                for other in self._servers.values():
+                    if (
+                        other is not server
+                        and other.state is McpConnectionState.DISABLED
+                        and other.spec.enabled
+                        and other.spec.start_allowed
+                    ):
+                        await self._connect(other)
+            return self._snapshot(spec.name, server)
+
     async def disconnect(self, server_name: str) -> None:
         async with self._lock:
             server = self._server(server_name)
@@ -181,6 +223,10 @@ class McpRuntime:
                 normalized = await self._discover(server)
             except asyncio.CancelledError:
                 raise
+            except McpAuthenticationRequired as error:
+                await self._detach(server, target=McpConnectionState.AUTH_REQUIRED)
+                self._require_auth(server, error.challenge)
+                return self._snapshot(server_name, server)
             except McpConnectionError:
                 await self._detach(server, target=McpConnectionState.FAILED)
                 server.diagnostic = McpDiagnostic(
@@ -248,6 +294,14 @@ class McpRuntime:
             )
         except asyncio.CancelledError:
             raise
+        except McpAuthenticationRequired as error:
+            async with self._lock:
+                if server.state is McpConnectionState.CONNECTED:
+                    await self._detach(server, target=McpConnectionState.AUTH_REQUIRED)
+                    self._require_auth(server, error.challenge)
+            raise McpRuntimeError(
+                f"MCP server {server_name!r} requires authentication"
+            ) from error
         except McpConnectionError as error:
             await self._connection_lost(server)
             raise McpRuntimeError(
@@ -265,6 +319,7 @@ class McpRuntime:
     async def _connect(self, server: _ServerRuntime) -> None:
         server.state = McpConnectionState.PENDING
         server.diagnostic = None
+        server.auth_challenge = None
         try:
             transport = self._transport_factory(server.spec)
         except McpConfigurationError:
@@ -293,6 +348,10 @@ class McpRuntime:
             await self._close_failed_transport(server)
             server.state = McpConnectionState.FAILED
             raise
+        except McpAuthenticationRequired as error:
+            await self._close_failed_transport(server)
+            self._require_auth(server, error.challenge)
+            return
         except Exception:
             await self._close_failed_transport(server)
             self._fail(
@@ -309,6 +368,10 @@ class McpRuntime:
             await self._close_failed_transport(server)
             server.state = McpConnectionState.FAILED
             raise
+        except McpAuthenticationRequired as error:
+            await self._close_failed_transport(server)
+            self._require_auth(server, error.challenge)
+            return
         except (ValueError, McpTransportError, TypeError):
             await self._close_failed_transport(server)
             self._fail(
@@ -328,6 +391,17 @@ class McpRuntime:
         server.info = info
         server.state = McpConnectionState.CONNECTED
         self._commit_tools(server, normalized, tools)
+
+    @staticmethod
+    def _require_auth(server: _ServerRuntime, challenge: McpAuthChallenge) -> None:
+        server.state = McpConnectionState.AUTH_REQUIRED
+        server.auth_challenge = challenge
+        server.diagnostic = McpDiagnostic(
+            server.spec.name,
+            server.state,
+            McpDiagnosticCode.AUTH_REQUIRED,
+            "MCP server requires authentication.",
+        )
 
     async def _discover(self, server: _ServerRuntime) -> tuple[McpRemoteTool, ...]:
         assert server.transport is not None

@@ -30,8 +30,15 @@ class McpServerTransport(StrEnum):
 
 class McpAuthKind(StrEnum):
     NONE = "none"
+    AUTO = "auto"
     BEARER = "bearer"
     OAUTH = "oauth"
+
+
+class McpAuthChallenge(StrEnum):
+    OAUTH = "oauth"
+    BEARER = "bearer"
+    CHOOSE = "choose"
 
 
 class McpConnectionState(StrEnum):
@@ -39,6 +46,7 @@ class McpConnectionState(StrEnum):
     PENDING = "pending"
     CONNECTED = "connected"
     FAILED = "failed"
+    AUTH_REQUIRED = "auth_required"
     CLOSED = "closed"
 
 
@@ -51,6 +59,7 @@ class McpDiagnosticCode(StrEnum):
     DISCOVERY_FAILED = "discovery_failed"
     REGISTRATION_FAILED = "registration_failed"
     CONNECTION_LOST = "connection_lost"
+    AUTH_REQUIRED = "auth_required"
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,11 +120,11 @@ class McpServerSpec:
                 raise ValueError("HTTP MCP URL requires HTTPS or loopback HTTP")
         if self.auth is McpAuthKind.BEARER:
             if (
-                self.bearer_token_from is None
-                or _ENVIRONMENT_NAME.fullmatch(self.bearer_token_from) is None
+                self.bearer_token_from is not None
+                and _ENVIRONMENT_NAME.fullmatch(self.bearer_token_from) is None
             ):
                 raise ValueError(
-                    "Bearer MCP auth requires an environment variable name"
+                    "Bearer MCP source must be an environment variable name"
                 )
         elif self.bearer_token_from is not None:
             raise ValueError("Bearer token source requires bearer auth")
@@ -174,6 +183,7 @@ class McpServerSnapshot:
     tool_names: tuple[str, ...]
     diagnostic: McpDiagnostic | None
     connection_info: McpConnectionInfo | None
+    auth_challenge: McpAuthChallenge | None = None
 
 
 def validate_remote_tool_name(name: str) -> str:
@@ -203,6 +213,7 @@ def _bounded_public_name(value: str) -> str:
 __all__ = [
     "McpCallResult",
     "McpAuthKind",
+    "McpAuthChallenge",
     "McpConnectionInfo",
     "McpConnectionState",
     "McpDiagnostic",

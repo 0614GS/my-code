@@ -1,10 +1,12 @@
 """Stateful user-level application façade."""
 
 import asyncio
+import re
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from my_code.agent.runner import InteractiveAgentRunner
@@ -24,6 +26,7 @@ from my_code.application.contracts.history import (
     ResumedSession,
 )
 from my_code.application.contracts.inputs import PathSuggestion, QueuedInputView
+from my_code.application.contracts.mcp import McpServerRegistration
 from my_code.application.contracts.permissions import (
     PermissionHandler,
     PermissionModeSwitch,
@@ -51,9 +54,11 @@ from my_code.application.sessions.operations import SessionOperations
 from my_code.application.sessions.transcript_projection import project_transcript
 from my_code.application.turns.coordinator import TurnCoordinator
 from my_code.application.turns.mentions.suggestions import WorkspacePathSuggester
+from my_code.auth.mcp_bearer import McpBearerTokenStore
+from my_code.auth.mcp_oauth import McpOAuthTokenStore
 from my_code.config.paths import SettingsScope
 from my_code.config.settings import AgentSettings
-from my_code.config.store import SettingsStore
+from my_code.config.store import McpServerSettingsLayer, SettingsLayer, SettingsStore
 from my_code.context.engine import ContextEngine
 from my_code.conversation.models import (
     AssistantMessage,
@@ -66,6 +71,13 @@ from my_code.features.background_tasks.notifications import (
     BackgroundTaskNotificationSource,
 )
 from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
+from my_code.mcp.models import (
+    McpAuthKind,
+    McpConnectionState,
+    McpServerScope,
+    McpServerSpec,
+    McpServerTransport,
+)
 from my_code.model.display import DisplayDensity
 from my_code.permissions.models import PermissionMode
 from my_code.permissions.policy import PermissionPolicy
@@ -274,6 +286,154 @@ class ApplicationService:
             await self.runtime.start()
             await self.runtime.mcp.reconnect(server)
             return self.capabilities()
+
+    async def add_mcp(self, registration: McpServerRegistration) -> CapabilitiesView:
+        """保存当前工作区的可信定义，并立即连接到当前 runtime。"""
+
+        scope = (
+            SettingsScope.USER
+            if self.settings.paths.project_config_collides_with_user_storage
+            else SettingsScope.LOCAL
+        )
+        name = registration.name
+        if name is None:
+            if registration.url is None:
+                raise ValueError("MCP server name is required for stdio")
+            host = urlsplit(registration.url).hostname or "mcp"
+            base = re.sub(r"[^a-z0-9_-]+", "-", host.lower()).strip("-")[:55]
+            base = base or "mcp"
+            used = {item.name for item in self.runtime.mcp.snapshots()}
+            name = base
+            suffix = 2
+            while name in used:
+                name = f"{base[: 64 - len(str(suffix)) - 1]}-{suffix}"
+                suffix += 1
+        layer = McpServerSettingsLayer(
+            name=name,
+            command=registration.command,
+            args=registration.args,
+            env_from=registration.env_from,
+            scope=scope,
+            transport="http" if registration.url is not None else "stdio",
+            url=registration.url,
+            auth=(
+                "auto"
+                if registration.name is None and registration.url is not None
+                else registration.auth
+            ),
+            bearer_token_from=registration.bearer_token_from,
+        )
+        spec = McpServerSpec(
+            name=layer.name,
+            command=layer.command,
+            cwd=self.settings.cwd,
+            args=layer.args,
+            env_from=layer.env_from,
+            scope=McpServerScope(scope.value),
+            transport=McpServerTransport(layer.transport),
+            url=layer.url,
+            auth=McpAuthKind(layer.auth),
+            bearer_token_from=layer.bearer_token_from,
+        )
+        async with self.runtime.operation_lock():
+            await self.runtime.start()
+            SettingsStore(self.settings.paths).write(
+                scope,
+                SettingsLayer(mcp_enabled=True, mcp_servers=(layer,)),
+            )
+            await self.runtime.mcp.add_or_replace(spec)
+            return self.capabilities()
+
+    async def authenticate_mcp(
+        self, server_name: str, auth: McpAuthKind, *, token: str | None = None
+    ) -> CapabilitiesView:
+        """仅在连接成功后把鉴权方式写入设置。"""
+
+        if auth not in {McpAuthKind.OAUTH, McpAuthKind.BEARER}:
+            raise ValueError("MCP authentication must be OAuth or Bearer")
+        previous = self.runtime.mcp.spec(server_name)
+        if previous.auth is not McpAuthKind.AUTO:
+            raise ValueError("MCP server is not awaiting automatic authentication")
+        if previous.transport is not McpServerTransport.HTTP or previous.url is None:
+            raise ValueError("Only HTTP MCP servers can authenticate")
+        if previous.scope is McpServerScope.PROJECT:
+            raise ValueError("Project MCP server must be trusted locally first")
+        bearer_store = McpBearerTokenStore(
+            self.settings.paths.config_home / ".mcp-bearer",
+            server_name,
+            previous.url,
+        )
+        old_token = bearer_store.load() if auth is McpAuthKind.BEARER else None
+        if auth is McpAuthKind.BEARER:
+            if token is None:
+                raise ValueError("Bearer token is required")
+            bearer_store.save(token)
+        updated = replace(previous, auth=auth, bearer_token_from=None)
+        async with self.runtime.operation_lock():
+            try:
+                snapshot = await self.runtime.mcp.add_or_replace(updated)
+                if snapshot.state is not McpConnectionState.CONNECTED:
+                    raise ValueError("MCP authentication did not connect")
+                self._save_mcp_spec(updated)
+            except BaseException:
+                if auth is McpAuthKind.BEARER:
+                    if old_token is None:
+                        bearer_store.delete()
+                    else:
+                        bearer_store.save(old_token)
+                await self.runtime.mcp.add_or_replace(previous)
+                raise
+            return self.capabilities()
+
+    async def logout_mcp(self, server_name: str) -> CapabilitiesView:
+        spec = self.runtime.mcp.spec(server_name)
+        if spec.transport is not McpServerTransport.HTTP or spec.url is None:
+            raise ValueError("Only HTTP MCP servers have remote credentials")
+        if spec.bearer_token_from is not None:
+            raise ValueError(
+                "Environment-backed Bearer token must be removed from settings"
+            )
+        if spec.scope is McpServerScope.PROJECT:
+            raise ValueError("Project MCP server must be trusted locally first")
+        async with self.runtime.operation_lock():
+            McpBearerTokenStore(
+                self.settings.paths.config_home / ".mcp-bearer",
+                server_name,
+                spec.url,
+            ).delete()
+            McpOAuthTokenStore(
+                self.settings.paths.config_home / ".mcp-oauth",
+                server_name,
+                spec.url,
+            ).delete()
+            anonymous = replace(spec, auth=McpAuthKind.AUTO)
+            self._save_mcp_spec(anonymous)
+            await self.runtime.mcp.add_or_replace(anonymous)
+            return self.capabilities()
+
+    def _save_mcp_spec(self, spec: McpServerSpec) -> None:
+        scope = SettingsScope(spec.scope.value)
+        SettingsStore(self.settings.paths).write(
+            scope,
+            SettingsLayer(
+                mcp_servers=(
+                    McpServerSettingsLayer(
+                        name=spec.name,
+                        command=spec.command,
+                        args=spec.args,
+                        env_from=spec.env_from,
+                        scope=scope,
+                        transport=spec.transport.value,
+                        url=spec.url,
+                        auth=spec.auth.value,
+                        bearer_token_from=spec.bearer_token_from,
+                        enabled=spec.enabled,
+                        startup_timeout_seconds=spec.startup_timeout_seconds,
+                        call_timeout_seconds=spec.call_timeout_seconds,
+                    ),
+                )
+            ),
+        )
 
     async def submit(self, prompt: str) -> InvocationOutcome:
         self._interrupt_background_waits()

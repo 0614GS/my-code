@@ -38,7 +38,15 @@ def test_remote_mcp_url_rejects_insecure_or_embedded_credentials(url: str) -> No
         )
 
 
-def test_bearer_mcp_requires_environment_variable_reference() -> None:
+def test_bearer_mcp_accepts_private_store_or_valid_environment_reference() -> None:
+    McpServerSpec(
+        "remote",
+        None,
+        Path("/tmp"),
+        transport=McpServerTransport.HTTP,
+        url="https://example.com/mcp",
+        auth=McpAuthKind.BEARER,
+    )
     with pytest.raises(ValueError, match="environment variable name"):
         McpServerSpec(
             "remote",

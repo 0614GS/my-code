@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from shlex import split as shell_split
 
+from my_code.application.contracts.mcp import McpServerRegistration
 from my_code.application.contracts.status import ApplicationStatus
 
 
@@ -59,6 +60,7 @@ class CommandOutcome:
     show_tools: bool = False
     skill_operation: str | None = None
     mcp_operation: tuple[str, str] | None = None
+    mcp_add: McpServerRegistration | None = None
     show_tasks: bool = False
     show_agents: bool = False
     open_view_picker: bool = False
@@ -111,9 +113,7 @@ class SlashCommandRegistry:
                 SlashCommand(
                     "skills", "List or reload skills", SlashCommandAction.SKILLS
                 ),
-                SlashCommand(
-                    "mcp", "Show or refresh MCP servers", SlashCommandAction.MCP
-                ),
+                SlashCommand("mcp", "Manage MCP servers", SlashCommandAction.MCP),
                 SlashCommand(
                     "tasks",
                     "List Bash and Subagent tasks",
@@ -202,9 +202,18 @@ class SlashCommandRegistry:
             if not arguments:
                 return CommandOutcome(mcp_operation=("list", ""))
             operation = arguments[0].casefold() if arguments else ""
-            if len(arguments) == 2 and operation in {"refresh", "reconnect"}:
+            if len(arguments) == 2 and operation in {"refresh", "reconnect", "logout"}:
                 return CommandOutcome(mcp_operation=(operation, arguments[1]))
-            return CommandOutcome("Usage: /mcp [refresh|reconnect <server>]")
+            if operation == "add":
+                try:
+                    return CommandOutcome(mcp_add=_parse_mcp_add(arguments[1:]))
+                except ValueError as error:
+                    return CommandOutcome(str(error))
+            return CommandOutcome(
+                "Usage: /mcp [add <URI> | add <name> <url> "
+                "[--oauth|--bearer-env VAR] | add <name> -- <command> "
+                "[args...] | refresh|reconnect|logout <server>]"
+            )
         if command.action is SlashCommandAction.VIEW:
             if not arguments:
                 return CommandOutcome(open_view_picker=True)
@@ -296,6 +305,48 @@ class SlashCommandRegistry:
                 for name in (command.name, *command.aliases)
             )
         )
+
+
+def _parse_mcp_add(arguments: list[str]) -> McpServerRegistration:
+    usage = (
+        "Usage: /mcp add <URI> or "
+        "/mcp add <name> <url> [--oauth|--bearer-env VAR] "
+        "or /mcp add <name> [--env-from TARGET=SOURCE] -- <command> [args...]"
+    )
+    if len(arguments) == 1 and arguments[0].startswith(("https://", "http://")):
+        return McpServerRegistration(url=arguments[0], auth="auto")
+    if len(arguments) < 2:
+        raise ValueError(usage)
+    name, *rest = arguments
+    if rest[0].startswith(("https://", "http://")):
+        url, *options = rest
+        if not options:
+            return McpServerRegistration(name=name, url=url)
+        if options == ["--oauth"]:
+            return McpServerRegistration(name=name, url=url, auth="oauth")
+        if len(options) == 2 and options[0] == "--bearer-env":
+            return McpServerRegistration(
+                name=name,
+                url=url,
+                auth="bearer",
+                bearer_token_from=options[1],
+            )
+        raise ValueError(usage)
+    environment: list[tuple[str, str]] = []
+    while len(rest) >= 2 and rest[0] == "--env-from":
+        target, separator, source = rest[1].partition("=")
+        if not separator or not target or not source:
+            raise ValueError(usage)
+        environment.append((target, source))
+        rest = rest[2:]
+    if len(rest) < 2 or rest[0] != "--":
+        raise ValueError(usage)
+    return McpServerRegistration(
+        name=name,
+        command=rest[1],
+        args=tuple(rest[2:]),
+        env_from=tuple(environment),
+    )
 
 
 __all__ = [

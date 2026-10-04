@@ -961,7 +961,7 @@ def _parse_mcp_servers(
                 f"mcp.servers.{raw_name}.url requires HTTP type: {path}"
             )
         auth = raw_server.get("auth", "none")
-        if auth not in ("none", "bearer", "oauth") or (
+        if auth not in ("none", "auto", "bearer", "oauth") or (
             transport == "stdio" and auth != "none"
         ):
             raise SettingsFileError(f"mcp.servers.{raw_name}.auth is invalid: {path}")
@@ -971,7 +971,7 @@ def _parse_mcp_servers(
             path,
             f"mcp.servers.{raw_name}.bearerTokenFrom",
         )
-        if (auth == "bearer") != (bearer is not None) or (
+        if (bearer is not None and auth != "bearer") or (
             bearer is not None and _ENVIRONMENT_NAME.fullmatch(bearer) is None
         ):
             raise SettingsFileError(

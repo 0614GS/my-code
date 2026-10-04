@@ -8,18 +8,29 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx2
 from mcp import Client, StdioServerParameters
 from mcp.client.auth import OAuthClientProvider
+from mcp.client.auth.utils import (
+    build_protected_resource_metadata_discovery_urls,
+    extract_resource_metadata_from_www_auth,
+)
 from mcp.client.streamable_http import streamable_http_client
 from mcp.client.subscriptions import ToolsListChanged
-from mcp.shared.auth import OAuthClientMetadata
+from mcp.shared.auth import (
+    OAuthClientMetadata,
+    OAuthMetadata,
+    ProtectedResourceMetadata,
+)
 from mcp.types import CallToolResult, TextContent, ToolListChangedNotification
 
+from my_code.auth.mcp_bearer import McpBearerTokenStore
 from my_code.auth.mcp_oauth import McpOAuthTokenStore
 from my_code.foundation.json import JsonObject, to_json_object
 from my_code.mcp.models import (
+    McpAuthChallenge,
     McpAuthKind,
     McpCallResult,
     McpConnectionInfo,
@@ -29,10 +40,12 @@ from my_code.mcp.models import (
 )
 from my_code.mcp.oauth import LoopbackOAuthCallback
 from my_code.mcp.transport import (
+    McpAuthenticationRequired,
     McpConfigurationError,
     McpConnectionError,
     McpProtocolError,
     McpRequestError,
+    McpTransportError,
 )
 
 _SAFE_ENV = (
@@ -77,9 +90,15 @@ class SdkMcpTransportFactory:
         token = None
         if spec.auth is McpAuthKind.BEARER:
             source = spec.bearer_token_from
-            if source is None or not self.environ.get(source):
+            token = (
+                self.environ.get(source)
+                if source is not None
+                else McpBearerTokenStore(
+                    self.oauth_root.parent / ".mcp-bearer", spec.name, spec.url or ""
+                ).load()
+            )
+            if not token:
                 raise McpConfigurationError("MCP Bearer token source is missing")
-            token = self.environ[source]
         return SdkMcpTransport(
             spec,
             environment,
@@ -113,6 +132,9 @@ class SdkMcpTransport:
         ] = asyncio.Queue()
         self._actor: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[McpConnectionInfo] | None = None
+        self._auth_seen = False
+        self._auth_header: str | None = None
+        self._resource_metadata_url: str | None = None
 
     def set_tools_changed_handler(self, handler: Callable[[], None] | None) -> None:
         self._handler = handler
@@ -130,6 +152,8 @@ class SdkMcpTransport:
                 if self.spec.auth is McpAuthKind.OAUTH and self._interactive
                 else timeout_seconds
             )
+            if self.spec.auth is McpAuthKind.AUTO:
+                limit = max(limit, 20)
             return await asyncio.wait_for(asyncio.shield(self._ready), timeout=limit)
         except BaseException:
             if self._actor is not None:
@@ -188,6 +212,7 @@ class SdkMcpTransport:
                         httpx2.AsyncClient(
                             headers=headers,
                             auth=auth,
+                            event_hooks={"response": [self._capture_auth_response]},
                             timeout=httpx2.Timeout(
                                 30, read=max(300, self.spec.call_timeout_seconds)
                             ),
@@ -239,9 +264,7 @@ class SdkMcpTransport:
                 if isinstance(error, asyncio.CancelledError):
                     self._ready.cancel()
                 else:
-                    self._ready.set_exception(
-                        McpConnectionError(f"MCP SDK connection failed: {error}")
-                    )
+                    self._ready.set_exception(await self._connection_error(error))
             while not self._commands.empty():
                 pending = self._commands.get_nowait()
                 if pending is not None and not pending[2].done():
@@ -291,7 +314,80 @@ class SdkMcpTransport:
             raise
         except Exception as error:
             if not future.done():
-                future.set_exception(error)
+                future.set_exception(await self._connection_error(error))
+
+    async def _capture_auth_response(self, response: httpx2.Response) -> None:
+        if self.spec.auth is not McpAuthKind.AUTO:
+            return
+        if self.spec.url is None or response.request.url != httpx2.URL(self.spec.url):
+            return
+        if 200 <= response.status_code < 300:
+            self._auth_seen = False
+            return
+        if response.status_code != 401:
+            return
+        self._auth_seen = True
+        self._auth_header = response.headers.get("WWW-Authenticate")
+        self._resource_metadata_url = extract_resource_metadata_from_www_auth(response)
+
+    async def _connection_error(self, error: BaseException) -> McpTransportError:
+        if isinstance(error, McpAuthenticationRequired):
+            return error
+        if self.spec.auth is McpAuthKind.AUTO and self._auth_seen:
+            try:
+                challenge = await asyncio.wait_for(self._classify_auth(), timeout=8)
+            except Exception:
+                challenge = McpAuthChallenge.CHOOSE
+            return McpAuthenticationRequired(challenge)
+        if isinstance(error, McpTransportError):
+            return error
+        return McpConnectionError("MCP SDK connection failed")
+
+    async def _classify_auth(self) -> McpAuthChallenge:
+        assert self.spec.url is not None
+        origin = urlsplit(self.spec.url)
+        urls = build_protected_resource_metadata_discovery_urls(
+            self._resource_metadata_url, self.spec.url
+        )
+        async with httpx2.AsyncClient(timeout=5, follow_redirects=False) as client:
+            for url in urls:
+                candidate = urlsplit(url)
+                if (candidate.scheme, candidate.netloc) != (
+                    origin.scheme,
+                    origin.netloc,
+                ):
+                    continue
+                try:
+                    response = await client.get(url)
+                    if response.status_code != 200:
+                        continue
+                    metadata = ProtectedResourceMetadata.model_validate_json(
+                        response.content
+                    )
+                    if (
+                        str(metadata.resource).rstrip("/") == self.spec.url.rstrip("/")
+                        and metadata.authorization_servers
+                    ):
+                        return McpAuthChallenge.OAUTH
+                except (httpx2.HTTPError, ValueError):
+                    continue
+            legacy_url = (
+                f"{origin.scheme}://{origin.netloc}"
+                "/.well-known/oauth-authorization-server"
+            )
+            try:
+                response = await client.get(legacy_url)
+                if response.status_code == 200:
+                    metadata = OAuthMetadata.model_validate_json(response.content)
+                    if urlsplit(str(metadata.issuer)).netloc == origin.netloc:
+                        return McpAuthChallenge.OAUTH
+            except (httpx2.HTTPError, ValueError):
+                pass
+        if self._auth_header and self._auth_header.lstrip().lower().startswith(
+            "bearer"
+        ):
+            return McpAuthChallenge.BEARER
+        return McpAuthChallenge.CHOOSE
 
     async def _list(self, client: Client) -> tuple[McpRemoteTool, ...]:
         found: list[McpRemoteTool] = []

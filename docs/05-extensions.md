@@ -23,13 +23,27 @@ MCP Tool adapter 只负责 schema 和调用协议转换，执行时仍是普通 
 
 项目 settings 中的 server 定义默认不受信任：project 层不能直接开启全局 MCP 或 server，用户必须在 local settings 中显式启用完整定义。环境变量只通过名称映射注入，不把值写入配置、诊断或 Session。
 
-HTTP server 使用 `type: "http"` 和 `url`，只接受 HTTPS 或本机 loopback HTTP。`auth` 可设为 `none`、`bearer` 或 `oauth`。Bearer 使用 `bearerTokenFrom` 指向环境变量；OAuth 在交互模式首次连接时打开浏览器，通过本机回调完成动态客户端注册和授权，令牌保存在用户配置目录下私有文件。当前只支持动态客户端注册，无头模式仅能使用已有凭据。当前仅暴露 tools；非文本内容以占位文本呈现，resources 和 prompts 延后。
+TUI 可直接新增并连接 MCP，配置写入当前工作区的 `.my-code/settings.local.json`（当工作区与用户配置目录重合时写入用户 settings）。连接失败也会保留定义和诊断；服务端恢复后可运行 `/mcp reconnect <name>`，环境变量变化需重启 TUI 才能生效。同名新增会替换本地定义和当前连接。
+
+```text
+/mcp add https://example.com/mcp
+/mcp add remote https://example.com/mcp --oauth
+/mcp add remote https://example.com/mcp --bearer-env MCP_TOKEN
+/mcp add local -- python -m my_mcp_server
+/mcp add local --env-from TOKEN=LOCAL_TOKEN -- npx my-mcp-server
+/mcp logout remote
+/mcp
+```
+
+`/mcp add <URI>` 自动生成不冲突的名称，先匿名连接。初始化或发现 tools 返回 401 时，TUI 根据 OAuth 元数据或 Bearer challenge 启动浏览器授权、请求遮蔽输入的 token；信息不足时让用户选择。取消鉴权会保留定义和诊断，可用 `/mcp reconnect <name>` 重试。`/mcp add` 会立即更新运行时的工具目录，无需重启 TUI。配置中的环境变量只保存名称，值从启动 my-code 的进程环境读取。
+
+HTTP server 使用 `type: "http"` 和 `url`，只接受 HTTPS 或本机 loopback HTTP。`auth` 可设为 `none`、`auto`、`bearer` 或 `oauth`；旧配置省略 `auth` 仍为 `none`。`bearerTokenFrom` 指向环境变量；若 `auth` 为 `bearer` 且未提供该字段，则从用户私有存储读取 token。OAuth 在交互模式首次连接时打开浏览器，通过本机回调完成动态客户端注册和授权。两类凭据均存于用户配置目录下的私有文件，`/mcp logout <name>` 可清除。当前只支持动态客户端注册，无头模式仅能使用已有凭据。当前仅暴露 tools；非文本内容以占位文本呈现，resources 和 prompts 延后。
 
 用户 settings 示例（令牌值通过进程环境提供）：
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "mcp": {
     "enabled": true,
     "servers": {

@@ -8,13 +8,24 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx2
 import pytest
 from mcp.client.auth import OAuthClientProvider
 
 import my_code.mcp.sdk as sdk_module
-from my_code.mcp.models import McpAuthKind, McpServerSpec, McpServerTransport
+from my_code.auth.mcp_bearer import McpBearerTokenStore
+from my_code.mcp.models import (
+    McpAuthChallenge,
+    McpAuthKind,
+    McpServerSpec,
+    McpServerTransport,
+)
 from my_code.mcp.sdk import SdkMcpTransportFactory
-from my_code.mcp.transport import McpConfigurationError, McpRequestError
+from my_code.mcp.transport import (
+    McpAuthenticationRequired,
+    McpConfigurationError,
+    McpRequestError,
+)
 
 _SERVER = r"""
 import json
@@ -112,6 +123,23 @@ def test_sdk_bearer_resolves_only_named_environment_variable(tmp_path: Path) -> 
         SdkMcpTransportFactory({}, tmp_path, interactive=False)(spec)
 
 
+def test_sdk_bearer_can_load_user_private_token(tmp_path: Path) -> None:
+    url = "https://example.com/mcp"
+    McpBearerTokenStore(tmp_path / ".mcp-bearer", "remote", url).save("stored-secret")
+    spec = McpServerSpec(
+        "remote",
+        None,
+        tmp_path,
+        transport=McpServerTransport.HTTP,
+        url=url,
+        auth=McpAuthKind.BEARER,
+    )
+    transport = SdkMcpTransportFactory({}, tmp_path / ".mcp-oauth", interactive=False)(
+        spec
+    )
+    assert transport._bearer_token == "stored-secret"
+
+
 @pytest.mark.asyncio
 async def test_sdk_tool_call_cancellation_does_not_poison_connection(
     tmp_path: Path,
@@ -137,7 +165,9 @@ async def test_sdk_tool_call_cancellation_does_not_poison_connection(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("auth", [McpAuthKind.BEARER, McpAuthKind.OAUTH])
+@pytest.mark.parametrize(
+    "auth", [McpAuthKind.AUTO, McpAuthKind.BEARER, McpAuthKind.OAUTH]
+)
 async def test_sdk_http_auth_is_passed_to_sdk_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auth: McpAuthKind
 ) -> None:
@@ -215,6 +245,74 @@ async def test_sdk_http_auth_is_passed_to_sdk_client(
     if auth is McpAuthKind.BEARER:
         assert captured["headers"] == {"Authorization": "Bearer secret"}
         assert captured["auth"] is None
-    else:
+    elif auth is McpAuthKind.OAUTH:
         assert captured["headers"] == {}
         assert isinstance(captured["auth"], OAuthClientProvider)
+    else:
+        assert captured["headers"] == {}
+        assert captured["auth"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("challenge_header", "metadata", "expected"),
+    [
+        ('Bearer realm="test"', None, McpAuthChallenge.BEARER),
+        (
+            'Bearer resource_metadata="https://example.com/meta"',
+            {
+                "resource": "https://example.com/mcp",
+                "authorization_servers": ["https://login.example.com"],
+            },
+            McpAuthChallenge.OAUTH,
+        ),
+        (None, None, McpAuthChallenge.CHOOSE),
+    ],
+)
+async def test_auto_http_auth_classifies_401_without_real_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    challenge_header: str | None,
+    metadata: dict[str, object] | None,
+    expected: McpAuthChallenge,
+) -> None:
+    original_client = httpx2.AsyncClient
+    requested: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        requested.append(str(request.url))
+        if request.url.path == "/mcp":
+            return httpx2.Response(
+                401,
+                headers=(
+                    {"WWW-Authenticate": challenge_header}
+                    if challenge_header is not None
+                    else {}
+                ),
+                request=request,
+            )
+        if request.url.path == "/meta" and metadata is not None:
+            return httpx2.Response(200, json=metadata, request=request)
+        return httpx2.Response(404, request=request)
+
+    monkeypatch.setattr(
+        sdk_module.httpx2,
+        "AsyncClient",
+        lambda **kwargs: original_client(
+            transport=httpx2.MockTransport(respond), **kwargs
+        ),
+    )
+    spec = McpServerSpec(
+        "remote",
+        None,
+        tmp_path,
+        transport=McpServerTransport.HTTP,
+        url="https://example.com/mcp",
+        auth=McpAuthKind.AUTO,
+    )
+    transport = SdkMcpTransportFactory({}, tmp_path, interactive=False)(spec)
+
+    with pytest.raises(McpAuthenticationRequired) as failure:
+        await transport.connect(timeout_seconds=2)
+    assert failure.value.challenge is expected
+    assert all(url.startswith("https://example.com/") for url in requested)

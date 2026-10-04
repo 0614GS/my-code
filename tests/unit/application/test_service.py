@@ -1,12 +1,14 @@
 """Concrete ApplicationService orchestration and session-bundle tests."""
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from mcp.shared.auth import OAuthToken
 
 from my_code.agent.events import (
     AgentConversationUpdated,
@@ -30,6 +32,7 @@ from my_code.application.contracts.history import (
     HistoryText,
     HistoryToolCall,
 )
+from my_code.application.contracts.mcp import McpServerRegistration
 from my_code.application.contracts.views import (
     TranscriptAttachment,
     TranscriptReasoning,
@@ -41,6 +44,8 @@ from my_code.application.contracts.views import (
 from my_code.application.service import ApplicationService
 from my_code.application.turns.event_projection import project_agent_events
 from my_code.auth.credentials import CredentialSource, CredentialStore
+from my_code.auth.mcp_bearer import McpBearerTokenStore
+from my_code.auth.mcp_oauth import McpOAuthTokenStore
 from my_code.bootstrap import bootstrap_application
 from my_code.config.paths import MyCodePaths
 from my_code.config.providers import ProviderProtocol
@@ -73,6 +78,15 @@ from my_code.conversation.state import CompactBoundary
 from my_code.features.background_tasks.registry import BackgroundTask
 from my_code.features.background_tasks.wake import BackgroundTaskWakeSignal
 from my_code.foundation.json import JsonObject
+from my_code.mcp.models import (
+    McpAuthChallenge,
+    McpAuthKind,
+    McpCallResult,
+    McpConnectionInfo,
+    McpRemoteTool,
+    McpServerSpec,
+)
+from my_code.mcp.transport import McpAuthenticationRequired, McpConnectionError
 from my_code.model.capabilities import ModelDescriptor, ModelLimits
 from my_code.model.invocation import (
     ModelInputOrigin,
@@ -165,6 +179,230 @@ def test_app_state_is_the_single_runtime_owner(tmp_path: Path) -> None:
     assert runtime.runtime.permissions.policy is runtime.tool_executor.policy
     assert runtime.runtime.tools.snapshot() == runtime.tool_executor.tools
     assert runtime.runtime.session.session_id == _CURRENT_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_add_mcp_persists_local_config_and_connects_now(tmp_path: Path) -> None:
+    application = _bootstrap_runtime(tmp_path)
+
+    class Transport:
+        def set_tools_changed_handler(self, handler: object) -> None:
+            del handler
+
+        async def connect(self, *, timeout_seconds: float) -> McpConnectionInfo:
+            del timeout_seconds
+            return McpConnectionInfo("2025-11-25", "fake", "1")
+
+        async def list_tools(
+            self, *, timeout_seconds: float
+        ) -> tuple[McpRemoteTool, ...]:
+            del timeout_seconds
+            return (McpRemoteTool("echo", "Echo", {"type": "object"}),)
+
+        async def call_tool(
+            self, name: str, arguments: JsonObject, *, timeout_seconds: float
+        ) -> McpCallResult:
+            del name, arguments, timeout_seconds
+            return McpCallResult("ok")
+
+        async def close(self) -> None:
+            pass
+
+    application.runtime.mcp._transport_factory = lambda spec: Transport()  # type: ignore[assignment]
+    try:
+        capabilities = await application.add_mcp(
+            McpServerRegistration("local", command="fake-server")
+        )
+        assert capabilities.mcp_servers[0].state == "connected"
+        assert capabilities.mcp_servers[0].tool_names == ("mcp__local__echo",)
+        document = json.loads(
+            application.settings.paths.local_settings_path.read_text(encoding="utf-8")
+        )
+        assert document["mcp"]["enabled"] is True
+        assert document["mcp"]["servers"]["local"]["command"] == "fake-server"
+    finally:
+        await application.close()
+
+
+@pytest.mark.asyncio
+async def test_add_mcp_rejects_insecure_url_before_writing(tmp_path: Path) -> None:
+    application = _bootstrap_runtime(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="HTTPS or loopback"):
+            await application.add_mcp(
+                McpServerRegistration("remote", url="http://example.com/mcp")
+            )
+        assert not application.settings.paths.local_settings_path.exists()
+    finally:
+        await application.close()
+
+
+class _AuthTransport:
+    def __init__(
+        self,
+        spec: McpServerSpec,
+        *,
+        reject_bearer: bool = False,
+        cancel_oauth: bool = False,
+    ) -> None:
+        self.spec = spec
+        self.reject_bearer = reject_bearer
+        self.cancel_oauth = cancel_oauth
+
+    def set_tools_changed_handler(self, handler: object) -> None:
+        del handler
+
+    async def connect(self, *, timeout_seconds: float) -> McpConnectionInfo:
+        del timeout_seconds
+        if self.spec.auth is McpAuthKind.AUTO:
+            raise McpAuthenticationRequired(McpAuthChallenge.BEARER)
+        if self.cancel_oauth and self.spec.auth is McpAuthKind.OAUTH:
+            raise asyncio.CancelledError
+        if self.reject_bearer and self.spec.auth is McpAuthKind.BEARER:
+            raise McpConnectionError("rejected")
+        return McpConnectionInfo("2025-11-25", "fake", "1")
+
+    async def list_tools(self, *, timeout_seconds: float) -> tuple[McpRemoteTool, ...]:
+        del timeout_seconds
+        return ()
+
+    async def call_tool(
+        self, name: str, arguments: JsonObject, *, timeout_seconds: float
+    ) -> McpCallResult:
+        del name, arguments, timeout_seconds
+        return McpCallResult("ok")
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_uri_add_generates_unique_name_and_private_bearer_flow(
+    tmp_path: Path,
+) -> None:
+    application = _bootstrap_runtime(tmp_path)
+    application.runtime.mcp._transport_factory = lambda spec: _AuthTransport(spec)  # type: ignore[assignment]
+    try:
+        first = await application.add_mcp(
+            McpServerRegistration("example-com", url="https://example.com/other")
+        )
+        assert first.mcp_servers[0].name == "example-com"
+        added = await application.add_mcp(
+            McpServerRegistration(url="https://example.com/mcp")
+        )
+        auto = next(item for item in added.mcp_servers if item.name == "example-com-2")
+        assert auto.state == "auth_required"
+        assert auto.auth_challenge == "bearer"
+
+        connected = await application.authenticate_mcp(
+            "example-com-2", McpAuthKind.BEARER, token="secret"
+        )
+        assert (
+            next(
+                item for item in connected.mcp_servers if item.name == "example-com-2"
+            ).state
+            == "connected"
+        )
+        path = application.settings.paths.local_settings_path
+        document = json.loads(path.read_text(encoding="utf-8"))
+        entry = document["mcp"]["servers"]["example-com-2"]
+        assert entry["auth"] == "bearer"
+        assert "bearerTokenFrom" not in entry
+        assert "secret" not in path.read_text(encoding="utf-8")
+        store = McpBearerTokenStore(
+            application.settings.paths.config_home / ".mcp-bearer",
+            "example-com-2",
+            "https://example.com/mcp",
+        )
+        assert store.load() == "secret"
+        logged_out = await application.logout_mcp("example-com-2")
+        assert store.load() is None
+        assert (
+            next(
+                item for item in logged_out.mcp_servers if item.name == "example-com-2"
+            ).state
+            == "auth_required"
+        )
+    finally:
+        await application.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_bearer_auth_restores_auto_config_and_removes_token(
+    tmp_path: Path,
+) -> None:
+    application = _bootstrap_runtime(tmp_path)
+    application.runtime.mcp._transport_factory = lambda spec: _AuthTransport(  # type: ignore[assignment]
+        spec, reject_bearer=True
+    )
+    try:
+        await application.add_mcp(McpServerRegistration(url="https://example.com/mcp"))
+        with pytest.raises(ValueError, match="did not connect"):
+            await application.authenticate_mcp(
+                "example-com", McpAuthKind.BEARER, token="secret"
+            )
+        store = McpBearerTokenStore(
+            application.settings.paths.config_home / ".mcp-bearer",
+            "example-com",
+            "https://example.com/mcp",
+        )
+        assert store.load() is None
+        document = json.loads(
+            application.settings.paths.local_settings_path.read_text(encoding="utf-8")
+        )
+        assert document["mcp"]["servers"]["example-com"]["auth"] == "auto"
+        assert application.runtime.mcp.snapshot("example-com").state.value == (
+            "auth_required"
+        )
+    finally:
+        await application.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_oauth_restores_auto_definition(tmp_path: Path) -> None:
+    application = _bootstrap_runtime(tmp_path)
+    application.runtime.mcp._transport_factory = lambda spec: _AuthTransport(  # type: ignore[assignment]
+        spec, cancel_oauth=True
+    )
+    try:
+        await application.add_mcp(McpServerRegistration(url="https://example.com/mcp"))
+        with pytest.raises(asyncio.CancelledError):
+            await application.authenticate_mcp("example-com", McpAuthKind.OAUTH)
+        document = json.loads(
+            application.settings.paths.local_settings_path.read_text(encoding="utf-8")
+        )
+        assert document["mcp"]["servers"]["example-com"]["auth"] == "auto"
+        assert application.runtime.mcp.snapshot("example-com").state.value == (
+            "auth_required"
+        )
+    finally:
+        await application.close()
+
+
+@pytest.mark.asyncio
+async def test_oauth_auth_persists_mode_and_logout_deletes_token(
+    tmp_path: Path,
+) -> None:
+    application = _bootstrap_runtime(tmp_path)
+    application.runtime.mcp._transport_factory = lambda spec: _AuthTransport(spec)  # type: ignore[assignment]
+    try:
+        await application.add_mcp(McpServerRegistration(url="https://example.com/mcp"))
+        connected = await application.authenticate_mcp("example-com", McpAuthKind.OAUTH)
+        assert connected.mcp_servers[0].state == "connected"
+        document = json.loads(
+            application.settings.paths.local_settings_path.read_text(encoding="utf-8")
+        )
+        assert document["mcp"]["servers"]["example-com"]["auth"] == "oauth"
+        store = McpOAuthTokenStore(
+            application.settings.paths.config_home / ".mcp-oauth",
+            "example-com",
+            "https://example.com/mcp",
+        )
+        await store.set_tokens(OAuthToken(access_token="secret", token_type="Bearer"))
+        await application.logout_mcp("example-com")
+        assert await store.get_tokens() is None
+    finally:
+        await application.close()
 
 
 @pytest.mark.asyncio

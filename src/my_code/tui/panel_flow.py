@@ -9,6 +9,7 @@ from typing import cast
 from prompt_toolkit.document import Document
 
 from my_code.config.validation import validate_base_url
+from my_code.mcp.models import McpAuthKind
 from my_code.model.primitives import validate_provider_id
 from my_code.permissions.models import PermissionConfirmation
 from my_code.tui.provider_screen import (
@@ -104,6 +105,8 @@ class PanelFlowMixin:
             self._agent_task_id = None
         if self._panel == "plan_action":
             self._pending_plan = None
+        if self._panel in {"mcp_auth_choice", "mcp_bearer"}:
+            self._mcp_auth_server = None
         self._panel = None
         if self._provider_wizard is not None:
             self._provider_wizard.clear_sensitive()
@@ -124,6 +127,28 @@ class PanelFlowMixin:
         view = self._panel_view()
         row = self._panel_picker.current(view.rows) if view is not None else None
         action = row.key if row is not None else None
+        if self._panel == "mcp_auth_choice" and action is not None:
+            server_name = self._mcp_auth_server
+            if action == "later" or server_name is None:
+                self._close_panel()
+            elif action == "bearer":
+                self._panel = "mcp_bearer"
+                self.buffer.set_document(Document(""), bypass_readonly=True)
+                self._invalidate()
+            else:
+                self._close_panel()
+                self._mcp_auth_server = server_name
+                await self._authenticate_mcp(McpAuthKind.OAUTH)
+            return
+        if self._panel == "mcp_bearer":
+            token = self.buffer.text
+            if not token:
+                return
+            server_name = self._mcp_auth_server
+            self._close_panel()
+            self._mcp_auth_server = server_name
+            await self._authenticate_mcp(McpAuthKind.BEARER, token=token)
+            return
         if self._panel == "full_access":
             self._resolve_full_access(action == "allow")
         elif self._panel == "question":
